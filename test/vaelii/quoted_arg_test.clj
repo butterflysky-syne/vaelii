@@ -117,14 +117,20 @@
   ;; a predicate and therefore fails that constraint; `(Quote parentOf)` is a compound
   ;; mention and remains WFF.  This pins the boundary without conflating it with the
   ;; preceding predicate's simultaneous arg/quotedArg declarations.
-  (tu/with-terms [quotedTestPred parentOf Quote]
+  (tu/with-terms [quotedTestPred parentOf Quote PredicateQuote]
     (v/assert kb (list 'unaryPredicate quotedTestPred) 'CxUniverse)
     (v/assert kb (list 'binaryPredicate parentOf) 'CxUniverse)
     (v/assert kb (list 'arg quotedTestPred 1 'symbol) 'CxUniverse)
     (v/assert kb (list 'unreifiableFunction Quote) 'CxUniverse)
     (v/assert kb (list 'quotingFunction Quote) 'CxUniverse)
     (v/assert kb (list 'result Quote 'symbol) 'CxUniverse)
+    (v/assert kb (list 'unreifiableFunction PredicateQuote) 'CxUniverse)
+    (v/assert kb (list 'quotingFunction PredicateQuote) 'CxUniverse)
+    (v/assert kb (list 'result PredicateQuote 'predicate) 'CxUniverse)
     (is (= :arg-type (refusal kb (list quotedTestPred parentOf)))
         "using parentOf denotes a predicate, not a symbol")
+    (is (= :arg-type
+           (refusal kb (list quotedTestPred (list PredicateQuote parentOf))))
+        "a quoted compound whose declared result is predicate does not satisfy symbol")
     (is (nil? (refusal kb (list quotedTestPred (list Quote parentOf))))
         "Quote declares a symbol result, so the quoted mention satisfies the use-level slot")))
