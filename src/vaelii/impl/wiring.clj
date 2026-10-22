@@ -7,24 +7,20 @@
 
     kb <- checks <- special <- integrate <- chain <- settle <- vaelii.core
 
-  Three calls run the other way, and the static require graph cannot express any of them.
-  Two are **genuine mutual recursion**: the cycle is in the *behaviour*, and no code motion
-  removes it — the assert path reaches a mint that asserts (`assert-sentence`), and
-  negation-as-failure runs the prover registry back over its own argument (`solve-goal`).
-  The third, `retract-sentex`, is the teardown entry point a below-core solver
-  (`vaelii.impl.asp.solve-context`) reaches to retract a labeling artifact: the teardown
-  orchestration is core-private and has not been extracted below core, so this call runs up
-  rather than down for now.  They are collected here so the set can be counted, and so
-  `lein lint`'s **E8** can fail a literal `requiring-resolve` anywhere else under `src/` and
-  **E19** any target beyond these three.  Each is a `delay` over `requiring-resolve` rather
-  than a dynamic var; why is docs/namespaces.md, \"The layering\".
-
-  A namespace that merely sits *above* `vaelii.core` and calls back down to its public API is
-  **not** written here — a call that can point downward is made to point downward.  Reading a
-  dump (`vaelii.impl.io.import`) recovers through `vaelii.impl.recovery`, the
-  `predAllSpecified` audit (`vaelii.impl.predall`) reads through `vaelii.impl.provers`, and the
-  `functional_at_instant` audit (`vaelii.impl.fluent`) reads through `vaelii.impl.provers` and
-  the node engine `vaelii.impl.inference`; all sit below `vaelii.core`, which requires them.
+  Five targets are reached the other way, and the static require graph cannot express any
+  of them.  Four are **genuine mutual recursion**, where the cycle is in the *behaviour* and
+  no code motion removes it: the assert path reaches a mint that asserts
+  (`assert-sentence`); negation-as-failure runs the prover registry back over its own
+  argument (`solve-goal`); the exception read walk asks the claim walk for a second route,
+  and the claim walk reads facts through the exception read walk (`route-reach`,
+  `firing-goals`, `goal-reach`); and a KB's open replays its operation log through the
+  write entry points of `vaelii.core` (`replay-op`).  The fifth, `retract-sentex`, is the
+  teardown entry point a below-core solver reaches while the teardown orchestration is
+  core-private.  `lein lint`'s **E8** fails a literal `requiring-resolve` anywhere else
+  under `src/`, **E19** any target beyond these five, and **E20** a namespace that installs
+  a function into a lower namespace's slot at load instead of appearing here.  Each entry
+  is a `delay` over `requiring-resolve` rather than a dynamic var.  See docs/namespaces.md,
+  \"The layering\".
 
   `*defer-settle?*` lives here too, because both sides of the assert recursion read it."
   (:refer-clojure :exclude [assert]))
@@ -40,7 +36,7 @@
   un-reconciled for the caller to settle once, later.  Three callers bind it:
 
   - a rule firing minting a skolem NAT mid-fixpoint (`vaelii.impl.skolem`): the nested
-    `(termOfUnit K E)` assert is monotonic bookkeeping and the enclosing firing settles
+    `(natFormula K E)` assert is monotonic bookkeeping and the enclosing firing settles
     once when it finishes, so settling per mint would be redundant churn — and worse,
     would relabel belief inside the running chain (docs/skolem.md);
   - a placed conclusion minting the constants of its ground reifiable NATs
@@ -58,13 +54,16 @@
 
 ;; ==== Genuine mutual recursion ============================================
 
-;; `assert-sentence` runs the full assertion path.  Three namespaces call it from inside
+;; `assert-sentence` runs the full assertion path.  Four namespaces call it from inside
 ;; the chaining fixpoint `vaelii.core/assert` itself started: `vaelii.impl.nat` (a reified
-;; NAT stores its `(termOfUnit K E)` map and its materialized types), `vaelii.impl.skolem`
-;; (a firing mints its witness) and `vaelii.impl.quasiquote` (declaring the four marks
-;; quasiquotation runs on).  Storing is a *whole* assert — naming, the definitional checks,
-;; the index, chaining, settle — so the write path runs chaining, and chaining calls back
-;; here to mint a constant.  The cycle is in the behaviour, and no arrangement of the code
+;; NAT stores its `(natFormula K E)` map and its materialized types), `vaelii.impl.skolem`
+;; (a firing mints its witness), `vaelii.impl.quasiquote` (declaring the four marks
+;; quasiquotation runs on) and `vaelii.impl.chain` (`reassert-premise` re-asserts a premise
+;; under the spelling a predicate declaration folds it to).  `vaelii.impl.asp.label` and
+;; `vaelii.impl.asp.solve-context` call it outside chaining, to store a labeling's
+;; sentences and its `genlCx` edge, for `retract-sentex`'s reason below.  Storing is a
+;; *whole* assert — naming, the definitional checks, the index, chaining, settle — so the
+;; write path runs chaining, and chaining calls back here to mint a constant.  The cycle is in the behaviour, and no arrangement of the code
 ;; removes it (docs/skolem.md).
 
 (def ^:private core-assert
@@ -91,9 +90,51 @@
   [kb goal context]
   (@provers-solve-goal kb goal context))
 
+;; The second-route walks.  `vaelii.impl.except`'s read walk asks whether a reader reaches a
+;; preserved claim's path, or a rule firing's goals, another way, and
+;; `vaelii.impl.inherit`'s claim walk answers.  `inherit` requires `except`, and the claim
+;; walk matches facts through `res/matches-visible`, which reads the excepts back through
+;; `except`'s read walk: the two walks are mutually recursive, and `except/*routes*` bounds
+;; the nesting.  A `requiring-resolve` loads `inherit` on first use, so the answer does not
+;; depend on which namespace loaded first.
+
+(def ^:private inherit-second-route
+  (delay (requiring-resolve 'vaelii.impl.inherit/second-route)))
+
+(defn route-reach
+  "Does `reader` reach `b` from `a` over the fact relation `rel` a `transitiveInArgInverse`
+  preserves a claim along?"
+  [kb rel a b reader]
+  ((:reach @@inherit-second-route) kb rel a b reader))
+
+(defn firing-goals
+  "`[goals stated]` for the rule firing `j`: the goals it matched through a reach and the
+  antecedent handles that state a literal, or nil when it reads no goal off `j`."
+  [kb j]
+  ((:goals @@inherit-second-route) kb j))
+
+(defn goal-reach
+  "Does `reader` reach the ground `goal` from a claim it reads?"
+  [kb goal reader]
+  ((:goal-reach @@inherit-second-route) kb goal reader))
+
+;; `replay-op` is the operation-log replay table.  `vaelii.core/open-kb` opens a sealed store
+;; through `vaelii.impl.seal`, which replays the frames logged since the seal through
+;; `vaelii.impl.oplog/replay!`, and each frame runs the `vaelii.core` write entry point that
+;; recorded it.  The open and the entry points are mutually recursive through the log.
+
+(def ^:private core-replay-dispatch
+  (delay (requiring-resolve 'vaelii.core/replay-dispatch)))
+
+(defn replay-op
+  "The function a logged frame of operation `op` runs through, or nil when `vaelii.core`
+  records no such operation."
+  [op]
+  (get @@core-replay-dispatch op))
+
 ;; `retract-sentex` is the teardown entry point.  `vaelii.impl.asp.solve-context` reaches it
 ;; to retract a labeling artifact (an inert truth value, its `genlCx` placement edge).
-;; Unlike the two above this is **not** a behavioural cycle: the teardown orchestration
+;; Unlike the four above this is **not** a behavioural cycle: the teardown orchestration
 ;; (`retract-storage!`, the settle, the orphan and meta sweeps) is core-private and has not
 ;; been extracted below `vaelii.core`, so a below-core caller reaches it up here.  Extracting
 ;; that orchestration below core would let this point downward like the others, and is the

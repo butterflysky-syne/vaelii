@@ -3,10 +3,10 @@
 (ns vaelii.guard-test
   "The HTTP guards (`vaelii.host.guard`) as pure functions — no KB, no socket.
 
-  These pin the refusal paths of the `Host` allowlist that closes DNS rebinding, and
+  These assert the refusal paths of the `Host` allowlist that closes DNS rebinding, and
   the pieces it is built from.  The daemon- and browser-level tests
   (`vaelii.serve-test`, `vaelii.web-test`) drive the wrapped handlers; this namespace
-  pins the guard's own decisions, including the deliberate carve-outs a handler test
+  asserts the guard's own decisions, including the deliberate carve-outs a handler test
   could mistake for gaps."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.host.guard :as guard]))
@@ -38,7 +38,7 @@
   ;; `VAELII_ALLOWED_HOSTS` overrides both branches, and `System/getenv` is a static
   ;; call with no var to fake — so this asserts the default branches, and skips when
   ;; the environment carries the override (under it, the defaults are genuinely not
-  ;; in force).  The override's *consumption* is pinned below through `host-allowed?`,
+  ;; in force).  The override's *consumption* is asserted below through `host-allowed?`,
   ;; which takes the set as a value.
   (if (some? (System/getenv "VAELII_ALLOWED_HOSTS"))
     (println "SKIP vaelii.guard-test/allowed-hosts-follows-the-bind:"
@@ -116,7 +116,7 @@
   ;; the deliberate carve-out: HTTP/1.1 requires `Host` and every browser sends it,
   ;; so its absence marks a non-browser client (curl, a test's request map) — which
   ;; has no ambient browser context to ride, and is not the request rebinding is
-  ;; about.  Pinned so any future tightening is a visible choice, not drift.
+  ;; about.  Asserted so a tightening is a visible choice, not drift.
   (is (guard/host-allowed? guard/loopback-hosts {}))
   (is (guard/host-allowed? guard/loopback-hosts {:headers {}})))
 
@@ -151,7 +151,7 @@
 ;; ---- edn-body? -----------------------------------------------------------
 
 (deftest edn-body-prefix-matches-the-declared-type
-  ;; the CSRF gate's own decision, at the pure level; the daemon-level consequences
+  ;; the CSRF check's own decision, at the pure level; the daemon-level consequences
   ;; (415, no side effect) are `vaelii.serve-test`'s
   (let [req (fn [ct] {:headers {"content-type" ct}})]
     (testing "parameters and case variants still declare EDN"

@@ -7,12 +7,12 @@
   resolves that name and builds an instance of it: a record frame (`Class/forName`, then
   the static `create`), a deftype frame (`Class/forName`, then the first public
   constructor over the fields that follow), and a `Serializable` frame (an
-  `ObjectInputStream` over the bytes that follow).  nippy 3.9.0 gates the third behind
-  `*thaw-serializable-allowlist*` and the first two behind nothing at all.
+  `ObjectInputStream` over the bytes that follow).  nippy 3.9.0 checks the third against
+  `*thaw-serializable-allowlist*` and the first two against nothing at all.
 
   Every file the engine reads is **untrusted input** — a store directory or a dump
-  arrives from wherever an operator copied it — so all three are gated here, and the
-  gate is the tightest one there is:
+  arrives from wherever an operator copied it — so all three are checked here, and the
+  check is the tightest one there is:
 
   > **A vaelii frame never carries a class name.**
 
@@ -22,13 +22,13 @@
   frame that names one therefore came from somewhere else, and `allowed-classes` is
   empty: the name is refused (`:disallowed-class`) before the class is resolved.
 
-  **The `Serializable` allowlist is pinned rather than inherited.**  nippy's default is
+  **The `Serializable` allowlist is bound here rather than inherited.**  nippy's default is
   a safe set, but it lives in a dynamic var an embedding application is invited to
   widen — nippy documents `allow-and-record-any-serializable-class-unsafe` for exactly
   that migration — and a host that widened it would widen the engine's file readers with
   it.  Binding it per read makes the entry point this namespace's rather than the host's.
 
-  **How the first two are gated**, since nippy exposes no hook for them: the readers
+  **How the first two are checked**, since nippy exposes no hook for them: the readers
   `taoensso.nippy.io` dispatches to are vars, and this namespace installs a checked
   reader in place of each.  A refusal is thrown from there, which is *before* nippy's own
   `try` — so it travels rather than becoming the `{:nippy/unthawable …}` placeholder a
@@ -37,7 +37,7 @@
   force, so a host application thawing its own records in this JVM is unaffected.
 
   **What holds that wrap to the release it was written against** is
-  `pinned-nippy-version`: three internals are reached into here, and a bump that keeps
+  `expected-nippy-version`: three internals are reached into here, and a bump that keeps
   their names while routing deserialization around them would narrow this entry point without
   reddening anything.  So the version is checked at load and the namespace refuses to
   come up against another one."
@@ -63,7 +63,7 @@
 
 (def ^:dynamic *guarding*
   "Is a thaw inside `with-guard`?  The checked readers below stand in for nippy's own
-  process-wide, so this is what keeps the gate the engine's own: false — a host
+  process-wide, so this is what keeps the class check the engine's own: false — a host
   application's thaw — calls straight through."
   false)
 
@@ -90,16 +90,16 @@
 
 ;; ---- the nippy release the three attachment points were read against -----
 
-(def pinned-nippy-version
+(def expected-nippy-version
   "The nippy release this entry point was written against, and the whole of what keeps it from
   narrowing in silence.
 
-  The gate reaches into three of nippy's **internals**: the vars
+  The class check reaches into three of nippy's **internals**: the vars
   `taoensso.nippy.io/read-record` and `taoensso.nippy.io/read-deftype`, wrapped in place
   below, and nippy's own call to `taoensso.nippy.impl/serializable-allowed?`, which is
   what lets a `Serializable` frame be refused by name rather than arrive as a placeholder.
   A bump that **renames or moves** any of them fails this namespace at load, and that is
-  visible enough.  The failure this pin exists for is the quiet one: a bump that keeps the
+  visible enough.  The failure this check exists for is the quiet one: a bump that keeps the
   vars and stops routing a class name through them — a new reader path, an inlined call —
   wraps cleanly, evaluates green, and covers less than it did.  On a **deserialization
   trust boundary** \"the guard silently narrowed\" is the worst available outcome, so the
@@ -127,8 +127,8 @@
       (with-open [in (io/input-stream u)] (.load props in))
       (.getProperty props "version"))))
 
-(defn check-nippy-pin!
-  "Refuse to go on unless the nippy on the classpath is `pinned`; the version agreed on,
+(defn check-nippy-version!
+  "Refuse to go on unless the nippy on the classpath is `expected`; the version agreed on,
   otherwise a throw, which fails this namespace and with it the build.
 
   This throws for two distinct reasons.  The descriptor is **unreadable**, so nothing is
@@ -136,29 +136,29 @@
   is readable and names **another release** (`:nippy-version-moved`).  Both refuse,
   because a class-name check that cannot say which nippy release it is guarding checks
   nothing, and both messages say what the reader has to do next."
-  [pinned]
+  [expected]
   (let [found (resolved-nippy-version)]
     (cond
       (nil? found)
       (throw (ex-info (str "cannot read which nippy is on the classpath, so the class-name"
                            " entry point cannot say it is guarding the release it was written"
-                           " against (" pinned ") — expected the artifact's own"
+                           " against (" expected ") — expected the artifact's own"
                            " META-INF/maven/com.taoensso/nippy/pom.properties")
-                      {:type :nippy-version-unreadable :pinned pinned}))
+                      {:type :nippy-version-unreadable :expected expected}))
 
-      (not= pinned found)
+      (not= expected found)
       (throw (ex-info (str "nippy " found " is on the classpath and the class-name check was"
-                           " written against " pinned " — re-read"
+                           " written against " expected " — re-read"
                            " taoensso.nippy.io/read-record,"
                            " taoensso.nippy.io/read-deftype and nippy's call to"
                            " taoensso.nippy.impl/serializable-allowed?, confirm that every"
                            " path resolving a class name still routes through them, then"
-                           " move `pinned-nippy-version` to " found)
-                      {:type :nippy-version-moved :pinned pinned :found found}))
+                           " move `expected-nippy-version` to " found)
+                      {:type :nippy-version-moved :expected expected :found found}))
 
       :else found)))
 
-;; ---- the two readers nippy gates behind nothing --------------------------
+;; ---- the two readers nippy checks against nothing -----------------------
 ;; Installed once, at load.  `defonce` on the originals, so reloading this namespace in
 ;; a REPL does not wrap a wrapper: what is captured the first time is nippy's own.
 
@@ -171,7 +171,7 @@
 #_{:clj-kondo/ignore [:unused-private-var]}
 (defonce ^:private installed
   (do
-    (check-nippy-pin! pinned-nippy-version)
+    (check-nippy-version! expected-nippy-version)
     (alter-var-root #'nippy-io/read-record
                     (constantly
                      (fn [ibr class-name]
@@ -188,7 +188,7 @@
 
 (defmacro ^:private with-guard
   "Run `body` with the class-name check closed: the two checked readers armed, and the
-  `Serializable` allowlist pinned to this namespace's.  One binding frame, so a caller
+  `Serializable` allowlist bound to this namespace's.  One binding frame, so a caller
   that opens the entry point once for a run of frames pays one push and one pop."
   [& body]
   `(binding [*guarding*                          true

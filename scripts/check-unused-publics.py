@@ -38,7 +38,7 @@ never here. A category added to dodge one finding hides every future finding lik
 NO SIBLING-CLAIMS MACHINERY. A scan of this shape usually needs a way to say "this
 var's only caller lives in a repo that is not checked out". Here that is one baseline
 line with the reason, not a mechanism: the SQL record stores (`vaelii-postgres`,
-`vaelii-sqlite`) build their roster with `roster/collector`, and the foreign-reader
+`vaelii-sqlite`) build their handle set with `handle-set/collector`, and the foreign-reader
 plugin's contract is `requiring-resolve` from an edn manifest, calling nothing here.
 """
 

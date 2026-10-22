@@ -23,7 +23,8 @@
             [vaelii.core :as v]
             [vaelii.impl.capabilities :as cap]
             [vaelii.impl.protocols :as p]
-            [vaelii.impl.resolution :as res]))
+            [vaelii.impl.resolution :as res]
+            [vaelii.impl.special :as special]))
 
 (defn- hinting-store
   "`inner` with `Prefetching` bolted on, recording each hint into `hints` (and each
@@ -175,7 +176,7 @@
 
 (deftest a-value-that-is-not-a-chunk-is-refused-where-it-is-bound
   ;; `true` is the guess an off-value of `false` invites, and it is truthy — so without a
-  ;; refusal it passes every gate on the query path and fails in `cap/hinting`'s `(long n)`,
+  ;; refusal it passes every check on the query path and fails in `cap/hinting`'s `(long n)`,
   ;; several frames into a lazy seq, naming neither the var nor what was bound to it.
   (doseq [v [true nil 0 -1 :always "256" 2.5]]
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"\*prefetch-candidates\*"
@@ -206,7 +207,7 @@
 (deftest the-recovery-walks-hint-without-a-setting
   ;; `reindex` fetches every live record and `recover` every stored justification, and
   ;; both consume every handle they are given — so a hint there can save round trips and
-  ;; cannot waste one, and neither is gated on `*prefetch-candidates*`.  That is the whole
+  ;; cannot waste one, and neither is conditional on `*prefetch-candidates*`.  That is the whole
   ;; difference from the query path, and it is asserted with the setting explicitly OFF.
   (let [kb    (v/open-kb {:backend :memory :space (gensym "prefetch")})
         _     (do (v/assert-rule kb '[(rel ?x)] '(derived ?x) 'CxPrefetch {:direction :forward})
@@ -237,3 +238,52 @@
     (is (nil? (cap/prefetcher (:records kb))))
     (is (nil? (cap/justification-prefetcher (:records kb))))
     (is (map? (v/reindex kb)) "and the rebuild runs exactly as it did")))
+
+(deftest a-recover-hints-the-records-its-settle-reads-a-handle-at-a-time
+  ;; the membership candidates' entries, the argument holds a recover decides again and
+  ;; the forced predicates' sentexes are read a record apiece, and each walk reads every
+  ;; handle it is given
+  (let [kb    (v/open-kb {:backend :memory :space (gensym "prefetch")})
+        _     (do (v/assert kb '(genl prefetch_dog prefetch_animal) 'CxPrefetch)
+                  (v/assert kb '(arg ownsPrefetchPet 2 prefetch_animal) 'CxPrefetch)
+                  (v/assert-rule kb '[(ownsPrefetchPet ?o ?p)] '(prefetch_owner ?o) 'CxPrefetch)
+                  (v/assert kb '(forced_monotonic_predicate prefetchForced) 'CxPrefetch)
+                  (doseq [i (range 20)]
+                    (let [x (symbol (str "Ind" i))]
+                      (v/assert kb (list 'prefetch_dog x) 'CxPrefetch)
+                      (v/assert kb (list 'prefetch_pet x) 'CxPrefetch)
+                      (v/assert kb (list 'ownsPrefetchPet 'Owner x) 'CxPrefetch)
+                      (v/assert kb (list 'prefetchForced 'Owner x) 'CxPrefetch))))
+        hints (atom [])
+        kb2   (assoc kb :records (hinting-store (:records kb) hints))
+        recs  (:records kb)
+        of    (fn [f] (into #{} (filter #(= f (first (:sentence (p/get-sentex recs %)))))
+                            (p/sentex-ids recs)))]
+    (v/recover kb2)
+    (let [hinted (set (mapcat identity @hints))]
+      (testing "every membership candidate's entries"
+        (is (= 20 (count (of 'prefetch_pet))))
+        (is (every? hinted (concat (of 'prefetch_dog) (of 'prefetch_pet)))))
+      (testing "the rule on the declared predicate, whose argument hold is decided again"
+        (is (some #(and (hinted %) (some? (:antecedent (p/get-sentex recs %))))
+                  (p/sentex-ids recs))))
+      (testing "every sentex of a forced predicate"
+        (is (= 20 (count (of 'prefetchForced))))
+        (is (every? hinted (of 'prefetchForced)))))))
+
+(deftest the-supporter-pass-hints-every-stored-declaration
+  ;; `reindex` reads each stored declaration again after its record walk, a record apiece,
+  ;; so the declaration pass hints its own extent
+  (let [kb    (v/open-kb {:backend :memory :space (gensym "prefetch")})
+        _     (doseq [i (range 20)]
+                (v/assert kb (list 'genl (symbol (str "prefetch_kind" i)) 'prefetch_top)
+                          'CxPrefetch))
+        hints (atom [])
+        kb2   (assoc kb :records (hinting-store (:records kb) hints))
+        recs  (:records kb)
+        genls (into #{} (filter #(= '[genl prefetch_top]
+                                    (let [[f _ t] (:sentence (p/get-sentex recs %))] [f t])))
+                    (p/sentex-ids recs))]
+    (special/post-taxonomy-supporters! kb2)
+    (is (= 20 (count genls)))
+    (is (every? (set (mapcat identity @hints)) genls))))

@@ -82,27 +82,38 @@
   in? believed? belief-status believed why-not
   why genls types contexts premise? defeat-class justification
   ;; one `genl` step each way, whatever installed the edge — a stated `genl` or a cover
-  ;; roster — which is what the taxonomy view draws and the tree opens
+  ;; declaration — which is what the taxonomy graph draws and the tree opens
   direct-genls direct-specs
+  ;; every subtype of a type, which a whole-KB list reads to find the members of
+  ;; `unary_predicate`
+  specs
   ;; the one-step neighbours no other one-step neighbour stands between, which is what the
   ;; concept graph draws: one round trip an expansion, the reduction done by the engine
   min-genls max-specs
   ;; the same reduction over `genlCx`, for a context's page
   min-context-parents max-context-children
-  ;; whether a `types` node is a relation, by its stored arity, for the term colouring
-  relation?
+  ;; whether a `types` node is a relation, and a predicate's arity, for the term colouring
+  relation? relation-arity
   supporting-justifications dependent-justifications
-  ;; which justifications the rule exceptions currently block — the one thing about a
-  ;; justification that cannot be read off belief, and so the one a remote reader would
-  ;; otherwise have to render wrong
-  blocked-justifications
+  ;; the verdict a context reads on each justification of a handle — what cannot be read
+  ;; off belief, and so what a remote reader would otherwise have to render wrong
+  justification-verdicts
   lookup escalate count-in-context
   sentexes-in-context sentexes-with-arg sentexes-with-functor count-with-arg
   count-with-functor disjoint-metatypes metatype-members separating-covers conflicts
+  ;; a type's members off the index, and whether one is believed: the whole-KB list of
+  ;; types without a genl reads every member of `unary_predicate`'s subtypes this way
+  stored-first-args isa?
+  ;; whether two types are disjoint, which a rename into an existing term is checked for
+  disjoint?
+  ;; the cover declarations over a whole, which the concept graph groups a type's
+  ;; subtypes by
+  covers-of
   contradictions
   ;; what a reified term denotes, so a reified NAT is displayed as the expression it was
-  ;; minted from rather than as its opaque constant (docs/nat.md).  Gated by the pure
-  ;; `reified-term?` below, so a KB with no reified terms never sends it
+  ;; minted from rather than as its opaque constant (docs/nat.md).  The pure
+  ;; `reified-term?` below decides whether it is sent, so a KB with no reified terms
+  ;; never sends it
   term-expression
   violations chain-stats terms term-count sentex-count find-terms
   ;; the per-rule funnel behind chain-stats — placed / refused / silent, for the page that
@@ -206,3 +217,6 @@
 ;; `vaelii.core/set-cache-limit` for an API or REPL caller
 (def cache-profile     core/cache-profile)
 (def set-cache-scale   core/set-cache-scale)
+;; the log dial is process-wide too, and delegates straight for the same reason
+(def log-level         core/log-level)
+(def set-log-level     core/set-log-level)

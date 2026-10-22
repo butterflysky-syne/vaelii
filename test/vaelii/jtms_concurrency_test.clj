@@ -3,7 +3,7 @@
 (ns vaelii.jtms-concurrency-test
   "A reader thread beside a writer thread is the supported shape (docs/storage.md, the
   single-writer contract): the web browser over a REPL's KB.  The atom-over-persistent-map
-  reference gives that reader a consistent view for free; the dense network mutates its
+  reference gives that reader a consistent snapshot for free; the dense network mutates its
   bitmaps in place, so it earns the same guarantee with a `StampedLock`.
 
   This is the guarantee under stress.  One writer churns a graph — asserting and

@@ -71,7 +71,7 @@
       (v/assert kb (list 'genlCx CxChainWhy 'CxWell) 'CxUniverse
                 {:strength :monotonic})
       (v/assert kb (list 'arg deepIn 1 'thing) 'CxUniverse {:strength :monotonic})
-      ;; the antecedent pins A to C specifically, so the only way to satisfy it is the
+      ;; the antecedent binds A to C specifically, so the only way to satisfy it is the
       ;; two-step entailment
       (v/assert-rule kb [(list 'properPartOfRegion RegA RegC)] (list deepIn RegA)
                      CxChainWhy {:direction :forward})

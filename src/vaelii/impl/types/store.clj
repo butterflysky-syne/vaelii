@@ -13,7 +13,7 @@
 ;; `compacting` boxes the copy-on-write compactor's state while a compaction is in
 ;; flight, else nil.  `store!`/`kill!` fold the ids they touch into `:touched`, and
 ;; `clear-records!` sets `:aborted` — both under the kind lock, so the compactor's
-;; delta reconcile sees a consistent view.  See `compact-kind!`.  `failed` holds the
+;; delta reconcile sees a consistent snapshot.  See `compact-kind!`.  `failed` holds the
 ;; failure of a compaction that could not install its result past the commit point,
 ;; else nil; while set, every read and write refuses (`usable!`).  `fault` is the
 ;; store's one fault latch (`files/latch-fault!`), the same atom in all three kinds: a

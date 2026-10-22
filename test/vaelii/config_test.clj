@@ -29,7 +29,7 @@
   properties absent.  The environment variables it also reads are not here: a JVM cannot
   clear its own environment, and `prop-bool` is where they are covered.
 
-  **Read off `config/switch-names`, not written out.**  A hand-kept copy of a roster
+  **Read off `config/switch-names`, not written out.**  A hand-kept copy of a list
   drifts, and this one drifted: it stood one short of the build's, missing
   `vaelii.index.snapshot-drift`, so `with-nothing-set` left that property set and the
   defaults it claims to show were whatever the run carried.  That is `config/switches`'
@@ -201,7 +201,7 @@
   their default at their own call site rather than going through a `prop-*` reader; the
   solver names a **registry member**, so unset is the absence of a choice rather than a
   default to check — `vaelii.asp.solver` still reads through `config/asp-solver`, and
-  refuses a name outside the roster like every other switch here."
+  refuses a name outside the accepted list like every other switch here."
   ["vaelii.disk.dir" "vaelii.web.port" "vaelii.kb.path" "vaelii.kb.catalog"
    "vaelii.asp.solver"])
 
@@ -212,7 +212,7 @@
    ["VAELII_KB_PATH"                #(count (catalog/search-path))       2]])
 
 (deftest nothing-set-is-the-documented-default-outside-this-namespace
-  ;; `config_surface_test` pins every switch's *name* and its citation; this is the
+  ;; `config_surface_test` freezes every switch's *name* and its citation; this is the
   ;; **Default** column of the same table, for the two-thirds of the surface whose
   ;; reader lives somewhere other than `vaelii.impl.config`.  Without it that column is
   ;; prose: a changed default is a doc nobody updated and a test nobody failed.

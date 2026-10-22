@@ -8,8 +8,9 @@
   that is O(records).  A snapshot is a *cache* of that rebuild: written once, read back on
   the next open, and installed instead of recomputed.  It is never a source of truth.  Its
   only failure mode is \"recompute\", never \"wrong answer\", which is what keeps it clear of
-  order independence — a snapshot is stamped to the exact records it was derived from, and a
-  mismatch takes the slow path (`reindex`/`recover`), never a stale belief.
+  order independence — a snapshot records the fingerprint of the exact records it was
+  derived from, and a mismatch takes the slow path (`reindex`/`recover`), never a stale
+  belief.
 
   ## One image, many sinks
 
@@ -43,7 +44,7 @@
 
   It is written **last**, exactly as a dump's `meta.edn` is: a half-written image has no
   manifest, so `read-manifest` returns nil and the image is never offered — the caller
-  rebuilds.  Opening a `file-sink` deletes any existing manifest first, so the window in
+  rebuilds.  Opening a `file-sink` deletes any existing manifest first, so the crash window in
   which an old manifest could describe half-rewritten sections does not exist.
 
   ## Validity is the whole design
@@ -56,8 +57,8 @@
   * `:layout-changed`  — the snapshot format version, or `kv/index-layout-version`, is not
                          this build's (an index in another layout reads as *empty* rather
                          than wrong, which is the undiagnosable failure this forecloses);
-  * `:records-differ`  — the manifest's records stamp is not the store's now (a different
-                         KB, or the same one after a write);
+  * `:records-differ`  — the manifest's records fingerprint is not the store's now (a
+                         different KB, or the same one after a write);
   * `:entries-truncated` — a section is short or unreadable, caught while installing (a torn
                          nippy chunk is indistinguishable from a clean EOF, so truncation shows only as a
                          frame count below what the manifest recorded).
@@ -67,15 +68,16 @@
   refused; these sections are nippy frames, which are endian-neutral, so a byte-order
   mismatch cannot arise and the format version subsumes any encoding change.
 
-  The stamp is `vaelii.impl.io.fingerprint`'s records digest, which **ports**: a `:disk`
-  store hashes its slots, a `:memory` store folds its records, a SQL store answers a count
-  — and all compare against the same manifest number.  Which digest a caller passes is its
-  business; the sink only compares."
+  The records fingerprint is `vaelii.impl.io.fingerprint`'s records digest, which
+  **ports**: a `:disk` store hashes its slots, a `:memory` store folds its records, a SQL
+  store answers a count — and all compare against the same manifest number.  Which digest
+  a caller passes is its business; the sink only compares."
   (:require [clojure.java.io :as io]
             [taoensso.trove :as trove]
             [vaelii.impl.disk.files :as dfiles]
             [vaelii.impl.io.frames :as frames]
             [vaelii.impl.kv :as kv]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.types.snapshot :as snapshot-types
              :refer [SnapshotSink SnapshotSource commit! read-manifest read-section
@@ -117,7 +119,7 @@
 
 (defn file-sink
   "A sink writing sections and a `manifest.edn` under `root`.  Opening it deletes any
-  existing manifest, so from here until `commit!` the image reads as absent — the window
+  existing manifest, so from here until `commit!` the image reads as absent — the crash window
   in which a stale manifest could describe half-rewritten sections is closed by
   construction.  `:compression` defaults to `:none` (an image is a fast local cache, and
   the CPU a codec costs is usually the wrong trade for it); `:chunk-size` to 10000.
@@ -129,8 +131,8 @@
 
   **And it belongs here rather than in `save-index!`.**  Invalidating before the first
   section is a property of *this* target — a directory of files, where the manifest and
-  the sections are separate objects with a window between them.  A sink whose commit is
-  one transactional write has no such window and needs no such step, and `save-index!`
+  the sections are separate objects with a crash window between them.  A sink whose commit is
+  one transactional write has no such crash window and needs no such step, and `save-index!`
   sits above the protocol and writes through whichever sink it is handed.  Moving the step up
   would mean a third protocol op every out-of-tree implementer had to grow, to say
   something two of the three targets have nothing to say about."
@@ -215,34 +217,34 @@
   rather than through here (`vaelii.impl.disk.index-snapshot/decision`): it interleaves a
   byte-order class between them, and orders the whole cond by what a reader needs told
   first rather than by what is cheapest to ask."
-  [meta stamp]
+  [meta fingerprint]
   (cond
     (not= kv/index-layout-version (:index-layout meta)) :layout-changed
-    (not= (:records meta) stamp)                        :records-differ
+    (not= (:records meta) fingerprint)                  :records-differ
     :else                                               nil))
 
 (defn decision
-  "Why the image described by manifest `m` cannot be trusted against `stamp` (the store's
-  current records fingerprint), or nil when it can.  The medium-agnostic reading of the
-  question `vaelii.impl.disk.index-snapshot/decision` answers for a mapped image — that
-  one draws its own truncation and platform classes from the files it maps and does not
-  come through here.  The image is a cache, so any non-nil reason discards the whole of
-  it and the caller rebuilds.  `:entries-truncated` is not decided
-  here — a nippy stream's truncation is indistinguishable from a clean EOF, so it can only be caught while
-  the section is installed, against the count the manifest recorded."
-  [m stamp]
+  "Why the image described by manifest `m` cannot be trusted against `fingerprint` (the
+  store's current records fingerprint), or nil when it can.  The medium-agnostic reading
+  of the question `vaelii.impl.disk.index-snapshot/decision` answers for a mapped image —
+  that one draws its own truncation and platform classes from the files it maps and does
+  not come through here.  The image is a cache, so any non-nil reason discards the whole
+  of it and the caller rebuilds.  `:entries-truncated` is not decided here — a nippy
+  stream's truncation is indistinguishable from a clean EOF, so it can only be caught
+  while the section is installed, against the count the manifest recorded."
+  [m fingerprint]
   (cond
     (nil? m)                                         :absent
     (not= format-version (:format m))                :layout-changed
-    :else                                            (index-mismatch m stamp)))
+    :else                                            (index-mismatch m fingerprint)))
 
 (defn index-manifest
-  "The manifest for an index image: the two format numbers, the records stamp it is valid
-  against, and the section's frame count for the truncation check."
-  [stamp entry-count]
+  "The manifest for an index image: the two format numbers, the records fingerprint it is
+  valid against, and the section's frame count for the truncation check."
+  [fingerprint entry-count]
   {:format       format-version
    :index-layout kv/index-layout-version
-   :records      stamp
+   :records      fingerprint
    :sections     {index-section {:count entry-count}}})
 
 ;;; ── save / load the index ──────────────────────────────────────────────
@@ -259,35 +261,42 @@
   Public because the two places an index arrives from a file — a snapshot section
   (`load-index!`, below) and a dump's `index/entries` stream (`vaelii.impl.io.import`) —
   are the same install and must stay one: same batch size, same refusal, same count to
-  check against the manifest that vouches for the stream."
-  [index frames]
-  (let [n (volatile! 0)]
-    (doseq [batch (partition-all install-batch frames)]
-      (when-not (every? #(and (sequential? %) (= 2 (count %))) batch)
-        (throw (ex-info (str "index entry stream holds "
-                             (pr-str (first (remove #(and (sequential? %) (= 2 (count %)))
-                                                    batch)))
-                             ", which is not a [key value] pair — every entry of an index"
-                             " section is a two-element sequential")
-                        {:type :malformed-entry})))
-      (vswap! n + (count batch))
-      (p/index-load index batch))
-    @n))
+  check against the manifest that vouches for the stream.  `total`, the count the
+  manifest records (nil when unknown), is the progress lines' total."
+  ([index frames] (install-entries! index frames nil))
+  ([index frames total]
+   (let [n (volatile! 0)]
+     (with-open [r (progress/start ::install-entries
+                                   "index: install the entries" total)]
+       (doseq [batch (partition-all install-batch frames)]
+         (when-not (every? #(and (sequential? %) (= 2 (count %))) batch)
+           (throw (ex-info (str "index entry stream holds "
+                                (pr-str (first (remove #(and (sequential? %) (= 2 (count %)))
+                                                       batch)))
+                                ", which is not a [key value] pair — every entry of an index"
+                                " section is a two-element sequential")
+                           {:type :malformed-entry})))
+         (vswap! n + (count batch))
+         (p/index-load index batch)
+         (progress/tick! r (count batch))))
+     @n)))
 
 (defn save-index!
   "Write `index`'s projection through `sink` as the index section, then commit a manifest
-  stamped with `stamp` (the records fingerprint).  Returns the committed manifest.
+  carrying `fingerprint` (the records fingerprint).  Returns the committed manifest.
 
   The manifest is committed **after** the section, so a crash mid-write leaves an image
   with no manifest, which `load-index!` reads as `:absent` and rebuilds."
-  [sink index stamp]
-  (let [n        (write-section! sink index-section (index-frames index))
-        manifest (index-manifest stamp n)]
+  [sink index fingerprint]
+  (let [n        (with-open [r (progress/start ::write-entries
+                                               "index: write the entries" nil)]
+                   (write-section! sink index-section (progress/each r (index-frames index))))
+        manifest (index-manifest fingerprint n)]
     (commit! sink manifest)
     manifest))
 
 (defn load-index!
-  "Validate the image behind `source` against `stamp` (the store's current records
+  "Validate the image behind `source` against `fingerprint` (the store's current records
   fingerprint) and install its index section into `index`, or report why it was discarded.
   Returns `{:index :replayed :entries n}` or `{:index :rebuild :reason r}` with `r` one of
   `:absent :layout-changed :records-differ :entries-truncated`.
@@ -296,9 +305,9 @@
   state and this is a cache of it — and reindex clears the index first, so a partial install
   left by a truncated section is wiped.  `index` must be **empty** on entry, the same
   contract `p/index-load` carries."
-  [source index stamp]
+  [source index fingerprint]
   (let [m (read-manifest source)]
-    (if-let [why (decision m stamp)]
+    (if-let [why (decision m fingerprint)]
       {:index :rebuild :reason why}
       (let [expected (long (get-in m [:sections index-section :count]))]
         (try
@@ -307,7 +316,7 @@
             ;; file behind the seq is still open until somebody says so; the closer holds
             ;; the file and not the seq, so the entries installed stay collectable
             (with-open [_ (frames/closer entries)]
-              (let [n (install-entries! index entries)]
+              (let [n (install-entries! index entries expected)]
                 (if (= (long n) expected)
                   {:index :replayed :entries n}
                   (do (trove/log! {:level :warn :id ::index-short

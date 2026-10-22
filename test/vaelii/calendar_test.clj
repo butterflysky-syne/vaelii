@@ -22,7 +22,7 @@
             [vaelii.test-util :as tu]))
 
 ;; A fresh KB per test: the upper layer, whose time.txt holds the vocabulary the goals are
-;; written in (which is also what the clock's scoping gate reads), the CxChange event
+;; written in (which is also what the clock's scoping check reads), the CxChange event
 ;; calculus the last test drives, and the prover registered.  Opt-in like every other
 ;; reasoner, so an unregistered KB stores and retrieves calendar facts and pays nothing.
 (use-fixtures :each (tu/neutral-fresh
@@ -237,13 +237,13 @@
 ;; ---- where the event calculus stops -------------------------------------
 
 (tu/deftest-kb inertia-over-computed-moments-still-needs-its-edges-written-down
-  ;; Pinned rather than swept, and the reason is this test's own subject.  Where the
-  ;; event calculus stops is where it reaches `instantBefore` with one end OPEN, and
-  ;; which end is open is a fact about the order the conjuncts run in: ranked, the open
-  ;; literal is reached first and the calendar prover declines it; unranked, it is
-  ;; reached last with both ends already ground and the clock answers, deriving a
-  ;; `holdsAt` this test exists to say the theory does not reach.
-  (tu/with-pinned [#'plan/*enabled*]
+  ;; Forced to the shipped planner rather than swept, and the reason is this test's own
+  ;; subject.  Where the event calculus stops is where it reaches `instantBefore` with
+  ;; one end OPEN, and which end is open is a fact about the order the conjuncts run
+  ;; in: ranked, the open literal is reached first and the calendar prover declines it;
+  ;; unranked, it is reached last with both ends already ground and the clock answers,
+  ;; deriving a `holdsAt` this test exists to say the theory does not reach.
+  (tu/with-shipped [#'plan/*enabled*]
     ;; The clock orders two moments; it supplies no `instantBefore` EDGE.  Both halves of
     ;; the event calculus reach that predicate with one end **open** — "what happened before
     ;; six", not "is three before six" — so both stop at the same place, which is what keeps
@@ -280,7 +280,7 @@
 
 (tu/deftest-kb the-clock-answers-the-whole-shipped-vocabulary-and-only-what-holds
   ;; A predicate the clock answered but the algebras did not name would be one nothing else
-  ;; in this tree can compose with, so the rosters are read off the algebras themselves: for
+  ;; in this tree can compose with, so the predicate lists are read off the algebras themselves: for
   ;; a pair whose relation is `:during`, exactly the predicates denoting `:during` hold.
   (let [a '(MonthFn 2000 3)
         b '(YearFn 2000)

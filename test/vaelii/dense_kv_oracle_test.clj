@@ -15,7 +15,7 @@
   representation: the tier pairings are five separate arms (the cold pair splits again on
   length ratio, merged against searched), and one of them is only reachable through a
   posting that promoted and then shrank, which no random stream is likely to build.  That
-  test also pins the *read-only* half — an arm that used the mutating `RoaringBitmap.and`
+  test also asserts the *read-only* half — an arm that used the mutating `RoaringBitmap.and`
   would answer every intersection correctly and silently shrink the index behind it."
   (:require [clojure.test :refer [deftest is]]
             [vaelii.impl.dense-kv :as dense]

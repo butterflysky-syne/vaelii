@@ -38,7 +38,7 @@
         (is (not (v/isa? kb pup person 'CxNaturalWorld)))))))
 
 (tu/deftest-kb arg-constraints-use-transitivity
-  ;; Pinned to the constraint reading: transitivity is asserted here through a refusal, and
+  ;; Forced to the constraint reading: transitivity is asserted here through a conviction, and
   ;; with the entailment on a symbol argument is minted rather than convicted
   ;; (docs/argtypes.md).  The entailment reads the same closure — argtype_entail_test's
   ;; a-subsuming-membership-does-not-suppress-the-entailment is that half.
@@ -48,14 +48,15 @@
          likesPet (tu/tmp-pred) tom (tu/tmp-ind) muffet (tu/tmp-ind)]
      (type-hierarchy kb {:animal animal :thing thing :physical-object physical-object
                          :person person :dog dog})
+     (v/assert kb (list 'disjoint person dog) 'CxUniverse)
      (v/assert kb (list 'arg likesPet 1 person) 'CxUniverse)
      (v/assert kb (list person tom) 'CxNaturalWorld)
      (v/assert kb (list dog muffet) 'CxNaturalWorld)
      (testing "a person satisfies the arg-1 person constraint"
        (is (v/assert kb (list likesPet tom muffet) 'CxNaturalWorld)))
-     (testing "a dog in arg 1 violates it (dog is-a thing but not is-a person)"
-       (is (thrown? clojure.lang.ExceptionInfo
-                    (v/assert kb (list likesPet muffet tom) 'CxNaturalWorld)))))))
+     (testing "a dog in arg 1 violates it (dog is-a animal and disjoint from person)"
+       (is (= :arg-type (tu/write-type kb #(v/assert kb (list likesPet muffet tom)
+                                                     'CxNaturalWorld))))))))
 
 (tu/deftest-kb specificity-in-matching
   (let [dog (tu/tmp-type) animal (tu/tmp-type) breathes (tu/tmp-pred) muffet (tu/tmp-ind)]

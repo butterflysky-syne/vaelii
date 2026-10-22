@@ -10,6 +10,7 @@
             [vaelii.impl.inherit :as inherit]
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.naming :as nm]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.provers :as provers]
             [vaelii.impl.resolution :as res]
@@ -294,11 +295,12 @@
   ([kb _queued cands]
    (let [tms   (reasoning/tms kb)
          held  (into #{} (remove cands) (jtms/blocked tms))]
-     (into held
-           (filter (fn [jid]
-                     (when-let [j (p/get-justification (:records kb) jid)]
-                       (chain/justification-excepted? kb j))))
-           cands))))
+     (with-open [r (progress/start ::exception-blocked "settle: decide the exceptions again" (count cands))]
+       (into held
+             (filter (fn [jid]
+                       (when-let [j (p/get-justification (:records kb) jid)]
+                         (chain/justification-excepted? kb j))))
+             (progress/each r cands))))))
 
 (defn released-refusals
   "The recorded refusals the queued triggers may have released: `{:free [[rule-handle

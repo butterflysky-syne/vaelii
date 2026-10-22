@@ -48,7 +48,7 @@
     (if (<= n max-violations)
       v
       ;; `vec` *over* the `subvec`, not the subvec itself: a subvec holds a reference to
-      ;; the vector it was cut from, so returning one would pin every entry it just
+      ;; the vector it was cut from, so returning one would retain every entry it just
       ;; dropped — on a ledger that trims again on the next overflow, the cap would bound
       ;; the count and nothing else.
       (vec (subvec v (- n max-violations))))))
@@ -56,7 +56,7 @@
 (def ^:dynamic *batch-entries*
   "The entries filed by a batch that can be rolled back, as an identity set, or nil outside
   one.  `vaelii.core`'s `edit!`, `preview` and single `assert` bind it on the thread that
-  runs the batch (`batch-entries`), `report` and `report-unstamped` add each entry they
+  runs the batch (`batch-entries`), `report` and `report-without-run` add each entry they
   append, and the rollback removes exactly those (`restore!`).
 
   Bound per thread, so an entry a reader thread appends while the batch runs is not the
@@ -113,7 +113,7 @@
   for answering two ways, both of which are about a *literal* and not a firing; and the
   notice that a sweep stopped short of what it might have said, which is about a bound
   rather than about a firing.
-  This reads `(:rule entry)` rather than a roster of kinds."
+  This reads `(:rule entry)` rather than a list of kinds."
   [kb entry]
   (when-let [h (:rule entry)]
     (let [rsx (p/get-sentex (:records kb) h)]
@@ -121,8 +121,8 @@
        :sentence (when rsx (sx/authored-sentence rsx))})))
 
 (defn log-entries
-  "Log `entries` at :warn as `report` logs them, stamped with the current chaining run,
-  and file nothing.  The roster's void firings log here: a `:forced-conclusion` entry is
+  "Log `entries` at :warn as `report` logs them, tagged with the current chaining run,
+  and file nothing.  The forced-monotonic set's void firings log here: a `:forced-conclusion` entry is
   read off the stored firings (`vaelii.core/violations`), not filed.  Logs nothing while
   `*report-sink*` is bound."
   [kb entries]
@@ -135,7 +135,7 @@
             (trove/log! {:level :debug :id ::dropping-rule :data (dropping-rule kb e)})))))))
 
 (defn report
-  "Append dropped-conclusion entries to the accumulating ledger, stamped with the
+  "Append dropped-conclusion entries to the accumulating ledger, tagged with the
   chaining run that dropped them, and log each at :warn — a drop must be visible even to
   a caller who never reads the ledger (a bulk load polls nothing).
 
@@ -149,17 +149,17 @@
   emptied only by `vaelii.core/clear-violations!`, which does."
   [kb entries]
   (when (seq entries)
-    (let [run     (:runs @(reasoning/chain-stats kb))
-          stamped (mapv #(assoc % :run run) entries)]
+    (let [run    (:runs @(reasoning/chain-stats kb))
+          tagged (mapv #(assoc % :run run) entries)]
       (if *report-sink*
-        (swap! *report-sink* #(newest (into % stamped)))
+        (swap! *report-sink* #(newest (into % tagged)))
         (do
           (log-entries kb entries)
-          (note-batch! stamped)
-          (swap! (reasoning/violations kb) #(newest (into % stamped))))))))
+          (note-batch! tagged)
+          (swap! (reasoning/violations kb) #(newest (into % tagged))))))))
 
-(defn report-unstamped
-  "Append one entry to the ledger as it is, with no chaining-run stamp and no log line:
+(defn report-without-run
+  "Append one entry to the ledger as it is, with no chaining-run tag and no log line:
   `report` for a reading no firing reaches, so there is no run to name.  The
   qualitative, metric and sign calculi file their inconsistencies here and log them
   themselves.  A KB with no ledger answers nil."

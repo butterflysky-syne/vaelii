@@ -7,7 +7,7 @@
   `vaelii.stratification-test` covers the two ends of the check — cycles through
   negation are refused, purely positive recursion is not — but it keeps them in
   disjoint scenarios, so every rule in it is reachable exactly one way.  That leaves
-  the state itself unpinned: collapsing `seen` to `(:id r)` passes that whole
+  the state itself untested: collapsing `seen` to `(:id r)` passes that whole
   namespace, because a node there is never reached both positively and negatively.
 
   It is the *both* case that the pair-keyed state exists for.  A node reached with a
@@ -94,7 +94,7 @@
 
 ;; ---- positive recursion survives a negative edge pointing into it ------------
 ;;
-;; `stratification-test/mutual-positive-recursion-is-accepted` pins a two-rule
+;; `stratification-test/mutual-positive-recursion-is-accepted` asserts a two-rule
 ;; positive cycle with no negative edge anywhere near it.  The case that exercises the
 ;; state is the same cycle *entered* negatively: every node in the loop is then
 ;; visited with `negative?` true, and the walk has to go all the way round it and stop

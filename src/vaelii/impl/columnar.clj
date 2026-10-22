@@ -45,7 +45,7 @@
 
   **Composition keeps the new surface small.**  Only the trie families
   (`index`/`unindex`/`lookup`/`count-at`/`children`) are native here; the secondary
-  roots, the rule / exception indexes, the inverted term index, and the term roster
+  roots, the rule / exception indexes, the inverted term index, and the term-name set
   beside it — all flat `key → set` maps — delegate to an embedded `KvIndexStore` over a
   Phase-1 `TieredKvBackend` (int-dense postings already).  `index-sentex` and
   `unindex-sentex!` take the ops for those families from `kv/flat-family-adds` /
@@ -61,7 +61,7 @@
   reading this index may see an array reference, a capacity or the CSR-mode flag from
   before a growth or a compaction, and there is no happens-before edge that would stop
   it.  The atom- and lock-based backends give an incidental reader beside the writer a
-  consistent view; this one does not, and it is the caller's job to keep its reads on
+  consistent snapshot; this one does not, and it is the caller's job to keep its reads on
   the writer's thread or behind a synchronizer of its own.  The fields are unsynchronized
   because the walk reads them at every frontier node, which is the index's hottest loop
   — a volatile read there is paid per node per lookup, to buy a guarantee the engine's
@@ -70,6 +70,7 @@
             [vaelii.impl.caches :as caches]
             [vaelii.impl.dense-roots :as dense-roots]
             [vaelii.impl.kv :as kv]
+            [vaelii.impl.observe :as observe]
             [vaelii.impl.profile :as prof]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.sentex :as sx]
@@ -122,8 +123,9 @@
   (index-sentex [_ sentex handle]
     (let [pth  (sx/path sentex)
           flat (kv/flat-family-adds (transient []) roots (trie-reads trie) sentex handle)] ; reads the pre-write postings
+      (observe/keep-before! trie [pth handle] #(contains? (t-leaves-at trie pth) handle))
       (t-insert! trie pth handle)
-      (p/kv-batch roots (persistent! (:ops flat)))
+      (kv/batch! roots (persistent! (:ops flat)))
       ;; the same tally `KvIndexStore` keeps, because this store writes the index itself
       ;; rather than through it — an instrument that went quiet on the backend the
       ;; density work exists for would report a KB that never writes an index.  The four
@@ -143,12 +145,13 @@
   (unindex-sentex! [_ sentex handle]
     (let [pth  (sx/path sentex)
           flat (kv/flat-family-retires roots (trie-reads trie) sentex handle) ; reads the pre-write postings
+          _    (observe/keep-before! trie [pth handle] #(contains? (t-leaves-at trie pth) handle))
           dead (long (t-remove! trie pth handle))]
       (if (neg? dead)
         (trove/log! {:level :warn :id ::unindex-absent
                      :data {:handle handle :path pth :context (:context sentex)}})
         (do
-          (p/kv-batch roots (:ops flat))
+          (kv/batch! roots (:ops flat))
           (when (prof/profiling?)
             (prof/record-index-retract sentex (assoc (:counts flat)
                                                      :levels (inc (count pth))
@@ -161,11 +164,13 @@
   ;; walk below is native and counts no node probes (docs/profile.md).
   (count-at [_ prefix]  (prof/record-read :trie-counts) (t-count-at trie prefix))
   (children [_ prefix]  (prof/record-read :trie-counts) (t-children trie prefix))
-  (lookup   [_ pattern] (prof/record-read :trie-lookup) (t-lookup   trie pattern))
-  (lookup   [_ pattern ctxs] (prof/record-read :trie-lookup) (t-lookup trie pattern ctxs))
+  (lookup   [_ pattern] (prof/record-read :trie-lookup) (prof/record-posting (t-lookup trie pattern)))
+  (lookup   [_ pattern ctxs]
+    (prof/record-read :trie-lookup)
+    (prof/record-posting (t-lookup trie pattern ctxs)))
   ;; the exact leaf — the trie's own `t-leaves-at`, which walks the path's nodes and
   ;; decodes nothing else.  Tallied as retrieval, like the walk above it.
-  (leaf-at  [_ path]    (prof/record-read :trie-lookup) (t-leaves-at trie path))
+  (leaf-at  [_ path]    (prof/record-read :trie-lookup) (prof/record-posting (t-leaves-at trie path)))
 
   ;; the non-trie families — flat key→handle-set maps — read/write the shared backend
   (sentexes-with-functor [_ pred]     (p/sentexes-with-functor embedded pred))
@@ -192,12 +197,12 @@
   (family-child-count [_ f path]
     (if (= :trie f) (t-child-count trie path) (p/family-child-count embedded f path)))
   (family-leaf [_ f path]
-    (if (= :trie f) (t-leaves-at trie path) (p/family-leaf embedded f path)))
+    (if (= :trie f) (prof/record-posting (t-leaves-at trie path)) (p/family-leaf embedded f path)))
   (family-member? [_ f path x]
     (if (= :trie f) (contains? (t-leaves-at trie path) x) (p/family-member? embedded f path x)))
   (family-handles [_ f node ctxs]
     (if (= :trie f)
-      (trie-handles trie (vec node) (kv/family-ctxs 'family-handles ctxs))
+      (prof/record-posting (trie-handles trie (vec node) (kv/family-ctxs 'family-handles ctxs)))
       (p/family-handles embedded f node ctxs)))
   ;; the trie is written by `index-sentex` alone, which the embedded store refuses by tag
   (family-apply! [_ ops] (p/family-apply! embedded ops))
@@ -225,6 +230,67 @@
 
   ;; one wipe of the shared dictionary, after both structures that reference it are reset
   (clear-index! [_] (t-clear! trie) (p/kv-clear! roots) (tok/clear-tokens! dict) nil))
+
+;; ---- the index before the write -------------------------------------------------
+
+(defn- under? [prefix path]
+  (and (<= (count prefix) (count path)) (= prefix (subvec path 0 (count prefix)))))
+
+(defn- prior-trie
+  "The native trie `live` as it stood before the write that recorded `rec`, `{[path
+  handle] present-before?}`: the live answer less what the write inserted, plus what it
+  removed.  A read-only `PTrie`."
+  [live rec]
+  (let [moved (reduce (fn [[plus minus] [[pth h] was?]]
+                        (let [now? (contains? (t-leaves-at live pth) h)]
+                          (cond (and now? (not was?)) [(conj plus [(vec pth) h]) minus]
+                                (and was? (not now?)) [plus (conj minus [(vec pth) h])]
+                                :else                 [plus minus])))
+                      [[] []] rec)
+        [plus minus] moved
+        plus-hs (into #{} (map second) plus)
+        gone    (delay (let [t (trie-types/make-trie (tok/token-dict))]
+                         (doseq [[pth h] minus] (t-insert! t pth h))
+                         t))
+        within  (fn [ps prefix] (count (filter #(under? prefix (first %)) ps)))
+        cnt     (fn [prefix] (let [prefix (vec prefix)]
+                               (+ (- (long (t-count-at live prefix)) (within plus prefix))
+                                  (within minus prefix))))
+        kids    (fn [prefix]
+                  (let [prefix (vec prefix) n (count prefix)]
+                    (into [] (comp (distinct) (filter #(pos? (long (cnt (conj prefix %))))))
+                          (concat (t-children live prefix)
+                                  (keep (fn [[pth]] (when (and (< n (count pth)) (under? prefix pth)) (nth pth n)))
+                                        minus)))))
+        refuse  #(throw (UnsupportedOperationException. "the trie before the write takes no write"))]
+    #_{:clj-kondo/ignore [:missing-protocol-method]}
+    (reify trie-types/PTrie
+      (t-insert! [_ _ _] (refuse))
+      (t-remove! [_ _ _] (refuse))
+      (t-clear! [_] (refuse))
+      (t-compact! [_] (refuse))
+      (t-count-at [_ prefix] (cnt prefix))
+      (t-children [_ prefix] (kids prefix))
+      (t-child-count [_ prefix] (count (kids prefix)))
+      (t-leaves-at [_ prefix]
+        (let [prefix (vec prefix)]
+          (-> (reduce (fn [s [pth h]] (if (= pth prefix) (disj s h) s)) (set (t-leaves-at live prefix)) plus)
+              (into (keep (fn [[pth h]] (when (= pth prefix) h))) minus))))
+      (t-lookup [this pattern] (t-lookup this pattern nil))
+      (t-lookup [_ pattern ctxs]
+        (cond-> (into #{} (remove plus-hs) (t-lookup live pattern ctxs))
+          (seq minus) (into (t-lookup @gone pattern ctxs)))))))
+
+(defn prior-index
+  "The `ColumnarIndexStore` `store` as it stood before the writes the open write record
+  recorded on its trie and its roots backend, or `store` itself when the record holds
+  none."
+  [{:keys [dict trie roots] :as store}]
+  (let [rec (observe/kept trie)
+        pr  (kv/prior-kv roots)]
+    (if (and (nil? rec) (identical? pr roots))
+      store
+      (->ColumnarIndexStore dict (if rec (prior-trie trie rec) trie) pr (kv/->KvIndexStore pr)))))
 
 ;; ---- construction (space-number sharing, like the memory / dense backends) --
 ;; The trie and the roots backend share ONE token dictionary per space (a term interned by

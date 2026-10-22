@@ -29,5 +29,5 @@
  {:feature "exceptWhen · NAF"       :removability :free   :rows [:S5]}
  {:feature "edge solver"            :removability :free   :rows [:S7]}
  {:feature "mint withdrawal"        :removability :free   :rows [:Q8 :Q9]}
- {:feature "published window"       :removability :free   :rows [:Q6]}
- {:feature "touched window"         :removability :speed  :rows [:M2]}]
+ {:feature "published set"          :removability :free   :rows [:Q6]}
+ {:feature "touched set"            :removability :speed  :rows [:M2]}]

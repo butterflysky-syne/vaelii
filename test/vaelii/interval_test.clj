@@ -103,7 +103,7 @@
       (is (= iv/all-relations (set (keys iv/allen-composition))))
       (doseq [[_ row] iv/allen-composition]
         (is (= iv/all-relations (set (keys row)))))))
-  (testing "the three unconstrained entries are the ones where B pins nothing"
+  (testing "the three unconstrained entries are the ones where B constrains nothing"
     (is (= #{[:before :after] [:after :before] [:during :contains]}
            (set (for [[r1 row] iv/allen-composition
                       [r2 rels] row
@@ -199,7 +199,7 @@
 
 (tu/deftest-kb a-derived-predicate-can-be-the-only-thing-entailed
   (tu/with-terms [A B D]
-    ;; meets∘metBy pins the two ends together and says nothing about the two starts, so
+    ;; meets∘metBy ties the two ends together and says nothing about the two starts, so
     ;; the pair is #{:finishes :finished-by :equal} — three base relations, no one of
     ;; them entailed, and yet they all share time
     (v/assert kb (list 'meets A B) C)
@@ -230,7 +230,7 @@
       (is (v/ask? kb (list 'temporallyDisjoint B A) C))
       (is (not (v/ask? kb (list 'sharesTimeWith A B) C))))))
 
-(tu/deftest-kb a-derived-assertion-constrains-without-pinning
+(tu/deftest-kb a-derived-assertion-constrains-without-determining
   (tu/with-terms [A B]
     (v/assert kb (list 'precedes A B) C)
     (is (= #{:before :meets} (iv/possible-allen-relations kb C A B)))
@@ -252,6 +252,55 @@
     (is (v/ask? kb (list 'properSubintervalOf A B) C))
     (is (not (v/ask? kb (list 'during A B) C)))))
 
+(defn- answers
+  "The values `goal` binds `var` to in `C`."
+  [kb goal var]
+  (set (map #(get % var) (v/ask kb goal C))))
+
+(tu/deftest-kb containment-is-answered-only-over-time-intervals
+  ;; subintervalOf and properSubintervalOf take time intervals, and during takes any
+  ;; temporal thing, so a situation is in during's domain and outside theirs
+  (tu/with-terms [S1 S2 T1 T2]
+    (v/assert kb (list 'situation S1) C)
+    (v/assert kb (list 'situation S2) C)
+    (v/assert kb (list 'during S1 S2) C)
+    (v/assert kb (list 'time_interval T1) C)
+    (v/assert kb (list 'time_interval T2) C)
+    (v/assert kb (list 'during T1 T2) C)
+    (testing "two situations: the base relation holds and the containment does not"
+      (is (v/ask? kb (list 'during S1 S2) C))
+      (is (v/ask? kb (list 'hasSubinterval S2 S1) C) "hasSubinterval takes temporal things")
+      (is (not (v/ask? kb (list 'subintervalOf S1 S2) C)))
+      (is (not (v/ask? kb (list 'properSubintervalOf S1 S2) C)))
+      (is (not (contains? (answers kb (list 'subintervalOf '?x S2) '?x) S1)))
+      (is (empty? (answers kb (list 'properSubintervalOf S1 '?y) '?y))))
+    (testing "two time intervals: both containments hold"
+      (is (v/ask? kb (list 'subintervalOf T1 T2) C))
+      (is (v/ask? kb (list 'properSubintervalOf T1 T2) C))
+      (is (contains? (answers kb (list 'subintervalOf '?x T2) '?x) T1))
+      (is (= #{T2} (answers kb (list 'properSubintervalOf T1 '?y) '?y))))))
+
+(tu/deftest-kb an-entailed-containment-answers-generic-parthood
+  ;; subintervalOf is below partOf and properSubintervalOf below properPartOf, so a
+  ;; containment the network entails is a parthood tuple too
+  (tu/with-terms [A B S1 S2]
+    (v/assert kb (list 'time_interval A) C)
+    (v/assert kb (list 'time_interval B) C)
+    (v/assert kb (list 'during A B) C)
+    (v/assert kb (list 'situation S1) C)
+    (v/assert kb (list 'situation S2) C)
+    (v/assert kb (list 'during S1 S2) C)
+    (testing "ground"
+      (is (v/ask? kb (list 'partOf A B) C))
+      (is (v/ask? kb (list 'properPartOf A B) C))
+      (is (not (v/ask? kb (list 'properPartOf B A) C))))
+    (testing "open"
+      (is (contains? (answers kb (list 'partOf '?x B) '?x) A))
+      (is (= #{B} (answers kb (list 'properPartOf A '?y) '?y))))
+    (testing "the parthood reading keeps the containment's domain"
+      (is (not (v/ask? kb (list 'partOf S1 S2) C)))
+      (is (not (v/ask? kb (list 'properPartOf S1 S2) C))))))
+
 ;; ---- what the algebra leaves open ---------------------------------------
 
 (tu/deftest-kb possible-relations-reports-exactly-what-is-left
@@ -261,14 +310,14 @@
       (is (= :unknown (qkb/definite iv/allen kb C A D))))
     (v/assert kb (list 'overlaps A B) C)
     (v/assert kb (list 'during B D) C)
-    (testing "overlaps∘during pins only that A ends somewhere strictly inside D"
+    (testing "overlaps∘during determines only that A ends somewhere strictly inside D"
       (is (= #{:overlaps :starts :during} (iv/possible-allen-relations kb C A D)))
       (is (= :unknown (qkb/definite iv/allen kb C A D)))
       (testing "so no base relation is entailed, though every survivor shares time"
         (is (not (v/ask? kb (list 'overlaps A D) C)))
         (is (not (v/ask? kb (list 'during A D) C)))
         (is (v/ask? kb (list 'sharesTimeWith A D) C)))
-      (testing "while the pair a fact pins down stays pinned"
+      (testing "while the pair a fact determines stays determined"
         (is (= #{:overlaps} (iv/possible-allen-relations kb C A B)))
         (is (= :overlaps (qkb/definite iv/allen kb C A B)))))))
 

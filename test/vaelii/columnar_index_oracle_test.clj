@@ -127,7 +127,7 @@
     (doseq [t terms] (both #(reads/as-stored-with-term % t) mem col))
     (doseq [ts (partition-all 2 (seq terms))]
       (both #(p/sentexes-with-terms % (vec ts)) mem col))
-    ;; the term roster — the vocabulary must be the same set and the same count, so a
+    ;; the term-name set — the vocabulary must be the same set and the same count, so a
     ;; name retired by the last unindex on one store is retired on the other
     (both reads/stored-terms-global mem col)
     (both reads/stored-term-count-global mem col)))
@@ -159,7 +159,7 @@
         ;; a wipe leaves both empty and equal
         (p/clear-index! mem) (p/clear-index! col)
         (is (zero? (p/count-at col [])))
-        (is (zero? (reads/stored-term-count-global col)) "the roster is wiped with the index")
+        (is (zero? (reads/stored-term-count-global col)) "the term-name set is wiped with the index")
         (doseq [[s _] ops] (is (empty? (p/lookup col (sx/path s)))))
         (both #(p/count-at % []) mem col)))))
 
@@ -307,7 +307,7 @@
 (deftest a-stray-unindex-takes-nothing-with-it
   ;; The trie's counters come down without looking, and a node that reaches zero is
   ;; deleted with every handle at its leaf — so an unindex of a handle that is not at
-  ;; the leaf (never indexed, or already removed) is gated on one membership probe and
+  ;; the leaf (never indexed, or already removed) stops at one membership probe and
   ;; touches nothing.  Otherwise one stray call would take a live sibling's nodes, and
   ;; the sibling with them, out of the trie.
   (doseq [[label store] [["flat"     (mem/memory-index-store       {:space 79})]
@@ -337,11 +337,11 @@
 (defn- rm-rf! [^String d]
   (doseq [f (reverse (file-seq (java.io.File. d)))] (.delete ^java.io.File f)))
 
-;; The stamp is the *records'* fingerprint, and this oracle has no record store — so it
-;; hands over a constant.  What the round trip has to prove is that a mapped index answers
-;; what the store it was written from answered; that the stamp catches a KB which moved
-;; underneath one is `index_snapshot_test`'s question, against real records.
-(def ^:private constant-stamp (constantly {:count 1 :max-handle 1 :digest 42}))
+;; The snapshot carries the *records'* fingerprint, and this oracle has no record store —
+;; so it hands over a constant.  What the round trip has to prove is that a mapped index
+;; answers what the store it was written from answered; that the fingerprint catches a KB
+;; which moved underneath one is `index_snapshot_test`'s question, against real records.
+(def ^:private constant-fingerprint (constantly {:count 1 :max-handle 1 :digest 42}))
 
 (deftest ^:slow columnar-snapshot-round-trip
   (let [dir (tmpdir)]
@@ -360,8 +360,8 @@
 
           ;; write, read into a store that has never seen a sentex, and re-check
           ;; everything against the reference that was never snapshotted
-          (is (= :saved (:index (snap/save! dir src constant-stamp))))
-          (is (= :mapped (:index (snap/load! dir dst constant-stamp))))
+          (is (= :saved (:index (snap/save! dir src constant-fingerprint))))
+          (is (= :mapped (:index (snap/load! dir dst constant-fingerprint))))
           (compare-all mem dst (map first ops))
           (is (= (reads/as-stored-rules-by-antecedent-global mem 'p0) (reads/as-stored-rules-by-antecedent-global dst 'p0)))
           (is (= (reads/as-stored-rules-by-consequent-global mem 'p2) (reads/as-stored-rules-by-consequent-global dst 'p2)))
@@ -381,8 +381,8 @@
             (compare-all mem dst (map first (conj (vec live) [extra 99001])))
 
             ;; and the churned store round-trips again, back into the first one
-            (is (= :saved (:index (snap/save! dir dst constant-stamp))))
-            (is (= :mapped (:index (snap/load! dir src constant-stamp))))
+            (is (= :saved (:index (snap/save! dir dst constant-fingerprint))))
+            (is (= :mapped (:index (snap/load! dir src constant-fingerprint))))
             (compare-all mem src (map first (conj (vec live) [extra 99001]))))))
       (finally (rm-rf! dir)))))
 

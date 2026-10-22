@@ -83,7 +83,7 @@ sign read at Q. One arithmetic and one fixpoint serve both, and the edge constra
 **both ways**:
 
 - *down* — a rate with a known sign makes its quantity rising, falling or steady.
-- *up* — a stated trend pins the rate, which can then be an addend elsewhere, and two
+- *up* — a stated trend determines the rate, which can then be an addend elsewhere, and two
   rates declared of one quantity take the same sign.
 
 A rate is an ordinary quantity, so **the rate of a sum is stated as a sum of the rates**.
@@ -146,7 +146,7 @@ A quantity the reading never reached is answered with nothing under either polar
 the engine knows no sign for it and can rule none out.
 
 `cost` is `:compute` and `completeness` is 100. The reading is **resident** on the KB,
-stamped with the change clock as a qualitative network is ([qcn.md](qcn.md), "The
+keyed by the change clock as a qualitative network is ([qcn.md](qcn.md), "The
 network is resident, and the clock is what makes that sound"), so a rule joining a sign
 antecedent over many bindings computes it once.
 

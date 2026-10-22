@@ -4,7 +4,7 @@
   "The in-memory token dictionary (`vaelii.impl.tokens`) the columnar index labels its
   edges with.  It is exercised heavily but only *indirectly* — through
   `columnar_index_oracle_test`, which would catch a wrong id as a wrong lookup answer
-  without saying that the dictionary was why.  These pin its contract directly.
+  without saying that the dictionary was why.  These assert its contract directly.
 
   The contract that matters is what a trie path token can be.  `sentex/path` yields
   symbols, numbers, the `:false` / `:rule` keywords, `nil` for a rule's empty slots,

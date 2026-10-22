@@ -7,7 +7,7 @@
 # another writer landing a test halfway through moves the test and assertion
 # counts under it — the artifact then shows counts that differ per run, which
 # reads exactly like a run that skipped something.  It cost one investigation to
-# establish that it was not.  The same applies to a gate whose log is read an
+# establish that it was not.  The same applies to a `lein gate` run whose log is read an
 # hour later, and to a number quoted into a report.
 #
 # `src/` and `test/` only: a dirty `docs/` or `CHANGELOG.md` cannot move a count,
@@ -34,7 +34,7 @@ revision_dirty() {
 
 # `<hash> — <state>`, and nothing else: no colour, no newline, no label.  The
 # caller owns all three, which is what lets one line serve a console header, a
-# summary row and the log stamp below.
+# summary row and the log header below.
 revision_line() {
   local rev dirty
   rev=$(revision_hash)
@@ -48,8 +48,8 @@ revision_line() {
 
 # The first line of a log: the same fact, dated, and commented so the greps that
 # read these logs back (`^Ran `, `^lein test :only `) cannot match it.  `$1`
-# names what was run — every caller passes it (the backend, the sweep, the gate
-# stage); the `suite run` default is a fallback for a bare call, not the common case.
-revision_stamp() {
+# names what was run — every caller passes it (the backend, the sweep, the
+# `lein gate` stage); the `suite run` default is a fallback for a bare call, not the common case.
+revision_header() {
   printf '# %s at %s — %s\n' "${1:-suite run}" "$(revision_line)" "$(date '+%Y-%m-%d %H:%M:%S')"
 }

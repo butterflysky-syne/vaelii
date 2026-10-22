@@ -8,16 +8,16 @@
 #
 # The checks run in three concurrent LANES; see the LANES block below for the
 # split and why it is lanes rather than one job per check.  Rows still print in
-# roster order, so the report reads the same as a serial run.  LINT_SERIAL=1
+# check order, so the report reads the same as a serial run.  LINT_SERIAL=1
 # runs the lanes one after another, for a machine with no headroom for two JVMs.
 #
 #   - glossary    structural lint for docs/glossary.md (badges + order + links)
-#   - versions    the coordinates this tree states twice agree (sibling pin,
+#   - versions    the coordinates this tree states twice agree (sibling version,
 #                 lein-cloverage)
 #   - links       relative markdown links across README + docs/ resolve
 #   - drift       doc claims about the code still match the code
 #   - kondo       clj-kondo over src + test + bench   (native binary; a NOTE
-#                 under the row when the local version is not the CI pin)
+#                 under the row when the local version is not CI's)
 #   - cljfmt      `lein cljfmt check` — formatting     (config in project.clj :cljfmt)
 #   - shellcheck  the repo's shell scripts
 #   - reflect     a compile pass over src + bench; any reflection/boxing warning
@@ -25,8 +25,9 @@
 #                 header of scripts/check-reflection.sh for why the split exists
 #   - unused      a public var under impl/ that nothing references, against
 #                 scripts/unused-publics-baseline.txt
-#   - prose       metaphor and aphorism where a mechanism has a name, against the
-#                 per-file budget in scripts/prose-baseline.txt (CONTRIBUTING §3.9)
+#   - prose       metaphor and aphorism where a mechanism has a name, and the words
+#                 that name several mechanisms, against the per-file budget in
+#                 scripts/prose-baseline.txt (CONTRIBUTING §3.10)
 #   - derived     every stateful def under impl/ and every Reasoning field has a
 #                 derived-state register row, or a reason in its allowlist
 #
@@ -37,9 +38,9 @@
 # EVERY RUN KEEPS ITS REPORT.  The report goes to `logs/lint/run-<pid>.log` as
 # well as to the console, `logs/lint/latest` points at the newest, and one row
 # lands in `logs/runs.tsv` naming the revision, the clock and the verdict
-# (scripts/lib/runlog.sh).  Under `lein gate` this is the second copy — the gate
+# (scripts/lib/runlog.sh).  Under `lein gate` this is the second copy — `lein gate`
 # captures its own stage log — and it is kept because the two answer different
-# questions: the gate's copy is one run's output under `target/`, which `lein
+# questions: `lein gate`'s copy is one run's output under `target/`, which `lein
 # clean` deletes, and this is the history of what this checkout has linted.
 #
 # The granular `lein lint-glossary` / `lint-versions` / `lint-links` /
@@ -177,7 +178,7 @@ check() {
   printf '%s\n' "$rc" >"$DIR/$label.rc"
 }
 
-# report_row <label> — print one roster row, waiting for its lane to get there.
+# report_row <label> — print one check row, waiting for its lane to get there.
 # The label prints first, so an outstanding check is the one named at the end of
 # the report while it runs — the same feedback a serial run gave.
 report_row() {
@@ -198,7 +199,7 @@ report_row() {
   print_status "$label" "$(cat "$DIR/$label.rc")" "$DIR/$label.out" "$(cat "$DIR/$label.t")"
 }
 
-# kondo_version_note — say so when the local clj-kondo is not the one CI pins.
+# kondo_version_note — say so when the local clj-kondo is not the one CI uses.
 #
 # The kondo check runs whatever binary is on PATH, and CI runs the version
 # `.github/workflows/lint.yml` names.  Nothing made those the same, so a local
@@ -206,32 +207,32 @@ report_row() {
 # and flags what an older one passes, which is a green squash arriving on
 # staging with five errors waiting for it.
 #
-# A NOTE and never a failure.  The pin moves whenever the workflow
+# A NOTE and never a failure.  CI's version moves whenever the workflow
 # is edited, and a package manager can lag it for weeks — brew runs as much as
-# four months behind the pin, which opens a window where no `brew install`
-# can satisfy a hard check.  Refusing to run the linter at all during that
-# window costs more than the drift it would report.  Silent when the two agree,
-# and silent when either side cannot be read: an unreadable pin is a fact about
+# four months behind it, which opens a time window where no `brew install` can
+# satisfy a hard check.  Refusing to run the linter at all during that time window
+# costs more than the drift it would report.  Silent when the two agree,
+# and silent when either side cannot be read: an unreadable CI version is a fact about
 # this script's parsing, not a finding about the tree.
 kondo_version_note() {
-  local pin have
+  local ci_ver have
   command -v clj-kondo >/dev/null 2>&1 || return 0
-  pin="$(sed -n 's/^[[:space:]]*clj-kondo:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' \
+  ci_ver="$(sed -n 's/^[[:space:]]*clj-kondo:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' \
            .github/workflows/lint.yml 2>/dev/null | head -1)"
   have="$(clj-kondo --version 2>/dev/null \
             | grep -oE '[0-9]{4}\.[0-9]{2}\.[0-9]{2}' | head -1)"
-  [[ -n "$pin" && -n "$have" && "$pin" != "$have" ]] || return 0
-  printf '  %-11s %s! local %s, CI pins %s — CI can fail on what this passes%s\n' \
-         '' "$YELLOW" "$have" "$pin" "$RST"
+  [[ -n "$ci_ver" && -n "$have" && "$ci_ver" != "$have" ]] || return 0
+  printf '  %-11s %s! local %s, CI uses %s — CI can fail on what this passes%s\n' \
+         '' "$YELLOW" "$have" "$ci_ver" "$RST"
   printf '  %-11s %s  brew upgrade borkdude/brew/clj-kondo, or install-clj-kondo --version %s%s\n' \
-         '' "$DIM" "$pin" "$RST"
+         '' "$DIM" "$ci_ver" "$RST"
 }
 
-# The roster and the verdict, as a function, so the whole report can go through
+# The check rows and the verdict, as a function, so the whole report can go through
 # one `tee` below.  `${PIPESTATUS[0]}` is what keeps the exit status this
 # script's own: a pipeline reports the LAST command's status, which would make
 # every lint run as green as `tee` is.
-# LANES.  The roster is split across three lanes that run at once, each lane
+# LANES.  The checks are split across three lanes that run at once, each lane
 # sequential.  Not one job per check, for two reasons:
 #
 #   - `kondo` and `unused` both shell out to clj-kondo, which reads and writes
@@ -263,10 +264,10 @@ lane_b() {
 lane_c() {
   check glossary   -- bash scripts/lint-glossary.sh
   check versions   -- bash scripts/lint-versions.sh
-  check links      -- python3 scripts/check-doc-links.py --public-view
+  check links      -- python3 scripts/check-doc-links.py --public-docs
   check drift      -- python3 scripts/check-doc-drift.py
   check conflicts  -- bash scripts/lint-conflict-markers.sh
-  # The roster is that script's, not this one's, and `lein lint-shellcheck` runs the
+  # The script list is that script's, not this one's, and `lein lint-shellcheck` runs the
   # same file — one list, so it cannot be complete for one caller and short for the
   # other. It also checks itself against the tree, both directions.
   check shellcheck -- bash scripts/lint-shellcheck.sh
@@ -276,7 +277,7 @@ lane_c() {
 
 # The order the report reads in, which is NOT a lane's order: rows print here,
 # each waiting for its own lane to reach it.
-readonly -a ROSTER=(glossary versions links drift conflicts
+readonly -a CHECKS=(glossary versions links drift conflicts
                     kondo cljfmt shellcheck reflect unused prose derived)
 
 lint_run() {
@@ -293,7 +294,7 @@ lint_run() {
   fi
 
   local label
-  for label in "${ROSTER[@]}"; do
+  for label in "${CHECKS[@]}"; do
     report_row "$label"
     [[ "$label" == kondo ]] && kondo_version_note
   done
@@ -309,7 +310,7 @@ lint_run() {
 }
 
 runlog_start
-revision_stamp lint >"$LOG"
+revision_header lint >"$LOG"
 lint_run 2>&1 | tee -a "$LOG"
 rc=${PIPESTATUS[0]}
 
@@ -321,7 +322,7 @@ runlog_prune "$LINT_ROOT" "${LINT_KEEP_RUNS:-40}"
 # The summary comes back OUT of the log rather than out of a variable: `lint_run`
 # ran in a pipeline, so its `$pass` and `$fail` were a subshell's.  The verdict
 # line it printed is the same fact, and reading it here is gate.sh's rule — one
-# roster, read where it was written, so the two cannot drift.
+# list, read where it was written, so the two cannot drift.
 verdict=$(sed 's/\x1b\[[0-9;]*m//g' "$LOG" | grep -E '^lint: ' | tail -1)
 [[ $rc -eq 0 ]] && state=passed || state=failed
 runlog_record lint - "$state" "${verdict#lint: }" "$LOG"

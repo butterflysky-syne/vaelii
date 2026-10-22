@@ -11,8 +11,8 @@
   standing, so it is decided once and re-derived by nobody.
 
   The criterion is only a runtime property in one place: **which handles a source puts
-  in `:nogood`**.  So that is what this pins, for all three shipped sources, together
-  with the consequence that makes it worth pinning — that acting on a definitional clash
+  in `:nogood`**.  So that is what this asserts, for all three shipped sources, together
+  with the consequence that makes the assertion matter — that acting on a definitional clash
   leaves the vocabulary that convicted it believed, and therefore leaves the verdict
   stable across the settles that follow.
 

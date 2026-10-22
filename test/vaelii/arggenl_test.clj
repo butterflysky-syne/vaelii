@@ -22,7 +22,8 @@
 (use-fixtures :each (tu/neutral-fresh tu/fresh))
 
 (defn- ex-type
-  "The `:type` on the ex-info a thunk throws, or nil if it does not throw.
+  "The `:type` a write thunk meets: the ex-info it throws, or the argument conviction its
+  fact is held inert under (`tu/write-type`), or nil.
 
   The paths below throw five distinguishable types — `:arg-genl` for the subtype
   constraint, `:arg-type` for the instance one, `:arity` and `:arg-position` for the
@@ -31,7 +32,7 @@
   collapsing into a naming refusal is exactly the regression a file full of those would
   stay green through, so each refusal here names the one it expects."
   [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (tu/write-type tu/*kb* f))
 
 (defn- type-relation
   "A type-level relation over kinds of `root`, plus the kinds themselves.
@@ -41,6 +42,7 @@
     (v/assert kb (list 'genl root 'thing) 'CxUniverse)
     (v/assert kb (list 'genl sub root) 'CxUniverse)
     (v/assert kb (list 'genl other 'thing) 'CxUniverse)   ; a type, but not under root
+    (v/assert kb (list 'disjoint other root) 'CxUniverse)
     (v/assert kb (list 'genlArg rel 1 root) 'CxUniverse)
     [rel sub other root]))
 
@@ -52,12 +54,12 @@
        (is (v/assert kb (list rel sub (tu/tmp-type)) 'CxUniverse)))
      (testing "the constraint type itself satisfies it — genl is reflexive"
        (is (v/assert kb (list rel root (tu/tmp-type)) 'CxUniverse)))
-     (testing "a type outside the constraint's down-closure does not"
+     (testing "a type the taxonomy separates from the constraint type does not"
        (is (= :arg-genl (ex-type #(v/assert kb (list rel other (tu/tmp-type)) 'CxUniverse))))))))
 
 (tu/deftest-kb genlArg-wants-a-subtype-where-arg-wants-an-instance
   ;; the whole point of having both: the same type symbol passes one and fails the other
-  ;; The constraint reading, pinned: with the entailment on there is no arg conviction of
+  ;; The constraint reading, forced: with the entailment on there is no arg conviction of
   ;; a symbol to compare genlArg's against — the declaration mints the membership instead
   ;; (docs/argtypes.md).  What the two readings do to one type symbol is still the subject;
   ;; only the reading of arg is fixed.
@@ -73,6 +75,7 @@
      ;; nothing to convict, so the test states it rather than assuming a loaded KB.
      (let [meta (tu/tmp-type)]
        (v/assert kb (list 'genl meta 'thing) 'CxUniverse)
+       (v/assert kb (list 'disjoint meta root2) 'CxUniverse)
        (v/assert kb (list meta sub) 'CxUniverse))
      (testing "the kind satisfies genlArg"
        (is (v/assert kb (list rel sub (tu/tmp-type)) 'CxUniverse)))
@@ -152,9 +155,10 @@
      (testing "each is still enforced on its own"
        (tu/with-terms [a_plant]
          (v/assert kb (list 'genl a_plant 'thing) 'CxUniverse)
+         (v/assert kb (list 'disjoint a_plant an_animal) 'CxUniverse)
          (v/assert kb (list a_collection a_plant) 'CxUniverse)
          (is (= :arg-genl (ex-type #(v/assert kb (list rel a_plant (tu/tmp-ind)) 'CxUniverse)))
-             "a collection, but not a kind of animal — genlArg convicts"))
+             "a collection, but a kind disjoint from animal — genlArg convicts"))
        (is (= :arg-genl (ex-type #(v/assert kb (list rel Rex (tu/tmp-ind)) 'CxUniverse)))
            "an individual can never be a subtype, so it is convicted rather than excused")))))
 
@@ -164,10 +168,17 @@
     (v/assert kb (list 'type_relation_predicate typeRel) 'CxUniverse)
     (testing "an instance-level relation takes arg"
       (is (v/assert kb (list 'arg instRel 1 'thing) 'CxUniverse))
-      (is (= :arg-constraint-kind (ex-type #(v/assert kb (list 'genlArg instRel 2 'thing) 'CxUniverse)))))
+      (try (v/assert kb (list 'genlArg instRel 2 'thing) 'CxUniverse)
+           (is false "genlArg on an instance_relation_predicate must refuse")
+           (catch clojure.lang.ExceptionInfo e
+             (is (= :arg-constraint-kind (:type (ex-data e)))))))
     (testing "a type-level relation takes genlArg"
-      (is (v/assert kb (list 'genlArg typeRel 1 'thing) 'CxUniverse))
-      (is (= :arg-constraint-kind (ex-type #(v/assert kb (list 'arg typeRel 2 'thing) 'CxUniverse)))))
+      (is (v/assert kb (list 'genlArg typeRel 1 'thing) 'CxUniverse)))
+    (testing "and arg as well: the kinds it relates are themselves instances of a type"
+      ;; `(arg disjoint 1 unary_predicate)` says each argument *is* a unary predicate,
+      ;; which a kind is — an instance claim about the kind, not a subtype claim, so
+      ;; it is no contradiction of the relation kind
+      (is (v/assert kb (list 'arg typeRel 2 'thing) 'CxUniverse)))
     (testing "an unclassified relation takes either"
       (let [rel (tu/tmp-pred)]
         (is (v/assert kb (list 'arg rel 1 'thing) 'CxUniverse))
@@ -183,7 +194,7 @@
       (is (v/assert kb (list 'arity rel 2) 'CxUniverse)))
     (testing "a different arity for the same predicate is stored as a functional clash"
       (is (tu/stored-in-clash? kb (list 'arity rel 7) 'CxUniverse))
-      ;; both bindings are on the engine's baseline roster, so `:monotonic`: a hard clash
+      ;; both bindings are in the baseline forced-monotonic set, so `:monotonic`: a hard clash
       (is (= [:functional] (mapv :kind (v/conflicts kb)))))))
 
 (tu/deftest-kb a-sentence-must-match-its-predicates-declared-arity
@@ -314,13 +325,14 @@
   ;; any length has the arguments past its declared number, and a constraint on one of them
   ;; fires on exactly the tuples that reach it — so refusing the declaration while storing
   ;; the three-argument fact leaves the third argument untypeable in a KB that admits it.
-  ;; Pinned to the constraint reading: what is asserted is that the released position is
+  ;; Forced to the constraint reading: what is asserted is that the released position is
   ;; *enforced*, and enforcement of a symbol argument is what the entailment reading
   ;; replaces with a mint (docs/argtypes.md).  The release itself reads the same either way.
   (tu/without-entailing
    (tu/with-terms [chainOf a_type b_type A B C Odd]
      (v/assert kb (list 'genl a_type 'thing) 'CxUniverse)
      (v/assert kb (list 'genl b_type 'thing) 'CxUniverse)
+     (v/assert kb (list 'disjoint a_type b_type) 'CxUniverse)
      (v/assert kb (list 'binary_predicate chainOf) 'CxUniverse)
      (is (= :arg-position
             (ex-type #(v/assert kb (list 'arg chainOf 3 a_type) 'CxUniverse)))
@@ -333,7 +345,7 @@
        (is (v/assert kb (list 'interArg chainOf 1 a_type 5 a_type) 'CxUniverse)))
      (testing "and the constraint is live on the tuple that reaches the position"
        (v/assert kb (list a_type C) 'CxUniverse)
-       (v/assert kb (list b_type Odd) 'CxUniverse)          ; placed, but not an a_type
+       (v/assert kb (list b_type Odd) 'CxUniverse)          ; a b_type, disjoint from a_type
        (is (v/assert kb (list chainOf A B C) 'CxUniverse))
        (is (= :arg-type (ex-type #(v/assert kb (list chainOf A B Odd) 'CxUniverse)))
            "argument 3 is enforced where the tuple has one, which is what makes the
@@ -384,8 +396,9 @@
        (is (v/assert kb (list rel reified (tu/tmp-type)) ctx)))
      (testing "a plain individual with no edges anywhere is still convicted"
        (is (= :arg-genl (ex-type #(v/assert kb (list rel plain (tu/tmp-type)) ctx)))))
-     (testing "visible evidence reaching the wrong place still convicts"
-       (v/assert kb (list 'genl kind 'thing) ctx)     ; visible, but not under root
+     (testing "a visible separation from the declared type still convicts"
+       (v/assert kb (list 'genl kind 'thing) ctx)
+       (v/assert kb (list 'disjoint kind root) ctx)
        (is (= :arg-genl (ex-type #(v/assert kb (list rel kind (tu/tmp-type)) ctx)))))
      (tax/del-genl! (reasoning/taxonomy kb) reified root 999901))))
 
@@ -454,7 +467,7 @@
 ;; A **reifiable** function's application never reaches this arm.  It is minted into a
 ;; constant before the checks run and the constant carries the same declarations
 ;; materialized as `(T K)` / `(genl K T)`, which the symbol arm reads.  One declaration,
-;; one verdict, whichever class the function is — which is what the last test here pins.
+;; one verdict, whichever class the function is — which is what the last test here asserts.
 ;;
 ;; Open-world throughout, one level out from the symbol reading: a function that declares
 ;; no result exempts every application of it, exactly as an unclassified symbol exempts
@@ -465,6 +478,7 @@
         wantsDog (tu/tmp-pred) wantsMsr (tu/tmp-pred)]
     (v/assert kb (list 'genl msr 'thing) 'CxUniverse)
     (v/assert kb (list 'genl dog 'thing) 'CxUniverse)
+    (v/assert kb (list 'disjoint msr dog) 'CxUniverse)
     (v/assert kb (list 'unreifiable_function f) 'CxUniverse)
     (v/assert kb (list 'unary_predicate wantsDog) 'CxUniverse)
     (v/assert kb (list 'arg wantsDog 1 dog) 'CxUniverse)
@@ -478,7 +492,7 @@
     (testing "and the same application satisfies a demand its result does reach"
       (is (v/assert kb (list wantsMsr (list f 7 'Meter)) 'CxUniverse)))
     (testing "the declaration arriving last reaches back over nothing, as the family does"
-      (is (empty? (v/violations kb)))
+      (is (not-any? #(= (list wantsDog (list f 5 'Meter)) (:sentence %)) (v/violations kb)))
       (is (v/ask? kb (list wantsDog (list f 5 'Meter)) 'CxUniverse)))))
 
 (tu/deftest-kb a-head-declaring-several-results-is-admitted-where-any-of-them-reaches
@@ -515,6 +529,7 @@
         inst (tu/tmp-pred) sub (tu/tmp-pred)]
     (v/assert kb (list 'genl root 'thing) 'CxUniverse)
     (v/assert kb (list 'genl other 'thing) 'CxUniverse)
+    (v/assert kb (list 'disjoint root other) 'CxUniverse)
     (v/assert kb (list 'unreifiable_function isaFn) 'CxUniverse)
     (v/assert kb (list 'unreifiable_function genlFn) 'CxUniverse)
     (v/assert kb (list 'result isaFn root) 'CxUniverse)
@@ -544,18 +559,18 @@
         "a declared result below the demanded kind is the demand met")))
 
 (tu/deftest-kb a-quoting-predicates-payload-is-a-mention-and-is-not-typed-by-its-function
-  ;; `(termOfUnit K E)` carries the NAT expression as a literal payload rather than as a
+  ;; `(natFormula K E)` carries the NAT expression as a literal payload rather than as a
   ;; term used in that position, so what `E`'s function yields says nothing about the
   ;; argument — typing it would type a quotation by its referent.  The declaration here
   ;; names a type the function's result does not reach, so the admission rests on the
-  ;; exemption and not on the shipped `(arg termOfUnit 2 non_atomic_term)`.
+  ;; exemption and not on the shipped `(arg natFormula 2 non_atomic_term)`.
   (let [msr (tu/tmp-type) dog (tu/tmp-type) f (tu/tmp-ind) K (tu/tmp-ind)]
     (v/assert kb (list 'genl msr 'thing) 'CxUniverse)
     (v/assert kb (list 'genl dog 'thing) 'CxUniverse)
     (v/assert kb (list 'unreifiable_function f) 'CxUniverse)
     (v/assert kb (list 'result f msr) 'CxUniverse)
-    (v/assert kb (list 'arg 'termOfUnit 2 dog) 'CxUniverse)
-    (is (v/assert kb (list 'termOfUnit K (list f 5)) 'CxUniverse))))
+    (v/assert kb (list 'arg 'natFormula 2 dog) 'CxUniverse)
+    (is (v/assert kb (list 'natFormula K (list f 5)) 'CxUniverse))))
 
 (tu/deftest-kb check-reads-a-reifiable-payload-of-a-quoting-predicate-as-a-mention
   ;; `check` reads a reifiable application as the constant `assert` would mint; in a
@@ -566,8 +581,8 @@
     (v/assert kb (list 'disjoint msr dog) 'CxUniverse)
     (v/assert kb (list 'reifiable_function f) 'CxUniverse)
     (v/assert kb (list 'result f msr) 'CxUniverse)
-    (v/assert kb (list 'arg 'termOfUnit 2 dog) 'CxUniverse)
-    (is (empty? (v/check kb (list 'termOfUnit K (list f 5)) 'CxUniverse)))))
+    (v/assert kb (list 'arg 'natFormula 2 dog) 'CxUniverse)
+    (is (empty? (v/check kb (list 'natFormula K (list f 5)) 'CxUniverse)))))
 
 (tu/deftest-kb a-result-declaration-a-context-cannot-see-does-not-refuse-it
   ;; the whole family judges from the asking context's vantage — a context is refused on
@@ -576,6 +591,7 @@
         seen (tu/tmp-ctx) sibling (tu/tmp-ctx)]
     (v/assert kb (list 'genl msr 'thing) 'CxUniverse)
     (v/assert kb (list 'genl dog 'thing) 'CxUniverse)
+    (v/assert kb (list 'disjoint msr dog) 'CxUniverse)
     (v/assert kb (list 'unreifiable_function f) 'CxUniverse)
     (v/assert kb (list 'unary_predicate wants) 'CxUniverse)
     (v/assert kb (list 'arg wants 1 dog) 'CxUniverse)
@@ -593,7 +609,7 @@
   ;; ordinary symbol arm convicts it.  Both classes of function, one declaration, one
   ;; verdict — which is the whole of why the check reads `result` rather than inventing
   ;; a second declaration for the applications that are never minted.
-  ;; Pinned to the constraint reading: the reified constant is a symbol, so under the
+  ;; Forced to the constraint reading: the reified constant is a symbol, so under the
   ;; entailment reading the symbol arm mints (dog K) rather than convicting it.  The claim
   ;; that both classes of function reach one verdict is a claim about the reading that has
   ;; one.
@@ -602,6 +618,7 @@
          x (tu/tmp-ind)]
      (v/assert kb (list 'genl msr 'thing) 'CxUniverse)
      (v/assert kb (list 'genl dog 'thing) 'CxUniverse)
+     (v/assert kb (list 'disjoint msr dog) 'CxUniverse)
      (v/assert kb (list 'reifiable_function f) 'CxUniverse)
      (v/assert kb (list 'result f msr) 'CxUniverse)
      (v/assert kb (list 'unary_predicate wants) 'CxUniverse)

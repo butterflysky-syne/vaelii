@@ -3,7 +3,7 @@
 (ns vaelii.plan-levels-edge-test
   "Cost-model branches and level behaviours the existing suites do not reach.
 
-  `plan_test` covers the greedy ordering, sideways information passing, the pinned
+  `plan_test` covers the greedy ordering, sideways information passing, the fixed-position
   evaluable and recursive literals, and planned-vs-unplanned equivalence.  What it
   never does is hand the planner a **negative** literal, or check the two secondary
   estimates that exist precisely because the trie cannot answer — the argument-root
@@ -19,11 +19,11 @@
             [vaelii.impl.plan :as plan]
             [vaelii.test-util :as tu]))
 
-;; The cost ranking is pinned on here whatever the run installed: every question below
+;; The cost ranking is forced on here whatever the run installed: every question below
 ;; is about which literal the RANKING chose, and `VAELII_PLAN=0` removes the ranking
-;; rather than reordering it.  Pinning keeps the assertion count identical across
-;; configurations, which standing aside would not (`tu/pinning`).
-(use-fixtures :each (tu/neutral-fresh tu/fresh) (tu/pinning [#'plan/*enabled*]))
+;; rather than reordering it.  Forcing it keeps the assertion count identical across
+;; configurations, which standing aside would not (`tu/shipped-fixture`).
+(use-fixtures :each (tu/neutral-fresh tu/fresh) (tu/shipped-fixture [#'plan/*enabled*]))
 
 ;; ---- the negative-literal cost path ------------------------------------
 
@@ -80,8 +80,8 @@
   ;; The extension point a chainer whose leaf is the registry uses, so a `genl` conjunct is costed by
   ;; the transitive closure rather than by stored edges (`provers/registry-est-override`,
   ;; and `provers_test` for it end to end).  Here it is driven straight at `plan/order`,
-  ;; because what needs pinning is the two branches of the extension point itself: that an override
-  ;; is consulted and that ordering follows it, and that one declining falls back.
+  ;; because the test asserts the two branches of the extension point itself: that an
+  ;; override is consulted and that ordering follows it, and that one declining falls back.
   (tu/with-terms [alpha beta Xx]
     (v/assert kb (list alpha Xx) 'CxNaturalWorld {:chain? false})
     (v/assert kb (list beta Xx)  'CxNaturalWorld {:chain? false})

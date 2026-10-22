@@ -15,6 +15,7 @@
             [clojure.test :refer [deftest is testing]]
             [taoensso.nippy :as nippy]
             [vaelii.core :as v]
+            [vaelii.impl.checks :as checks]
             [vaelii.impl.decide :as decide]
             [vaelii.impl.dense-jtms :as dense]
             [vaelii.impl.discovery :as discovery]
@@ -23,6 +24,7 @@
             [vaelii.impl.kb :as kb]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.reasoning-image :as ri]
+            [vaelii.impl.special :as special]
             [vaelii.impl.taxonomy :as tax]
             [vaelii.impl.types.reasoning :as reasoning]
             [vaelii.test-util :as tu])
@@ -62,12 +64,15 @@
 (defn- open
   "Open `dir` as a `:disk-snapshot` KB and record whether the open installed an image.  An
   install leaves the manifest as it was; a recover writes a fresh image, whose manifest
-  carries a new `:written-at`, so an unchanged manifest means the image was installed."
-  [dir]
-  (let [before (manifest-text dir)
-        kb     (v/open-kb {:backend :disk-snapshot :dir dir})]
-    (swap! opened assoc kb (and (some? before) (= before (manifest-text dir))))
-    kb))
+  carries a new `:written-at`, so an unchanged manifest means the image was installed.
+  `recover?` is the open's `:recover?`, the default when omitted."
+  ([dir] (open dir nil))
+  ([dir recover?]
+   (let [before (manifest-text dir)
+         kb     (v/open-kb (cond-> {:backend :disk-snapshot :dir dir}
+                             recover? (assoc :recover? recover?)))]
+     (swap! opened assoc kb (and (some? before) (= before (manifest-text dir))))
+     kb)))
 
 (defn- installed? [kb] (get @opened kb))
 
@@ -235,11 +240,12 @@
             (finally (v/close! a) (v/close! b) (rm-rf! ref))))
         (finally (rm-rf! dir))))))
 
-(deftest an-installed-kb-s-first-read-takes-the-taxonomy-s-own-separation-rosters
+(deftest an-installed-kb-s-first-read-takes-the-taxonomy-s-own-separation-tables
   (tu/with-snapshot-platform
-    ;; The image holds the membership candidates' separation stamp and the taxonomy's
-    ;; rosters as two read-back copies, equal and not identical.  The first read takes the
-    ;; taxonomy's, so a later read compares the two by identity, not entry by entry.
+    ;; The image holds the membership candidates' separation inputs and the taxonomy's
+    ;; separation tables as two read-back copies, equal and not identical.  The first read
+    ;; takes the taxonomy's, so a later read compares the two by identity, not entry by
+    ;; entry.
     (let [dir (tmpdir)]
       (try
         (let [kb (open dir)] (content! kb) (v/close! kb))
@@ -248,8 +254,8 @@
             (is (installed? a))
             (decide/synced a)
             (is (every? true? (map identical?
-                                   (tax/separation-stamp (reasoning/taxonomy a))
-                                   (:vaelii.impl.decide.membership/sep-stamp
+                                   (tax/separation-inputs (reasoning/taxonomy a))
+                                   (:vaelii.impl.decide.membership/sep-inputs
                                     @(reasoning/nogood-candidates a)))))
             (finally (v/close! a))))
         (finally (rm-rf! dir))))))
@@ -293,7 +299,7 @@
     (fn [dir] (rewrite-manifest! dir #(update % :format dec)))]
    ["another policy"
     (fn [dir] (rewrite-manifest! dir #(update-in % [:policy :assertive-arg-types] not)))]
-   ["another forced-monotonic roster"
+   ["another forced-monotonic set"
     (fn [dir] (rewrite-manifest! dir #(update-in % [:policy :forced-monotonic] conj
                                                  '[forced_monotonic_predicate likes])))]
    ["a truncated network section"
@@ -307,18 +313,73 @@
         (with-open [o (DataOutputStream. (io/output-stream f))]
           (nippy/freeze-to-out! o (assoc-in st [:taxonomy ::planted] (->Planted 1))))))]])
 
-(deftest the-stamp-names-the-declared-roster
+(deftest a-default-open-keeps-an-image-written-under-another-source
   (tu/with-snapshot-platform
-    ;; the forced sets an image carries were computed under the roster the declarations
-    ;; give, so the stamp carries that roster and an image under another one is declined
+    (let [dir (tmpdir)]
+      (try
+        (let [kb (open dir)] (content! kb) (v/close! kb))
+        (rewrite-manifest! dir #(assoc % :source "0"))
+        (let [a (open dir)
+              [b ref] (recovered-copy dir)]
+          (try
+            (is (installed? a) "the image was installed, not recovered past")
+            (is (not (:stale-belief (v/write-hazards a))))
+            (is (= (belief b) (belief a)) "it holds the labels a recover derives")
+            (finally (v/close! a) (v/close! b) (rm-rf! ref))))
+        (is (= "0" (:source (edn/read-string (manifest-text dir))))
+            "the close keeps the source the belief was derived under")
+        (finally (rm-rf! dir))))))
+
+(defn- strip-argument-family!
+  "Rewrite the image in `dir` as a build without the argument family wrote it: its
+  candidate index holds none of `vaelii.impl.decide.argument`'s keys, and its manifest
+  names another source."
+  [dir]
+  (let [f  (io/file dir "reasoning" "state.nippy")
+        st (with-open [i (DataInputStream. (io/input-stream f))] (nippy/thaw-from-in! i))
+        st (update-in st [:atoms :nogood-candidates]
+                      #(into {} (remove (fn [[k _]] (and (keyword? k) (= "vaelii.impl.decide.argument" (namespace k))))) %))]
+    (with-open [o (DataOutputStream. (io/output-stream f))] (nippy/freeze-to-out! o st))
+    (rewrite-manifest! dir #(assoc % :source "0"))))
+
+(deftest an-image-without-the-argument-family-installs-with-no-whole-argument-read
+  (tu/with-snapshot-platform
+    (let [dir   (tmpdir)
+          reads (atom 0)
+          all   @#'checks/all-declarations]
+      (try
+        (let [kb (open dir)]
+          (content! kb)
+          (v/assert kb '(arg owns 1 animal) 'CxUniverse {:strength :monotonic})
+          (v/assert kb '(owns Fido Bone) 'CxUniverse)
+          (v/close! kb))
+        (strip-argument-family! dir)
+        (with-redefs [checks/all-declarations (fn [kb] (swap! reads inc) (all kb))]
+          (let [a (open dir)]
+            (try
+              (is (installed? a))
+              (is (zero? @reads) "the install reads no declaration")
+              (v/assert a '(owns Rex Bone) 'CxUniverse)
+              (is (zero? @reads) "the first settle reads no declaration whole")
+              (let [[b ref] (recovered-copy dir)]
+                (try (is (= (belief b) (belief a)) "it believes what a recover of its records believes")
+                     (finally (v/close! b) (rm-rf! ref))))
+              (finally (v/close! a)))))
+        (finally (rm-rf! dir))))))
+
+(deftest the-image-policy-names-the-forced-monotonic-declarations
+  (tu/with-snapshot-platform
+    ;; the forced sets an image carries were computed under the forced-monotonic set the
+    ;; declarations give, so the image's `:policy` carries those declarations and an image
+    ;; under other ones is declined
     (let [dir (tmpdir)]
       (try
         (let [kb     (open dir)
-              roster #(:forced-monotonic (:policy (ri/stamp kb nil)))]
+              declared #(:forced-monotonic (:policy (ri/manifest-for kb nil)))]
           (try
-            (is (= [] (roster)))
+            (is (= [] (declared)))
             (v/assert kb '(forced_monotonic_predicate likes) 'CxUniverse)
-            (is (= '[[forced_monotonic_predicate likes CxUniverse]] (roster)))
+            (is (= '[[forced_monotonic_predicate likes CxUniverse]] (declared)))
             (finally (v/close! kb))))
         (finally (rm-rf! dir))))))
 
@@ -330,7 +391,9 @@
           (try
             (let [kb (open dir)] (content! kb) (v/close! kb))
             (spoil! dir)
-            (let [a (open dir)
+            ;; `:auto`, which declines an image written under other engine source; the
+            ;; default keeps that one (the test after this)
+            (let [a (open dir :auto)
                   [b ref] (recovered-copy dir)]
               (try
                 (is (not (installed? a)) "the image was declined")
@@ -354,7 +417,7 @@
 (deftest no-image-is-written-while-a-settle-decides-the-belief
   (tu/with-snapshot-platform
     ;; The writer's settle is parked before its discovery, and the image write on this
-    ;; thread declines: the stamp covers the records, and a settle moves belief without
+    ;; thread declines: the manifest covers the records, and a settle moves belief without
     ;; writing one, so an image of a network a settle is deciding would pass the next open's
     ;; check and install belief no settled KB held.
     (let [dir (tmpdir)]
@@ -392,16 +455,37 @@
             (v/close! kb))
           (is (not (.exists (manifest dir))))
           (finally (rm-rf! dir)))))
-    (testing "an inert sentex has a record and no node"
+    (testing "a record with no node and no inert mark"
       (let [dir (tmpdir)]
         (try
           (let [kb (open dir)]
             (content! kb)
-            (v/assert-inert kb '(dog Spot) 'CxUniverse)
+            (let [h (v/assert-inert kb '(dog Spot) 'CxUniverse)]
+              (p/put-provenance (:records kb) h (dissoc (p/get-provenance (:records kb) h) :inert)))
             (is (nil? (ri/save! kb)))
             (v/close! kb))
           (is (not (.exists (manifest dir))))
           (finally (rm-rf! dir)))))))
+
+(deftest an-inert-sentex-is-imaged-and-reopens-stored-and-not-believed
+  (tu/with-snapshot-platform
+    ;; `assert-inert` mints no node and a recover gives every record one, so the installed
+    ;; network and the recovered one differ by the inert node; belief is the same
+    (let [dir (tmpdir)]
+      (try
+        (let [kb (open dir)]
+          (content! kb)
+          (v/assert-inert kb '(dog Spot) 'CxUniverse)
+          (is (some? (ri/save! kb)))
+          (v/close! kb))
+        (let [a (open dir)
+              [b ref] (recovered-copy dir)]
+          (try
+            (is (installed? a))
+            (is (= (belief b) (belief a)))
+            (is (false? (get (belief a) ['(dog Spot) 'CxUniverse])))
+            (finally (v/close! a) (v/close! b) (rm-rf! ref))))
+        (finally (rm-rf! dir))))))
 
 (deftest every-kb-atom-is-imaged-or-named-as-left-alone
   (let [kb    (v/open-kb {:backend :memory :space [::atoms] :recover? false})
@@ -460,7 +544,7 @@
        (is (= (belief a) (belief b)))))))
 
 (deftest a-dump-written-while-the-kb-moved-carries-no-image
-  ;; The network is read after the walks and stamped with their fingerprints.  A write
+  ;; The network is read after the walks and written with their fingerprints.  A write
   ;; between the two — here from the export's own progress callback, once the sentexes
   ;; have streamed — would install on import as belief the streamed records never had:
   ;; the premise is in the dump and OUT in the network.
@@ -488,7 +572,7 @@
         (doseq [kb [a b]] (v/clear! kb)))
       (finally (rm-rf! dir)))))
 
-(deftest the-records-stamp-covers-the-justifications
+(deftest the-records-fingerprint-covers-the-justifications
   (tu/with-snapshot-platform
     (let [dir (tmpdir)]
       (try
@@ -498,7 +582,7 @@
               fp   (drs/reasoning-fingerprint recs)]
           (try
             (is (= (count (p/justification-ids recs)) (get-in fp [:justifications :count])))
-            (testing "a justification stored over unchanged sentexes moves the stamp"
+            (testing "a justification stored over unchanged sentexes moves the fingerprint"
               (let [[a c] (take 2 (sort (p/sentex-ids recs)))]
                 (p/put-justification recs (jtms/->just (p/next-id recs) 'rule [a] c {} :default))
                 (is (= (:sentexes fp) (:sentexes (drs/reasoning-fingerprint recs))))
@@ -510,7 +594,7 @@
   (tu/with-snapshot-platform
     ;; `clear!` truncates the logs, so records of the same byte lengths refill the old slots
     ;; exactly, and the store below differs from the one the image describes in content
-    ;; alone.  The epoch the wipe mints is the part of the stamp that separates the two.
+    ;; alone.  The epoch the wipe mints is the part of the fingerprint that separates the two.
     (let [dir   (tmpdir)
           strip (fn [fp] (update-vals fp #(dissoc % :epoch)))]
       (try
@@ -543,6 +627,40 @@
     (with-open [o (DataOutputStream. (io/output-stream sf))]
       (nippy/freeze-to-out! o (f st)))
     (rewrite-manifest! dir #(assoc-in % [:bytes :state] (.length sf)))))
+
+;; `(dog Fred)` withholds the mint `(animal Fred)` that `(parentOf Fred Mary)` entails, and
+;; its retraction under `special/*release-withheld?*` false leaves that mint owed
+(defn- owe-a-release! [kb]
+  (binding [checks/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
+    (doseq [s '[(genl animal thing) (genl dog animal) (arg parentOf 1 animal)
+                (dog Fred) (parentOf Fred Mary)]]
+      (v/assert kb s 'CxUniverse))
+    (binding [special/*release-withheld?* false]
+      (v/retract! kb (v/handle-of kb '(dog Fred) 'CxUniverse)))))
+
+(deftest the-image-carries-the-owed-releases-and-an-image-without-them-installs
+  (tu/with-snapshot-platform
+    (binding [checks/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
+      (let [dir (tmpdir)]
+        (try
+          (let [kb (open dir)]
+            (owe-a-release! kb)
+            (is (= 1 (v/owed-releases kb)))
+            (v/close! kb))
+          (let [a (open dir)]
+            (try
+              (is (installed? a))
+              (is (= 1 (v/owed-releases a)) "a close and a reopen keep the debt")
+              (is (= 1 (:released (v/release-withheld! a))))
+              (is (true? (get (belief a) ['(animal Fred) 'CxUniverse])))
+              (finally (v/close! a))))
+          (rewrite-state! dir #(update % :atoms dissoc :mint-queues))
+          (let [b (open dir)]
+            (try
+              (is (installed? b) "an image an earlier build wrote without the queue installs")
+              (is (zero? (v/owed-releases b)))
+              (finally (v/close! b))))
+          (finally (rm-rf! dir)))))))
 
 ;; A value whose thaw throws an `OutOfMemoryError` while `heap-short?` holds, as a thaw
 ;; does when the heap runs out under it, and nippy wraps the error as it wraps that one.

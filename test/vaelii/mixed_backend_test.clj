@@ -13,10 +13,10 @@
 
   Engine-level parity across every mode is `backend_parity_test`'s job (it runs the same
   scripted session on every name `kb/backend-names` carries, or says what covers the one
-  it skips), and the thorough gate is the whole suite under
+  it skips), and the thorough regression test is the whole suite under
   `VAELII_TEST_BACKEND=disk-memory` / `=disk-dense` / `=disk-columnar`.
 
-  The **roster's other two readers** are pinned at the bottom of this namespace: the
+  The **backend list's other two readers** are tested at the bottom of this namespace: the
   suite's configuration list, which is bash, and docs/storage.md's table, which is prose.
   Neither can be reached from `kb`'s own load-time validator, and a backend missing from
   either ships untested or undocumented without a single test going red."
@@ -25,6 +25,7 @@
             [clojure.test :refer [are deftest is testing]]
             [vaelii.core :as v]
             [vaelii.impl.disk.backend :as backend]
+            [vaelii.impl.disk.files :as dfiles]
             [vaelii.impl.disk.lock :as lock]
             [vaelii.impl.kb :as kb])
   (:import [java.nio.file Files]
@@ -125,6 +126,23 @@
   [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
+(defn- adapters-failing
+  "Run `f` with each sibling adapter's namespace failing to load by throwing `(thrown)`.
+  A `checkouts/` link or a `+with-` profile can put an adapter on this classpath, so an
+  absence claim states the absence instead of reading it off the classpath."
+  [thrown f]
+  (let [resolve requiring-resolve]
+    (with-redefs [requiring-resolve
+                  (fn [sym]
+                    (if (#{"vaelii.sqlite.record-store" "vaelii.postgres.record-store"}
+                         (namespace sym))
+                      (throw (thrown))
+                      (resolve sym)))]
+      (f))))
+
+(defn- absent []
+  (java.io.FileNotFoundException. "Could not locate vaelii/x/record_store__init.class"))
+
 (deftest an-unknown-selection-names-the-axis-it-belongs-to
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown KB backend"
                         (v/open-kb {:backend :nonesuch})))
@@ -170,14 +188,26 @@
   ;; `:unknown-backend` — and a caller catching that to fall back on `:memory` did the
   ;; wrong thing twice over: the name is legal, and the fix is a coordinate in the
   ;; project rather than a different backend.
-  (are [opts records coord]
-       (= {:type :missing-adapter :records records :coordinate coord}
-          (select-keys (refusal #(v/open-kb opts)) [:type :records :coordinate]))
-    {:backend :sqlite}                    :sqlite "com.vaelii/sqlite"
-    {:backend :pg-memory :pg "jdbc:postgresql://h/d"} :pg "com.vaelii/postgres")
-  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"com\.vaelii/sqlite"
-                        (v/open-kb {:backend :sqlite}))
-      "and the message names the coordinate to add"))
+  (adapters-failing
+   absent
+   #(do (are [opts records coord]
+             (= {:type :missing-adapter :records records :coordinate coord}
+                (select-keys (refusal (fn [] (v/open-kb opts))) [:type :records :coordinate]))
+          {:backend :sqlite}                                :sqlite "com.vaelii/sqlite"
+          {:backend :pg-memory :pg "jdbc:postgresql://h/d"} :pg     "com.vaelii/postgres")
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"com\.vaelii/sqlite"
+                              (v/open-kb {:backend :sqlite}))
+            "and the message names the coordinate to add")))
+  (testing "an adapter whose source loads without its dependencies"
+    ;; a `checkouts/` link adds the adapter's source and none of its dependencies
+    (adapters-failing
+     #(clojure.lang.Compiler$CompilerException.
+       "vaelii/postgres/record_store.clj" 1 1
+       (java.io.FileNotFoundException. "Could not locate next/jdbc__init.class"))
+     #(let [e (is (thrown-with-msg? clojure.lang.ExceptionInfo #"loading it failed .*next/jdbc"
+                                    (v/open-kb {:backend :pg-memory :pg "jdbc:postgresql://h/d"})))]
+        (is (= {:type :missing-adapter :records :pg :coordinate "com.vaelii/postgres"}
+               (select-keys (ex-data e) [:type :records :coordinate])))))))
 
 (deftest one-number-names-both-of-a-KBs-stores
   ;; The index is a function of the records, so the two are shared or separate as one
@@ -247,16 +277,16 @@
                                           :base    {:backend :memory :record-db 7}
                                           :overlay {:backend :memory :space 188}})))
         (finally (v/clear! base)))))
-  ;; A key added to the constructor and not to the roster is refused, which says so at
-  ;; once; a key left in the roster after nothing reads it is accepted and ignored, which
-  ;; is the bug this whole test is about.  So the roster is pinned: it shrinks on purpose.
-  (testing "and the roster is exactly the vocabulary"
+  ;; A key added to the constructor and not to the key set is refused, which says so at
+  ;; once; a key left in the key set after nothing reads it is accepted and ignored, which
+  ;; is the bug this whole test is about.  So the key set is frozen here: it shrinks on purpose.
+  (testing "and the key set is exactly the vocabulary"
     (is (= #{:backend :records :index :space :dir :pg :tms :recover?
              :naming :base :base-stores :overlay :oplog?}
            kb/opt-keys))))
 
 (deftest a-store-value-outside-its-domain-is-refused
-  ;; The key roster above settles which keys are read; this is the value of the three that
+  ;; The key set above settles which keys are read; this is the value of the three that
   ;; pick the store.  Unchecked, a string space would share the directory of the number
   ;; it prints as, a nil space would key a RAM store apart from space 0, a blank directory
   ;; would put the store in the JVM's working directory, and a :dir or :base-stores of the
@@ -308,7 +338,7 @@
                  (finally (v/close! kb)))))))))
 
 (deftest a-mount-or-durability-key-without-its-axis-is-refused
-  ;; All four keys are in the roster, so `check-opts!` passes them — but each is read
+  ;; All four keys are in the key set, so `check-opts!` passes them — but each is read
   ;; only under the axis selection it belongs to.  `{:backend :memory :base-stores …}`
   ;; opens a plain RAM KB with nothing mounted, and `{:backend :memory :dir …}` names
   ;; a directory nothing writes: the caller who asked for durability loses the store
@@ -344,11 +374,11 @@
           (v/clear! kb))))))
 
 (deftest recover-takes-one-of-four-settings-and-refuses-the-rest
-  ;; The key is in the roster, so `check-opts!` passes it — the *value* is the check,
+  ;; The key is in the key set, so `check-opts!` passes it — the *value* is the check,
   ;; and it has to be a refusal.  Reading an unnamed setting as the warn branch hands
   ;; back an empty TMS over a store that is not empty, which answers [] to everything:
   ;; a wrong answer where a refusal is owed.
-  (testing "the four the roster names all open"
+  (testing "the four the check accepts all open"
     (doseq [mode [:auto true :warn false]]
       (let [kb (v/open-kb {:space 88 :recover? mode})]
         (is (some? kb) (str (pr-str mode) " opens"))
@@ -359,7 +389,7 @@
                            (v/open-kb {:space 88 :recover? bad}))
                   (str (pr-str bad) " is refused"))]
         (is (= :unknown-option (:type (ex-data e))))
-        (is (re-find #":warn" (ex-message e)) "the message carries the roster"))))
+        (is (re-find #":warn" (ex-message e)) "the message carries the accepted settings"))))
   (testing "an explicit nil is refused too, and says it is not the default"
     (let [e (is (thrown? clojure.lang.ExceptionInfo
                          (v/open-kb {:space 88 :recover? nil})))]
@@ -445,12 +475,37 @@
                                   (v/open-kb {:backend :memory :pg {:dbname "nope"}})))]
       (is (= [:pg] (:unknown (ex-data e))))))
   (testing "the adapter is not the engine's to carry"
-    ;; core has no JDBC dependency, so selecting :pg here reaches the lazy resolve and
-    ;; finds nothing — the missing-adapter error, not a FileNotFoundException.  The
-    ;; adapter's own suite is where a live :pg KB is exercised.
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"needs the vaelii-postgres adapter"
-                          (v/open-kb {:backend :pg-memory
-                                      :pg {:dbtype "postgresql" :dbname "nope"}})))))
+    ;; selecting :pg reaches the lazy resolve, which finds no adapter — the
+    ;; missing-adapter error, not a FileNotFoundException.  The adapter's own suite is
+    ;; where a live :pg KB is exercised.
+    (adapters-failing
+     absent
+     #(is (thrown-with-msg? clojure.lang.ExceptionInfo #"needs the vaelii-postgres adapter"
+                            (v/open-kb {:backend :pg-memory
+                                        :pg {:dbtype "postgresql" :dbname "nope"}}))))))
+
+(deftest a-pg-directory-names-its-server
+  ;; a :pg-* directory records the server its index was built against (index/records.edn),
+  ;; so a reopen with no :pg reads the server off it and reaches the adapter — made absent,
+  ;; so the missing-adapter error rather than the needs-:pg refusal.  A directory with no
+  ;; records identity names nothing, and is refused.
+  (let [root (.toFile (java.nio.file.Files/createTempDirectory
+                       "vaelii-pg-identity" (make-array java.nio.file.attribute.FileAttribute 0)))
+        dir  (str root)]
+    (try
+      (doseq [backend [:pg-snapshot :pg-disk-log]]
+        (testing (str backend " with no records identity")
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"needs :pg to name a database"
+                                (v/open-kb {:backend backend :dir dir})))))
+      (dfiles/write-records-identity! (str dir "/index") ["localhost" 5432 "vaelii" "kb_one"])
+      (adapters-failing
+       absent
+       #(doseq [backend [:pg-snapshot :pg-disk-log]]
+          (testing (str backend " over a directory holding a records identity")
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"needs the vaelii-postgres adapter"
+                                  (v/open-kb {:backend backend :dir dir}))))))
+      (finally
+        (doseq [f (reverse (file-seq root))] (.delete ^java.io.File f))))))
 
 (deftest the-pg-pairings-name-a-records-axis-and-an-index-axis
   (is (= {:records :pg :index :memory} (kb/backend-axes {:backend :pg-memory})))
@@ -627,7 +682,7 @@
           "and nothing took the directory's lock on the way out")
       (finally (rm-rf! dir)))))
 
-;; ---- the roster's readers outside this process ---------------------------
+;; ---- the backend list's readers outside this process ---------------------
 
 (def ^:private suite-config-file "scripts/lib/suite-configs.sh")
 (def ^:private storage-doc "docs/storage.md")
@@ -650,18 +705,18 @@
 
 (deftest every-backend-is-swept-or-excused
   ;; `test-backends.sh`, `test-sweeps.sh` and `test-matrix.sh` all read one bash array, so
-  ;; the roster has one place to be wrong in — and it is in another language, which is
+  ;; the list has one place to be wrong in — and it is in another language, which is
   ;; exactly why nothing in the engine notices when it goes short.  A backend added to
   ;; `kb/backend-modes` and not to that array runs under no configuration at all: the
   ;; matrix goes green on fifteen rows that never touched it.
   (let [swept  (suite-backends)
-        roster (set kb/backend-names)]
-    (is (= roster (into swept (keys unswept)))
+        names  (set kb/backend-names)]
+    (is (= names (into swept (keys unswept)))
         (str suite-config-file "'s ALL_BACKENDS plus `unswept` must be exactly"
              " kb/backend-names"))
     (is (empty? (filter swept (keys unswept)))
         "a backend cannot be both swept and excused")
-    (is (empty? (remove roster (keys unswept)))
+    (is (empty? (remove names (keys unswept)))
         "an excuse for a name that is not a backend has outlived what it excused")))
 
 (defn- documented-backends
@@ -722,7 +777,7 @@
               (refusal {:backend-modes (assoc (:backend-modes tables)
                                               :memory-tape {:records :memory :index :tape})})))
           "and on the index axis"))
-    (testing "a name for a pair the gates reject, where the refusal never mentions the name"
+    (testing "a name for a pair the pair checks reject, where the refusal never mentions the name"
       (is (= :illegal-pair
              (:mismatch (refusal {:backend-modes (assoc (:backend-modes tables)
                                                         :ram-snapshot {:records :memory :index :snapshot})})))))

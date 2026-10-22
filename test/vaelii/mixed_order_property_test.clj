@@ -39,7 +39,7 @@
   **What is compared, and why it is content.** Three readings, all handle-free:
 
   - the believed sentences **per assertion context**, and per **view** context up the
-    `genlCx` ancestor set (which is where the exception force and the visibility gate land);
+    `genlCx` ancestor set (which is where the exception force and the visibility condition land);
   - the belief label of each believed sentex — `defeat-class`, plus the contradiction
     and conflict tallies, so a flipped class or a double-counted dilemma surfaces;
   - the `genl` / `genlCx` closures at every probe type and context, plus the equality
@@ -56,7 +56,7 @@
   record sets. A stored sentex is not a believed one.
 
   **Every backend, one JVM.** `scripts/test-backends.sh` runs the whole suite on each of
-  the eight, which is the thorough gate and a thing somebody has to remember; this
+  the eight, which is the thorough regression test and a thing somebody has to remember; this
   opens all eight itself, so an order-dependence that only appears under the durable
   index fails in an ordinary `lein test`. The KBs are private — their own spaces, and a
   private temp directory per durable arm — so they share a store with nothing.
@@ -217,7 +217,7 @@
    ;; and the two `ownerOf` facts are four ingredients of one merge. Each arrival order
    ;; runs a different arm — the facts last meet an ingested mark, the mark last runs
    ;; `special/equate-existing`, the edge last runs `special/equate-under-edge`, whose
-   ;; gate read the arity-2 spelling alone until 0.14.0. Both fillers are symbols, so the
+   ;; mark check read the arity-2 spelling alone until 0.14.0. Both fillers are symbols, so the
    ;; pair merges rather than being refused, and the merge is a second route to the class
    ;; `kip-equals-kipper` elects.
    [[:one-keeper-per-animal
@@ -469,7 +469,7 @@
 (def ^:private default-seed 20260825)
 
 (deftest a-mixed-kb-reads-the-same-in-any-order
-  ;; Parity between orderings that all did nothing is worthless, so pin the pool down
+  ;; Parity between orderings that all did nothing is worthless, so assert the pool's shape
   ;; first: run every chain in the order written and check the KB it builds is the
   ;; interaction-dense one the docstring claims.
   (testing "the pool is not vacuous"

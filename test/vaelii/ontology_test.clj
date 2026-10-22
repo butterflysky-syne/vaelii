@@ -4,7 +4,7 @@
   "The shipped ontology as a *modelling* claim, where `starter-test` reads it as a schema
   that loads and reasons.
 
-  What is pinned here is the structure of the mini-ontology rather than any one inference:
+  This namespace asserts the structure of the mini-ontology rather than any one inference:
   which names are types and which are properties, that every type is placed under the
   root, that an ability is an event kind related to a kind rather than spelled as a
   predicate of its own, and how a claim about a kind reaches the kinds beneath it and
@@ -58,25 +58,69 @@
     (is (not (contains? (set (v/terms kb)) 'capability)))
     (is (empty? (v/find-sentexes kb 'capability)))))
 
-(tu/deftest-kb both-ability-predicates-type-their-second-argument-as-an-event-kind
+(tu/deftest-kb all-dogs-have-shell-access
+  ;; Asserts that argument 2 of capabilityType and of hasCapability is a happening kind, not
+  ;; only an event kind.  Shell access comes and goes: a dog logs in, wanders off, and logs
+  ;; in again, so shell_access lies under happening and intermittent, never under event.
+  ;; Both predicates take it with no clash, and neither places it under event.
+  (tu/with-terms [shell_access Rex]
+    (v/assert kb (list 'genl shell_access 'happening) 'CxUniverse)
+    (v/assert kb (list 'genl shell_access 'intermittent) 'CxUniverse)
+    (v/assert kb (list 'capabilityType 'dog shell_access) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'capabilityType 'dog shell_access) 'CxUniverse))
+        "every dog may have shell access")
+    (v/assert kb (list 'dog Rex) 'CxUniverse)
+    (v/assert kb (list 'hasCapability Rex shell_access) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'hasCapability Rex shell_access) 'CxUniverse))
+        "and this one does")
+    (is (not (v/genl? kb shell_access 'event)) "a happening with a gap is no event")
+    (is (empty? (v/conflicts kb)) "and nothing clashes")))
+
+(tu/deftest-kb both-ability-predicates-type-their-second-argument-as-a-happening-kind
   (testing "the declarations"
-    (is (v/ask? kb '(genlArg hasCapability 2 event)))
-    (is (v/ask? kb '(genlArg capabilityType 2 event))))
+    (is (v/ask? kb '(genlArg hasCapability 2 happening)))
+    (is (v/ask? kb '(genlArg capabilityType 2 happening))))
   (testing "an event kind nobody listed as an ability is accepted as one"
     (tu/with-terms [swimming Wanda]
       (v/assert kb (list 'genl swimming 'event) 'CxUniverse)
       (v/assert kb (list 'animal Wanda) N)
       (is (v/assert kb (list 'hasCapability Wanda swimming) N))
       (is (v/assert kb (list 'capabilityType 'fish swimming) N))))
-  (testing "a kind that is not an event kind is convicted by genlArg, against event"
-    ;; Pinned to the constraint-only reading, where `check` reports the conviction.
+  (testing "a kind that is not a happening kind is convicted by genlArg, against happening"
+    ;; Forced to the constraint-only reading, where `assert` holds the fact inert.
     (tu/without-entailing
      (tu/with-terms [Wanda]
        (v/assert kb (list 'animal Wanda) N)
-       (doseq [s [(list 'hasCapability Wanda 'metal) (list 'capabilityType 'fish 'metal)]]
-         (let [p (first (filter #(= :arg-genl (:type %)) (v/check kb s N)))]
+       (doseq [s [(list 'hasCapability Wanda 'metal_stuff) (list 'capabilityType 'fish 'metal_stuff)]]
+         (let [p (first (filter #(= :arg-genl (:type %)) (tu/check-or-conviction kb s N)))]
            (is (= :arg-genl (:type p)) (str (pr-str s) " is convicted by genlArg"))
-           (is (= 'event (:expected p)) (str (pr-str s) " is convicted against event"))))))))
+           (is (= 'happening (:expected p)) (str (pr-str s) " is convicted against happening"))))))))
+
+(tu/deftest-kb the-first-position-of-hasCapability-takes-any-causal-doer
+  ;; A doer is whatever doneBy can name, and that is wider than animal: a machine or an
+  ;; organization can be the doer of an event.  What cannot is an acausal thing, which
+  ;; can occupy no cause slot.  Forced to the constraint-only reading, where `assert`
+  ;; holds the fact under the conviction.
+  (tu/without-entailing
+   (tu/with-terms [Pump Acme Noon]
+     (v/assert kb (list 'machine Pump) N)
+     (v/assert kb (list 'organization Acme) N)
+     (v/assert kb (list 'time Noon) N)
+     (testing "the declaration, which names causal and not animal"
+       (is (v/ask? kb '(arg hasCapability 1 causal)))
+       (is (not (v/ask? kb '(arg hasCapability 1 animal)))))
+     (testing "the doers that are not animals"
+       (is (v/genl? kb 'machine 'causal))
+       (is (v/genl? kb 'organization 'causal))
+       (is (= [] (v/check kb (list 'hasCapability Pump 'travelling) N)) "a machine")
+       (is (= [] (v/check kb (list 'hasCapability Acme 'event) N)) "an organization"))
+     (testing "an acausal thing is still convicted, against causal"
+       (is (v/genl? kb 'time 'acausal))
+       (let [p (first (filter #(= :arg-type (:type %))
+                              (tu/check-or-conviction kb (list 'hasCapability Noon 'travelling) N)))]
+         (is (some? p) "a time can be the doer of nothing")
+         (is (= 1 (:position p)))
+         (is (= 'causal (:expected p))))))))
 
 (tu/deftest-kb a-bird-that-flies-travels
   ;; flying genl travelling, and (transitiveInArg hasCapability 2 genl) carries a
@@ -123,6 +167,26 @@
   (testing "and at the member, by its own rule"
     (is (seq (v/sentexes-matching kb '(not (hasCapability Tweety flying)) N)))))
 
+(tu/deftest-kb a-life-stage-takes-a-kind-claim-of-its-own
+  ;; One lineage, two stages: the adult flies and the larva does not.  Both stages are
+  ;; kinds of the lineage, and each stage carries its own capability claim.
+  (testing "the stages are kinds of the lineage, named by their stage relation"
+    (is (v/ask? kb '(genl caterpillar lepidopteran) B))
+    (is (v/ask? kb '(genl butterfly lepidopteran) B))
+    (is (v/ask? kb '(larvalFormOf caterpillar lepidopteran) B))
+    (is (v/ask? kb '(adultFormOf butterfly lepidopteran) B)))
+  (testing "never both at once, though one organism is each in turn"
+    (is (v/ask? kb '(diachronicallyDisjoint caterpillar butterfly) B))
+    (is (v/ask? kb '(diachronicallyDisjoint butterfly caterpillar) B) "symmetric")
+    (is (not (true? (v/disjoint? kb 'caterpillar 'butterfly))) "and not timelessly disjoint"))
+  (testing "a timeless disjoint is also a diachronic one"
+    (is (v/ask? kb '(diachronicallyDisjoint quantity situation) B)))
+  (testing "the adult flies"
+    (is (v/ask? kb '(capabilityType butterfly flying) B)))
+  (testing "the larva does not, and the KB says so rather than staying silent"
+    (is (not (v/ask? kb '(capabilityType caterpillar flying) B)))
+    (is (seq (v/sentexes-matching kb '(not (capabilityType caterpillar flying)) '?ctx)))))
+
 (tu/deftest-kb a-claim-about-a-kind-does-not-reach-its-members-on-its-own
   ;; The bridge is a rule, written once and deliberately, because "every bird flies" and
   ;; "this bird flies" differ by a quantifier the KB will not guess (typeToInstancePred).
@@ -141,18 +205,18 @@
   ;; the entailing reading: the derivation is the subject
   (tu/with-entailing
     ;; One symbol read at both levels has to pick one argument check for both, and whichever
-    ;; it picks convicts the half it was not written for: `arg … 1 animal` is right for
+    ;; it picks convicts the half it was not written for: `arg … 1 causal` is right for
     ;; `(… Tweety flying)` and wrong for `(… bird flying)`, since a kind is not a member of
     ;; the type it lies under.  So: two predicates, the kind-level one marked, and the pair
     ;; named in prose because the predicate that names pairs cannot take a mixed half.
     (testing "the kind-level half relates kinds, and says so"
       (is (v/ask? kb '(type_relation_predicate capabilityType))))
-    (testing "the instance-level half is MIXED — one animal to one event kind — so it
+    (testing "the instance-level half is MIXED — one causal thing to one event kind — so it
             carries no relation_kind, and its two positions take different checks"
       (is (not (v/ask? kb '(instance_relation_predicate hasCapability))))
       (is (not (v/ask? kb '(type_relation_predicate hasCapability))))
-      (is (v/ask? kb '(arg hasCapability 1 animal)))
-      (is (v/ask? kb '(genlArg hasCapability 2 event))))
+      (is (v/ask? kb '(arg hasCapability 1 causal)))
+      (is (v/ask? kb '(genlArg hasCapability 2 happening))))
     (testing "so declaring the pairing would mark the mixed half — typeToInstancePred
             types its second argument an instance half, and derives that mark"
       (tu/with-terms [CxPairing]
@@ -187,74 +251,39 @@
                       :when (seq ps)]
                   [(:sentence sx) (:context sx) (mapv :type ps)])]
     (is (empty? guilty)
-        (str "shipped facts their own declarations convict: " (vec guilty)))))
+        (str "shipped facts their own declarations convict: " (vec guilty)))
+    (is (empty? (filter #(= :inert-argument (:violation %)) (v/violations kb)))
+        "and none is held inert")))
 
-(def ^:private untyped-positions
-  "The argument positions of arity **2 and up** that the shipped text contexts leave
-  undeclared, each with the reason no `arg` / `genlArg` / `quotedArg` can name it.  A
-  position that is not here and not declared fails the test below; a position here that
-  gains a declaration fails it too, so the roster stays a list of reasons rather than a
-  list of debts.
+(def ^:private undeclared-positions
+  "The argument positions of arity **2 and up** that the shipped text contexts declare with
+  no `arg`-family form, each with the reason.  A position that holds a term of any kind
+  declares `thing` (`(arg P n thing)`), and a position that holds a term taken as written
+  declares the expression type with `quotedArg`, so neither belongs here.  What remains is
+  a position no declaration fits.
 
-  A **unary** predicate's one position is exempt as a class and is not rostered — see
-  the test."
+  A position that is not here and not declared fails the test below; a position here that
+  gains a declaration fails it too.
+
+  A **unary** predicate's one position is exempt as a class and is not listed — see the
+  test."
   (merge
-   {'[genl 1]  "predicate specializations: (genlArg genl 1 thing) is false of (genl predicateTypeByArity relationTypeByArity), whose ends are binary predicates"
-    '[genl 2]  "the root: (genlArg genl 2 thing) would entail (genl thing thing), refused as irreflexive"
-    '[comment 1] "the commented term: a type, a predicate, an individual or a context, so no type below thing covers it"}
-   ;; slots that hold a term of any kind, which no type below thing covers
-   {'[believes 1]           "a believer, whose type the upper ontology does not name"
-    '[evaluate 2]           "an evaluate expression: a number or an application"
-    '[likes 2]              "what a person likes"
-    '[termOfUnit 1]         "the reified constant of a termOfUnit"
-    '[rewriteOf 1]          "either side of a rewriteOf"
-    '[rewriteOf 2]          "either side of a rewriteOf"
-    '[seeAlso 1]            "a cross-referenced term"
-    '[seeAlso 2]            "a cross-referenced term"
-    '[doneBy 2]             "an event's doer: a person, an animal, a machine or a process"
-    '[performedBy 2]        "an event's doer: a person, an animal, a machine or a process"
-    '[perceives 1]          "a perceiver, whose type the upper ontology does not name"
-    '[sees 1]               "a perceiver, whose type the upper ontology does not name"
-    '[seeImage 1]           "a perceiver, whose type the upper ontology does not name"
-    '[seeImage 2]           "the image perceived: a thing of any kind"
-    '[watchVideo 1]         "a perceiver, whose type the upper ontology does not name"
-    '[watchVideo 2]         "the video perceived: a thing of any kind"
-    '[agentHasTool 1]       "what a tool is available to, whose types the upper ontology does not name"
-    '[toolArgType 3]        "the type a tool's argument takes: a type of any kind"
-    '[argN 1]               "the term found at a position of a formula"
-    '[sameAs 1]             "either side of a sameAs"
-    '[sameAs 2]             "either side of a sameAs"
-    '[equals 1]             "either side of an equals"
-    '[equals 2]             "either side of an equals"
-    '[input 2]              "what went into an event: a thing of any kind"
-    '[destroyedInput 2]     "what went into an event: a thing of any kind"
-    '[preservedInput 2]     "what went into an event: a thing of any kind"
-    '[output 2]             "what an event left behind, tangible or intangible"
-    '[predAllInstance 3]    "a rule generator's fixed filler"
-    '[predExistsInstance 3] "a rule generator's fixed filler"
-    '[predInstanceAll 2]    "a rule generator's fixed filler"
-    '[predInstanceExists 2] "a rule generator's fixed filler"
-    '[predExistsInstancePlaceholder 3] "an Exists cell's fixed filler"
-    '[predInstanceExistsPlaceholder 2] "an Exists cell's fixed filler"
-    '[means 2]              "the meaning: what a term denotes or the proposition a sentence expresses, a thing of any kind"
-    '[denotes 2]            "what a denotational_term names: a thing of any kind"
-    '[closedExtentForArg 3]  "the argument value a closed extent is granted for: a term of any kind"
-    '[closedExtentForArg1 2] "the argument value a closed extent is granted for: a term of any kind"
-    '[closedExtentForArg2 2] "the argument value a closed extent is granted for: a term of any kind"
-    '[closedExtentForArg3 2] "the argument value a closed extent is granted for: a term of any kind"}
+   {'[genl 1] "predicate specializations: (genlArg genl 1 thing) is false of (genl performedBy doneBy), whose ends are binary predicates (core.txt, beside genl)"
+    '[genl 2] "the root: (genlArg genl 2 thing) would entail (genl thing thing), refused as irreflexive (core.txt, beside genl)"}
+   ;; the example: (Quote S), whose arg reading derives a membership of a reified
+   ;; constant or of a bare symbol written in its place, and whose quotedArg reading
+   ;; names no syntactic type of the form
    (into {} (for [p '[positiveExample negativeExample borderlineExample]]
-              {[p 1] "an exemplified term"
-               [p 2] "the example, a sentence written as a term"}))
-   ;; the five aggregation operators: a result variable, a census variable, a sentence body
+              [[p 2] "the example, a quoted sentence (Quote …)"]))
+   ;; the five aggregation operators: a result, a value variable, a sentence body.  Each
+   ;; is a query operator that is never stored, and a type on a slot reaches the rule
+   ;; variables bound there.
    (into {} (for [op '[agg/count agg/sum agg/avg agg/min agg/max] i [1 2 3]]
-              [[op i] "an operator slot — a variable, a variable and a sentence body"]))
-   ;; koinii's speech acts name their target as (sentexHandle H) — a mention the engine
-   ;; mints with no result type — or carry a proposition; a demand on either would
-   ;; convict every meta-sentex the app writes
-   (into {} (for [[p i] '[[asserts 2] [queries 2] [answers 2] [answers 3] [justifies 2]
-                          [justifies 3] [disputes 2] [endorses 2] [refuse 2] [retracts 2]
-                          [votesFor 2] [votesAgainst 2] [notUnderstood 2]]]
-              [[p i] "a sentex handle or a proposition, a mention no argument type names"]))))
+              [[op i] "an operator slot — a result, a value variable and a sentence body"]))
+   ;; the stored exception (exceptWhen Q (sentexHandle H)): assert-entry/assert-exceptWhen-meta!
+   ;; runs no argument check on it, and it is excluded from fact matching
+   {'[exceptWhen 1] "the exception query, whose variables are the rule's, so a type on the slot would reach the rule variables bound there"
+    '[exceptWhen 2] "the sentexHandle of the rule the exception qualifies, a mention of a stored sentex"}))
 
 (deftest every-shipped-function-declares-its-corresponding-predicate
   ;; A function comes with the predicate relating its arguments to its value
@@ -274,7 +303,7 @@
     (is (empty? (remove corr fns))
         (str "functions declaring no corresponding predicate: " (pr-str (sort (remove corr fns)))))))
 
-(deftest every-position-of-a-shipped-arity-above-one-is-typed-or-excused
+(deftest every-position-of-a-shipped-arity-above-one-is-declared
   ;; Read off the text files rather than a loaded KB, because the claim is about what the
   ;; contexts *write*: an author declaring (arity P n) for n above 1, or a class that
   ;; fixes such an n, owes a type for every one of the n positions — `check` reads only
@@ -321,12 +350,12 @@
                             i    (range 1 (inc n))
                             :when (not (declared [p i]))]
                         [p i]))
-        excused  (set (keys untyped-positions))]
+        excused  (set (keys undeclared-positions))]
     (is (seq arities) "the text contexts were found and read")
     (is (empty? (remove excused gaps))
-        (str "positions the shipped contexts leave untyped: " (pr-str (sort (remove excused gaps)))))
+        (str "positions the shipped contexts leave undeclared: " (pr-str (sort (remove excused gaps)))))
     (is (empty? (remove gaps excused))
-        (str "excused positions that are now declared (drop them from the roster): "
+        (str "listed positions that are now declared (drop them from undeclared-positions): "
              (pr-str (sort (remove gaps excused)))))))
 
 ;; ---- the exception mechanism itself, apart from birds --------------------
@@ -371,33 +400,39 @@
       (is (empty? (filter #(= :inherited (:kind %))
                           (concat (v/contradictions kb) (v/conflicts kb))))))))
 
-;; ---- what is a type, and what is only a property ------------------------
+;; ---- the biology properties and the kinds they are said of ---------------
 
 (def ^:private biology-properties
   "The seven life.txt properties placed under the kind each is said of."
   '{alive biological, dead biological, mortal organism,
     asleep animal, awake animal, breathes_air animal, warm_blooded animal})
 
-(tu/deftest-kb a-type-is-a-noun-and-a-property-is-not-a-type
+(tu/deftest-kb the-biology-properties-are-placed-under-their-kind
   ;; The naming rules make `alive` and `mortal` legal unary predicates, and nothing in
-  ;; them says whether a name belongs in the genl hierarchy.  That is a modelling
-  ;; decision: a type is a kind of thing and wants a noun, while a property is something
-  ;; a thing *is*.  A property may sit BELOW the kind it is said of — the alive
-  ;; organisms are some of the organisms — but never above a kind: that would make
-  ;; "mortal" a kind that organisms are a kind OF.  Were one wanted as a type in that
-  ;; sense it would be spelled for it — `mortal_being`, not `mortal`.
+  ;; them says where a name sits in the genl hierarchy.  Each of these properties is
+  ;; said of one kind, so it is placed under that kind: only an animal is warm-blooded,
+  ;; and `(warm_blooded Rock1)` is a type clash.  A kind may sit below one of them, as
+  ;; `bird` and `mammal` sit below `warm_blooded`, and the kind a property is said of
+  ;; never does.  Spelling a type as a noun and a
+  ;; property as an adjective is a style hint, not a rule of the hierarchy.
   (testing "the properties the biology theory concludes are placed under their kind"
     (doseq [[p kind] biology-properties]
       (is (v/genl? kb p kind) (str p " is placed under " kind))
       (is (v/genl? kb p 'thing) (str p " reaches thing"))
       (is (v/isa? kb p 'unary_predicate)
-          (str p " is still a one-place predicate"))))
-  (testing "and no type sits below any of them"
-    (doseq [p (keys biology-properties)]
-      (is (= #{p} (v/specs kb p))
-          (str p " is a property, not a kind — nothing may be placed under it"))
-      (is (not (v/genl? kb (biology-properties p) p))
-          (str (biology-properties p) " is not a kind of " p))))
+          (str p " is still a one-place predicate"))
+      (is (not (v/genl? kb kind p)) (str kind " is not placed under " p))))
+  (testing "a kind may sit below one: every bird and every mammal is warm-blooded"
+    (doseq [t '[bird mammal penguin dog]]
+      (is (v/genl? kb t 'warm_blooded) (str t " is placed under warm_blooded")))
+    (tu/with-terms [Pingu Rex Nemo]
+      (v/assert kb (list 'penguin Pingu) 'CxWell)
+      (v/assert kb (list 'dog Rex) 'CxWell)
+      (v/assert kb (list 'fish Nemo) 'CxWell)
+      (is (v/ask? kb (list 'warm_blooded Pingu) 'CxWell) "a penguin is warm-blooded")
+      (is (v/ask? kb (list 'warm_blooded Rex) 'CxWell) "a dog is warm-blooded")
+      (is (v/ask? kb (list 'not (list 'warm_blooded Nemo)) 'CxWell)
+          "a fish is not, by the rule that denies it")))
   (testing "while the kinds they are said of are types, and reach the root"
     (doseq [t '[animal bird penguin dog person tangible event flying]]
       (is (v/genl? kb t 'thing) (str t " must reach thing")))))
@@ -414,8 +449,8 @@
 (def ^:private placed-unary-predicates
   "Fifteen shipped `unary_predicate` terms each placed under `thing` by a stated `genl`
   edge, so the `:not-under-thing` sweep (docs/integrity.md) reports none of them.  The
-  seven biology properties among them are placed under the kind each is said of, and
-  `a-type-is-a-noun-and-a-property-is-not-a-type` holds that no kind sits below one."
+  seven biology properties among them are placed under the kind each is said of, as
+  `the-biology-properties-are-placed-under-their-kind` holds."
   '#{initially functional_at_instant
      abducible_predicate closed_extent_predicate decontextualized_predicate
      target_following_predicate forced_decontextualized_predicate
@@ -562,13 +597,12 @@
   ;; concludes no more than it does, so no rule in the ontology is carrying its weight
   ;; only because somebody wrote it twice at two levels of the hierarchy.
   ;;
-  ;; The arity generator is the case that tests the claim.  It stamps one rule per
-  ;; `relationTypeByArity` fact, and CxUniverse ships three — over `unary`, `binary` and
-  ;; `ternary`.  A `(predicateTypeByArity unary_predicate 1)` fact beside them would
-  ;; stamp a fourth firing wherever the first already fires, since `unary_predicate`
-  ;; is a `unary`; CxUniverse states that membership with a `genl` edge instead, so the
-  ;; reading stays at zero and a mapping table that grew a redundant member would
-  ;; show up here.
+  ;; The arity generators are the case that tests the claim.  The relation-wide one
+  ;; generates one rule per `relationTypeByArity` fact, over `unary` through `quinary`,
+  ;; and the predicate and function ones generate a rule per mapping fact over the ten
+  ;; kind classes, each guarded by its kind.  A guarded rule concludes a kind
+  ;; class the relation-wide rule does not, so neither covers the other, and a mapping
+  ;; table that grew a redundant member would show up here.
   (let [q (:subsumption (v/kb-quality kb {:limit 100}))]
     (is (pos? (:total q)) "the reading ran over rules rather than over nothing")
     (is (not (:truncated? q)) "and over all of them")
@@ -576,7 +610,7 @@
         (str "covered: " (pr-str (mapv (juxt :by-sentence :sentence) (:subsumed q)))))))
 
 (tu/deftest-kb a-generated-rule-is-not-exempt-from-the-subsumption-reading
-  ;; The reading does not spare a rule for having been stamped by a generator: a
+  ;; The reading does not spare a rule for having been generated by a generator: a
   ;; mapping fact over a type and a second over its subtype mint two rules, and the
   ;; narrower one fires nowhere the broader does not.
   (tu/with-terms [broad_type narrow_type outcome_type generatesType]
@@ -591,7 +625,7 @@
           pair [(v/handle-of kb (rule broad_type) 'CxUniverse)
                 (v/handle-of kb (rule narrow_type) 'CxUniverse)]
           q (:subsumption (v/kb-quality kb {:limit 100}))]
-      (is (every? some? pair) "both rules are stamped")
+      (is (every? some? pair) "both rules are generated")
       (is (not (:truncated? q)))
       (is (some #(= pair [(:by %) (:subsumed %)]) (:subsumed q))
           "the narrower generated rule is reported as covered"))))
@@ -602,10 +636,17 @@
   ;; penguin's, wakefulness against sleep, life against death, and the shepherd boy's
   ;; credibility against his lying — is one of the two rules **stating** the other as an
   ;; `exceptWhen`, which is what `:excepted` marks.  Nothing else is left: the arity table
-  ;; would be three `:functional` pairs, each two of the classification rules concluding a
-  ;; different `(arity ?p n)` for one `?p`, and the three classes are declared pairwise
-  ;; `disjoint`, so no `?p` satisfies two antecedents and the pairs are unreachable rather
-  ;; than unstated (docs/quality.md).
+  ;; would be `:functional` pairs, each two of the classification rules concluding a
+  ;; different `(arity ?p n)` for one `?p`, and the five exact classes are separated, so no
+  ;; `?p` satisfies two antecedents and the pairs are unreachable rather than unstated
+  ;; (docs/quality.md).
+  ;;
+  ;; The arity floors would be 82 `:disjoint` pairs.  A floor rule reads `(arity ?r ?n)`
+  ;; with `(lessThan k ?n)` and concludes `(at_least_… ?r)`, which is disjoint from every
+  ;; exact class of k places or fewer, and a rule concluding that class or claiming that
+  ;; arity binds the same `?r` to exactly k places or fewer.  The arity table is
+  ;; functional, so no `?r` satisfies both antecedents, and `arity-floor-conflicted?` drops
+  ;; every such pair as unreachable.
   ;;
   ;; No `:disjoint` pair is left.  CxCriedWolf's `lied_before → liar` concludes a person,
   ;; and two kinds of rule conclude a type disjoint from one: the signed refinements of
@@ -615,15 +656,44 @@
   ;; `arg` declarations: `(arg lied_before 1 person)` types the liar rule's variable a
   ;; `person`, disjoint from what the other rule states or concludes about the same term,
   ;; so `arg-type-conflicted?` drops every such pair as unreachable (vaelii#95).
-  (let [pairs (:pairs (:clashes (v/kb-quality kb {:limit 100})))
-        kinds (frequencies (map :kind pairs))]
-    (is (= {:negation 4} kinds)
+  ;;
+  ;; Two pairs are left unexcepted on purpose.  A proper reading's definition concludes a
+  ;; proper tangible part or a proper sub-situation, so a part, and the root rule
+  ;; `(properPartOf x y) → (not (partOf y x))` denies one.  Both fire for one tuple only
+  ;; where the facts already contradict the root rule: a part whose whole is stated a proper
+  ;; part of it.  Both rules are strict definitions, so that clash is the one the facts owe,
+  ;; and an exception would hide it.
+  (let [pairs       (:pairs (:clashes (v/kb-quality kb {:limit 100})))
+        kinds       (frequencies (map :kind pairs))
+        root-denial '(implies (properPartOf ?part ?whole) (not (partOf ?whole ?part)))
+        definition? #(some #{root-denial} (:sentences %))]
+    (is (= {:negation 6} kinds)
         (str "clashes: " (pr-str (mapv (juxt :kind :sentences) pairs))))
-    (is (every? :excepted (filter #(= :negation (:kind %)) pairs))
-        "negation clashes are excepted")))
+    (is (every? :excepted (remove definition? (filter #(= :negation (:kind %)) pairs)))
+        "negation clashes are excepted")
+    (is (= 2 (count (filter definition? pairs)))
+        "and the root denial meets the two proper readings' definitions, unexcepted")))
+
+(tu/deftest-kb a-type-relation-predicate-relates-predicates
+  ;; Every argument of a type_relation_predicate is a predicate: the kinds it relates are
+  ;; unary predicates, and genl relates predicate specializations of any arity as well.
+  ;; core.txt concludes that forward from the relation kind, as (args ?relation predicate).
+  (testing "disjoint's arguments derive as predicates"
+    (is (= [{'?t 'predicate}] (v/query kb '(args disjoint ?t) 'CxUniverse))))
+  (testing "and genl's, whose binary-predicate edges are predicates and not unary ones"
+    (is (= [{'?t 'predicate}] (v/query kb '(args genl ?t) 'CxUniverse)))
+    (is (v/ask? kb '(genl performedBy doneBy) 'CxUniverse)))
+  (testing "the declaration reaches the rule-clash reading"
+    ;; `(unary ?type) (disjoint ?type ?type) → (empty ?type)` demands ?type be a predicate
+    ;; through disjoint's args, and `(function ?r) (arity ?r 1) → (unary_function ?r)` places
+    ;; the same term under function.  predicate and function are disjoint, so the pair is
+    ;; unreachable and arg-type-conflicted? drops it.
+    (let [pairs (:pairs (:clashes (v/kb-quality kb {:limit 100})))]
+      (is (not-any? (fn [p] (some #(some #{'empty} (flatten %)) (:sentences p))) pairs)
+          (str "the emptiness rule pairs with nothing: " (pr-str (mapv :sentences pairs)))))))
 
 (tu/deftest-kb the-arity-rules-clash-with-each-other-in-neither-direction
-  ;; The reading's own half of the arity separation.  The generator stamps one rule per
+  ;; The reading's own half of the arity separation.  The generator generates one rule per
   ;; exact class, and two of them conclude two arities for one relation only where the
   ;; relation holds both classes — which `(disjoint unary binary)` and its two peers
   ;; refuse on the antecedents.  No `?relation` satisfies two of them, so the pair is
@@ -635,14 +705,19 @@
   ;; antecedents' `arg` declarations too: `(arg arity 1 relation)` types the arity rule's
   ;; variable a `relation`, disjoint from the `person` the paired rule concludes, so
   ;; `arg-type-conflicted?` drops the pair as unreachable (vaelii#95).  The arity table
-  ;; therefore pairs with nothing.
+  ;; therefore pairs with nothing.  An arity floor beside an exact class binds one relation
+  ;; above and at or below one length, and `arity-floor-conflicted?` drops that pair, so
+  ;; the floors pair with nothing either.
   (let [pairs   (:pairs (:clashes (v/kb-quality kb {:limit 100})))
         about   (fn [f] (filter (fn [p] (some #(some #{f} (flatten %)) (:sentences p)))
                                 pairs))]
     (is (empty? (about 'arity))
         (str "the arity table pairs with nothing: " (pr-str (mapv :sentences (about 'arity)))))
     (is (empty? (about 'unary_predicate))
-        (str "nor do the classes: " (pr-str (mapv :sentences (about 'unary_predicate)))))))
+        (str "nor do the classes: " (pr-str (mapv :sentences (about 'unary_predicate)))))
+    (doseq [floor '[at_least_binary at_least_ternary at_least_quaternary at_least_quinary]]
+      (is (empty? (about floor))
+          (str "nor does " floor ": " (pr-str (mapv :sentences (about floor))))))))
 
 (tu/deftest-kb a-predicate-is-at-most-one-of-the-three-arity-classifications
   ;; The declaration that empties the reading above.  A predicate takes one number of
@@ -722,11 +797,11 @@
     (is (v/genl? kb 'dog 'spatial))))
 
 (defn- refusal
-  "The `:type` of the ex-info `assert` throws for `sentence`, or `:stored` when it takes
-  it (and then retracts it again, so the probe leaves nothing behind)."
+  "The `:type` of the ex-info `assert` throws for `sentence`, or of the argument conviction
+  it holds the fact inert under, or `:stored` when it takes it and holds nothing.  A fact
+  the probe stored is retracted again (`tu/write-conviction`)."
   [kb sentence context]
-  (try (some->> (v/assert kb sentence context) (v/retract! kb)) :stored
-       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (or (:type (tu/write-conviction kb sentence context)) :stored))
 
 (tu/deftest-kb a-time-is-in-time-and-in-no-space-and-causes-nothing
   ;; A date cannot be a cause: the year 2000 broke nothing — two-digit years did, at the
@@ -887,9 +962,10 @@
 ;; Two partitions of `thing`.  `spatial` / `aspatial` divides by a location in SOME space —
 ;; physical space, or a mathematical one, where a line or a square of an abstract board
 ;; has a location and none in the world.  `tangible` / `intangible` divides by mass.
-;; `spatiotemporal` is below `spatial` and `temporal`: what has a location in space and
-;; time.  CxUniverse states the two edges as `genl` edges and not as an intersection, so a
-;; thing stated spatial and temporal is not concluded spatiotemporal; `nowhere_never` is
+;; `spatiotemporal` is below `physical` and `temporal`, and so below `spatial`: what has a
+;; location in physical space and time.  CxUniverse states the edges as `genl` edges and not
+;; as an intersection, so a thing stated spatial and temporal is not concluded
+;; spatiotemporal; `nowhere_never` is
 ;; placed below `aspatial` and `atemporal` the same way.  The spatial calculi relate
 ;; anything spatial.  A region is the case the two partitions cross on: spatiotemporal,
 ;; and massless.
@@ -915,6 +991,41 @@
       (is (true? (v/ask? kb (list 'spatiotemporal Pebble) 'CxUniverse)))
       (is (true? (v/ask? kb (list 'spatial Pebble) 'CxUniverse)))
       (is (true? (v/ask? kb (list 'temporal Pebble) 'CxUniverse))))))
+
+;; `physical` is `spatial` narrowed to the physical space of our universe.  spatiotemporal
+;; is by definition what is physical and temporal, and CxUniverse places it below both by
+;; genl edges and not by an intersection, so neither the membership nor its negation is
+;; concluded from the two types.
+
+(tu/deftest-kb spatiotemporal-is-below-physical-and-physical-below-spatial
+  (is (true? (v/genl? kb 'physical 'spatial)))
+  (is (true? (v/genl? kb 'spatiotemporal 'physical)))
+  (is (true? (v/genl? kb 'spatiotemporal 'temporal)))
+  (is (true? (v/genl? kb 'tangible 'physical))))
+
+(tu/deftest-kb a-tangible-individual-is-physical-and-spatial
+  (tu/with-terms [Pebble]
+    (v/assert kb (list 'tangible Pebble) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'physical Pebble) 'CxUniverse)))
+    (is (true? (v/ask? kb (list 'spatial Pebble) 'CxUniverse)))))
+
+(tu/deftest-kb something-physical-and-temporal-is-not-concluded-spatiotemporal
+  (is (true? (v/genl? kb 'spatiotemporal 'physical)))
+  (tu/with-terms [CxPond Puddle]
+    (v/assert kb (list 'genlCx CxPond 'CxUniverse) 'CxUniverse)
+    (v/assert kb (list 'physical Puddle) CxPond)
+    (v/assert kb (list 'temporal Puddle) CxPond)
+    (is (not (v/ask? kb (list 'spatiotemporal Puddle) CxPond)))
+    (is (not (v/ask? kb (list 'not (list 'spatiotemporal Puddle)) CxPond)))))
+
+(tu/deftest-kb a-line-in-the-plane-is-not-concluded-physical
+  ;; Located in the Cartesian plane and in no time, the line y=x is spatial and atemporal.
+  (is (true? (v/genl? kb 'physical 'spatial)))
+  (tu/with-terms [Diagonal]
+    (v/assert kb (list 'spatial Diagonal) 'CxUniverse)
+    (v/assert kb (list 'atemporal Diagonal) 'CxUniverse)
+    (is (not (v/ask? kb (list 'physical Diagonal) 'CxUniverse)))
+    (is (not (v/ask? kb (list 'not (list 'physical Diagonal)) 'CxUniverse)))))
 
 (tu/deftest-kb an-abstract-figure-is-spatial-without-being-spatiotemporal
   ;; A line in a plane has a location in that plane and none in the world, no mass,
@@ -955,7 +1066,7 @@
 (tu/deftest-kb spatial-and-aspatial-partition-thing
   (is (true? (v/disjoint? kb 'spatial 'aspatial)))
   (is (true? (v/disjoint? kb 'spatiotemporal 'aspatial))
-      "the partition separates spatiotemporal from aspatial through the genl to spatial")
+      "the partition separates spatiotemporal from aspatial through physical's genl to spatial")
   (is (true? (v/genl? kb 'spatial 'thing)))
   (is (true? (v/genl? kb 'aspatial 'thing)))
   (testing "a thing cannot be both"
@@ -1072,18 +1183,18 @@
 
 (tu/deftest-kb the-closed-extent-grants-pass-the-integrity-sweep
   ;; New vocabulary is swept with kb-integrity over its own terms, in the context that
-  ;; declares it.  The review-only :missing-arg pass reports every untyped position; a
-  ;; position untyped-positions excuses is expected, and any other fails here.
-  (let [terms '#{closedExtentForArg closedExtentForArg1 closedExtentForArg2 closedExtentForArg3}]
+  ;; declares it.  The review-only :missing-arg pass reports every undeclared position,
+  ;; and each position of the six grants is declared.
+  (let [terms '#{closedExtentForArg closedExtentForArg1 closedExtentForArg2 closedExtentForArg3
+                 closedExtentForArg4 closedExtentForArg5}]
     (is (= :audited (:status (v/kb-integrity kb terms 'CxUniverse)))
         "the default passes find nothing")
     (let [missing (:missing-arg (v/kb-integrity kb terms 'CxUniverse {:categories #{:missing-arg}}))]
       (is (empty? (for [{:keys [predicate missing]} missing
                         :when (contains? terms predicate)
-                        i     missing
-                        :when (not (contains? untyped-positions [predicate i]))]
+                        i     missing]
                     [predicate i]))
-          "every untyped position of a new term is one the roster excuses"))))
+          "every position of the six grants is declared"))))
 
 (tu/deftest-kb what-has-no-place-in-space-or-time-has-no-mass
   ;; Mass entails a location in space and time, so what lacks either lacks mass.
@@ -1171,6 +1282,21 @@
       (v/assert kb (list 'organism PitcherPlant) 'CxUniverse)
       (is (not (tu/stored-in-clash? kb (list 'hollow PitcherPlant) 'CxUniverse))))))
 
+(tu/deftest-kb a-wing-is-never-fur
+  ;; A bat's wing has fur on it, and the fur is part of the wing.  That is parthood, not
+  ;; one thing in both types, so wing and fur are stated disjoint.
+  (is (true? (v/disjoint? kb 'wing 'fur)))
+  (is (= :disjoint (v/subsumption-status kb 'wing 'fur)))
+  (testing "a fur-covered wing is no clash"
+    (tu/with-terms [BatWing BatFur]
+      (v/assert kb (list 'wing BatWing) 'CxUniverse)
+      (v/assert kb (list 'fur BatFur) 'CxUniverse)
+      (is (not (tu/stored-in-clash? kb (list 'tangiblePartOf BatFur BatWing) 'CxUniverse)))))
+  (testing "one thing in both types clashes"
+    (tu/with-terms [Furwing]
+      (v/assert kb (list 'wing Furwing) 'CxUniverse)
+      (is (tu/stored-in-clash? kb (list 'fur Furwing) 'CxUniverse)))))
+
 (tu/deftest-kb a-biological-thing-can-be-hollow
   ;; A pitcher plant and a lab-grown bladder are biological and hollow.  A cup and a cave
   ;; are hollow and not biological, and a leaf is biological and not hollow.
@@ -1219,7 +1345,7 @@
           located '[spatial spatiotemporal]]
     (is (true? (v/disjoint? kb kind located ctx)) (str kind " and " located " in " ctx)))
   (testing "a spatial relation between a quantity and an organization derives two clashes"
-    ;; Pinned to the entailing reading: the clash sides are the minted (spatial X), and
+    ;; Forced to the entailing reading: the clash sides are the minted (spatial X), and
     ;; the constraint-only reading refuses the northOf instead.
     (tu/with-entailing
       (tu/with-terms [WaterLevel AcmeCo]
@@ -1276,7 +1402,8 @@
   disjointness descends a genl edge — so a stated sentence repeating one of those is not
   written."
   '[[genl aspatial thing CxUniverse "partition thing spatial aspatial"]
-    [disjoint spatiotemporal aspatial CxUniverse "spatiotemporal genl spatial; partition thing spatial aspatial"]
+    [genl spatiotemporal spatial CxUniverse "spatiotemporal genl physical genl spatial"]
+    [disjoint spatiotemporal aspatial CxUniverse "spatiotemporal genl physical genl spatial; partition thing spatial aspatial"]
     [genl intangible thing CxUniverse "partition thing tangible intangible"]
     [genl nowhere_never intangible CxUniverse "nowhere_never genl aspatial genl intangible"]
     [genl organization intangible CxUniverse "organization genl aspatial genl intangible"]
@@ -1296,7 +1423,7 @@
     [genl acausal thing CxUniverse "partition thing causal acausal"]
     [disjoint causal acausal CxUniverse "partition thing causal acausal"]
     [genl sign_value thing CxUniverse "sign_value genl nowhere_never genl intangible genl thing"]
-    [genl spatiotemporal thing CxUniverse "spatiotemporal genl spatial, spatial genl thing (partition)"]
+    [genl spatiotemporal thing CxUniverse "spatiotemporal genl physical genl spatial, spatial genl thing (partition)"]
     [genl organism tangible CxUniverse "organism genl biological genl tangible"]
     [genl body_part tangible CxUniverse "body_part genl biological genl tangible"]
     [genl body_part biological CxUniverse "separating biological organism body_part"]
@@ -1321,22 +1448,40 @@
     [disjoint formation organism CxUniverse "organism genl biological; separating tangible formation biological"]
     [disjoint formation body_part CxUniverse "body_part genl biological; separating tangible formation biological"]
     [genl asymmetric binary_predicate CxUniverse "asymmetric genl anti_symmetric genl binary_predicate"]
-    [disjoint string predicate CxUniverse "string genl unrepresented_term, predicate genl relation; unrepresented_term genl linguistic; disjoint linguistic relation"]
-    [disjoint number predicate CxUniverse "number genl unrepresented_term, predicate genl relation; unrepresented_term genl linguistic; disjoint linguistic relation"]
-    [disjoint keyword predicate CxUniverse "keyword genl unrepresented_term, predicate genl relation; unrepresented_term genl linguistic; disjoint linguistic relation"]
-    [disjoint boolean predicate CxUniverse "boolean genl unrepresented_term, predicate genl relation; unrepresented_term genl linguistic; disjoint linguistic relation"]
-    [disjoint character predicate CxUniverse "character genl unrepresented_term, predicate genl relation; unrepresented_term genl linguistic; disjoint linguistic relation"]
+    [disjoint string predicate CxUniverse "string genl unrepresented_term, predicate genl relation; unrepresented_term genl linguistic, relation genl logical; separating nowhere_never logical linguistic quantitative"]
+    [disjoint number predicate CxUniverse "number genl unrepresented_term, predicate genl relation; unrepresented_term genl linguistic, relation genl logical; separating nowhere_never logical linguistic quantitative"]
+    [disjoint keyword predicate CxUniverse "keyword genl unrepresented_term, predicate genl relation; unrepresented_term genl linguistic, relation genl logical; separating nowhere_never logical linguistic quantitative"]
+    [disjoint boolean predicate CxUniverse "boolean genl unrepresented_term, predicate genl relation; unrepresented_term genl linguistic, relation genl logical; separating nowhere_never logical linguistic quantitative"]
+    [disjoint character predicate CxUniverse "character genl unrepresented_term, predicate genl relation; unrepresented_term genl linguistic, relation genl logical; separating nowhere_never logical linguistic quantitative"]
     [disjoint glass_stuff stone CxUniverse "disjoint_metatype stuff_type_by_substance"]
-    [disjoint metal glass_stuff CxUniverse "disjoint_metatype stuff_type_by_substance"]
-    [disjoint metal stone CxUniverse "disjoint_metatype stuff_type_by_substance"]
-    [disjoint metal wood CxUniverse "disjoint_metatype stuff_type_by_substance"]
+    [disjoint metal_stuff glass_stuff CxUniverse "disjoint_metatype stuff_type_by_substance"]
+    [disjoint metal_stuff stone CxUniverse "disjoint_metatype stuff_type_by_substance"]
+    [disjoint metal_stuff wood CxUniverse "disjoint_metatype stuff_type_by_substance"]
     [disjoint wood glass_stuff CxUniverse "disjoint_metatype stuff_type_by_substance"]
     [disjoint wood stone CxUniverse "disjoint_metatype stuff_type_by_substance"]
     [genl reifiable_function function CxUniverse "partition function reifiable_function unreifiable_function"]
     [genl unreifiable_function function CxUniverse "partition function reifiable_function unreifiable_function"]
     [genl fixed_order_type unary_predicate CxUniverse "partition unary_predicate fixed_order_type variable_order_type"]
     [genl variable_order_type unary_predicate CxUniverse "partition unary_predicate fixed_order_type variable_order_type"]
-    [genl equivalence_relation binary_predicate CxUniverse "intersection equivalence_relation reflexive symmetric transitive; reflexive genl binary_predicate"]])
+    [genl equivalence_relation binary_predicate CxUniverse "intersection equivalence_relation reflexive symmetric transitive; reflexive genl binary_predicate"]
+    [genl linguistic nowhere_never CxUniverse "separating nowhere_never logical linguistic quantitative"]
+    [genl relation nowhere_never CxUniverse "separating logical relation context; separating nowhere_never logical linguistic quantitative"]
+    [genl context nowhere_never CxUniverse "separating logical relation context; separating nowhere_never logical linguistic quantitative"]
+    [genl measure nowhere_never CxUniverse "measure genl quantitative; separating nowhere_never logical linguistic quantitative"]
+    [disjoint linguistic relation CxUniverse "relation genl logical; separating nowhere_never logical linguistic quantitative"]
+    [disjoint linguistic measure CxUniverse "measure genl quantitative; separating nowhere_never logical linguistic quantitative"]
+    [disjoint measure relation CxUniverse "measure genl quantitative, relation genl logical; separating nowhere_never logical linguistic quantitative"]
+    [disjoint relation context CxUniverse "separating logical relation context"]
+    [genl unit_of_measure nowhere_never CxUniverse "unit_of_measure genl quantitative; separating nowhere_never logical linguistic quantitative"]
+    [genl physical_dimension nowhere_never CxUniverse "physical_dimension genl quantitative; separating nowhere_never logical linguistic quantitative"]
+    [genl sign_value nowhere_never CxUniverse "sign_value genl quantitative; separating nowhere_never logical linguistic quantitative"]
+    [disjoint unit_of_measure relation CxUniverse "unit_of_measure genl quantitative, relation genl logical; separating nowhere_never logical linguistic quantitative"]
+    [disjoint physical_dimension relation CxUniverse "physical_dimension genl quantitative, relation genl logical; separating nowhere_never logical linguistic quantitative"]
+    [genl proposition nowhere_never CxUniverse "separating logical relation proposition context; separating nowhere_never logical linguistic quantitative"]
+    [disjoint proposition linguistic CxUniverse "proposition genl logical; separating nowhere_never logical linguistic quantitative"]
+    [disjoint proposition relation CxUniverse "separating logical relation proposition context"]
+    [disjoint expression relation CxUniverse "expression genl linguistic, relation genl logical; separating nowhere_never logical linguistic quantitative"]
+    [disjoint expression context CxUniverse "expression genl linguistic, context genl logical; separating nowhere_never logical linguistic quantitative"]])
 
 (tu/deftest-kb the-kb-states-no-relation-it-already-derives
   ;; Each relation is read from the context that held the removed sentence, so a removal
@@ -1354,7 +1499,7 @@
 ;; distinction between them is carried by *which predicate you write* — `arg` types what
 ;; an argument denotes, `quotedArg` the term written there — so a second set of type
 ;; names would be redundancy plus a trap, a `quotedArg` outside the syntactic lattice
-;; convicting nothing for the life of the KB.  These pin the modelling half of that: the
+;; convicting nothing for the life of the KB.  These assert the modelling half of that: the
 ;; placement, the two disjointness claims, and the one type the pattern does not reach.
 
 (tu/deftest-kb the-value-kinds-are-placed-in-the-domain-lattice
@@ -1400,10 +1545,22 @@
       (testing "and a string value is what the position is for"
         (is (= [] (v/check kb (list 'comment 'thing "some text") 'CxUniverse)))))))
 
-(tu/deftest-kb a-term-cannot-be-both-a-string-and-a-relation
-  (tu/with-terms [Thing1]
-    (v/assert kb (list 'string Thing1) 'CxUniverse)
-    (is (tu/stored-in-clash? kb (list 'predicate Thing1) 'CxUniverse))))
+(tu/deftest-kb a-string-and-a-predicate-of-one-term-are-an-irreducible-conflict
+  ;; `string` and `predicate` are both forced-monotonic term kinds, so the
+  ;; clash `(disjoint linguistic relation)` makes of them through their genl edges has no
+  ;; member to defeat: both stay believed and `conflicts` names the pair, the same in
+  ;; either order
+  (doseq [[first-kind second-kind] '[[string predicate] [predicate string]]]
+    (tu/with-terms [Thing1]
+      (v/assert kb (list first-kind Thing1) 'CxUniverse)
+      (v/assert kb (list second-kind Thing1) 'CxUniverse)
+      (is (v/ask? kb (list 'string Thing1) 'CxUniverse)
+          (str second-kind " after " first-kind ": string stays believed"))
+      (is (v/ask? kb (list 'predicate Thing1) 'CxUniverse))
+      (let [hs (v/handle-of kb (list 'string Thing1) 'CxUniverse)
+            hp (v/handle-of kb (list 'predicate Thing1) 'CxUniverse)]
+        (is (some #(= #{hs hp} (set (:nogood %))) (v/conflicts kb))
+            "and the pair is reported as a conflict")))))
 
 ;; ---- what is biological ---------------------------------------------------
 ;; An organism and a part it grew are both biological, and tangible through it.  The two
@@ -1482,21 +1639,27 @@
 ;; the parts are separated and cover their whole: a member denied every part but one is
 ;; concluded the last.
 
-(tu/deftest-kb a-relation-that-is-not-truth-valued-is-a-function
-  ;; The coverage half of (partition relation function truth_valued_relation);
-  ;; three-partitions-divide-relation pins the separation half.
-  (tu/with-terms [relatesTo]
+(tu/deftest-kb a-function-is-not-a-truth-valued-relation
+  ;; (partition relation function truth_valued_relation), read off a function stated as
+  ;; one and off a relation denied the other part; three-partitions-divide-relation
+  ;; asserts the separation half.  A denial of the forced-monotonic truth_valued_relation
+  ;; is believed while no (truth_valued_relation X) is stored.
+  (tu/with-terms [relatesTo deniedRelation]
     (v/assert kb (list 'relation relatesTo) 'CxUniverse)
-    (v/assert kb (list 'not (list 'truth_valued_relation relatesTo)) 'CxUniverse)
-    (is (true? (v/ask? kb (list 'function relatesTo) 'CxUniverse)))))
+    (v/assert kb (list 'function relatesTo) 'CxUniverse)
+    (is (false? (v/ask? kb (list 'truth_valued_relation relatesTo) 'CxUniverse)))
+    (is (true? (v/ask? kb (list 'not (list 'truth_valued_relation relatesTo)) 'CxUniverse))
+        "a function is refuted as a truth_valued_relation")
+    (is (= :false (:verdict (v/argue kb (list 'truth_valued_relation relatesTo) 'CxUniverse))))
+    (testing "a relation denied truth_valued_relation is concluded a function by the cover"
+      (v/assert kb (list 'relation deniedRelation) 'CxUniverse)
+      (v/assert kb (list 'not (list 'truth_valued_relation deniedRelation)) 'CxUniverse)
+      (is (true? (v/ask? kb (list 'function deniedRelation) 'CxUniverse))))))
 
 (tu/deftest-kb reifiable-and-unreifiable-partition-function
   (is (true? (v/disjoint? kb 'reifiable_function 'unreifiable_function 'CxUniverse)))
   (is (true? (v/genl? kb 'reifiable_function 'function 'CxUniverse)))
-  (is (true? (v/genl? kb 'unreifiable_function 'function 'CxUniverse)))
-  (testing "the separation is not quoting_function's: that mark crosses both parts"
-    (is (not (v/disjoint? kb 'quoting_function 'reifiable_function)))
-    (is (not (v/disjoint? kb 'quoting_function 'unreifiable_function)))))
+  (is (true? (v/genl? kb 'unreifiable_function 'function 'CxUniverse))))
 
 (tu/deftest-kb fixed-and-variable-order-partition-unary-predicate
   (is (true? (v/disjoint? kb 'fixed_order_type 'variable_order_type 'CxUniverse)))
@@ -1578,30 +1741,38 @@
   ;; a plant_class beside tree and flower, so it is apart from each and from oak and rose.
   ;; The seven biology properties life.txt places under biological, organism and animal are
   ;; states and capacities of an organism rather than kinds of one, so they are left out: each
-  ;; crosses the folk taxonomy, and its pairs with it stay unknown.
+  ;; crosses the folk taxonomy, and its pairs with it stay unknown.  Two life stages of one
+  ;; kind (caterpillar and butterfly) are neither: one organism is both, one after the other,
+  ;; so their pair is left unknown on purpose and only pairs of stages of a kind are skipped.
   (let [props   '#{alive dead mortal asleep awake breathes_air warm_blooded}
         org     (set (remove props (filter #(v/genl? kb % 'organism) (v/types kb))))
+        stage-of (fn [s] (set (for [r '[larvalFormOf adultFormOf]
+                                    k org
+                                    :when (v/ask? kb (list r s k) B)]
+                                k)))
+        same-kind-stages? (fn [a b] (boolean (some (stage-of a) (stage-of b))))
         unknown (for [{:keys [a b status]} (:pairs-data (v/disjointness-audit kb))
-                      :when (and (org a) (org b) (= :unknown status))]
+                      :when (and (org a) (org b) (= :unknown status)
+                                 (not (same-kind-stages? a b)))]
                   (set [a b]))]
     (is (every? org folk-species) "every species is an organism")
     (is (true? (v/disjoint? kb 'grass 'oak)) "grass is not a tree, so not an oak")
     (is (= [] (vec unknown)))))
 
-;; ---- folk_species is on the forced-monotonic roster ------------------------
+;; ---- folk_species is forced-monotonic ------------------------
 ;; A species membership is definitional, so CxUniverse writes each :monotonic and a rule
-;; concluding a roster literal from one alone fires as a roster rule.
+;; concluding a forced-monotonic literal from one alone fires as a forced-monotonic rule.
 
 (tu/deftest-kb a-folk-species-membership-is-held-monotonic
   (is (= :monotonic (v/defeat-class kb (v/handle-of kb '(folk_species dog) 'CxUniverse))))
-  (testing "a denial of one is held OUT"
+  (testing "a denial of one loses to it"
     (let [d (v/assert kb '(not (folk_species dog)) 'CxUniverse)]
       (is (not (v/in? kb d)))
       (is (true? (v/ask? kb '(folk_species dog) 'CxUniverse))))))
 
-(tu/deftest-kb a-rule-from-folk-species-to-orthogonal-is-a-roster-rule
+(tu/deftest-kb a-rule-from-folk-species-to-orthogonal-is-a-forced-monotonic-rule
   ;; A rule that declares every species orthogonal to a kind of tangible thing:
-  ;; its one antecedent is a roster literal, so its firings are believed rather than held
+  ;; its one antecedent is a forced-monotonic literal, so its firings are believed rather than held
   ;; void and reported as a :forced-conclusion.
   (tu/with-terms [tended]
     (v/assert kb (list 'genl tended 'tangible) 'CxUniverse)
@@ -1612,18 +1783,89 @@
     (is (= :orthogonal (v/subsumption-status kb 'dog tended)))
     (is (not-any? #(= :forced-conclusion (:violation %)) (v/violations kb)))))
 
-(tu/deftest-kb artifact-is-declared-nowhere-and-the-six-kinds-are-made
+(tu/deftest-kb a-warm-blooded-animal-is-a-vertebrate-by-default
+  (let [edges (filter #(v/premise? kb (:id %)) (v/sentexes-matching kb '(genl warm_blooded vertebrate) 'CxUniverse))]
+    (is (= 1 (count edges)) "(genl warm_blooded vertebrate) is stated in CxUniverse")
+    (is (= :default (:strength (first edges))) "at default strength"))
+  (tu/with-terms [Warm1 Cat1 Trout1]
+    (v/assert kb (list 'warm_blooded Warm1) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'vertebrate Warm1) 'CxUniverse)))
+    (testing "and the class rules that derive and deny warm_blooded raise no clash"
+      (v/assert kb (list 'mammal Cat1) 'CxBiology)
+      (v/assert kb (list 'fish Trout1) 'CxBiology)
+      (is (true? (v/ask? kb (list 'warm_blooded Cat1) 'CxBiology)))
+      (is (true? (v/ask? kb (list 'not (list 'warm_blooded Trout1)) 'CxBiology)))
+      (is (empty? (v/conflicts kb))))))
+
+(tu/deftest-kb artifact-is-declared-nowhere-and-the-made-kinds-are-made
   ;; The KB declares no artifact term and no alias for one.  building, clothing,
-  ;; container, furniture, machine and vehicle are kinds of made.
+  ;; container, electronic_device, furniture, machine and vehicle are kinds of made.
   (is (empty? (v/sentexes-matching kb '(comment artifact ?text) '?ctx)))
   (is (empty? (v/sentexes-matching kb '(genl artifact ?type) '?ctx)))
   (is (empty? (v/sentexes-matching kb '(genl ?type artifact) '?ctx)))
   (is (= 1 (count (v/sentexes-matching kb '(comment made ?text) 'CxUniverse))))
-  (doseq [t '[building clothing container furniture machine vehicle]]
+  (doseq [t '[building clothing container electronic_device furniture machine vehicle]]
     (is (true? (v/genl? kb t 'made 'CxUniverse)) (str t " is made")))
-  (doseq [t '[clothing container furniture machine vehicle]]
+  (doseq [t '[clothing container electronic_device furniture machine vehicle]]
     (is (some #(v/premise? kb (:id %)) (v/sentexes-matching kb (list 'genl t 'made) 'CxUniverse))
         (str "(genl " t " made) is stated"))))
+
+(tu/deftest-kb an-electronic-device-is-made-and-overlaps-machine
+  ;; electronic_device is defined by the circuit it contains.  A fan-cooled desktop is a
+  ;; machine and an electronic device, a wind-up clock a machine with no circuit, and a
+  ;; single-board computer an electronic device with no moving part that does work.
+  (is (= 1 (count (v/sentexes-matching kb '(comment electronic_device ?text) 'CxUniverse))))
+  (is (true? (v/genl? kb 'electronic_device 'made 'CxUniverse)))
+  (is (some #(v/premise? kb (:id %))
+            (v/sentexes-matching kb '(orthogonal electronic_device machine) 'CxUniverse))
+      "(orthogonal electronic_device machine) is stated")
+  (is (= 1 (count (v/sentexes-matching
+                   kb '(comment (orthogonal electronic_device machine) ?text) 'CxUniverse)))
+      "the orthogonal sentence carries its witnesses as a comment")
+  (is (= :orthogonal (v/subsumption-status kb 'machine 'electronic_device)))
+  (is (not (v/disjoint? kb 'machine 'electronic_device)))
+  (testing "a term in both types is no clash"
+    (tu/with-terms [Desktop1]
+      (v/assert kb (list 'machine Desktop1) 'CxUniverse)
+      (is (not (tu/stored-in-clash? kb (list 'electronic_device Desktop1) 'CxUniverse)))
+      (is (true? (v/ask? kb (list 'electronic_device Desktop1) 'CxUniverse)))
+      (is (true? (v/ask? kb (list 'machine Desktop1) 'CxUniverse)))))
+  (testing "a machine is not concluded an electronic device, nor the converse"
+    (tu/with-terms [WindUpClock1 BoardComputer1]
+      (v/assert kb (list 'machine WindUpClock1) 'CxUniverse)
+      (v/assert kb (list 'electronic_device BoardComputer1) 'CxUniverse)
+      (is (not (v/ask? kb (list 'electronic_device WindUpClock1) 'CxUniverse)))
+      (is (not (v/ask? kb (list 'machine BoardComputer1) 'CxUniverse)))
+      (is (true? (v/ask? kb (list 'made BoardComputer1) 'CxUniverse)))
+      (is (not (v/ask? kb (list 'person BoardComputer1) 'CxUniverse))
+          "an electronic device is not concluded a person"))))
+
+;; ---- mechanism ----------------------------------------------------------------
+;; mechanism is the common genl of machine and electronic_device, and their shared
+;; separations are stated once on it: a mechanism is never an organism and never stuff.
+
+(tu/deftest-kb mechanism-parents-machine-and-electronic-device
+  (is (= 1 (count (v/sentexes-matching kb '(comment mechanism ?text) 'CxUniverse))))
+  (doseq [t '[machine electronic_device]]
+    (is (some #(v/premise? kb (:id %)) (v/sentexes-matching kb (list 'genl t 'mechanism) 'CxUniverse))
+        (str "(genl " t " mechanism) is stated")))
+  (is (some #(v/premise? kb (:id %)) (v/sentexes-matching kb '(genl mechanism tangible) 'CxUniverse))
+      "(genl mechanism tangible) is stated")
+  (is (not (v/genl? kb 'mechanism 'made 'CxUniverse))
+      "most mechanisms are made, not all: a mechanism is not concluded made")
+  (doseq [t '[organism substance]]
+    (is (some #(v/premise? kb (:id %)) (v/sentexes-matching kb (list 'disjoint 'mechanism t) 'CxUniverse))
+        (str "(disjoint mechanism " t ") is stated"))
+    (doseq [k '[mechanism machine electronic_device]]
+      (is (true? (v/disjoint? kb k t)) (str k " is disjoint with " t))))
+  (is (empty? (v/sentexes-matching kb '(disjoint animal machine) 'CxUniverse))
+      "the animal/machine separation is reached through mechanism, not restated")
+  (is (true? (v/disjoint? kb 'animal 'machine)))
+  (testing "an organism stated a mechanism is a clash"
+    (tu/with-terms [Sheep1]
+      (v/assert kb (list 'organism Sheep1) 'CxUniverse)
+      (v/assert kb (list 'electronic_device Sheep1) 'CxUniverse)
+      (is (tu/stored-in-clash? kb (list 'electronic_device Sheep1) 'CxUniverse)))))
 
 ;; ---- made and natural ------------------------------------------------------
 ;; made and natural partition tangible.  A formation is a natural tangible that nothing
@@ -1686,8 +1928,9 @@
 
 ;; ---- orthogonal pairs across made and natural -------------------------------
 ;; In each pair the two types overlap and neither subsumes the other.  An orthogonal is
-;; not inherited along genl, so the KB states each pair.  Each witness is an individual
-;; in both types.
+;; not inherited along genl, so the KB states each pair, or states a typeOrthogonal fact
+;; over origin_type that derives the pair with made and the pair with natural.  Each
+;; witness is an individual in both types.
 
 (def ^:private cross-cutting
   '[[organism made Dolly1] [organism natural WildSheep1]
@@ -1699,8 +1942,11 @@
 (tu/deftest-kb what-cuts-across-made-and-natural-is-stated-orthogonal
   (doseq [[a b witness] cross-cutting]
     (testing (str a " and " b)
-      (is (some #(v/premise? kb (:id %)) (v/sentexes-matching kb (list 'orthogonal a b) 'CxUniverse))
-          (str "(orthogonal " a " " b ") is stated"))
+      (if (contains? '#{made natural} b)
+        (is (some #(v/premise? kb (:id %)) (v/sentexes-matching kb (list 'typeOrthogonal 'origin_type a) 'CxUniverse))
+            (str "(typeOrthogonal origin_type " a ") is stated"))
+        (is (some #(v/premise? kb (:id %)) (v/sentexes-matching kb (list 'orthogonal a b) 'CxUniverse))
+            (str "(orthogonal " a " " b ") is stated")))
       (is (= :orthogonal (v/subsumption-status kb a b)) "the pair reads orthogonal")
       (is (not (v/disjoint? kb a b)))
       (let [w (tu/fresh-term :individual witness)]
@@ -1758,3 +2004,148 @@
     (v/assert kb (list 'denotes (list 'Quote 'Muffet) Y) 'CxUniverse {:strength :monotonic})
     (is (true? (v/ask? kb (list 'equals X Y) 'CxUniverse))
         "functional on means reaches denotes through its genl edge")))
+
+(tu/deftest-kb a-tangible-part-is-a-part-and-parthood-chains-across-kinds
+  ;; (genl tangiblePartOf partOf) makes every tangiblePartOf tuple a partOf tuple, and
+  ;; (transitive partOf) chains a tangible part with a stated broad one.
+  (tu/with-terms [Piston Engine Car Fleet]
+    (v/assert kb (list 'tangiblePartOf Piston Engine) 'CxUniverse)
+    (v/assert kb (list 'tangiblePartOf Engine Car) 'CxUniverse)
+    (v/assert kb (list 'partOf Car Fleet) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'partOf Piston Engine) 'CxUniverse))
+        "a tangiblePartOf fact answers partOf")
+    (is (true? (v/ask? kb (list 'partOf Piston Fleet) 'CxUniverse))
+        "partOf's transitivity chains through its tangiblePartOf tuples")
+    (is (not (v/ask? kb (list 'tangiblePartOf Piston Fleet) 'CxUniverse))
+        "a broad partOf fact is not a tangiblePartOf one")))
+
+(tu/deftest-kb a-sub-situation-is-a-part-and-a-shared-time-makes-none
+  ;; subSituationOf is transitive and below partOf.  Parthood is not read off time: two
+  ;; situations occupying one time are not thereby parts of one another.
+  (tu/with-terms [Inning Game Series Rally Afternoon]
+    (doseq [s [Inning Game Series Rally]]
+      (v/assert kb (list 'situation s) 'CxUniverse))
+    (v/assert kb (list 'subSituationOf Inning Game) 'CxUniverse)
+    (v/assert kb (list 'subSituationOf Game Series) 'CxUniverse)
+    (v/assert kb (list 'timeOf Game Afternoon) 'CxUniverse)
+    (v/assert kb (list 'timeOf Rally Afternoon) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'subSituationOf Inning Series) 'CxUniverse))
+        "subSituationOf chains")
+    (is (true? (v/ask? kb (list 'partOf Inning Series) 'CxUniverse))
+        "a sub-situation is a part")
+    (is (not (v/ask? kb (list 'subSituationOf Rally Game) 'CxUniverse))
+        "a shared time derives no subSituationOf")
+    (is (not (v/ask? kb (list 'subSituationOf Game Rally) 'CxUniverse))
+        "nor in the other direction")))
+
+(tu/deftest-kb each-non-proper-parthood-relation-holds-of-a-thing-and-itself
+  ;; partOf, tangiblePartOf, partOfRegion and subSituationOf each carry their own
+  ;; (reflexive P) mark, since the reflexive prover reads the mark and not a genl edge.
+  (tu/with-terms [Wheel]
+    (doseq [p '[partOf tangiblePartOf partOfRegion subSituationOf]]
+      (is (true? (v/has-prop? kb :reflexive p)) (str p " carries its own mark"))
+      (is (true? (v/ask? kb (list p Wheel Wheel) 'CxUniverse)) (str p " holds of a thing and itself")))))
+
+(tu/deftest-kb a-proper-counterpart-needs-the-reverse-tuple-denied
+  ;; properCounterpart's generator: the proper tuple follows from a tuple and a believed
+  ;; denial of its reverse, never from the reverse tuple being absent.
+  (tu/with-terms [coversOf properCoversOf A B]
+    (v/assert kb (list 'properCounterpart coversOf properCoversOf) 'CxUniverse)
+    (v/assert kb (list coversOf A B) 'CxUniverse)
+    (is (not (v/ask? kb (list properCoversOf A B) 'CxUniverse))
+        "a reverse tuple nobody stated is not a reverse tuple denied")
+    (v/assert kb (list 'not (list coversOf B A)) 'CxUniverse)
+    (is (true? (v/ask? kb (list properCoversOf A B) 'CxUniverse))
+        "a tuple and its denied reverse make the proper tuple")))
+
+(tu/deftest-kb a-proper-part-is-a-part-whose-whole-is-not-part-of-it
+  ;; Each non-proper parthood relation has a proper counterpart below it and below
+  ;; properPartOf.  The proper tuple needs the reverse tuple denied, not merely unstated.
+  (tu/with-terms [Piston Engine Car]
+    (v/assert kb (list 'properTangiblePartOf Piston Engine) 'CxUniverse)
+    (doseq [g [(list 'tangiblePartOf Piston Engine) (list 'properPartOf Piston Engine)
+               (list 'partOf Piston Engine) (list 'not (list 'tangiblePartOf Engine Piston))]]
+      (is (true? (v/ask? kb g 'CxUniverse)) (str "a proper tangible part answers " (pr-str g))))
+    (v/assert kb (list 'tangiblePartOf Engine Car) 'CxUniverse)
+    (is (not (v/ask? kb (list 'properTangiblePartOf Engine Car) 'CxUniverse))
+        "a part whose whole is not denied to be part of it is not thereby proper")
+    (v/assert kb (list 'not (list 'tangiblePartOf Car Engine)) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'properTangiblePartOf Engine Car) 'CxUniverse)))
+    (is (true? (v/ask? kb (list 'properTangiblePartOf Piston Car) 'CxUniverse))
+        "a proper part of a proper part is a proper part")
+    (is (not (v/ask? kb (list 'properPartOf Piston Piston) 'CxUniverse))
+        "nothing is a proper part of itself"))
+  (testing "two regions each part of the other are neither proper and stay two"
+    (tu/with-terms [Lot Parcel]
+      (v/assert kb (list 'partOfRegion Lot Parcel) 'CxUniverse)
+      (v/assert kb (list 'partOfRegion Parcel Lot) 'CxUniverse)
+      (is (not (v/ask? kb (list 'properPartOfRegion Lot Parcel) 'CxUniverse)))
+      (is (not (v/ask? kb (list 'equals Lot Parcel) 'CxUniverse)))
+      (is (some? (v/handle-of kb '(not (anti_symmetric partOf)) 'CxUniverse))
+          "and the KB states antisymmetry declined, not merely unstated")))
+  (testing "a proper region part is a proper part"
+    (tu/with-terms [Plot Field]
+      (v/assert kb (list 'properPartOfRegion Plot Field) 'CxUniverse)
+      (is (true? (v/ask? kb (list 'properPartOf Plot Field) 'CxUniverse))))))
+
+(tu/deftest-kb a-subinterval-is-a-part-of-a-time
+  ;; subintervalOf and properSubintervalOf relate time intervals, so each is parthood:
+  ;; subintervalOf is reflexive and below partOf, properSubintervalOf below properPartOf.
+  (tu/with-terms [Morning Day Hour Week]
+    (v/assert kb (list 'subintervalOf Morning Day) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'time_interval Morning) 'CxUniverse)) "its arguments are time intervals")
+    (is (true? (v/ask? kb (list 'partOf Morning Day) 'CxUniverse)))
+    (is (true? (v/ask? kb (list 'subintervalOf Week Week) 'CxUniverse)))
+    (v/assert kb (list 'properSubintervalOf Hour Morning) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'properPartOf Hour Morning) 'CxUniverse)))))
+
+;; ---- parthood invariants ----------------------------------------------------
+;; A parthood relation is either non-proper, and then reflexive, or proper, and then below
+;; properPartOf.  "Proper" is read off the genl edge to properPartOf, whose definition is
+;; settled, and never off a relation's name.  A spec of partOf carrying neither is
+;; unclassified, and the classification never defaults one to proper.
+
+(defn- parthood-specs
+  "Every spec of partOf, at any depth, partOf included."
+  [kb]
+  (set (map #(get % '?s) (v/ask kb '(genl ?s partOf) 'CxUniverse))))
+
+(defn- unclassified-parthood-specs
+  "The specs of partOf marked neither reflexive nor below properPartOf, sorted."
+  [kb]
+  (sort (remove #(or (v/has-prop? kb :reflexive %) (v/genl? kb % 'properPartOf))
+                (parthood-specs kb))))
+
+(defn- symmetric-irreflexive-parthood-specs
+  "A review flag, not a proof: the specs of partOf marked both symmetric and irreflexive,
+  sorted.  Such a relation holds between distinct mutual parts, which is worth a second
+  look.  A relation the flag passes is certified as nothing."
+  [kb]
+  (sort (filter #(and (v/has-prop? kb :symmetric %) (v/has-prop? kb :irreflexive %))
+                (parthood-specs kb))))
+
+(tu/deftest-kb every-parthood-relation-is-reflexive-or-proper
+  (is (= [] (unclassified-parthood-specs kb)) "the shipped parthood relations are classified")
+  (testing "a spec carrying neither mark is unclassified, whatever its name says"
+    (tu/with-terms [gluedTo properGluedTo]
+      (v/assert kb (list 'genl gluedTo 'tangiblePartOf) 'CxUniverse)
+      (v/assert kb (list 'genl properGluedTo 'tangiblePartOf) 'CxUniverse)
+      (is (= (sort [gluedTo properGluedTo]) (unclassified-parthood-specs kb)))
+      (v/assert kb (list 'reflexive gluedTo) 'CxUniverse)
+      (v/assert kb (list 'genl properGluedTo 'properTangiblePartOf) 'CxUniverse)
+      (is (= [] (unclassified-parthood-specs kb)) "and classified once marked"))))
+
+(tu/deftest-kb a-symmetric-irreflexive-parthood-relation-is-flagged-for-review
+  (is (= [] (symmetric-irreflexive-parthood-specs kb)) "no shipped parthood relation is flagged")
+  (testing "symmetric and irreflexive: distinct mutual parts, flagged for review"
+    (tu/with-terms [weldedTo]
+      (v/assert kb (list 'genl weldedTo 'tangiblePartOf) 'CxUniverse)
+      (v/assert kb (list 'symmetric weldedTo) 'CxUniverse)
+      (v/assert kb (list 'irreflexive weldedTo) 'CxUniverse)
+      (is (= [weldedTo] (symmetric-irreflexive-parthood-specs kb)))))
+  (testing "symmetric and reflexive, as spatiallyEqual is, is not flagged"
+    (tu/with-terms [coextensiveWith]
+      (v/assert kb (list 'genl coextensiveWith 'partOf) 'CxUniverse)
+      (v/assert kb (list 'symmetric coextensiveWith) 'CxUniverse)
+      (v/assert kb (list 'reflexive coextensiveWith) 'CxUniverse)
+      (is (not-any? #{coextensiveWith} (symmetric-irreflexive-parthood-specs kb))))))

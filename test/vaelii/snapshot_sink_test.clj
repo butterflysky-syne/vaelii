@@ -70,10 +70,10 @@
 
 (defn- entries-of [kb] (into #{} (p/index-entries (:index kb))))
 
-(defn- records-stamp
+(defn- records-fingerprint
   "The records fingerprint a derived image is valid against, folded over the sentex records
   the way `export!` does.  Commutative and additive, so id order is immaterial — this is
-  the portable stamp a `:memory` store computes; a `:disk` store would hash its slots and a
+  the portable fingerprint a `:memory` store computes; a `:disk` store would hash its slots and a
   SQL store would answer a count, all against the same manifest number."
   [kb]
   (let [records (:records kb)
@@ -100,14 +100,14 @@
   ;; index, and compare — the entries the index projects, and the answers the KB gives —
   ;; against a `reindex` that rebuilt from the same records.
   (tu/with-cleared-kb [kb tu/fresh]
-    (let [t     (terms)
-          _     (build! kb t)
-          stamp (records-stamp kb)
-          medium (snap/memory-medium)]
-      (snap/save-index! medium (:index kb) stamp)
+    (let [t           (terms)
+          _           (build! kb t)
+          fingerprint (records-fingerprint kb)
+          medium      (snap/memory-medium)]
+      (snap/save-index! medium (:index kb) fingerprint)
       (p/clear-index! (:index kb))
       (is (empty? (entries-of kb)) "the fixture for the replay is a genuinely empty index")
-      (let [r (snap/load-index! medium (:index kb) stamp)]
+      (let [r (snap/load-index! medium (:index kb) fingerprint)]
         (is (= :replayed (:index r)) "the sink's image was used, not rebuilt")
         (is (pos? (long (:entries r))))
         (let [replayed-entries (entries-of kb)
@@ -128,18 +128,18 @@
   (let [dir (temp-dir "cross")]
     (try
       (tu/with-cleared-kb [kb tu/fresh]
-        (let [t      (terms)
-              _      (build! kb t)
-              stamp  (records-stamp kb)
-              oracle (entries-of kb)                 ; the entries a rebuild produces
-              mem    (snap/memory-medium)]
-          (snap/save-index! (snap/file-sink (.getPath dir)) (:index kb) stamp)
-          (snap/save-index! mem (:index kb) stamp)
+        (let [t           (terms)
+              _           (build! kb t)
+              fingerprint (records-fingerprint kb)
+              oracle      (entries-of kb)                 ; the entries a rebuild produces
+              mem         (snap/memory-medium)]
+          (snap/save-index! (snap/file-sink (.getPath dir)) (:index kb) fingerprint)
+          (snap/save-index! mem (:index kb) fingerprint)
           (doseq [[label source] [["file"   (snap/file-source (.getPath dir))]
                                   ["memory" mem]]]
             (testing label
               (p/clear-index! (:index kb))
-              (is (= :replayed (:index (snap/load-index! source (:index kb) stamp))))
+              (is (= :replayed (:index (snap/load-index! source (:index kb) fingerprint))))
               (is (= oracle (entries-of kb))
                   (str "the " label " sink installed a different index than a rebuild"))))))
       (finally (rm-rf! dir)))))
@@ -147,7 +147,7 @@
 ;;; ── one image format, not two ──────────────────────────────────────────
 
 (deftest the-dump-and-the-image-carry-one-index-format
-  ;; Step 4's claim, pinned directly: the export dump's index section and a standalone
+  ;; Step 4's claim, asserted directly: the export dump's index section and a standalone
   ;; snapshot image are one projection through one framing, not two serializations that
   ;; drift.  Both route through `snapshot/index-frames` and `io/frames`, so a dump's on-disk
   ;; index stream reads back as the very seq a fresh `save-index!` writes — a guard against a
@@ -156,10 +156,10 @@
   (let [dir (temp-dir "one-format")]
     (try
       (tu/with-cleared-kb [kb tu/fresh]
-        (let [t     (terms)
-              _     (build! kb t)
-              stamp (records-stamp kb)
-              proj  (vec (snap/index-frames (:index kb)))]   ; the projection both must carry
+        (let [t           (terms)
+              _           (build! kb t)
+              fingerprint (records-fingerprint kb)
+              proj        (vec (snap/index-frames (:index kb)))]   ; the projection both must carry
           (testing "the export dump's index section is the snapshot projection"
             (exp/export! kb (.getPath (File. dir "dump"))
                          {:variant :records+index :compression :none})
@@ -167,7 +167,7 @@
                               (io/file dir "dump" "index" "entries.nippy.stream") :none)))))
           (testing "and so is the file image's — one format, read back the same way"
             (snap/save-index! (snap/file-sink (.getPath (File. dir "image")) {:compression :none})
-                              (:index kb) stamp)
+                              (:index kb) fingerprint)
             (is (= proj (vec (snapshot-types/read-section
                               (snap/file-source (.getPath (File. dir "image")))
                               snap/index-section)))))))
@@ -178,9 +178,9 @@
 (deftest a-fresh-source-with-no-committed-manifest-is-absent
   (tu/with-cleared-kb [kb tu/fresh]
     (build! kb (terms))
-    (let [stamp (records-stamp kb)]
+    (let [fingerprint (records-fingerprint kb)]
       (is (= {:index :rebuild :reason :absent}
-             (snap/load-index! (snap/memory-medium) (:index kb) stamp))
+             (snap/load-index! (snap/memory-medium) (:index kb) fingerprint))
           "a sink that never committed offers no image"))))
 
 (deftest a-file-image-missing-its-manifest-is-absent
@@ -188,53 +188,53 @@
     (try
       (tu/with-cleared-kb [kb tu/fresh]
         (build! kb (terms))
-        (let [stamp (records-stamp kb)]
-          (snap/save-index! (snap/file-sink (.getPath dir)) (:index kb) stamp)
+        (let [fingerprint (records-fingerprint kb)]
+          (snap/save-index! (snap/file-sink (.getPath dir)) (:index kb) fingerprint)
           (is (.delete (File. dir "manifest.edn")) "removed the completion marker")
           (p/clear-index! (:index kb))
           (is (= {:index :rebuild :reason :absent}
-                 (snap/load-index! (snap/file-source (.getPath dir)) (:index kb) stamp))
+                 (snap/load-index! (snap/file-source (.getPath dir)) (:index kb) fingerprint))
               "sections with no manifest read as no image")))
       (finally (rm-rf! dir)))))
 
 (deftest a-layout-this-build-does-not-key-in-is-discarded
   ;; The sharpest class: an index in another layout would read as *empty* rather than as
-  ;; wrong, so nothing downstream would notice.  Both halves of the layout stamp — the
+  ;; wrong, so nothing downstream would notice.  Both halves of the layout version — the
   ;; snapshot format and `kv/index-layout-version` — are checked.
   (tu/with-cleared-kb [kb tu/fresh]
     (build! kb (terms))
-    (let [stamp (records-stamp kb)]
+    (let [fingerprint (records-fingerprint kb)]
       (testing "kv/index-layout-version"
         (let [m (snap/memory-medium)]
-          (snap/save-index! m (:index kb) stamp)
+          (snap/save-index! m (:index kb) fingerprint)
           (swap! (:state m) update :manifest assoc :index-layout (inc kv/index-layout-version))
           (is (= {:index :rebuild :reason :layout-changed}
-                 (snap/load-index! m (:index kb) stamp)))))
+                 (snap/load-index! m (:index kb) fingerprint)))))
       (testing "the snapshot format version"
         (let [m (snap/memory-medium)]
-          (snap/save-index! m (:index kb) stamp)
+          (snap/save-index! m (:index kb) fingerprint)
           (swap! (:state m) update :manifest assoc :format (inc snap/format-version))
           (is (= {:index :rebuild :reason :layout-changed}
-                 (snap/load-index! m (:index kb) stamp))))))))
+                 (snap/load-index! m (:index kb) fingerprint))))))))
 
 (deftest an-image-for-a-different-store-is-discarded
-  ;; The records stamp is what ties an image to the KB it describes.  A bumped digest and a
+  ;; The records fingerprint ties an image to the KB it describes.  A bumped digest and a
   ;; genuinely different KB both fail the same way, which is the point — the check does not
   ;; care *why* the records differ, only that they do.
   (tu/with-cleared-kb [kb tu/fresh]
     (build! kb (terms))
-    (let [stamp (records-stamp kb)
-          m     (snap/memory-medium)]
-      (snap/save-index! m (:index kb) stamp)
+    (let [fingerprint (records-fingerprint kb)
+          m           (snap/memory-medium)]
+      (snap/save-index! m (:index kb) fingerprint)
       (testing "a tampered digest"
         (is (= {:index :rebuild :reason :records-differ}
-               (snap/load-index! m (:index kb) (update stamp :digest inc)))))
+               (snap/load-index! m (:index kb) (update fingerprint :digest inc)))))
       (testing "a genuinely different store"
         (tu/with-cleared-kb [other tu/fresh]
           (tu/with-terms [rel Aye Bee CxOther]
             (v/assert other (list rel Aye Bee) CxOther))
           (is (= {:index :rebuild :reason :records-differ}
-                 (snap/load-index! m (:index kb) (records-stamp other)))))))))
+                 (snap/load-index! m (:index kb) (records-fingerprint other)))))))))
 
 (deftest a-truncated-section-is-discarded-and-installs-nothing-of-itself
   ;; A torn nippy chunk is indistinguishable from a clean EOF, so truncation shows only as a frame count
@@ -242,18 +242,18 @@
   (let [dir (temp-dir "truncated")]
     (try
       (tu/with-cleared-kb [kb tu/fresh]
-        (let [t     (terms)
-              _     (build! kb t)
-              stamp (records-stamp kb)
-              sink  (snap/file-sink (.getPath dir) {:compression :none})]
-          (snap/save-index! sink (:index kb) stamp)
+        (let [t           (terms)
+              _           (build! kb t)
+              fingerprint (records-fingerprint kb)
+              sink        (snap/file-sink (.getPath dir) {:compression :none})]
+          (snap/save-index! sink (:index kb) fingerprint)
           ;; drop the last frame from the section, leaving the manifest's count too high
           (let [^File f  (File. dir "index.nippy.stream")
                 existing (vec (frames/read-chunked-seq f :none))]
             (is (> (count existing) 1) "need at least two frames to truncate one away")
             (frames/write-frames! f (butlast existing) {:compression :none :chunk-size 10000}))
           (p/clear-index! (:index kb))
-          (let [r (snap/load-index! (snap/file-source (.getPath dir)) (:index kb) stamp)]
+          (let [r (snap/load-index! (snap/file-source (.getPath dir)) (:index kb) fingerprint)]
             (is (= {:index :rebuild :reason :entries-truncated} r)))
           (testing "and the KB is whole after the caller rebuilds — discarding is always safe"
             (v/reindex kb)

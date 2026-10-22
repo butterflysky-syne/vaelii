@@ -6,8 +6,8 @@
   Forward chaining leans on three fast paths — the justification dedup index
   (`jtms/*dedup-cache*`), the `ensure-node` no-op skip, and the single-context
   placement answer in `taxonomy/maximal-common-descendant-contexts` — and each claims
-  to compute exactly what its reference path computes.  This pins that claim the way
-  `arg_root_retrieval_test` pins retrieval: the same knowledge chained under both
+  to compute exactly what its reference path computes.  This asserts that claim the way
+  `arg_root_retrieval_test` asserts retrieval: the same knowledge chained under both
   bindings must reach the identical fixpoint, compared on **content** (sentence,
   context, strength, belief; a justification's consequence, informant and
   antecedents as content), never on handles.
@@ -100,11 +100,11 @@
 ;; ---- the authority memo across a canonicalization move ------------------
 ;; A bulk run arms `kb/*chain-authoritative-functors*`: for a functor the store held
 ;; nothing under, a handle-cache miss is taken as proof of absence and the trie walk
-;; skipped.  The cache empties whenever the canon stamp moves — here a rule concluding
+;; skipped.  The cache empties whenever the cache key moves — here a rule concluding
 ;; `(symmetric P)` moves it mid-fixpoint — and the memo must follow it, or every
 ;; conclusion stored before the move is stored again after it.
 
-(deftest the-authority-memo-follows-the-handle-cache-across-a-stamp-move
+(deftest the-authority-memo-follows-the-handle-cache-across-a-cache-key-move
   (tu/with-terms [linkOf edgeOf markOf pairOf A B CxLinks]
     (let [n         (+ kb/chain-authority-min-frontier 6)   ; a bulk frontier: the memo is armed
           pair      (fn [i] [(symbol (str A i)) (symbol (str B i))])
@@ -119,7 +119,7 @@
           (let [[a b] (pair i)]
             (v/assert kb (list linkOf a b) CxLinks {:chain? false})))
         (v/forward-chain kb {})
-        (testing "the run moved the canon stamp: the symmetric declaration was concluded once"
+        (testing "the run moved the cache key: the symmetric declaration was concluded once"
           (is (= 1 (count (handles kb (list 'symmetric pairOf))))))
         (testing "one handle per conclusion, on either side of the move"
           (is (= n (count (v/sentexes-with-functor kb edgeOf)))
@@ -168,4 +168,4 @@
         (is (true? (jtms/has-justification? t2 9 [1 2] 3))
             "t2's answer comes from t2's supports, not t1's cached emptiness"))
       (is (false? (jtms/has-justification? t1 9 [1 2] 3))
-          "and t1's view is untouched by t2's traffic"))))
+          "and t1's dedup cache is untouched by t2's traffic"))))

@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.wipe-fsync-cost-test
-  "What one wipe costs the **filesystem**, as counted directory fsyncs — the gate for the
+  "What one wipe costs the **filesystem**, as counted directory fsyncs — the counted test for the
   class of regression `lein perf` and `assert_cost_test` are both structurally blind to.
 
   `assert_cost_test` counts index operations, and says so in its own preamble: work that
@@ -27,13 +27,13 @@
   which is what lets it live in the suite rather than behind a command somebody has to
   remember.
 
-  ## Why both directions are pinned
+  ## Why both directions are asserted
 
   An exact count that only said \"a quiet wipe fsyncs once\" would be satisfied by
   deleting the fsync outright, which is a crash-safety bug and not an optimization: the
   *removal* of a failed compaction's commit marker is what the next open repairs from,
   and a marker whose directory entry never reached the platter is a marker that comes
-  back.  So the second test plants the temps a failed compaction leaves and pins the
+  back.  So the second test plants the temps a failed compaction leaves and asserts the
   fsync that clears them.  The two together say the fsync is owed exactly when a
   directory entry actually went away.
 
@@ -46,8 +46,8 @@
   - **Another thread's fsyncs.**  The count is scoped to the calling thread on purpose,
     so the durability daemon's own tick cannot move it.
 
-  The KB is pinned to `:backend :disk-log` rather than inheriting `VAELII_TEST_BACKEND`, for
-  the reason `assert_cost_test` pins `:memory`: the gate then says the same thing on all
+  The KB is fixed at `:backend :disk-log` rather than inheriting `VAELII_TEST_BACKEND`, for
+  the reason `assert_cost_test` fixes `:memory`: the counted test then says the same thing on all
   thirteen matrix configurations instead of thirteen different things."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -86,7 +86,7 @@
 
 (defn- record-pairs
   "The `(log, idx)` pairs the record store keeps under `dir`, **discovered** rather than
-  spelled out: a record kind added to the store then moves this gate's numbers, which is
+  spelled out: a record kind added to the store then moves this test's numbers, which is
   a diff somebody reads, instead of slipping past a hard-coded three."
   [dir]
   (->> (file-seq (io/file dir))
@@ -112,7 +112,7 @@
     (fn [dir]
       (let [kb    (populated-kb dir)
             pairs (record-pairs dir)]
-        (testing "the store keeps the three record kinds this gate's numbers assume"
+        (testing "the store keeps the three record kinds this test's numbers assume"
           (is (= 3 (count pairs))
               (str "record kinds under " dir ": " (mapv :log pairs))))
         (testing "no compaction is in flight, so nothing needs its removal made durable"
@@ -120,7 +120,8 @@
             ;; ONE: `clear-records!` rewrites the counters blob through
             ;; `write-nippy-atomic!`, which fsyncs the directory the rename landed in.
             ;; The three `delete-compact-temps!` calls beside it find nothing to delete
-            ;; and so owe nothing.  Re-pin deliberately; do not widen to a ceiling.
+            ;; and so owe nothing.  Update the expected count deliberately; do not widen
+            ;; to a ceiling.
             (is (= 1 n)
                 "a wipe with no compaction in flight costs exactly one directory fsync")))))))
 

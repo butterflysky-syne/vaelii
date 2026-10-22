@@ -160,7 +160,7 @@
       (v/assert-rule kb [(list mammal '?y)] (list has_fur '?y) 'CxGen {:direction :forward})
       (is (seq (v/sentexes-matching kb (list has_fur rex) 'CxSpec))))))
 
-(tu/deftest-kb a-join-rule-fires-over-spec-facts-with-a-common-viewpoint
+(tu/deftest-kb a-join-rule-fires-over-spec-facts-with-a-common-view
   ;; The requirement's join case: two antecedents, spec-type facts, genl + genlCx.
   (let [dog (tu/tmp-type) cat (tu/tmp-type) animal (tu/tmp-type)
         muffet (tu/tmp-ind) tom (tu/tmp-ind) whiskers (tu/tmp-ind)
@@ -174,7 +174,7 @@
     (v/assert kb (list cat tom) 'CxTop)
     (testing "a spec fact in a sub joins a fact in the shared super, placed in the sub"
       (is (seq (v/sentexes-matching kb (list coexist muffet tom) 'CxA))))
-    (testing "two facts in sibling subs (no common viewpoint) derive nothing"
+    (testing "two facts in sibling subs (no common view) derive nothing"
       (v/assert kb (list cat whiskers) 'CxB)
       (is (empty? (v/sentexes-matching kb (list coexist muffet whiskers) '?ctx)))
       (is (empty? (v/sentexes-matching kb (list coexist whiskers muffet) '?ctx))))))
@@ -265,7 +265,7 @@
 (tu/deftest-kb slot-resolution-reaches-conclusions-already-derived
   ;; The two spellings of one rule may arrive with the facts *between* them, so the
   ;; rule fires before the slots resolve.  The record slot resolves by content either
-  ;; way; what this pins is that the justifications already fired through the rule
+  ;; way; this asserts that the justifications already fired through the rule
   ;; move with it (`jtms/restrength-informant`): a firing bakes the rule's
   ;; contribution in as the justification's `:strength`, and a defeasible→strict
   ;; resolution that left it there would keep exactly the arrival order the slot join
@@ -324,7 +324,7 @@
   ;; Two different questions read two different slots, and the rule entry point must not
   ;; answer the first with a constant.  `:strength` is the rule's *own* class, and comes
   ;; from `opts` as it does at the fact entry point; what a firing confers is `:defeasible`'s to
-  ;; say (`chain/rule-view-of`), so storing a rule known-true leaves its conclusions
+  ;; say (`chain/rule-fields-of`), so storing a rule known-true leaves its conclusions
   ;; where they were.  Nothing in the engine defeats a rule (docs/nmtms.md states the
   ;; absence), so the slot is one that reads back rather than one that moves belief —
   ;; which is why `defeat-class` is asserted below beside the record: it is the read a
@@ -655,7 +655,7 @@
 ;; `(exceptWhen <query> <rule>)` is split at the assert layer: the rule stores
 ;; normally and the exception becomes a belief-following meta-sentex
 ;; `(exceptWhen <query> (sentexHandle H))` naming the rule H by handle, its query
-;; aligned to the rule's canonical variables.  These tests pin that representation —
+;; aligned to the rule's canonical variables.  These tests assert that representation —
 ;; not the blocking semantics, which `except_test` specifies.
 
 (tu/deftest-kb the-constructor-drops-a-surface-exceptWhen-wrapper-onto-the-bare-rule

@@ -12,7 +12,7 @@
     --line:#ccd6d5; --line-strong:#aab8b7;
     --core:#3c5a63; --free:#1f7a6c; --bundle:#93670f; --collapse:#a8442a;
     --accent:#1f7a6c;
-    --c-never:#9aa6a8; --c-key:#1f7a6c; --c-stamp:#2f8299; --c-drain:#6b5a9e;
+    --c-never:#9aa6a8; --c-key:#1f7a6c; --c-part:#2f8299; --c-drain:#6b5a9e;
     --c-ident:#3c5a8f; --c-gen:#b07d12; --c-whole:#c2602e; --c-clock:#a32d3a;
     --size:#3c5a63;
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -26,7 +26,7 @@
       --line:#273437; --line-strong:#3a4b4f;
       --core:#83a7b1; --free:#45bda9; --bundle:#d7a63f; --collapse:#e5805f;
       --accent:#45bda9;
-      --c-never:#62716f; --c-key:#45bda9; --c-stamp:#5fb3c8; --c-drain:#a493d6;
+      --c-never:#62716f; --c-key:#45bda9; --c-part:#5fb3c8; --c-drain:#a493d6;
       --c-ident:#8aa4d6; --c-gen:#d7a63f; --c-whole:#e88a5a; --c-clock:#e5707c;
       --size:#83a7b1;
       color-scheme:dark;
@@ -38,7 +38,7 @@
     --line:#273437; --line-strong:#3a4b4f;
     --core:#83a7b1; --free:#45bda9; --bundle:#d7a63f; --collapse:#e5805f;
     --accent:#45bda9;
-    --c-never:#62716f; --c-key:#45bda9; --c-stamp:#5fb3c8; --c-drain:#a493d6;
+    --c-never:#62716f; --c-key:#45bda9; --c-part:#5fb3c8; --c-drain:#a493d6;
     --c-ident:#8aa4d6; --c-gen:#d7a63f; --c-whole:#e88a5a; --c-clock:#e5707c;
     --size:#83a7b1;
     color-scheme:dark;
@@ -286,10 +286,10 @@
 
   // ---- fixed vocabulary: how coarse each code is, and the colour classes ----
   var COARSE = ["C","P","K","S","Q","I","G","W","R","G*"];
-  var CODE_VAR = {C:"--c-never", P:"--c-never", K:"--c-key", S:"--c-stamp", Q:"--c-drain", I:"--c-ident",
+  var CODE_VAR = {C:"--c-never", P:"--c-never", K:"--c-key", S:"--c-part", Q:"--c-drain", I:"--c-ident",
                   G:"--c-gen", W:"--c-whole", R:"--c-whole", "G*":"--c-clock"};
   var LIFECYCLE = ["recover","image-install","cleared","closed","caches-cleared"];
-  var KIND_VAR = {index:"--c-ident", cache:"--c-whole", journal:"--c-stamp", queue:"--c-drain", counter:"--c-gen", pass:"--c-never"};
+  var KIND_VAR = {index:"--c-ident", cache:"--c-whole", journal:"--c-part", queue:"--c-drain", counter:"--c-gen", pass:"--c-never"};
   var REMOVE = {core:["cannot remove","--core"], free:["independently removable","--free"],
                 speed:["speed only","--collapse"], none:["no feature","--faint"]};
   var GROUPS = "STMJNXWDQRK".split("");
@@ -666,7 +666,7 @@
     box.innerHTML = "";
     function sw(colour, text){ var s = h("span"); var i = h("i", "sw"); i.style.borderColor = colour; i.style.background = "color-mix(in srgb, " + colour + " 18%, transparent)"; s.appendChild(i); s.appendChild(document.createTextNode(text)); box.appendChild(s); }
     if(state.colour === "code"){
-      [["C P","--c-never","never / pass"],["K","--c-key","per key"],["S","--c-stamp","per stamp part"],["Q","--c-drain","drained"],
+      [["C P","--c-never","never / pass"],["K","--c-key","per key"],["S","--c-part","per key part"],["Q","--c-drain","drained"],
        ["I","--c-ident","identity"],["G","--c-gen","generation"],["W R","--c-whole","wholesale / rebuilt"],["G*","--c-clock","change clock"]]
         .forEach(function(x){ sw(v(x[1]), x[0] + " " + x[2]); });
     } else if(state.colour === "kind"){

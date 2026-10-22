@@ -95,7 +95,7 @@
   ;; enumeration here rather than throwing.  Always answering it is what lets the fork
   ;; above ask the question at all: `OverlayRecordStore` answers its own `Tallying` out of
   ;; these, and a base that refused them would put every `open-kb` emptiness probe back on
-  ;; the merged roster — which over a `:pg` base is the whole table.
+  ;; the merged handle set — which over a `:pg` base is the whole table.
   p/Tallying
   (sentex-tally        [_] (cap/count-sentexes        base))
   (justification-tally [_] (cap/count-justifications  base))

@@ -32,7 +32,7 @@
 
   The dispute module owns the reads, the state vocabulary, and the dispute id; THIS module owns the policy
   the dispute module deliberately left out — the **clock**, the **timeout**, and the **notify sinks**.  The
-  clock is the engine clock (`v/*clock*`), so a lifecycle stamp and its assertion's
+  clock is the engine clock (`v/*clock*`), so a lifecycle time and its assertion's
   `:created` provenance agree.
 
   Additive, like the sibling koinii modules: only the public core API — including
@@ -66,9 +66,9 @@
   nil)
 
 (defn- now
-  "The current stamp from the engine clock (`v/*clock*`), so a lifecycle timestamp and the
+  "The current time from the engine clock (`v/*clock*`), so a lifecycle timestamp and the
   `:created` provenance of the assertion recording it agree.  Bind `v/*clock*` in a test to
-  pin it."
+  fix it."
   []
   (v/*clock*))
 
@@ -77,7 +77,7 @@
 (defn notify-disputes
   "The default policy's core move: announce every not-yet-announced dispute `channel`
   observes and record it `notified`.  For each `:open` dispute (from the dispute module's
-  `pending-disputes`), stamp a `notified` mark (`open -> notified`) and push the entry to
+  `pending-disputes`), record a `notified` mark (`open -> notified`) and push the entry to
   `*notify-sink*`.  Changes NO belief — both sides stay `in?` at `:default` and `argue`
   still reports `:contradiction`; only the lifecycle record moves.
 
@@ -108,14 +108,15 @@
       (disj seen handle))))
 
 (defn- opened-at
-  "When dispute `id` arose: the latest `:created` stamp among its clashing sides and
+  "When dispute `id` arose: the latest `:created` time among its clashing sides and
   everything they rest on (the clash exists once the last of them is asserted — two sides
   for a rebuttal, three for an `anti_transitive` chain).  A side that was **derived**
-  carries no provenance of its own, so its stamps are its premises': an emergent clash —
-  two rules concluding `S` and `¬S` from facts nobody stated as a stance — arose when the
-  last of those premises landed, and reading the sides alone would find no stamp and
-  sweep it at its first tick.  0 if nothing in the closure carries a stamp — an un-stamped
-  dispute is treated as old, so the sweep surfaces it rather than hiding it."
+  carries no provenance of its own, so its creation times are its premises': an emergent
+  clash — two rules concluding `S` and `¬S` from facts nobody stated as a stance — arose
+  when the last of those premises landed, and reading the sides alone would find no
+  `:created` time and sweep it at its first tick.  0 if nothing in the closure carries a
+  `:created` time — such a dispute is treated as old, so the sweep surfaces it rather than
+  hiding it."
   [kb id]
   (reduce max 0 (keep #(:created (v/provenance kb %))
                       (into (set id) (mapcat #(support-handles kb %)) id))))
@@ -155,16 +156,16 @@
 
 (defn who-ruled
   "Read a ruling off its handle: `{:arbiter :dispute-ids :at}` from the provenance `rule`
-  stamped, or nil if `ruling-handle` is not an adjudication assertion.  'Which disputes
+  recorded, or nil if `ruling-handle` is not an adjudication assertion.  'Which disputes
   this sentex is the standing ruling of, who ruled them, and when' as a provenance read.
 
   `:dispute-ids` is a **set**, and it has to be.  Canonical dedup gives one sentex per
   (sentence, context), so an arbiter who rules two disputes the same way — the same
-  claim upheld against two different opponents — is stamping one handle twice, and a
-  single-valued tag would keep only the later id.  The earlier dispute would then read
-  no standing ruling at all, skip the one-ruling-per-arbiter guard, and land a second
-  monotonic ruling beside the first: two known-true claims on one clash, a `:conflict`
-  no ruling can settle."
+  claim upheld against two different opponents — records an adjudication on one handle
+  twice, and a single-valued tag would keep only the later id.  The earlier dispute would
+  then read no standing ruling at all, skip the one-ruling-per-arbiter guard, and land a
+  second monotonic ruling beside the first: two known-true claims on one clash, a
+  `:conflict` no ruling can settle."
   [kb ruling-handle]
   (let [p (v/provenance kb ruling-handle)]
     (when-let [dids (:adjudication p)]
@@ -208,8 +209,8 @@
   sentences.
 
   The ruling is an ordinary assertion: `upheld` at `:monotonic` strength in the arbiter's
-  OWN context (`id/context-for`), lifted under `channel` so the channel sees it, stamped
-  creator `arbiter` and tagged `:adjudication id` in provenance.  Monotonic strength
+  OWN context (`id/context-for`), lifted under `channel` so the channel sees it, recorded
+  with creator `arbiter` and tagged `:adjudication id` in provenance.  Monotonic strength
   defeats the losing `:default` side, so the coexisting clash clears — the dispute reads
   `:resolved` and `argue` collapses to `:true`/`:false`.  `why` on `upheld` shows the
   adjudication and who ruled.
@@ -232,7 +233,7 @@
 
   **An arbiter who is a party to the dispute is refused** (`:arbiter-is-party`).  A ruling
   is an assertion in the arbiter's own context, so for a party that context already holds
-  one of the two clashing sentences: ruling their own way would silently restamp their
+  one of the two clashing sentences: ruling their own way would silently re-record their
   claim as its own adjudication, and ruling the other way would *retract* it — the
   disputed claim deleted rather than the dispute settled, which `dispute-state` then reads
   as `:resolved` because there is no longer a clash to see.  Whether an arbiter may judge
@@ -253,7 +254,7 @@
     (when (some #(contains? mine (v/sentence-of %)) held)
       (throw (ex-info (str "koinii: " arbiter " is a party to dispute " (pr-str k)
                            " — an arbiter's ruling lands in the arbiter's own context, so"
-                           " ruling a dispute they hold a side of would restamp or retract"
+                           " ruling a dispute they hold a side of would re-record or retract"
                            " their own claim rather than settle the clash.  Name an arbiter who holds no"
                            " side of it")
                       {:type :arbiter-is-party :arbiter arbiter :dispute-id k})))
@@ -366,7 +367,7 @@
   naming its voter (`identity/attested-by`), naming those ballots in `:unattested`.  Only
   `cast-ballot` under a minted `:proof-tier` principal attests one; a ballot from
   `channel/vote` or from the wire carries none (docs/koinii.md, *Identity and the write
-  boundary*).  `tally` is ungated."
+  boundary*).  `tally` is unrestricted."
   [kb id claim-handle channel]
   (when-not (= :proof-tier id/*policy*)
     (throw (ex-info (str "koinii: majority resolution requires the :proof-tier identity "

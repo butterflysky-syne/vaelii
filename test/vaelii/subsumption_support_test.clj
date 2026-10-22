@@ -182,22 +182,21 @@
         (is (empty? (v/sentexes-matching kb (list ancestorOf Tom Bob) 'CxWell))
             "and only when the last supporter goes does the conclusion")))))
 
-(tu/deftest-kb an-edge-has-one-supporter-per-context
-  ;; What makes the witness choice above a **total** order rather than a tie-break left to
-  ;; whatever the retrieval enumerated: the candidates it picks from are keyed on their
-  ;; asserting context, and no two of them share one.  A sentence and a context are what a
-  ;; handle is allocated for, so stating the edge twice from one context is one sentex —
-  ;; and the picker's key is therefore complete on its own (`taxonomy/most-general-of`).
-  (tu/with-terms [fatherOf parentOf]
-    (let [a (v/assert kb (list 'genl fatherOf parentOf) 'CxUniverse)
-          b (v/assert kb (list 'genl fatherOf parentOf) 'CxUniverse)
-          c (v/assert kb (list 'genl fatherOf parentOf) 'CxWell)
-          support (tax/supporters (reasoning/taxonomy kb) [:genl fatherOf parentOf])]
+(tu/deftest-kb a-stated-edge-is-one-supporter-per-context-and-a-cover-is-one-more
+  ;; The witness choice above keys on the asserting context first.  A sentence and a
+  ;; context are what a handle is allocated for, so stating the edge twice from one context
+  ;; is one sentex.  A `partition` installing the same edge is a second supporter in that
+  ;; context, and `taxonomy/most-general-of` orders the two by the sentence each states.
+  (tu/with-terms [dog_t pet_t cat_t]
+    (let [a (v/assert kb (list 'genl dog_t pet_t) 'CxUniverse)
+          b (v/assert kb (list 'genl dog_t pet_t) 'CxUniverse)
+          c (v/assert kb (list 'genl dog_t pet_t) 'CxWell)
+          p (v/assert kb (list 'partition pet_t dog_t cat_t) 'CxUniverse)
+          support (tax/supporters (reasoning/taxonomy kb) [:genl dog_t pet_t])]
       (is (= a b) "one sentence in one context is one sentex, however often it is asserted")
       (is (not= a c) "a second context is a second sentex, and a second supporter")
-      (is (= #{a c} (set (keys support))) "so the edge has exactly the two supporters")
-      (is (= (count support) (count (set (vals support))))
-          "and their contexts are distinct — the key the witness is chosen on is total"))))
+      (is (= #{a c p} (set (keys support))))
+      (is (= 'CxUniverse (support a) (support p))))))
 
 (tu/deftest-kb a-second-path-around-the-edge-keeps-the-conclusion
   ;; multiple inheritance: dog reaches animal two ways.  Either edge can go.

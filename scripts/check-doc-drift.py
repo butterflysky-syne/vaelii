@@ -42,7 +42,8 @@ and those files describe the project around it.
   E8  `(requiring-resolve 'ns/var)` on a literal symbol anywhere under src/
       except vaelii.impl.wiring — a layering cut left at its call site, where
       nothing counts it and nothing stops the next one.  A computed symbol (a
-      keyword->var registry) and the two optional backends are exempt.
+      keyword->var registry) and the optional dependencies E8_OK_TARGETS names are
+      exempt.
   E9  Futurology: prose naming work as forthcoming ("on the roadmap", "is the
       next step", "left for a future pass", a `## TODO` section).  E7's mirror
       image and the same argument — the present is the only tense a doc has.
@@ -83,7 +84,7 @@ and those files describe the project around it.
       misleads exactly as one under docs/ does.
   E14 A `.clj` under src/, test/ or bench/ that does not open with the two
       licence-header lines, in order: `SPDX-License-Identifier: SSPL-1.0` then
-      the copyright.  The identifier is PINNED, not merely required — the engine
+      the copyright.  The identifier is FIXED, not merely required — the engine
       is SSPL-1.0 and the adapter siblings are Apache-2.0, so a file carrying the
       sibling's identifier is a licensing defect a presence check waves through.
   E15 A **Breaking** changelog entry in the unreleased section with no `*Breaks:*`
@@ -98,19 +99,19 @@ and those files describe the project around it.
       carries a question, and read straight off the protocol nothing says which
       answer the caller wanted: a forgotten belief filter and a deliberate as-stored
       read look identical.  `vaelii.impl.reads` asks it in the name of the read, and
-      the roster (`E16_OK_FILES`) is the one place an exception is written down.
+      the allowlist (`E16_OK_FILES`) is the one place an exception is written down.
       `RecordStore` is outside the check by design — a record IS the storage.  The
       `family-*` reads and the trie's `count-at` / `leaf-at` are narrower still:
       only `reads`, `kv` and `columnar` call them.  A `reads/…-global` entry point
       (one that passes `p/every-context`) is called only from a `(file, top-level
-      def)` pair on `E16_GLOBAL_ROSTER`, and a `reads` def passing the sentinel is
+      def)` pair on `E16_GLOBAL_ALLOW`, and a `reads` def passing the sentinel is
       named `…-global`.
   E17 A `tax/…-global` taxonomy read, or a flat-cache read (`has-prop?`, `inverse-of`,
       `disjoint?`, …) called with no context, from a `(file, top-level def)` pair not in
-      `E17_ROSTER`; and a roster entry whose definition makes no such read.  A read
+      `E17_ALLOW`; and an allowlist entry whose definition makes no such read.  A read
       sees what its context sees, and on a KB where no edge is context-restricted the
       global closure and the scoped one are the same object — so a caller that meant to
-      scope and did not is right on every KB but the one it is wrong on.  The roster
+      scope and did not is right on every KB but the one it is wrong on.  The allowlist
       records THAT a caller has a reason; the reason itself lives in that definition's
       own docstring.
   E18 A `.clj` under src/ that docs/namespaces.md neither glosses in its file map nor
@@ -120,15 +121,22 @@ and those files describe the project around it.
       and nothing else reads it, so a namespace added without a line goes on being
       unmapped silently while the number beside it keeps asserting otherwise.
   E19 A `(requiring-resolve 'ns/var)` in vaelii.impl.wiring whose target is not one of
-      the three the layering allows: the two genuine mutual recursions
-      (`vaelii.core/assert`, `vaelii.impl.provers/solve-goal`) and the teardown entry
-      point (`vaelii.core/retract!`), which a below-core solver reaches because the
-      teardown orchestration is core-private for now.  E8 forces every literal
-      requiring-resolve into that one file; E19 caps what it holds.  A fourth target is a
+      the five the layering allows: the four genuine mutual recursions
+      (`vaelii.core/assert`, `vaelii.impl.provers/solve-goal`,
+      `vaelii.impl.inherit/second-route`, `vaelii.core/replay-dispatch`) and the teardown
+      entry point (`vaelii.core/retract!`), which a below-core solver reaches because the
+      teardown orchestration is core-private.  E8 forces every literal
+      requiring-resolve into that one file; E19 caps what it holds.  A sixth target is a
       layering inversion — a below-core reader reached from core through a delay here
       rather than relocated below core so the call points down (docs/namespaces.md, "The
       layering").  Reuses E8's literal matcher, so a computed requiring-resolve is
       as invisible to it as to E8.
+  E20 A top-level form under src/ that installs a function into another namespace's
+      slot: a call to `alias/install…!` or `alias/set-…-fn!`, or a `reset!` /
+      `alter-var-root` of `alias/var`.  That is an up-call with no requiring-resolve
+      in it, so E8 and E19 cannot see it, and the lower namespace answers wrongly
+      until the higher one loads.  Route it through vaelii.impl.wiring.  A call made
+      inside a fn body (a listener a caller registers) is not top-level and passes.
 
   W1  Line-number citations into .clj files (`foo.clj:123`) — warned, not
       failed: cite the var name instead, line numbers always rot.
@@ -477,7 +485,7 @@ W1_CHECKED_BY_TEST = {"docs/operations.md"}
 for doc in md_files():
     lines = open(doc).read().split("\n")
 
-    # Split into fenced/unfenced views.
+    # Split into fenced and unfenced lines.
     in_fence, fence_lines, prose_lines = False, [], []
     for line in lines:
         if FENCE.match(line):
@@ -555,7 +563,7 @@ for doc in md_files():
         found = any(var in t or kw in t for t in src_text.values())
         if not found:
             # test/ carries the VAELII_TEST_* knobs; scan it too.
-            roots = [pjoin(ROOT, "project.clj"),
+            roots = [pjoin(ROOT, "project.clj"), pjoin(ROOT, "project-env.clj"),
                      pjoin(ROOT, "scripts"), RESOURCES, TEST_SRC]
             for p in roots:
                 if os.path.isfile(p):
@@ -629,6 +637,7 @@ def repo_text_files():
             if n.endswith((".sh", ".py", ".clj")):
                 yield pjoin(dirpath, n)
     yield pjoin(ROOT, "project.clj")
+    yield pjoin(ROOT, "project-env.clj")
 
 
 for path in repo_text_files():
@@ -821,8 +830,8 @@ for path in repo_text_files():
 #     registry (core's reasoners / calculi / solvers, imperative's `do/` handlers,
 #     foreign's plugins).  Deferral is the feature: the table is
 #     the public way to ask for a subsystem, and naming one must not load eight.
-#   - an optional dependency whose entire point is not being loaded — the dense TMS
-#     (RoaringBitmap, fastutil), the clingo bridge (JNA, libclingo), the
+#   - an optional dependency whose entire point is not being loaded — the clingo
+#     bridge (JNA, libclingo), the
 #     embedded-SQLite and Postgres record stores (the Apache-2.0 `com.vaelii/sqlite`
 #     and `com.vaelii/postgres` siblings the SSPL engine does not depend on), the
 #     sampling profiler, and tools.namespace's dependency graph for the hot-reload dev
@@ -842,8 +851,7 @@ for path in repo_text_files():
 # without thinking, not the one somebody hides; the inventory is a convention the
 # check defends, not a sandbox it enforces.
 E8_OK_FILES = {"src/vaelii/impl/wiring.clj"}
-E8_OK_TARGETS = {"vaelii.impl.dense-jtms/create-dense-tms",
-                 "vaelii.sqlite.record-store/sqlite-record-store",
+E8_OK_TARGETS = {"vaelii.sqlite.record-store/sqlite-record-store",
                  "vaelii.postgres.record-store/pg-record-store",
                  "vaelii.impl.asp.clingo/solve",
                  "vaelii.impl.asp.clingo/classify-both",
@@ -869,14 +877,16 @@ for path in clj_files():
 # but nothing caps what that one file holds.  A layering inversion surfaces there
 # as one more upward requiring-resolve: a below-core reader reached from core
 # through a delay here, rather than relocated below core so the call points down
-# (docs/namespaces.md, "The layering").  So pin the inventory to the three the
-# layering allows — the two genuine mutual recursions and the teardown entry point a
+# (docs/namespaces.md, "The layering").  So fix the inventory at the three the
+# layering allows — the four genuine mutual recursions and the teardown entry point a
 # below-core solver reaches while the teardown orchestration stays core-private; a
-# fourth target is an inversion to relocate, not to add here.  Reuses E8_LITERAL, so a
+# sixth target is an inversion to relocate, not to add here.  Reuses E8_LITERAL, so a
 # computed `(requiring-resolve sym)` is invisible to it exactly as it is to E8.
 E19_WIRING = pjoin(ROOT, "src/vaelii/impl/wiring.clj")
 E19_OK_TARGETS = {"vaelii.core/assert",
                   "vaelii.impl.provers/solve-goal",
+                  "vaelii.impl.inherit/second-route",
+                  "vaelii.core/replay-dispatch",
                   "vaelii.core/retract!"}
 if os.path.exists(E19_WIRING):
     for i, line in enumerate(open(E19_WIRING, errors="replace"), 1):
@@ -884,10 +894,35 @@ if os.path.exists(E19_WIRING):
         if m and m.group(1) not in E19_OK_TARGETS:
             flag("E19", E19_WIRING, m.group(1),
                  f"src/vaelii/impl/wiring.clj:{i} `requiring-resolve "
-                 f"'{m.group(1)}` — a target beyond the three wiring holds "
-                 f"(vaelii.core/assert, vaelii.impl.provers/solve-goal, "
-                 f"vaelii.core/retract!); relocate the callee below vaelii.core so the "
-                 f"call points down, rather than adding an inversion here")
+                 f"'{m.group(1)}` — a target beyond the five wiring holds "
+                 f"({', '.join(sorted(E19_OK_TARGETS))}); relocate the callee below "
+                 f"vaelii.core so the call points down, rather than adding an inversion "
+                 f"here")
+
+# ── E20: no load-time install into a lower namespace's slot ─────────────────
+# A higher namespace that fills a lower one's atom or dynamic var at load reaches up
+# without a requiring-resolve, so E8 and E19 never see the edge, and the lower
+# namespace reads the empty slot (and answers as if nothing were there) whenever the
+# higher one has not loaded yet.  wiring.clj's delay loads the callee on first use
+# instead.  Only a top-level form is matched — column 0, or the init of a top-level
+# def — so a listener a caller registers from inside a fn body (`feed/install-dispatch!`
+# from `vaelii.core/watch`) passes.  `caches/register-*` is a registry rather than a
+# slot: each registrant owns the state it registers, and an unloaded registrant
+# has no state to read.
+E20_INSTALL = re.compile(
+    r"^\((?:def\w*\s+(?:\^\S+\s+)*[\w*?!<>=+-]+\s+(?:\"(?:\\.|[^\"\\])*\"\s+)?\()?"
+    r"(?:([\w.-]+)/(install[\w-]*!|set-[\w-]*-fn!)"
+    r"|(reset!|alter-var-root)\s+(?:#')?([\w.-]+)/([\w*?!<>=+-]+))")
+for path in clj_files():
+    rel = prel(path, ROOT)
+    for i, line in enumerate(open(path, errors="replace"), 1):
+        m = E20_INSTALL.match(line)
+        if not m:
+            continue
+        target = f"{m.group(1)}/{m.group(2)}" if m.group(1) else f"{m.group(4)}/{m.group(5)}"
+        flag("E20", path, target,
+             f"{rel}:{i} `{target}` at load — an install into another namespace's slot, "
+             f"which E8 and E19 cannot see; reach the callee through vaelii.impl.wiring")
 
 # ── E10: a declare owes a reason, and a dead one owes nothing ───────────────
 # `declare` is how a file admits its definitions do not fall in dependency
@@ -1093,7 +1128,7 @@ for doc in itertools.chain(md_files(), extra_md_files()):
 # is Apache. Neither is visible by reading the code.
 #
 # Both lines and in this order, because that is what all 382 files do today and a
-# convention with one exception is one nobody can check. The identifier is pinned
+# convention with one exception is one nobody can check. The identifier is fixed
 # rather than merely required: `SSPL-1.0` is the claim, and an Apache header here
 # would be a licensing defect that a presence check waves through.
 LICENCE_HEADER = ("SPDX-License-Identifier: SSPL-1.0",
@@ -1173,10 +1208,10 @@ if os.path.exists(changelog):
 #
 # `vaelii.impl.reads` is where the question gets asked, in the name of the read:
 # `as-stored-…` / `stored-…` over the index store, `believed-…` over the KB. This
-# check is what keeps the entry points the only way in, and the roster below is the one
+# check is what keeps the entry points the only way in, and the allowlist below is the one
 # place an exception is written down.
 #
-# The roster is not a list of trusted callers — it is the implementers. A store
+# The allowlist is not a list of trusted callers — it is the implementers. A store
 # answering the protocol, the retrieval that *builds* the believed reads, and the
 # dump that copies the index wholesale are all below the question rather than
 # ducking it: there is no belief to filter by at the point they run.
@@ -1251,9 +1286,9 @@ E16_FAMILY_CALL = re.compile(r"\bp/(" + "|".join(re.escape(r) for r in E16_FAMIL
 # A read over every context reads past the reader's ancestor set, which context scoping
 # forbids unless the read is deliberately global. It passes `p/every-context` — never
 # nil, which a family read refuses — through a `reads/…-global` entry point, and this
-# roster lists who calls one, as E17's does for `tax/…-global`. The reason lives in the
+# allowlist names who calls one, as E17's does for `tax/…-global`. The reason lives in the
 # caller's docstring or beside the row.
-E16_GLOBAL_ROSTER = {
+E16_GLOBAL_ALLOW = {
     # The taxonomy is keyed by edge, not by reader: an entry's supporters in every
     # context decide whether it is installed, and the scoped closures filter by context.
     ("src/vaelii/impl/taxonomy.clj", "supporters-of"),
@@ -1261,26 +1296,32 @@ E16_GLOBAL_ROSTER = {
     ("src/vaelii/impl/taxonomy.clj", "stored-disjoint-metatype?"),
     # The unscoped census of every stored supporter functor, for the unscoped closure.
     ("src/vaelii/impl/taxonomy.clj", "all-keys"),
-    # The supporter visibility gate and its readers: the targets every stored except and
+    # A declaration's `(unary_predicate T)` entailment, in whatever context the declaration
+    # holds, read when T's length moves: a length holds at every context.
+    ("src/vaelii/impl/special.clj", "withdrawn-type-entailments"),
+    # The supporter visibility check and its readers: the targets every stored except and
     # defeat names, each filtered by the reader's view afterwards.
     ("src/vaelii/impl/except.clj", "named-entries"),
     ("src/vaelii/impl/kb.clj", "supporter-reaches?"),
     ("src/vaelii/impl/except.clj", "genlCx-excepts"),
-    # The declared roster: a reader's rules reading a predicate it misses, kept by its
+    # The declared forced-monotonic set: a reader's rules reading a predicate it misses, kept by its
     # ancestor set, and a declaration's switch over every reader's network state.
-    ("src/vaelii/impl/except.clj", "roster-state"),
-    ("src/vaelii/impl/except.clj", "roster-reads?"),
+    ("src/vaelii/impl/except.clj", "forced-state"),
+    ("src/vaelii/impl/except.clj", "forced-reads?"),
     ("src/vaelii/impl/except.clj", "denial-stored?"),
     ("src/vaelii/impl/checks.clj", "force-reach!"),
     # A declaration's reach: the contexts stating its predicate, each kept when a context
     # at or below the declaration's sees it, over the unscoped closures a placement reads.
     ("src/vaelii/impl/chain.clj", "declaration-reach"),
     ("src/vaelii/impl/resolution.clj", "defeated-index"),
-    ("src/vaelii/impl/settle.clj", "belief-before"),
-    # A rule read with no reader context: `concluding-rule-handles`' unscoped arities, a
-    # stratification check over every rule, and three whole-KB reports.
+    # A rule read with no reader context: `concluding-rule-handles`' unscoped arities and
+    # `concludes?`, the shadowing check that probes the same buckets, a stratification
+    # check over every rule and its test for a rule concluding below an edge, and three
+    # whole-KB reports.
     ("src/vaelii/impl/resolution.clj", "concluding-rule-handles"),
+    ("src/vaelii/impl/resolution.clj", "concludes?"),
     ("src/vaelii/impl/checks.clj", "stratification-readers"),
+    ("src/vaelii/impl/checks.clj", "edge-negation-cycle"),
     ("src/vaelii/impl/checks.clj", "declared-firings"),
     ("src/vaelii/impl/chain.clj", "rule-firing-report"),
     ("src/vaelii/impl/integrity.clj", "rule-macro-findings"),
@@ -1303,12 +1344,18 @@ E16_GLOBAL_ROSTER = {
     # A relation's length is read the same at every context, off its bindings in every
     # context.
     ("src/vaelii/impl/decide/arity.clj", "held-bindings"),
+    # The argument holds' candidates are a superset over every context, each decided
+    # again from its own context (`checks/argument-conviction`).
+    ("src/vaelii/impl/checks.clj", "declaration-candidates"),
+    ("src/vaelii/impl/checks.clj", "declarations-naming"),
+    ("src/vaelii/impl/checks.clj", "lattice-candidates"),
+    ("src/vaelii/impl/checks.clj", "rules-on"),
     # A metatype route's class membership is stored in CxUniverse, so the memberships a
     # write moves are read from every context.
     ("src/vaelii/impl/chain.clj", "class-route-memberships"),
     # The self tuples under an `irreflexive` mark when no reader set is given.
     ("src/vaelii/impl/decide/tuple.clj", "self-tuples-under"),
-    # The vocabulary: the term roster keys no context, and the public reads and the
+    # The vocabulary: the term-name set keys no context, and the public reads and the
     # quality report list every name the KB stores.
     ("src/vaelii/core.clj", "terms"),
     ("src/vaelii/core.clj", "term-count"),
@@ -1319,7 +1366,7 @@ E16_GLOBAL_ROSTER = {
     # or a report reads every stored rule, and `direct-concluders` is the stored graph.
     ("src/vaelii/impl/chain.clj", "fire-rules-for"),
     ("src/vaelii/impl/chain.clj", "permuting-rejoin-rules"),
-    ("src/vaelii/impl/special.clj", "computed-reading-rules"),
+    ("src/vaelii/impl/special.clj", "rules-taking"),
     ("src/vaelii/impl/chain.clj", "transitive-rejoin-rules"),
     ("src/vaelii/impl/chain.clj", "closure-rejoin-rules"),
     ("src/vaelii/impl/special.clj", "recheck-on-separation"),
@@ -1334,7 +1381,7 @@ E16_GLOBAL_ROSTER = {
     ("src/vaelii/impl/integrity.clj", "converse-rule"),
     ("src/vaelii/impl/integrity.clj", "known-exception?"),
     ("src/vaelii/impl/rules.clj", "direct-concluders"),
-    # A predicate-agnostic argument read: the slot roster keys no context, the public reads
+    # A predicate-agnostic argument read: the slot union keys no context, the public reads
     # answer over every context, a planner's or a lead's count bounds a cost its scoped
     # read then pays, and a candidate set is filtered per record by the reader's view.
     ("src/vaelii/core.clj", "sentexes-with-arg"),
@@ -1347,13 +1394,17 @@ E16_GLOBAL_ROSTER = {
     ("src/vaelii/impl/checks.clj", "lead-from-source?"),
     ("src/vaelii/impl/inherit.clj", "extent-size"),
     ("src/vaelii/impl/inherit.clj", "claim-reach-separated"),
+    ("src/vaelii/impl/inherit.clj", "edge-reach"),
     ("src/vaelii/impl/checks.clj", "membership-handles-led"),
-    ("src/vaelii/impl/special.clj", "roster-members-in"),
+    ("src/vaelii/impl/special.clj", "mint-members-in"),
     ("src/vaelii/impl/special.clj", "transitive-left-ends"),
     ("src/vaelii/impl/abduce.clj", "edge-handles"),
     ("src/vaelii/impl/clashes.clj", "believed-at-arg1"),
     ("src/vaelii/impl/resolution.clj", "type-memberships"),
-    ("src/vaelii/impl/decide/membership.clj", "term-entries"),
+    ("src/vaelii/impl/decide/membership.clj", "term-handles"),
+    # The distinct arguments at a declared position: the trie keys the context last, and
+    # each argument's contexts are then read narrowed to the declaration's.
+    ("src/vaelii/impl/checks.clj", "declaration-conflict"),
 }
 E16_GLOBAL_CALL = re.compile(r"\breads/([\w?!*-]+-global)(?![\w?-])")
 E16_EVERY = re.compile(r"\bp/every-context\b")
@@ -1374,20 +1425,20 @@ for path in clj_files():
                  f"The family methods serve every family, so the `reads` entry point names the "
                  f"family and tallies it: call `reads/…` instead")
         m = E16_GLOBAL_CALL.search(code)
-        if m and rel != "src/vaelii/impl/reads.clj" and (rel, enclosing) not in E16_GLOBAL_ROSTER:
+        if m and rel != "src/vaelii/impl/reads.clj" and (rel, enclosing) not in E16_GLOBAL_ALLOW:
             flag("E16", path, f"reads/{m.group(1)}",
                  f"{rel}:{i} `{enclosing}` calls `reads/{m.group(1)}` — a read over every "
-                 f"context outside the roster. A read sees what its context sees (README.md, "
+                 f"context outside the allowlist. A read sees what its context sees (README.md, "
                  f"context scoping): pass the reader's ancestor set to the scoped entry point, or "
-                 f"add `{enclosing}` to E16_GLOBAL_ROSTER and say in its docstring why it reads "
+                 f"add `{enclosing}` to E16_GLOBAL_ALLOW and say in its docstring why it reads "
                  f"every context")
         if (rel == "src/vaelii/impl/reads.clj" and E16_EVERY.search(code)
                 and not enclosing.endswith("-global")):
             flag("E16", path, "p/every-context",
                  f"{rel}:{i} `{enclosing}` passes `p/every-context` — an entry point reading "
-                 f"every context is named `…-global`, so E16_GLOBAL_ROSTER sees its callers")
+                 f"every context is named `…-global`, so E16_GLOBAL_ALLOW sees its callers")
 
-# ── E17: an unscoped taxonomy read is rostered, never reached for ──────────
+# ── E17: an unscoped taxonomy read is allowlisted, never reached for ───────
 # Context scoping is the third invariant: a read sees what its context sees, up the
 # genlCx ancestor set. `vaelii.impl.taxonomy` answers each closure both ways — `genls` walks
 # the edges visible from a context, `genls-global` walks every active edge whoever
@@ -1400,15 +1451,15 @@ for path in clj_files():
 # ways through their arity: with a concrete context they read the declarations that
 # context believes, and with none (or nil, or a `?var`) they read every declaration the
 # cache holds, one a defeat or an except hides from every reader included.  E17 holds a
-# context-free call to one of them to the same roster.
+# context-free call to one of them to the same allowlist.
 #
 # So an unscoped read is a decision, and this is where the decisions are listed. Each
-# roster entry is a `(file, top-level def)` pair, and the reason lives in that
-# definition's own docstring — the roster records THAT there is one, the docstring
-# says what it is. A caller that cannot state a reason wants the scoped arity.  A roster
+# allowlist entry is a `(file, top-level def)` pair, and the reason lives in that
+# definition's own docstring — the allowlist records THAT there is one, the docstring
+# says what it is. A caller that cannot state a reason wants the scoped arity.  An allowlist
 # entry whose definition makes no unscoped read is itself an E17 finding.
 #
-# `vaelii.impl.taxonomy` itself is not on the roster and needs no entry: it calls its
+# `vaelii.impl.taxonomy` itself is not on the allowlist and needs no entry: it calls its
 # own readers unqualified, and this rule is about reaching one through the alias.
 # A `tax/` read is global by its name: every one spelled with `-global`.
 E17_GLOBAL = re.compile(r"\btax/([\w?*!<>=+-]*-global(?:-[\w?*!<>=+-]+)?)(?![\w?*!<>=+-])")
@@ -1426,13 +1477,13 @@ E17_FLAT = {
     "tax/covers-over": (2, "required"), "tax/covers-naming-visible": (2, "required"),
     "tax/separating-pairs": (1, "required"),
     # The reads with no scoped arity: the census of a mark and its wrappers.  Every call
-    # is unscoped, except as the argument of `seq`, `empty?` or `not-empty`, a test of
-    # whether the KB declares the mark anywhere, which gates work a later read decides.
-    "tax/props": (None, "census"), "tax/quoting-function?": (None, "census"),
-    "tax/mention-marks": (None, "census"), "tax/commuting-groups": (None, "census"),
+    # is unscoped, except as the argument of `seq`, `empty?` or `not-empty`: a presence
+    # check of the mark anywhere in the KB, ahead of work a later scoped read decides.
+    "tax/props": (None, "census"), "tax/mention-marks": (None, "census"),
+    "tax/commuting-groups": (None, "census"),
 }
-E17_GATES = ("seq", "empty?", "not-empty")
-E17_ROSTER = {
+E17_PRESENCE_TESTS = ("seq", "empty?", "not-empty")
+E17_ALLOW = {
     # The public API offers both readings, and its shorter arity IS the global one —
     # `vaelii.core/genls` documents the pair (docs/taxonomy.md).
     ("src/vaelii/core.clj", "genls"),
@@ -1442,6 +1493,10 @@ E17_ROSTER = {
     ("src/vaelii/core.clj", "direct-specs"),
     ("src/vaelii/core.clj", "min-genls"),
     ("src/vaelii/core.clj", "max-specs"),
+    ("src/vaelii/core.clj", "common-genls"),
+    ("src/vaelii/core.clj", "common-specs"),
+    ("src/vaelii/core.clj", "min-common-genls"),
+    ("src/vaelii/core.clj", "max-common-specs"),
     # Assert-time refusals. A refusal is a claim about the KB and not about a vantage:
     # a cycle refused when asked from one context and allowed from another is not a
     # refusal, it is a coin toss.  `disjoint-problems` is the deliberate exception and
@@ -1463,7 +1518,8 @@ E17_ROSTER = {
     ("src/vaelii/impl/checks.clj", "edge-negation-cycle"),
     ("src/vaelii/impl/checks.clj", "genls-problem"),
     ("src/vaelii/impl/checks.clj", "covering-genls-problem"),
-    ("src/vaelii/impl/checks.clj", "mintable-type?"),
+    ("src/vaelii/impl/checks.clj", "breaks-demand?"),
+    ("src/vaelii/impl/checks.clj", "held-demand-test"),
     # The forward join and the trigger keys. A firing is placed in a context the join
     # decides, so the candidate fan cannot be scoped by one — the rule index is keyed
     # on the global closure and the placement narrows afterwards (docs/contexts.md).
@@ -1481,6 +1537,8 @@ E17_ROSTER = {
     ("src/vaelii/impl/inherit.clj", "witness?"),
     ("src/vaelii/impl/inherit.clj", "licensing-functors"),
     ("src/vaelii/impl/inherit.clj", "crossings"),
+    ("src/vaelii/impl/inherit.clj", "self-positions"),
+    ("src/vaelii/impl/inherit.clj", "joint-genl"),
     # The backward claim search weighs its two seeds by the unscoped reach, an upper
     # bound on the scoped one; the search itself reads the scoped `genl?`.
     ("src/vaelii/impl/inherit.clj", "stated-reached?"),
@@ -1507,7 +1565,7 @@ E17_ROSTER = {
     ("src/vaelii/impl/special.clj", "super-reaches-declaration?"),
     # Which mints a departure can have withheld, a superset over every placement: each
     # one it keeps is asked again from its own placement (`checks/subsumed-mint`).
-    ("src/vaelii/impl/special.clj", "may-release?"),
+    ("src/vaelii/impl/special.clj", "may-release"),
     # The predicates a declaration binds, read across every context the facts are stored
     # in; each fact is then asked its own context's declarations.
     ("src/vaelii/impl/special.clj", "declared-functors"),
@@ -1518,21 +1576,41 @@ E17_ROSTER = {
     ("src/vaelii/impl/qcn_kb.clj", "calculi-triggered-by"),
     ("src/vaelii/impl/chain.clj", "answered-by-calculus?"),
     ("src/vaelii/impl/special.clj", "rule-reads-above?"),
-    ("src/vaelii/impl/special.clj", "roster-antecedent-functors"),
+    ("src/vaelii/impl/special.clj", "rule-key-functors"),
+    ("src/vaelii/impl/special.clj", "key-fan"),
     ("src/vaelii/impl/special.clj", "under-seen-edges"),
     # Settle's candidate discovery. An over-approximated candidate merely checks and
     # yields nothing, and the arbitration that follows is context-scoped anyway.
     ("src/vaelii/impl/recheck.clj", "reachable-predicates"),
     ("src/vaelii/impl/discovery.clj", "separated-reach"),
+    ("src/vaelii/impl/discovery.clj", "preserved-below"),
+    ("src/vaelii/impl/inherit.clj", "edge-reach"),
     # A predicate no stored claim states in any reader's fan states none in a scoped one.
     ("src/vaelii/impl/inherit.clj", "claims-stored?"),
     # A nogood family keeps its candidate rows, a superset over every reader, where no
     # reader exists: at the store and removal choke points, at a replay's end and in a
-    # sync.  It reads the unscoped closures there through the one view this builds, and
+    # sync.  It reads the unscoped closures there through the one map this builds, and
     # its reader half is handed none.
-    ("src/vaelii/impl/decide.clj", "write-view"),
+    ("src/vaelii/impl/decide.clj", "unscoped-closures"),
+    # The argument holds' candidates are a superset over every reader, each decided
+    # again from its own context (`checks/argument-conviction`).
+    ("src/vaelii/impl/checks.clj", "constrained-functor"),
+    ("src/vaelii/impl/checks.clj", "constrained-functors"),
+    ("src/vaelii/impl/checks.clj", "declared-functor"),
+    ("src/vaelii/impl/checks.clj", "declaration-candidates"),
+    ("src/vaelii/impl/checks.clj", "value-kind-moved?"),
+    ("src/vaelii/impl/checks.clj", "lattice-candidates"),
+    ("src/vaelii/impl/checks.clj", "definition-candidates"),
+    ("src/vaelii/impl/checks.clj", "refresh-argument-holds!"),
+    ("src/vaelii/impl/checks.clj", "members-below"),
+    ("src/vaelii/impl/checks.clj", "type-level-rules"),
+    # A rule's variable constraints and their separations read over every reader, a
+    # superset: a rule it clears is convicted at no context, and one it does not clear
+    # is decided again from its own (`checks/rule-conviction`).
+    ("src/vaelii/impl/checks.clj", "declared-positions-global"),
+    ("src/vaelii/impl/checks.clj", "clash-possible?"),
     # The arity length entries are a superset over every reader, kept where no reader
-    # exists, as the candidate rows they serve are (`decide/write-view`).
+    # exists, as the candidate rows they serve are (`decide/unscoped-closures`).
     ("src/vaelii/impl/decide/arity.clj", "evict-below!"),
     ("src/vaelii/impl/decide/arity.clj", "lengths-of"),
     # A metatype route's class membership is stored in CxUniverse and reads the edges
@@ -1557,17 +1635,21 @@ E17_ROSTER = {
     ("src/vaelii/impl/except.clj", "visible-exception-index"),
     ("src/vaelii/impl/except.clj", "except-hidden-fn"),
     ("src/vaelii/impl/except.clj", "excepts-seen"),
-    ("src/vaelii/impl/except.clj", "reader-state"),
-    ("src/vaelii/impl/except.clj", "roster-at"),
-    # The declared roster's union over every reader, which the network computes and the
+    ("src/vaelii/impl/except.clj", "build-reader-state"),
+    ("src/vaelii/impl/except.clj", "forced-at"),
+    ("src/vaelii/impl/except.clj", "forced-reads?"),
+    # The declared forced-monotonic set's union over every reader, which the network computes and the
     # placement re-places from: a declaration's reach and the predicates declared.
     ("src/vaelii/impl/chain.clj", "declaration-reach"),
     ("src/vaelii/impl/checks.clj", "declared-firings"),
     ("src/vaelii/impl/decide.clj", "declarations"),
     ("src/vaelii/impl/decide.clj", "declared"),
     # The settle's `genlCx` moves: the placement reach is a superset over every reader,
-    # read where no reader exists, as the candidate rows are (`decide/write-view`).
+    # read where no reader exists, as the candidate rows are (`decide/unscoped-closures`).
     ("src/vaelii/impl/special.clj", "drain-moves!"),
+    # A write report's exemption seeds: the memberships of every type under a symbol a
+    # moved sentence names, a superset over every reader the report then reads scoped.
+    ("src/vaelii/impl/settle.clj", "sentence-seeds"),
     # A report on the whole taxonomy, which has no vantage to read from.
     ("src/vaelii/impl/quality.clj", "taxonomy-coverage"),
     # The clash reading's candidate fan. A rule pair is decided from a common descendant
@@ -1576,9 +1658,9 @@ E17_ROSTER = {
     # itself is decided scoped.
     ("src/vaelii/impl/quality.clj", "clash-partners"),
     # The context adjacency read where no reader exists: the settle's `genlCx` moves
-    # (an active edge an except reaches, every reader's moves read from it), and the gate
-    # in front of a fact's declarations below it, each candidate then asked from its
-    # placement.
+    # (an active edge an except reaches, every reader's moves read from it), and the
+    # candidate filter in front of a fact's declarations below it, each candidate then asked
+    # from its placement.
     ("src/vaelii/impl/special.clj", "excepted-edges"),
     ("src/vaelii/impl/special.clj", "declarations-below"),
     #
@@ -1592,14 +1674,15 @@ E17_ROSTER = {
     # store holds, which every reader shares.  The argument-order fold and the reified
     # spelling are stored once, and the read walk hides the spelling a reader's belief
     # rules out (docs/canonicalization.md); the storage context of a decontextualized
-    # mark, a teardown, a merge's retargeting, the roster a stored sentex is classed by.
+    # mark, a teardown, a merge's retargeting, the forced-monotonic set a stored sentex is
+    # classed by.
     ("src/vaelii/core.clj", "rehome-forced-extent!"),
     ("src/vaelii/core.clj", "target-following-meta?"),
     ("src/vaelii/impl/assert_entry.clj", "storage-context"),
     ("src/vaelii/impl/assert_entry.clj", "assert-one"),
     ("src/vaelii/impl/checks.clj", "checked-sentence"),
     ("src/vaelii/impl/checks.clj", "stored-spelling"),
-    ("src/vaelii/impl/decide.clj", "on-roster?"),
+    ("src/vaelii/impl/decide.clj", "forced-monotonic?"),
     ("src/vaelii/impl/integrate.clj", "permuting?"),
     ("src/vaelii/impl/integrate.clj", "recanonicalizing-subject"),
     ("src/vaelii/impl/kb.clj", "permuting-literal?"),
@@ -1609,9 +1692,9 @@ E17_ROSTER = {
     ("src/vaelii/impl/resolution.clj", "raw-match-with"),
     ("src/vaelii/impl/special.clj", "meta-target"),
     ("src/vaelii/impl/special.clj", "deduce-lifts"),
-    # A candidate superset a later step narrows: a gate in front of a scoped read, a
+    # A candidate superset a later step narrows: a candidate filter in front of a scoped read, a
     # trigger or seed whose re-join reads the rule's own context, a nogood candidate row
-    # kept where no reader exists and placed after (`decide/write-view`), and a claim
+    # kept where no reader exists and placed after (`decide/unscoped-closures`), and a claim
     # or reifiable function a per-reader test admits.
     ("src/vaelii/impl/chain.clj", "reified-fns"),
     ("src/vaelii/impl/nat.clj", "queue-split-uses!"),
@@ -1622,13 +1705,12 @@ E17_ROSTER = {
     ("src/vaelii/impl/decide/membership.clj", "separation-tests"),
     ("src/vaelii/impl/decide/membership.clj", "cover-convicted-at?"),
     ("src/vaelii/impl/decide/related.clj", "contradicted-somewhere?"),
-    ("src/vaelii/impl/decide/tuple.clj", "roster-marks"),
+    ("src/vaelii/impl/decide/tuple.clj", "prop-marks"),
     ("src/vaelii/impl/decide/tuple.clj", "det-marks"),
     ("src/vaelii/impl/decide/tuple.clj", "note-converse!"),
     ("src/vaelii/impl/decide/tuple.clj", "converse-functors"),
     ("src/vaelii/impl/decide/tuple.clj", "convicting"),
     ("src/vaelii/impl/decide/tuple.clj", "under-marks"),
-    ("src/vaelii/impl/decide/tuple.clj", "self-tuples-under"),
     ("src/vaelii/impl/inherit.clj", "denial-readings"),
     ("src/vaelii/impl/inherit.clj", "separated-types"),
     ("src/vaelii/impl/inherit.clj", "separation-moved"),
@@ -1645,30 +1727,24 @@ E17_ROSTER = {
     ("src/vaelii/impl/special.clj", "anti-symmetric-mark-relevant?"),
     ("src/vaelii/impl/special.clj", "offered-mark-over?"),
     #
-    # Census reads (`tax/props`, `commuting-groups`, `quoting-function?`, `mention-marks`)
+    # Census reads (`tax/props`, `commuting-groups`, `mention-marks`)
     # outside an emptiness test.  The public census is the KB-wide reading.
     ("src/vaelii/core.clj", "props"),
-    # A KB-wide property: the stored spelling, the roster, the rebuild of every stored
+    # A KB-wide property: the stored spelling, the forced-monotonic set, the rebuild of every stored
     # declaration, and whether an argument is a mention, which is a fact about the
     # sentence (`tax/mention-marks`).
-    ("src/vaelii/impl/decide.clj", "roster"),
-    ("src/vaelii/impl/kb.clj", "canon-stamp"),
+    ("src/vaelii/impl/decide.clj", "forced-predicates"),
+    ("src/vaelii/impl/kb.clj", "handle-cache-key"),
     ("src/vaelii/impl/resolution.clj", "spelling-opts"),
     ("src/vaelii/impl/resolution.clj", "matches-hierarchical-over"),
     ("src/vaelii/impl/special.clj", "permuting-marks"),
     ("src/vaelii/impl/special.clj", "rebuild-pending!"),
-    ("src/vaelii/impl/checks.clj", "nested-input-problem"),
-    ("src/vaelii/impl/checks.clj", "convicting-result-type"),
-    ("src/vaelii/impl/checks.clj", "minted-application-clash"),
-    ("src/vaelii/impl/nat.clj", "reify-or-mint-nat"),
-    ("src/vaelii/impl/nat.clj", "reify-nat-for-read"),
-    ("src/vaelii/impl/quasiquote.clj", "reduce-term"),
     ("src/vaelii/impl/quasiquote.clj", "any-quasiquote?"),
     ("src/vaelii/impl/resolution.clj", "representative-term"),
     ("src/vaelii/impl/resolution.clj", "displaced-terms-in"),
     ("src/vaelii/impl/resolution.clj", "retired-for?"),
     # A candidate superset a later step narrows: a trigger whose firing names the mark it
-    # was read through, which the read walk hides per reader; a walk the prover gates
+    # was read through, which the read walk hides per reader; a walk the prover filters
     # again at its context; nogood candidate rows; a per-reader filter.
     ("src/vaelii/impl/chain.clj", "mirrored-antecedent?"),
     ("src/vaelii/impl/chain.clj", "permuting-antecedent?"),
@@ -1686,12 +1762,10 @@ E17_ROSTER = {
     ("src/vaelii/impl/resolution.clj", "constraining-predicates"),
     ("src/vaelii/impl/special.clj", "declaring-predicates"),
     ("src/vaelii/impl/special.clj", "marked-roots"),
-    # The `quoting_function` mark: whether an argument is a mention is a fact about the
-    # sentence, read unscoped as `checks` reads it (`tax/mention-marks`).
-    ("src/vaelii/impl/provers.clj", "quoted-form"),
-    ("src/vaelii/impl/provers.clj", "expression-kind-goal?"),
     # The re-join reads every context, so an edge's upper end is read through every edge.
     ("src/vaelii/impl/provers.clj", "support-answers-reading"),
+    ("src/vaelii/impl/provers.clj", "relation-moved-answers"),
+    ("src/vaelii/impl/provers.clj", "relation-membership?"),
 }
 E17_DEF = re.compile(r"\(def[\w-]*\s+(?:\^[^\s]+\s+)*([^\s\)]+)")
 E17_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|;[^\n]*|\\.[^\s,()\[\]{}]*|#_|#?[(\[{]|[)\]}]|[^\s,()\[\]{}";]+')
@@ -1726,7 +1800,7 @@ def e17_flat_calls(text):
                 args = items[1:]
                 if mode == "census":
                     parent = stack[-1][3] if stack and len(stack[-1]) > 3 else None
-                    free = parent not in E17_GATES
+                    free = parent not in E17_PRESENCE_TESTS
                 else:
                     ctx = args[at] if len(args) > at else None
                     free = ctx == "nil" or (isinstance(ctx, str) and ctx.startswith("?"))
@@ -1779,34 +1853,34 @@ for path in clj_files():
         m = E17_GLOBAL.search(E16_BACKTICKED.sub("", line))
         if not m:
             continue
-        if (rel, enclosing) in E17_ROSTER:
+        if (rel, enclosing) in E17_ALLOW:
             E17_SEEN.add((rel, enclosing))
             continue
         flag("E17", path, f"tax/{m.group(1)}",
              f"{rel}:{i} `{enclosing}` calls `tax/{m.group(1)}` — an unscoped taxonomy "
-             f"read outside the roster. A read sees what its context sees (README.md, "
+             f"read outside the allowlist. A read sees what its context sees (README.md, "
              f"context scoping), and on a KB where no edge is context-restricted the "
              f"global and the scoped answer are the same object — so a caller that "
              f"meant to scope and did not is right until it is not. Pass the context "
              f"(`tax/{m.group(1).replace('-global', '')}`), or add `{enclosing}` to "
-             f"E17_ROSTER and say in its docstring why it must not be scoped")
+             f"E17_ALLOW and say in its docstring why it must not be scoped")
     if rel == "src/vaelii/impl/taxonomy.clj":
         continue
     for i, enclosing, read in e17_flat_calls(open(path, errors="replace").read()):
-        if (rel, enclosing) in E17_ROSTER:
+        if (rel, enclosing) in E17_ALLOW:
             E17_SEEN.add((rel, enclosing))
             continue
         flag("E17", path, read,
              f"{rel}:{i} `{enclosing}` calls `{read}` with no context — the flat-cache "
              f"read of every declaration the cache holds, one a defeat or an except "
              f"hides from every reader included. Pass the reader's context, or add "
-             f"`{enclosing}` to E17_ROSTER and say in its docstring why it reads the "
+             f"`{enclosing}` to E17_ALLOW and say in its docstring why it reads the "
              f"KB-wide answer")
 
-for rel, enclosing in sorted(E17_ROSTER - E17_SEEN):
+for rel, enclosing in sorted(E17_ALLOW - E17_SEEN):
     flag("E17", pjoin(ROOT, rel), f"{rel}:{enclosing}",
-         f"E17_ROSTER names `{enclosing}` in {rel}, which makes no unscoped taxonomy "
-         f"read: drop the entry, so the roster lists only the callers with a reason")
+         f"E17_ALLOW names `{enclosing}` in {rel}, which makes no unscoped taxonomy "
+         f"read: drop the entry, so the allowlist names only the callers with a reason")
 
 # ── E18: the namespace map accounts for every file under src/ ──────────────
 # docs/namespaces.md is the file map, and it makes a countable claim: the glossed
@@ -1835,7 +1909,7 @@ def e18_expand(token):
 
 
 def e18_lists(text):
-    """(glossed, by_name): the two rosters docs/namespaces.md holds, as paths under
+    """(glossed, by_name): the two file lists docs/namespaces.md holds, as paths under
     src/vaelii/. Brace groups are joined first — the koinii ones wrap."""
     glossed, by_name, header, fenced = set(), set(), None, False
     joined = re.sub(r"\{[^}]*\}", lambda m: re.sub(r"\s+", "", m.group(0)), text)

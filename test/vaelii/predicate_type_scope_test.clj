@@ -2,7 +2,7 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.predicate-type-scope-test
   "A property mark like `(transitive P)` is the queryable classification itself — there is
-  no derived `…Predicate` twin and no prover reading a global roster.  So asking
+  no derived `…Predicate` twin and no prover reading a global predicate set.  So asking
   `(transitive P)` is ordinary context-scoped retrieval, and it agrees with the
   `has-prop?`, `isa?` and stored-sentex reads beside it from every vantage.  A permuting
   mark's property is the exception: it decides the key a sentex is stored under in every
@@ -10,9 +10,9 @@
 
   The shipped ontology **masks** the scoping: `symmetric`/`transitive`/`reflexive`/
   `functional` are `decontextualized_predicate`s (core.txt), so a real KB lifts every such
-  mark into CxUniverse and every context sees it — global and scoped agree.  So this pins
+  mark into CxUniverse and every context sees it — global and scoped agree.  So this asserts
   the scoping on a **bare** KB, where the mark stays in the context it was declared in and
-  a sibling cannot see it; `meta_test` is the companion that pins the lifted, shipped
+  a sibling cannot see it; `meta_test` is the companion that asserts the lifted, shipped
   behaviour.
 
   Each test builds its own KB on the **isolated** database pair: it rebuilds in a loop,
@@ -35,7 +35,7 @@
             "and the open enumeration includes it"))
       (testing "a context that cannot see the declaration does not"
         (is (not (v/ask? kb '(transitive ptrans) 'CxPtsB))
-            "the ground prove is scoped to the vantage, not read off a global roster")
+            "the ground prove is scoped to the vantage, not read off a global predicate set")
         (is (not (contains? (set (map #(get % '?p)
                                       (v/ask kb '(transitive ?p) 'CxPtsB)))
                             'ptrans))

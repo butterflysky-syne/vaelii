@@ -9,7 +9,7 @@
   reads it.  A naming invariant passes on anything correctly spelled, so
   `(maxCardinality parentOf 2)` is a well-formed ternary fact, storable, believed, and
   read by nobody — and a KB author gets identical silence from a constraint that is
-  enforced and one that was never implemented.  A roster is what turns that silence into
+  enforced and one that was never implemented.  A classification table is what turns that silence into
   an answer.
 
   **Population: the terms core.txt comments.**  Not every predicate in the KB — a domain
@@ -33,26 +33,26 @@
 
   **Where the answer is written.**  Not here: each term's prose sits on its own entry in
   `vaelii.impl.predicates`, beside that term's shape, storage kind and facets, and this
-  roster is that field read back.  One entry per term is what stops the answer being a
+  table is that field read back.  One entry per term is what stops the answer being a
   second list keyed by the same functors — the failure the declaration namespace exists
   to end — and the *class* is read off the `:facets` rather than off which key the prose
   was written under, so a term the engine demonstrably reads cannot be classified inert
   by writing different prose beside it.
 
   **`audit` checks the classification**, with two tests over it: a term core.txt comments
-  with no roster entry fails, and a roster entry naming a term core.txt no longer
+  with no classification entry fails, and an entry naming a term core.txt no longer
   comments fails.  So the next plausible-looking functor cannot land unimplemented in
   silence, and a retired one cannot leave a stale claim behind.  `:contradicted` is the
   third, and the one that needs no judgement: a functor some data structure in the tree
   proves has behaviour — the special table's keys, the aggregates, the evaluables, the
-  rule wrappers — and the roster calls inert is a contradiction, not a matter of
+  rule wrappers — and the table calls inert is a contradiction, not a matter of
   opinion.
 
   **Why the answer does not live in the ontology.**  A `(notEnforced P)` marker was the
   obvious alternative and is self-defeating — it would be a declaration the engine does
   not read, which is the exact defect this namespace exists to find.  Putting it in each
   term's `comment` prose is worse: nothing can check prose without matching strings, so it
-  would drift the first time a check was added and the sentence was not.  A roster in code
+  would drift the first time a check was added and the sentence was not.  A table in code
   drifts too, but a test can see it drift."
   (:require [clojure.java.io :as io]
             [vaelii.impl.io.text :as text]
@@ -68,7 +68,7 @@
   sx/root-context)
 
 (def vocabulary-file
-  "The classpath path of the KB file whose `comment` sentences name this roster's
+  "The classpath path of the KB file whose `comment` sentences name this table's
   population."
   "kb/upper/core.txt")
 
@@ -81,7 +81,7 @@
                            (second s)))))
                (text/read-forms (io/resource vocabulary-file)))))
 
-(def roster
+(def classification
   "`term -> {:enforced \"where\"}` or `term -> {:inert \"why\"}`, over every term
   core.txt comments.
 
@@ -109,12 +109,12 @@
 
 (defn classify
   "What the engine does with vocabulary term `term`: `{:enforced \"where\"}`,
-  `{:inert \"why\"}`, or nil for a term the roster does not cover.
+  `{:inert \"why\"}`, or nil for a term the table does not cover.
 
-  Nil is **not** \"nothing reads it\" — the roster's population is core.txt's grammar,
+  Nil is **not** \"nothing reads it\" — the table's population is core.txt's grammar,
   so an ordinary domain predicate is simply not a term this question is asked about."
   [term]
-  (get roster term))
+  (get classification term))
 
 (defn- declared-terms
   "Every term `vocabulary-file` comments that `kb` holds a comment for in
@@ -137,10 +137,10 @@
 
 (def ^:private machine-readable-enforced
   "The functors whose behaviour is provable from a data structure rather than from prose:
-  the special-predicate table's own keys, the aggregate roster, the evaluable comparisons,
-  and the rule wrappers.  `audit` reports a roster entry that calls one of these inert,
+  the special-predicate table's own keys, the aggregate table, the evaluable comparisons,
+  and the rule wrappers.  `audit` reports a classification entry that calls one of these inert,
   which is the one kind of wrong answer here that does not need a human to notice — and
-  every roster the engine already keeps as data belongs in it, since each one added is a
+  every table the engine already keeps as data belongs in it, since each one added is a
   claim nobody has to review again."
   (delay (-> #{}
              (into (map first) special/entries)
@@ -154,23 +154,23 @@
 
       {:enforced    [[term \"where\"] …]
        :inert       [[term \"why\"] …]
-       :unclassified [term …]      ; declared, and the roster says nothing — the defect
-       :retired      [term …]      ; the roster claims a term the KB no longer declares
+       :unclassified [term …]      ; declared, and the table says nothing — the defect
+       :retired      [term …]      ; the table claims a term the KB no longer declares
        :contradicted [term …]}     ; called inert, but the special table gives it an arm
 
   `:unclassified` is what this exists for: a declaration that landed without anybody
   deciding whether the engine reads it.  `:retired` is the mirror — a claim about a term
-  that is gone, which is how a roster goes quietly wrong.  `:contradicted` is the check
+  that is gone, which is how a hand-kept table goes quietly wrong.  `:contradicted` is the check
   that needs no judgement at all.
 
   Vectors sorted by term, so two runs over one KB compare."
   [kb]
   (let [declared (declared-terms kb)
-        entry    (fn [t] [t (or (:enforced (roster t)) (:inert (roster t)))])]
-    {:enforced     (mapv entry (filter #(:enforced (roster %)) declared))
-     :inert        (mapv entry (filter #(:inert (roster %)) declared))
-     :unclassified (vec (remove roster declared))
-     :retired      (vec (remove declared (sort (keys roster))))
-     :contradicted (vec (filter #(and (:inert (roster %))
+        entry    (fn [t] [t (or (:enforced (classification t)) (:inert (classification t)))])]
+    {:enforced     (mapv entry (filter #(:enforced (classification %)) declared))
+     :inert        (mapv entry (filter #(:inert (classification %)) declared))
+     :unclassified (vec (remove classification declared))
+     :retired      (vec (remove declared (sort (keys classification))))
+     :contradicted (vec (filter #(and (:inert (classification %))
                                       (contains? @machine-readable-enforced %))
                                 declared))}))

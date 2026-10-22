@@ -439,7 +439,7 @@
   needs revisiting only if one of the two constraints it *reads* narrowed, and those are
   exactly the pairs the sweep reports — so the work left is `2 × changed × (n-2)` triple
   visits against a sweep's `n(n-1) × (n-2)`, and the two counts say directly which to do.
-  A sparse network moves a handful of pairs and drains in a rounding error; one that pins
+  A sparse network moves a handful of pairs and drains in a rounding error; one that determines
   nearly every pair would cost about two sweeps to drain, and sweeping again is less work.
   Each changed pair is queued in **both** directions, since both are written on every
   tightening and either can be an input to a triple.

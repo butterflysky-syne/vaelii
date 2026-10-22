@@ -25,14 +25,15 @@
   never half-applied), and compaction rewrites the log crash-safely
   (`files/recover-compaction!`).  A frame that does not thaw with frames after it is
   damage inside the log (`files/scan-log`'s `:damaged-frame`): the replay keeps the ops
-  before it and flags the store `damaged`, which the open gate answers by rebuilding the
-  index from the records.  All log writes hold the backend lock (the RAF file pointer is
+  before it and flags the store `damaged`, which the open's coverage check answers by rebuilding
+  the index from the records.  All log writes hold the backend lock (the RAF file pointer is
   shared)."
   (:require [clojure.set :as set]
             [taoensso.trove :as trove]
             [vaelii.impl.disk.durability :as dur]
             [vaelii.impl.disk.files :as f]
             [vaelii.impl.kv :as kv]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]))
 
 (defn- usable!
@@ -74,7 +75,7 @@
   *writers*, and it is not what this lock is for: `compact!` snapshots `@data` inside the
   lock and then rewrites the log to match, and it runs on the durability daemon's
   compaction executor — a thread the single-writer contract says nothing about.  Reading
-  `@data` before acquiring and publishing after releasing left two windows on that
+  `@data` before acquiring and publishing after releasing left two race windows on that
   thread.  A compaction landing in either one writes the log from a map that is missing
   this write (so the WAL holds the frame and the rewritten log does not, and the next
   open replays an index the running one disagrees with), or, after `kv-clear!`, restores
@@ -167,9 +168,9 @@
           ;; `[:put]` per key in hash order, where the lost keys are arbitrary and the
           ;; batch-seal counter may well be among the survivors.  The tail walk below
           ;; still finds a clean frame boundary and replays what remains; the flag is
-          ;; how the open gate knows that what remains is not everything.  It holds the
-          ;; reason, `:short-log` here or `:damaged-frame` from the replay below, and the
-          ;; gate's warning names it.
+          ;; how the open's coverage check knows that what remains is not everything.  It
+          ;; holds the reason, `:short-log` here or `:damaged-frame` from the replay below,
+          ;; and the check's warning names it.
           short?   (let [expected (get clean "kv")]
                      (and (integer? expected)
                           (not= (long expected) (f/log-length log))))]
@@ -185,15 +186,20 @@
               frames (volatile! 0)
               ;; A frame that does not thaw mid-log leaves the ops after it unread, so the
               ;; map is short by an unknown set of keys.  The log is left as it is — the
-              ;; index is derived, and the open gate's rebuild (`clear-index!`, then
-              ;; `reindex`) empties it — and the store is flagged the way a length
-              ;; mismatch against the clean marker flags it.
+              ;; index is derived, and the rebuild the open's coverage check runs
+              ;; (`clear-index!`, then `reindex`) empties it — and the store is flagged the
+              ;; way a length mismatch against the clean marker flags it.
               frame? (try
                        (f/truncate-log! log
-                                        (f/scan-log log log-path
-                                                    (fn [_ op]
-                                                      (vswap! frames inc)
-                                                      (vswap! m (fn [mm] (first (kv/apply-op mm op)))))))
+                                        (with-open [r (progress/start
+                                                       ::replay-log
+                                                       "open: replay the index log, in bytes"
+                                                       (f/log-length log))]
+                                          (f/scan-log log log-path
+                                                      (fn [_ op]
+                                                        (vswap! frames inc)
+                                                        (vswap! m (fn [mm] (first (kv/apply-op mm op)))))
+                                                      r)))
                        false
                        (catch clojure.lang.ExceptionInfo e
                          (when-not (= :damaged-frame (:type (ex-data e))) (throw e))
@@ -240,7 +246,7 @@
   `close!` can land between that check and this lock — and compacting a closed log
   fails *late*, the temp and its commit marker already on disk with the delete that
   clears them never reached, which the next open would replay as a crash-interrupted
-  compaction.  Under the lock there is no window: `close!` sets the flag holding the
+  compaction.  Under the lock there is no race window: `close!` sets the flag holding the
   same lock, so a compaction that acquires it either runs against a store that stays
   open until it finishes, or sees the flag and writes nothing."
   [{:keys [data log log-path lock frames closed failed fault]}]
@@ -264,7 +270,11 @@
         ;; the replay, which is what the marker is for.
         (let [committed? (volatile! false)]
           (try
-            (doseq [[k v] snapshot] (f/append-record! tlog [:put k v]))
+            (with-open [r (progress/start ::compact "compact: rewrite the index log"
+                                          (count snapshot))]
+              (doseq [[k v] snapshot]
+                (f/append-record! tlog [:put k v])
+                (progress/tick! r)))
             (f/force! tlog false)
             (f/close! tlog)
             (f/write-commit-marker! marker {:log log-path})
@@ -308,7 +318,7 @@
                                  :error t})))))))))))
 
 (defn- close-healthy!
-  "`close!` of a store with no fault latched: compact if earned, flush, stamp the clean
+  "`close!` of a store with no fault latched: compact if earned, flush, write the clean
   marker, latch `:closed`, release the log."
   [{:keys [dir log lock closed failed fault log-path] :as b}]
   (try
@@ -323,7 +333,7 @@
     ;; landing between the read and the flag would rewrite the log to some other length
     ;; and leave a marker that no longer describes it — and the next open reads that as
     ;; `damaged?`, which is a wholesale `clear-index!` plus `reindex` of a store nothing
-    ;; was ever wrong with.  Setting `closed` here closes that window: `compact!`
+    ;; was ever wrong with.  Setting `closed` here closes that race window: `compact!`
     ;; consults the flag after taking this same lock, so a queued rewrite that gets in
     ;; first finds the log open and the flag clear (and the length read after it is
     ;; still that log's), and one that arrives second is skipped.
@@ -350,7 +360,7 @@
   `[:put k v]` a replay actually needs. Closing is the moment to pay for it: the writer
   is done, and the cost lands once instead of on every subsequent open.
 
-  Gated on the *same* switch and threshold the background tick uses
+  It runs only under the *same* switch and threshold the background tick uses
   (`vaelii.impl.disk.durability`), so a store closed just after a compaction does not
   rewrite its log for nothing, and one knob turns both off.
 
@@ -361,8 +371,8 @@
   rewrite, over a directory another process may already hold.
 
   **A store whose fault latch is already set closes without throwing**: it writes no
-  clean marker, so the next open walks the log's tail and the open gate checks the
-  index's coverage, and it releases the log.  The fault was reported when it latched.  A
+  clean marker, so the next open walks the log's tail and checks the index's
+  coverage, and it releases the log.  The fault was reported when it latched.  A
   flush that fails here is a fault first found by the close, and it throws.  Either way
   the latch ends set, so a call on the store after the close is refused by name."
   [{:keys [log lock closed fault log-path] :as b}]

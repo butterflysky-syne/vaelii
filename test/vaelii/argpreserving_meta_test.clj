@@ -103,18 +103,17 @@
     (testing "position 2 is fixed — a declaration on one position answers for no other"
       (is (not (v/ask? kb (list 'quotedArg pAge 2 'positive_integer) C))))))
 
-(tu/deftest-kb quotedArg-answers-what-the-entry-point-already-refuses-on
+(tu/deftest-kb quotedArg-answers-what-the-entry-point-already-convicts-on
   ;; The two entry points, on one declaration.  `checks/args-quoted-problem` reads a super's
   ;; declaration against a sub's tuple through `res/constraining-predicates`, so the
-  ;; refusal descends; the query surface has to descend with it or the same declaration
+  ;; conviction descends; the query surface has to descend with it or the same declaration
   ;; means one thing to `assert` and another to `ask`.  Binary, because a quoted position
   ;; needs a tuple to sit in and a unary functor is snake_case by the naming rule.
   (tu/with-terms [pAgeOf pInfantAgeOf]
     (v/assert kb (list 'genl pInfantAgeOf pAgeOf) C)
     (v/assert kb (list 'quotedArg pAgeOf 2 'string) C)
-    (testing "the entry point refuses the sub's tuple under the super's declaration"
-      (is (thrown? clojure.lang.ExceptionInfo
-                   (v/assert kb (list pInfantAgeOf 'Bob 5) C)))
+    (testing "the entry point holds the sub's tuple inert under the super's declaration"
+      (is (= :quoted-arg-type (tu/write-type kb #(v/assert kb (list pInfantAgeOf 'Bob 5) C))))
       (is (v/assert kb (list pInfantAgeOf 'Bob "two") C)
           "and admits one whose written term is the declared kind"))
     (testing "and `ask` says the declaration binding it is there to be read"

@@ -57,9 +57,10 @@ Two kinds of literal are **held back** in the author's order, because their
 position is operational rather than logical:
 
 - **Deferred (evaluable)** literals — which consume bindings rather than produce them.
-  `sentex/deferred-predicates` names seventeen: `evaluate`, `lessThan`, `greaterThan`,
-  `integer`, `matchesPattern`, `different`, `unknown`, the five quantity comparisons,
-  and the five aggregation operators.
+  `sentex/deferred-predicates` names twenty-two: `evaluate`, `lessThan`, `greaterThan`,
+  `matchesPattern`, `different`, `unknown`, the six value kinds (`integer`, `string`,
+  `number`, `boolean`, `keyword`, `character`), the five quantity comparisons, and the
+  five aggregation operators.
 - The **recursive** literal of a recursive rule. Reordering it could turn a
   right-recursive rule left-recursive, which the backward chainers cannot execute.
 
@@ -246,10 +247,10 @@ context:
   every reader believes every mark queues nothing.
 
 `order_independence_test`'s `a-permuting-mark-defeated-below-the-facts-is-read-per-reader`
-pins both readers over sampled arrival orders, and
+asserts both readers over sampled arrival orders, and
 `a-defeated-permuting-mark-leaves-each-spelling-as-written` the case where no reader
 believes the mark. `a-defeat-below-a-split-fact-moves-no-class-above-it` and
-`a-firing-over-a-split-fact-takes-its-class-per-reader` pin the class each reader reads,
+`a-firing-over-a-split-fact-takes-its-class-per-reader` assert the class each reader reads,
 with a `^:slow` twin of each walking every arrival order.
 
 ## Commuting arguments sorted — the same sort at any arity
@@ -288,10 +289,10 @@ rules here conclude a mark that another of them needs:
 
 - `(commutative ?p)` → `(commutativeInArgAndRest ?p 1)` and back, the two directions of
   one equivalence.
-- `(commutative ?p) ∧ (arity ?p 2)` → `(symmetric ?p)`, whose conclusion `(genl symmetric
-  commutative)` makes a **spec** of `commutative` — and `provers/candidate-rules` offers a
-  rule concluding a spec as a candidate for the supertype goal. So the rule answers the
-  goal its own antecedent poses.
+- `(commutative ?p) ∧ (predicate ?p) ∧ (arity ?p 2)` → `(symmetric ?p)`, whose conclusion
+  `(genl symmetric commutative)` makes a **spec** of `commutative` — and
+  `provers/candidate-rules` offers a rule concluding a spec as a candidate for the
+  supertype goal. So the rule answers the goal its own antecedent poses.
 
 `provers/candidate-rules` carries no ancestor-goal guard, so nothing stops the descent.
 The depth bound (`inference/*max-depth*`) does stop it, which turns the cycle into an
@@ -472,9 +473,9 @@ conjunctive consequent comes back whole too.)
 An `exceptWhen` is split off before the expansion runs and re-attached **once per
 expansion**, against that expansion's own handle and aligned to its own varmap — the
 exception belongs on the rule it excepts, and after the split there are several
-([exceptions.md](exceptions.md)). A generator's stamped rule keeps its `or` until the
+([exceptions.md](exceptions.md)). A generator's generated rule keeps its `or` until the
 mint substitutes the holes, and `chain/mint-rule` expands what it is about to store, so
-the alternatives a generator stamps are the alternatives of the rule it stamped
+the alternatives a generator generates are the alternatives of the rule it generated
 ([generators.md](generators.md)).
 
 ### Two things about the whole rule

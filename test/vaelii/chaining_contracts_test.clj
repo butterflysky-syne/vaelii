@@ -8,7 +8,7 @@
   past `:max-depth`.  Only the depth bound had a test, so the second `:truncated?`
   disjunct was unreachable from the suite.
 
-  The second is the `new?` gate on the transitive re-seed, which is what keeps the
+  The second is the `new?` check on the transitive re-seed, which is what keeps the
   first backstop from being the thing that ends an ordinary run — see the test."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
@@ -47,7 +47,7 @@
   ;; The bound is checked *between* agenda datums, not inside one firing, so a single
   ;; datum's fan-out can overshoot it — `:max-derivations` is a backstop against a
   ;; runaway run, not a precise quota.  Asserting well below the unbounded total is
-  ;; what pins it without over-claiming.
+  ;; what tests it without over-claiming.
   (tu/with-terms [edge path A B C D E CxGraph]
     (v/assert kb (list 'genlCx CxGraph 'CxUniverse) 'CxUniverse)
     (v/assert kb (fwd [(list edge '?x '?y)] (list path '?x '?y)) CxGraph)
@@ -73,7 +73,7 @@
       (is truncated? "a depth-1 bound cannot reach the two-hop path"))))
 
 (tu/deftest-kb a-recursive-rule-concluding-a-transitive-predicate-converges
-  ;; The `new?` gate on `special/transitive-seeds` in `place-fact-conclusion`, and the
+  ;; The `new?` check on `special/transitive-seeds` in `place-fact-conclusion`, and the
   ;; only thing that exercises it.
   ;;
   ;; A declared-transitive predicate's closure is answered rather than stored, so a
@@ -90,8 +90,8 @@
   ;; re-drive the join over is the one the join already ran against.
   ;;
   ;; The bound is well below the backstop and far above the answer, so the assertion
-  ;; is about convergence rather than about a count: ungated this reaches 500 with the
-  ;; closure still unfinished, gated it stops at three.
+  ;; is about convergence rather than about a count: without the `new?` check this reaches
+  ;; 500 with the closure still unfinished, and with it the run stops at three.
   (tu/with-terms [edge anc A B C CxDescent]
     (v/assert kb (list 'genlCx CxDescent 'CxUniverse) 'CxUniverse)
     (v/assert kb (list 'transitive anc) CxDescent {:strength :monotonic :chain? false})
@@ -163,10 +163,10 @@
     (is (= closure (v/count-with-functor kb path))
         "and a run from what it had placed reaches the same fixpoint")))
 
-;; ---- the opts roster ------------------------------------------------------
+;; ---- the accepted option keys ---------------------------------------------
 
 (tu/deftest-kb a-forward-chain-option-nothing-reads-is-refused
-  ;; Every key `forward-chain` takes is a bound or the window into one, so the
+  ;; Every key `forward-chain` takes sets a bound or reports progress on one, so the
   ;; silent-default failure is a run with no ceiling: `{:max-derivation n}` reads as no
   ;; key at all and the fixpoint runs unbounded — the exact run the option was written
   ;; to prevent.  Wire-reachable, too: the daemon's `:forward-chain` op passes its args
@@ -184,7 +184,7 @@
     #_{:clj-kondo/ignore [:type-mismatch]}
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be a map"
                           (v/forward-chain kb :max-derivations))))
-  (testing "the rostered keys still run"
+  (testing "the accepted keys still run"
     (let [r (v/forward-chain kb {:max-depth 2 :max-derivations 10
                                  :progress-every-ms 1000 :on-progress (fn [_])})]
       (is (contains? r :derived)))))

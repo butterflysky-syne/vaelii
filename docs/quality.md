@@ -30,15 +30,15 @@ Seven questions, and the whole of this page is them:
 | which rules another rule already covers | one match per rule pair sharing a consequent functor | O(candidate pairs), each a handful of unifications |
 | which rule pairs would contradict each other | one unifier per rule pair the consequent index brings together | O(candidate pairs) |
 
-Plus the term roster, walked **once** to find the functor names the first four readings
+Plus the term-name set, walked **once** to find the functor names the first four readings
 are about — which is the report's one superlinear term and the reason the total below
 leads with it — and one record read per rule, which is what the last two need and the
 postings cannot give.
 
-**Nothing is a gate.** A threshold on somebody's ontology is not a build failure — `lein
-perf` gates the engine, and this reports on the content. What *is* gated is the report's
-own cost: `lein perf`'s `quality-report-scaling` check holds it to the vocabulary rather
-than to the KB.
+**No reading fails a build.** A threshold on somebody's ontology is not a build failure:
+`lein perf` checks the engine, and this reports on the content. The report's own cost is
+checked: `lein perf`'s `quality-report-scaling` holds it to the vocabulary rather than to
+the KB.
 
 ## One pass, and nothing new indexed
 
@@ -47,8 +47,8 @@ which is the failure class the taxonomy's one record of its supporters, the inde
 supporter families, exists to avoid. So every reading comes off state that is already
 there:
 
-- **One walk over the term roster**, and one is the number. The functor names come off it
-  by filter, and the type-shaped names come off *those* rather than off the roster a second
+- **One walk over the term-name set**, and one is the number. The functor names come off it
+  by filter, and the type-shaped names come off *those* rather than off the term-name set a second
   time — every type name is lowercase-initial, so it is already in the first answer.
 - **Three O(1) index reads per functor name** — the stored extent off the count-aware trie
   ([indexing.md](indexing.md)), and the rule postings *both* ways. That single pass is
@@ -216,6 +216,12 @@ than re-derived, so this map and `check`'s answer say it in the same words. `:to
 the declarations walked, `:stranded-count` the ones convicted, and the list is capped by
 `:limit` with `:truncated?` saying so.
 
+`:typed-thing` lists the believed declarations that type a position `thing`, each as
+`{:handle :sentence :context :facts}`, under the same `:limit`, and `:typed-thing-count`
+counts them. Such a declaration mints nothing ([argtypes.md](argtypes.md#where-it-does-not-mint)),
+and `:facts` is the number of facts of its predicate stored, the ones a narrower type
+would type.
+
 **A finding rather than an error**, and the reason it is a census question and not a
 `violations` one: a stranded declaration constrains nothing, refuses nothing and mints
 nothing, so there is no *newly* for a settle to report and it reads the same an hour later.
@@ -293,17 +299,22 @@ A mark's reach is asked at three points — whether the KB declares any, which g
 conclusion joins, and whether two conclusions share one — and all three go through one
 reader, so a spelling reaches the detector through every read or through none.
 
-"Jointly satisfiable" is **shallow**, and four things rule it out: a literal appearing
-under σ together with its own negation, one term claimed to be of two separated types, one
+"Jointly satisfiable" is **shallow**, and five things rule it out: a literal appearing
+under σ together with its own negation or with the negation of a predicate its own is a
+spec of — `(properPartOf ?x ?y)` beside `(not (partOf ?x ?y))`, a spec's tuple being the
+predicate's — one term claimed to be of two separated types, one
 term bound to two arities — `(arity ?p 1)` beside `(arity ?p 2)`, and `(arity ?p 1)` beside
-`(equivalence_relation ?p)`, which claims 2 by reaching `binary_predicate` up `genl` — and
-one term an `arg` declaration demands be of a type disjoint from one the two rules place it
-in. Each of the four is a **declaration read**: **no inference is run and no fact is
+`(equivalence_relation ?p)`, which claims 2 by reaching `binary_predicate` up `genl` — one
+term bounded above the exact arity it is claimed to have — `(arity ?p ?n)` with
+`(greaterThan ?n 2)` beside `(symmetric ?p)`, or `(arityMin ?p ?n)` with the same bound —
+and one term an `arg` declaration demands be of a type disjoint from one the two rules
+place it in — `arg` read with its covering forms, `(args P T)` and `(argAndRest P n T)`
+typing every position they reach. Each of the five is a **declaration read**: **no inference is run and no fact is
 consulted.** This is what the rules say about each other, so a pair here is a clash that
 *could* form rather than one that has — a clash already formed is in
 `(contradictions kb)`, which is the other question and the other reader.
 
-The fourth rule-out reads the two consequents beside the antecedents, because the type an
+The fifth rule-out reads the two consequents beside the antecedents, because the type an
 `arg` declaration demands of one rule's variable is disjoint from the type the **other**
 rule *concludes* about the unified term. `(arity ?r ?a) => (fixed_arity ?r)` demands `?r`
 be a `relation` through `(arg arity 1 relation)`, and CxCriedWolf's

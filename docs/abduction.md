@@ -1,7 +1,7 @@
 # Abduction: what would have to be true
 
-- **Covers:** `abduce` — mint the minimal, gated set of hypotheses a goal needs to become
-  provable, isolated in a scratch context.
+- **Covers:** `abduce` — mint the minimal set of hypotheses a goal needs to become provable, each
+  admitted by the abducibility check, isolated in a scratch context.
 - **Not here:** the DFS backward chainer (`prove`) whose dead-end hook abduction listens on →
   [inference.md](inference.md); open, non-ground hypotheses → [skolem.md](skolem.md).
 - **Assumes:** context, premise, strength, justification → [glossary.md](glossary.md).
@@ -34,7 +34,7 @@ options and the refusals.
 
 ## Where it lives
 
-- `vaelii.impl.abduce` — the scratch-context lifecycle, the gate (`abducible?`) and the
+- `vaelii.impl.abduce` — the scratch-context lifecycle, the abducibility check (`abducible?`) and the
   mint/re-prove loop (`run`).
 - `vaelii.impl.resolution` — `*dead-end*`, the observer `prove` reports dead ends to.
 - `vaelii.impl.special` — the `abducible_predicate` entry, a scoped taxonomy prop.
@@ -79,9 +79,10 @@ Only the DFS reports.  `query` is lazy: its dead ends would be found whenever a 
 realized the seq, after the thread binding is gone.  `prove` is a loop, so the binding is
 in place for the whole search.
 
-## The gate
+## The abducibility check
 
-Without a gate every dead end would be assumed and every goal would be answerable.
+Without the abducibility check every dead end would be assumed and every goal would be
+answerable.
 `abduce/abducible?` checks four conditions, cheapest first:
 
 1. **A ground positive literal.**  An open hypothesis is a skolemization question
@@ -113,7 +114,8 @@ running a search.
 
 ## The loop
 
-Prove, gather the dead ends, mint what the gate allows within `:max-depth`, prove again.
+Prove, gather the dead ends, mint what the abducibility check allows within `:max-depth`, prove
+again.
 
 A hypothesis satisfies the antecedent that dead-ended, so the next round reaches one rule
 further and exposes the next missing subgoal.  A conjunction is solved left to right: with
@@ -147,12 +149,12 @@ returned hypotheses license.
 rule depth past which a dead end is left alone.  A hypothesis minted twelve rules deep
 explains the goal only in the sense that anything explains anything.
 
-Neither narrows silently.  A gate that did would read as *there was nothing to find* when
+Neither narrows silently.  A check that did would read as *there was nothing to find* when
 a predicate was never granted:
 
 * `:status :capped` says the hypothesis cap left candidates unminted, in any round, even
   when a later round proved the goal;
-* `:refused` lists the dead ends the gate would not assume, and is reported only when
+* `:refused` lists the dead ends the abducibility check would not assume, and is reported only when
   nothing was proved, which is when a caller asks *why nothing*.
 
 ## Isolation
@@ -193,7 +195,7 @@ the hypotheses unhook the context holding them.
 ## Scope
 
 **In:** `core/abduce` / `core/abduce-discard!`, the context lifecycle, the dead-end
-observer, the gate, `abducible_predicate`, provenance, the caps, the irredundancy check.
+observer, the abducibility check, `abducible_predicate`, provenance, the caps, the irredundancy check.
 
 **Out:**
 

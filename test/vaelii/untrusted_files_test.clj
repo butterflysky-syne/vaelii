@@ -87,14 +87,14 @@
 
 (deftest the-serializable-fallback-is-refused-by-the-same-entry-point
   ;; nippy's `Serializable` path is allowlisted, but by a **dynamic var** an embedding
-  ;; application is invited to widen — so the engine pins its own rather than inheriting
+  ;; application is invited to widen — so the engine binds its own rather than inheriting
   ;; whatever the host left there.  A `java.time.LocalDate` is on nippy's default list
   ;; and is not on this one: it round-trips only through an `ObjectInputStream`, and a
   ;; stored value whose only durable form is that is a store every later read has to open
   ;; one for.
   (let [bs (nippy/freeze (java.time.LocalDate/of 2000 1 1))]
     (is (instance? java.time.LocalDate (nippy/thaw bs))
-        "nippy on its own deserializes it, which is what the pin overrides")
+        "nippy on its own deserializes it, which is what the bound allowlist overrides")
     (let [d (ex-data-of #(safe/thaw bs))]
       (is (= :disallowed-class (:type d)))
       (is (= "java.time.LocalDate" (:class d)))
@@ -168,32 +168,32 @@
               "and so does the dump")))
       (finally (rm-rf! d)))))
 
-;; ---- the pin on nippy's attachment points --------------------------------
+;; ---- the expected nippy version behind the attachment points -----------
 
-(deftest the-pin-names-the-nippy-that-is-actually-on-the-classpath
-  ;; The pin is only worth its ceremony if it is read from the resolved dependency rather
+(deftest the-expected-version-names-the-nippy-that-is-actually-on-the-classpath
+  ;; The expected version is only worth its ceremony if it is read from the resolved dependency rather
   ;; than restated by hand, so this asserts the two agree — and that the descriptor the
   ;; reading depends on is there at all, in a checkout and in whatever jar this runs from.
   (is (some? (safe/resolved-nippy-version))
-      "nippy's own META-INF/maven descriptor is readable, which is what the pin reads")
-  (is (= safe/pinned-nippy-version (safe/resolved-nippy-version))
+      "nippy's own META-INF/maven descriptor is readable, which is what the check reads")
+  (is (= safe/expected-nippy-version (safe/resolved-nippy-version))
       "the release the class-name check was written against is the one on the classpath")
-  (is (= safe/pinned-nippy-version (safe/check-nippy-pin! safe/pinned-nippy-version))
+  (is (= safe/expected-nippy-version (safe/check-nippy-version! safe/expected-nippy-version))
       "and the check passes, returning the version it agreed on"))
 
 (deftest a-moved-nippy-refuses-the-load-rather-than-narrowing-in-silence
-  ;; The pin exercised rather than trusted: the failure it exists for is a bump that keeps
+  ;; The version check exercised rather than trusted: the failure it exists for is a bump that keeps
   ;; `read-record` / `read-deftype` and stops routing a class name through them, which
   ;; nothing else in the tree can see.  So the one thing to prove is that a version other
-  ;; than the pinned one throws — the same throw a real bump would meet at load.
-  (let [d (ex-data-of #(safe/check-nippy-pin! "0.0.0-not-the-pinned-one"))]
+  ;; than the expected one throws — the same throw a real bump would meet at load.
+  (let [d (ex-data-of #(safe/check-nippy-version! "0.0.0-not-the-expected-one"))]
     (is (= :nippy-version-moved (:type d))
-        "a nippy other than the pinned one refuses, which fails the namespace and the build")
-    (is (= "0.0.0-not-the-pinned-one" (:pinned d)))
+        "a nippy other than the expected one refuses, which fails the namespace and the build")
+    (is (= "0.0.0-not-the-expected-one" (:expected d)))
     (is (= (safe/resolved-nippy-version) (:found d))
         "and the refusal names both versions, so the reader knows which way the ground moved"))
   (testing "the message says what a bumper is supposed to do, not merely that it stopped"
-    (let [msg (try (safe/check-nippy-pin! "0.0.0-not-the-pinned-one")
+    (let [msg (try (safe/check-nippy-version! "0.0.0-not-the-expected-one")
                    (catch clojure.lang.ExceptionInfo e (.getMessage e)))]
       (doseq [point ["taoensso.nippy.io/read-record"
                      "taoensso.nippy.io/read-deftype"
@@ -207,7 +207,7 @@
   ;; alike and only their kind differs.
   (with-redefs [safe/resolved-nippy-version (constantly nil)]
     (is (= :nippy-version-unreadable
-           (:type (ex-data-of #(safe/check-nippy-pin! safe/pinned-nippy-version)))))))
+           (:type (ex-data-of #(safe/check-nippy-version! safe/expected-nippy-version)))))))
 
 ;; ---- the manifest bound --------------------------------------------------
 
@@ -254,12 +254,12 @@
       (finally (try (backend/close-dir! (.getPath d)) (catch Throwable _ nil))
                (rm-rf! d)))))
 
-(deftest an-index-stamp-over-the-bound-is-read-under-the-bound
-  ;; Both stamps state a value the reader would accept, padded past the bound.  The
-  ;; layout stamp is a cache's, so past the bound it proves nothing and reads `:stale`
-  ;; (a rebuild), as a torn one does; the records stamp decides which store an index
+(deftest an-index-sentinel-over-the-bound-is-read-under-the-bound
+  ;; Both sentinels state a value the reader would accept, padded past the bound.  The
+  ;; layout version is a cache's, so past the bound it proves nothing and reads `:stale`
+  ;; (a rebuild), as a torn one does; the records identity decides which store an index
   ;; answers for, so it is refused by name.
-  (let [d (temp-dir "index-stamps")]
+  (let [d (temp-dir "index-sentinels")]
     (try
       (write-manifest! (.getPath (io/file d "layout.edn")) (+ dfiles/manifest-bytes 4096)
                        "{:index-layout 7}")

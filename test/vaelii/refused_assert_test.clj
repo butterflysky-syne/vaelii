@@ -23,11 +23,16 @@
   (let [b (tu/baseline kb)]
     (assoc b :believed (into #{} (filter #(v/in? kb %)) (:sentexes b)))))
 
+(def ^:private ^:dynamic *write*
+  "The write entry point `refusal-type` calls: `assert`, or `try-assert` for a refusal
+  only it makes (an argument conviction, which `assert` stores and holds inert)."
+  v/assert)
+
 (defn- refusal-type
-  "The `:type` `assert` throws for `sentence`, or `:stored` when it does not throw."
+  "The `:type` `*write*` throws for `sentence`, or `:stored` when it does not throw."
   ([kb sentence context] (refusal-type kb sentence context nil))
   ([kb sentence context opts]
-   (try (v/assert kb sentence context opts) :stored
+   (try (*write* kb sentence context opts) :stored
         (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
 
 (defn- refused-leaves-nothing
@@ -111,15 +116,16 @@
     (stone-schema! kb tintOf color rock Stone)
     (testing "an argument-type refusal"
       (tu/without-entailing
-       (refused-leaves-nothing kb (list tintOf (list FruitFn AppleTree) Stone) 'CxUniverse
-                               :arg-type)))
+       (binding [*write* v/try-assert]
+         (refused-leaves-nothing kb (list tintOf (list FruitFn AppleTree) Stone) 'CxUniverse
+                                 :definitional-clash))))
     (testing "a non-ground fact"
       (refused-leaves-nothing kb (list hueOf (list FruitFn AppleTree) '?c) 'CxUniverse :not-ground))
     (testing "an option refused after the mint"
       (refused-leaves-nothing kb (list hueOf (list FruitFn AppleTree) Red) 'CxUniverse
                               {:direction :backward} :unknown-option))
-    (testing "no termOfUnit names the application"
-      (is (empty? (v/sentexes-matching kb (list 'termOfUnit '?k (list FruitFn AppleTree))
+    (testing "no natFormula names the application"
+      (is (empty? (v/sentexes-matching kb (list 'natFormula '?k (list FruitFn AppleTree))
                                        'CxUniverse))))))
 
 (tu/deftest-kb a-context-nat-minted-for-a-refused-sentence-is-taken-back
@@ -127,7 +133,7 @@
     (v/assert kb (list 'result CxTimeFn 'context) 'CxUniverse)
     (refused-leaves-nothing kb (list 'Bad_Pred Rex) (list CxTimeFn CxMonad Day) :naming)))
 
-(tu/deftest-kb a-nat-whose-result-type-misses-the-demand-is-refused-alike
+(tu/deftest-kb a-nat-whose-result-type-misses-the-demand-is-held-and-refused-by-try-assert
   ;; the constraint reading, where the declaration convicts the constant for its result
   ;; type; the entailing one mints `(dog …)` beside `(fruit …)` and stores the clash
   (tu/with-terms [FruitFn fruit dog ownsDog AppleTree Bob]
@@ -137,9 +143,11 @@
       (v/assert kb s 'CxUniverse))
     (let [s (list ownsDog Bob (list FruitFn AppleTree))]
       (tu/without-entailing
-       (testing "check names the type assert throws"
-         (is (= #{:arg-type} (checked-types kb s 'CxUniverse))))
-       (refused-leaves-nothing kb s 'CxUniverse :arg-type)))))
+       (testing "check reports nothing, and assert holds the fact inert"
+         (is (= #{} (checked-types kb s 'CxUniverse)))
+         (is (= :arg-type (:type (tu/write-conviction kb s 'CxUniverse)))))
+       (binding [*write* v/try-assert]
+         (refused-leaves-nothing kb s 'CxUniverse :definitional-clash))))))
 
 (tu/deftest-kb a-nat-whose-result-type-the-entailment-extends-is-admitted-by-both
   ;; `fruit` does not reach `food` and is not disjoint from it, so the mint's constant
@@ -162,8 +170,10 @@
     (let [events (atom [])
           token  (v/watch kb #(swap! events conj %))]
       (try
-        (is (= :arg-type (tu/without-entailing
-                          (refusal-type kb (list tintOf (list FruitFn AppleTree) Stone) 'CxUniverse))))
+        (is (= :definitional-clash
+               (tu/without-entailing
+                (binding [*write* v/try-assert]
+                  (refusal-type kb (list tintOf (list FruitFn AppleTree) Stone) 'CxUniverse)))))
         (is (= [] @events) "the mint's settle is held and its handles are gone")
         (finally (v/unwatch kb token))))))
 

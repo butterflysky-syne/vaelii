@@ -8,7 +8,7 @@
   metadata, and the rules that mention it — onto the representative, riding the same
   belief-following migration machinery that round one built for individuals.
 
-  Each test pins one acceptance from the design prompt.  House rules apply:
+  Each test asserts one acceptance from the design prompt.  House rules apply:
   gensym'd temporaries via `tu/with-terms` (a predicate `bornIn` and a type `dog`
   come out camelCase / snake_case respectively, so the merge is between two fresh
   same-role terms), engine vocabulary (`rewriteOf`, `genl`, `transitive`,
@@ -308,15 +308,15 @@
 ;; ==========================================================================
 
 (tu/deftest-kb transitive-metadata-survives-a-predicate-merge
-  (tu/with-terms [partOf containedBy A B C CxName]
-    ;; declare containedBy transitive, then retire it in favour of partOf
+  (tu/with-terms [tangiblePartOf containedBy A B C CxName]
+    ;; declare containedBy transitive, then retire it in favour of tangiblePartOf
     (v/assert kb (list 'transitive containedBy) CxName)
     (v/assert kb (list containedBy A B) CxName)
     (v/assert kb (list containedBy B C) CxName)
-    (v/assert kb (list 'rewriteOf partOf containedBy) CxName)
+    (v/assert kb (list 'rewriteOf tangiblePartOf containedBy) CxName)
     (testing "the representative predicate is transitive"
-      (is (v/has-prop? kb :transitive partOf))
-      (is (v/ask? kb (list partOf A C) CxName)
+      (is (v/has-prop? kb :transitive tangiblePartOf))
+      (is (v/ask? kb (list tangiblePartOf A C) CxName)
           "transitivity holds under the representative across the migrated facts"))))
 
 (tu/deftest-kb disjointness-survives-a-type-merge

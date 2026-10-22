@@ -279,7 +279,7 @@
 
 ;; ---- a variable-functor goal expands rules ---------------------------------
 ;; `(?p Tom ?y)` names no consequent bucket, and any rule may conclude it once `?p`
-;; binds — so the candidate rules are every rule, read off the antecedent roster, and
+;; binds — so the candidate rules are every rule, read off the antecedent index, and
 ;; `subsuming-unify` binds the functor per rule.  Fact matching answers the open functor
 ;; through the argument roots; rule expansion has to answer it the same way, in both
 ;; engines, or the open question silently sees the stored half of the KB.
@@ -303,5 +303,5 @@
       (testing "a ground open-functor goal finds the derived predicate too"
         (is (= #{parentOf ancestorOf}
                (preds (v/prove kb (list '?p Tom Bob) CxOpen)))))
-      (testing "the candidate set for an open functor is every rule, read off the roster"
+      (testing "the candidate set for an open functor is every rule, read off the antecedent index"
         (is (contains? (set (res/concluding-rule-handles kb '?p CxOpen)) rh))))))

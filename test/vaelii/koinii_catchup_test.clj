@@ -10,19 +10,18 @@
   - resume from a stored cursor while still in the ring — tail, no snapshot;
   - overflow past the ring — lag detected, snapshot recovers the full state;
   - re-read and replay converge — a tailing agent and a snapshotting agent reach the same
-    view over the same window.
+    state over the same span of events.
 
   Wire-only: the ring / cursor / lag exist on the wire feed, so this needs a daemon.
 
   Four cases need no daemon and get a **scripted medium** instead: what `sync!` does when
   the poll fails, what it does when two threads drive one consumer, what a replayed
-  `:believed-removed` leaves the view at, and how far one pass will re-snapshot when reply
+  `:believed-removed` leaves the replica at, and how far one pass will re-snapshot when reply
   after reply reports a lag or reaps the subscription.  Each is about `sync!`'s own control
   flow rather than about a real feed, and a scripted medium is what makes the failing reply,
   the interleaving, the redelivery and the lag sequence deterministic."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.client :as vc]
-            [vaelii.host.core-context :as core-context]
             [vaelii.host.serve :as serve]
             [vaelii.host.subscribe :as sub]
             [vaelii.koinii.catchup :as cu]
@@ -35,7 +34,7 @@
 
 (defn- household-kb []
   (tu/load-dumped! (tu/fresh) :koinii/speech-acts
-                   #(doto % (core-context/load-into) (sa/load-speech-acts))))
+                   #(doto % (tu/load-core!) (sa/load-speech-acts))))
 
 (use-fixtures :each (tu/neutral-fresh household-kb))
 
@@ -60,18 +59,18 @@
             store  (cu/atom-store)
             c1 (cu/open (wire 'AgentBoreas) goal 'CxDeploy store)]
         (cu/sync! c1)
-        (is (empty? (cu/view-of c1)) "a fresh consumer over an empty channel sees nothing")
+        (is (empty? (cu/replica-of c1)) "a fresh consumer over an empty channel sees nothing")
         (ch/pose-query author 'Q1)
         (ch/pose-query author 'Q2)
         (cu/sync! c1)
-        (is (= #{(q 'Q1) (q 'Q2)} (cu/view-of c1)) "the tail delivered both queries")
-        (is (= (cu/snapshot (:handle c1) goal 'CxDeploy) (cu/view-of c1))
+        (is (= #{(q 'Q1) (q 'Q2)} (cu/replica-of c1)) "the tail delivered both queries")
+        (is (= (cu/snapshot (:handle c1) goal 'CxDeploy) (cu/replica-of c1))
             "and the wire query grounds to the same set a snapshot would")
-        (testing "a restart reloads the cursor + the durable view and tails the next write"
-          (let [c2 (cu/open (:handle c1) goal 'CxDeploy store (cu/view-of c1))]
+        (testing "a restart reloads the cursor + the durable replica and tails the next write"
+          (let [c2 (cu/open (:handle c1) goal 'CxDeploy store (cu/replica-of c1))]
             (ch/pose-query author 'Q3)
             (cu/sync! c2)
-            (is (= #{(q 'Q1) (q 'Q2) (q 'Q3)} (cu/view-of c2))
+            (is (= #{(q 'Q1) (q 'Q2) (q 'Q3)} (cu/replica-of c2))
                 "resumed from cursor N — Q3 tailed on, nothing missed or doubled")))))))
 
 (tu/deftest-kb catch-up-catches-overflow-with-a-snapshot
@@ -85,11 +84,11 @@
           (doseq [i (range 10)]                             ; > the ring's worth, past the idle consumer
             (ch/pose-query author (symbol (str "Over" i))))
           (cu/sync! c)                                      ; must detect lag and snapshot
-          (is (= 10 (count (cu/view-of c)))
+          (is (= 10 (count (cu/replica-of c)))
               "ended in the state it would have reached — the six that fell off the ring are
                recovered by the snapshot, not silently lost")
-          (is (= (cu/snapshot (:handle c) goal 'CxDeploy) (cu/view-of c))
-              "the view equals a full re-read"))))))
+          (is (= (cu/snapshot (:handle c) goal 'CxDeploy) (cu/replica-of c))
+              "the replica equals a full re-read"))))))
 
 (tu/deftest-kb ^:slow catch-up-reread-and-replay-converge
   (with-daemon kb
@@ -104,8 +103,8 @@
             (ch/pose-query author (symbol (str "Conv" i)))
             (cu/sync! tailer))                              ; the tailer keeps up — always in-ring
           (cu/sync! snapper)                                ; the snapshotter was idle — it lagged
-          (is (= 10 (count (cu/view-of tailer))) "the tailer replayed every event")
-          (is (= (cu/view-of tailer) (cu/view-of snapper))
+          (is (= 10 (count (cu/replica-of tailer))) "the tailer replayed every event")
+          (is (= (cu/replica-of tailer) (cu/replica-of snapper))
               "identical state whether recovered by tail-replay or by snapshot re-read"))))))
 
 ;;; ── the scripted medium: `sync!`'s control flow, without a daemon ─────────
@@ -136,7 +135,7 @@
 (deftest a-poll-that-throws-without-a-type-is-still-a-failure
   ;; The refusals catch-up discriminates on carry a `:type`, but a transport is free to
   ;; throw something else — and read as `{:err nil}` that falls through to the
-  ;; drained-to-head arm, which persists `{:cursor nil}` and hands back the stale view as
+  ;; drained-to-head arm, which persists `{:cursor nil}` and hands back the stale replica as
   ;; though the stream were current: silent loss, the one failure this module exists to
   ;; prevent.
   (let [store  (recording-store)
@@ -166,15 +165,15 @@
             "the transport's own refusal rides out, the default only standing in for none")))
     (testing "and the cursor is left where it was — never advanced past a poll that failed"
       (is (= {:token "T" :cursor 7} (koinii-types/read-position store))))
-    (testing "the view is untouched too"
-      (is (= #{'(queries Ava Q1)} (cu/view-of c))))))
+    (testing "the replica is untouched too"
+      (is (= #{'(queries Ava Q1)} (cu/replica-of c))))))
 
-(deftest two-threads-driving-one-consumer-do-not-corrupt-its-view
+(deftest two-threads-driving-one-consumer-do-not-corrupt-its-replica
   ;; A consumer has one driving thread (`open`), and `sync!` takes the consumer's monitor so
-  ;; a second caller cannot interleave inside the read-modify-write over `{:store :view}`.
+  ;; a second caller cannot interleave inside the read-modify-write over `{:store :replica}`.
   ;; Unguarded, both threads read "no cursor", both bootstrap, and the second's snapshot
   ;; `reset!` lands on top of the first's applied batch — the tail's work erased and the
-  ;; events already consumed, so the view ends EMPTY where one sequential `sync!` ends full.
+  ;; events already consumed, so the replica ends EMPTY where one sequential `sync!` ends full.
   (let [batch    [{:believed-added [{:sentence '(queries Ava Q1)}]}]
         entered  (CountDownLatch. 2)
         queried  (atom 0)
@@ -208,16 +207,16 @@
         [f1 f2]  [(run) (run)]]
     (.countDown start)
     (is (= #{'(queries Ava Q1)} @f1 @f2)
-        "each caller is handed the view a single sequential sync! would have left")
-    (is (= #{'(queries Ava Q1)} (cu/view-of c))
-        "and the consumer's view is that view — the second caller's snapshot did not
+        "each caller is handed the replica a single sequential sync! would have left")
+    (is (= #{'(queries Ava Q1)} (cu/replica-of c))
+        "and the consumer's replica is that replica — the second caller's snapshot did not
          land on top of the first's applied batch")))
 
-(deftest a-replayed-remove-reaches-the-same-view-as-a-re-read
+(deftest a-replayed-remove-reaches-the-same-replica-as-a-re-read
   ;; The `:believed-removed` half of `apply-events`: a sentence leaving belief leaves the
-  ;; view.  The drop is set-based, which is what makes the replay claim true for removes as
+  ;; replica.  The drop is set-based, which is what makes the replay claim true for removes as
   ;; well as adds — an at-least-once feed redelivering a batch that both added and removed
-  ;; must land on the view a full re-read gives, not on one where the re-add outlived the
+  ;; must land on the replica a full re-read gives, not on one where the re-add outlived the
   ;; drop or the drop outlived a later add.
   (let [batch  [{:believed-added   [{:sentence (q 'Q1)} {:sentence (q 'Q2)}]}
                 {:believed-removed [{:sentence (q 'Q1)}]}]
@@ -233,8 +232,8 @@
                               {:events batch :cursor n :lagged 0}
                               {:events [] :cursor n :lagged 0})))})
         c      (cu/open {:medium medium} goal 'CxDeploy (recording-store))]
-    (is (= #{(q 'Q2)} (cu/sync! c)) "the removed sentence is not in the view")
-    (is (= (cu/snapshot (:handle c) goal 'CxDeploy) (cu/view-of c))
+    (is (= #{(q 'Q2)} (cu/sync! c)) "the removed sentence is not in the replica")
+    (is (= (cu/snapshot (:handle c) goal 'CxDeploy) (cu/replica-of c))
         "and the twice-replayed remove leaves exactly what a full re-read gives")
     (is (= 3 @polls) "the drain really did apply the batch twice before the head")))
 
@@ -258,7 +257,7 @@
         store   (recording-store)
         c       (cu/open {:medium medium} goal 'CxDeploy store)]
     (koinii-types/write-position! store {:token "T" :cursor 7})        ; a consumer mid-stream
-    (testing "one pass re-snapshots on each lag and returns the complete view"
+    (testing "one pass re-snapshots on each lag and returns the complete replica"
       (is (= #{(q 'Q1) (q 'Q2)} (cu/sync! c)))
       (is (< 1 @queries) "a later lag re-read current state rather than being carried silently")
       (is (= {:token "T" :cursor 4} (koinii-types/read-position store))
@@ -267,7 +266,7 @@
 (deftest a-consumer-that-never-stops-lagging-is-told-not-silently-stalled
   ;; A poll that never stops reporting a lag means the consumer cannot keep up with the
   ;; channel.  Bounded re-snapshotting surfaces that as `:koinii/catchup-thrashing`
-  ;; rather than looping forever or handing back a stale view as though it were current.
+  ;; rather than looping forever or handing back a stale replica as though it were current.
   (let [medium (scripted-medium
                 {:open  (fn [] {:token "T" :cursor 0})
                  :query (fn [] [{'?a 'AgentAva '?q 'Q1}])
@@ -281,7 +280,7 @@
 (deftest a-subscription-reaped-on-every-poll-is-told-not-retried-forever
   ;; The other road to the same bound.  A daemon whose idle window closes between every
   ;; `-feed-open` and the poll that follows it answers `:unknown-subscription` every time —
-  ;; an aggressive reaper, or a consumer whose snapshot outlasts the window — so re-opening
+  ;; an aggressive reaper, or a consumer whose snapshot outlasts the idle window — so re-opening
   ;; and re-snapshotting per refusal never converges.  Unbounded that is a `sync!` which
   ;; never returns while re-reading the whole context each turn; bounded it is the
   ;; `:koinii/catchup-thrashing` the lag arm raises, told apart by `:condition`.
@@ -363,4 +362,4 @@
     (testing "and nothing of the consumer moved"
       (is (= {:token "T" :cursor 7} (koinii-types/read-position store))
           "the stored position stands, so the next sync! resumes rather than bootstraps")
-      (is (= #{'(queries Ava Q1)} (cu/view-of c)) "and the view is untouched"))))
+      (is (= #{'(queries Ava Q1)} (cu/replica-of c)) "and the replica is untouched"))))

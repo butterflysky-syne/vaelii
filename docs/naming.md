@@ -160,7 +160,7 @@ always will be — the invariant marks multi-word names, and says so.
 **The one exemption.** `sentexHandle` stands at arity 1 and is not a predicate: it names
 a stored sentex by its id, a term constructor wearing a literal's shape. It states
 nothing, so there is no relation to spell either way. `nm/unary-spelling-exempt` is the
-roster, and a name earns a place on it only by naming no relation.
+list, and a name earns a place on it only by naming no relation.
 
 ### What a rejection says
 
@@ -411,13 +411,13 @@ word means adding its row here and its entry there, in the same commit.
 | record | machine | 1 | Record |
 | refusal | machine | 1 | Refusal |
 | region | knowledge, term | 2 | Region (relabel scope); Region (spatial) |
-| roster | machine | 2 | Roster; Term roster |
 | sentence | formula | 1 | Sentence |
 | sentex | knowledge | 1 | Sentex |
 | strength | knowledge | 1 | Strength |
 | term | machine | 1 | Term |
 | value | term | 1 | Value |
 | variable | term | 1 | Variable |
+| view | knowledge | 1 | View |
 | wff | formula, machine | 2 | wff (ontology type); WFF (well-formedness) |
 | wrapper | formula | 1 | Wrapper |
 

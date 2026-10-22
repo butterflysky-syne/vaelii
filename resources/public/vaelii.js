@@ -1,5 +1,5 @@
 /* vaelii — the browser's one hand-written script (docs/web.md).  htmx carries the
-   declarative interactivity; this carries the three things it cannot express:
+   declarative interactivity; this carries the things it cannot express:
 
      1. the header's two colour dots — the palette and the light/dark theme — held as
         data-* on <html> and persisted.  The pre-paint <head> script applies the saved
@@ -13,6 +13,9 @@
      4. the browsing history: a term or sentex page carries a hidden `[data-visit]`
         element, recorded here in localStorage, and the front page's `#history` panel
         lists the terms, literals and rules visited, each in visit order.
+     5. a sentex's menu: a right-click on a badge opens Copy / Edit / Remove at the
+        pointer, the controls of the sentex page's action bar fetched from
+        /sentex-actions.
 
    A sentex row carries no script.  The row is text, so a press-drag over it selects
    that text the way a press-drag over any other text does, and the row's `[edit]`
@@ -36,7 +39,7 @@
 
   const PALETTES = ["violet", "red", "green", "rainbow"];
 
-  // what the OS is asking for, which is what an unpinned page is showing
+  // what the OS is asking for, which is what a page with no stored theme is showing
   const osTheme = () => {
     try { return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; }
     catch (e) { return "light"; }
@@ -44,14 +47,14 @@
 
   // Both readers **validate**, because localStorage is shared ground that anything can
   // have written: a value outside the set is not a preference, it is noise, and reading
-  // it back would pin the page to a value no rule matches — which strands it off the OS
+  // it back would set the page to a value no rule matches — which strands it off the OS
   // default rather than following it.  An unrecognised palette is the default one, and
-  // an unrecognised theme is no pin at all.
+  // an unrecognised theme is no stored choice at all.
   const palette = () => {
     const p = stored("vaelii-palette");
     return PALETTES.indexOf(p) < 0 ? "violet" : p;
   };
-  const pinnedTheme = () => {
+  const storedTheme = () => {
     const t = stored("vaelii-theme");
     return t === "light" || t === "dark" ? t : null;
   };
@@ -60,18 +63,18 @@
   // nav link.  Everything that changes one of them ends here.  The dots need no
   // state class: each is painted in the variables it sets, so it already shows it.
   function reflect() {
-    const pal = $("#palette-dot"), thm = $("#theme-dot"), pinned = pinnedTheme();
+    const pal = $("#palette-dot"), thm = $("#theme-dot"), chosen = storedTheme();
     if (pal) pal.title = "Colour palette: " + palette() + " (click to change)";
     if (thm) {
-      thm.title = pinned
-        ? "Theme: " + pinned + " (click to flip)"
-        : "Theme: " + osTheme() + ", following the system (click to pin one)";
+      thm.title = chosen
+        ? "Theme: " + chosen + " (click to flip)"
+        : "Theme: " + osTheme() + ", following the system (click to choose one)";
     }
     $$(".menubar a").forEach((a) => a.classList.toggle("active", a.getAttribute("href") === location.pathname));
   }
 
-  // data-palette picks the accent pair, data-theme pins light or dark over the OS
-  // preference — and a page that has never pinned one carries no data-theme at all,
+  // data-palette picks the accent pair, data-theme sets light or dark over the OS
+  // preference — and a page that has never stored one carries no data-theme at all,
   // which is what leaves the stylesheet's media query in charge
   const apply = (k, v) => {
     document.documentElement.setAttribute("data-" + k, v);
@@ -79,7 +82,7 @@
     reflect();
   };
 
-  // the OS flipping under an open page moves it too, until a click pins one; the CSS
+  // the OS flipping under an open page moves it too, until a click stores one; the CSS
   // does the recolouring on its own, so this is only the theme dot's title catching up
   try {
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", reflect);
@@ -98,12 +101,56 @@
       const i = PALETTES.indexOf(palette());
       return apply("palette", PALETTES[(i + 1) % PALETTES.length]);
     }
-    // flip whichever theme is on screen, pinned or OS-chosen, and the flip is what
-    // turns it into a pinned one
+    // flip whichever theme is on screen, stored or OS-chosen, and the flip is what
+    // turns it into a stored one
     if (ev.target.closest("#theme-dot")) {
-      return apply("theme", (pinnedTheme() || osTheme()) === "dark" ? "light" : "dark");
+      return apply("theme", (storedTheme() || osTheme()) === "dark" ? "light" : "dark");
     }
   });
+
+  // ---- a sentex's menu ---------------------------------------------------
+
+  // A right-click on a badge opens Copy / Edit / Remove for its sentex at the pointer:
+  // the sentex page's action bar, fetched from /sentex-actions so the two are one
+  // definition.  A press on an item hides the menu rather than removing it, so the
+  // request the press started keeps its source element; a press elsewhere, Escape, a
+  // scroll or the next swap of the page removes it.
+  const closeSxMenu = () => { const m = $("#sx-menu"); if (m) m.remove(); };
+
+  document.addEventListener("contextmenu", async (ev) => {
+    const a = ev.target.closest && ev.target.closest("a.badge-link");
+    const m = a && /\/sentex\/(\d+)/.exec(a.getAttribute("href") || "");
+    if (!m) return;
+    ev.preventDefault();
+    closeSxMenu();
+    const menu = document.createElement("div");
+    menu.id = "sx-menu";
+    menu.style.left = ev.clientX + "px";
+    menu.style.top = ev.clientY + "px";
+    document.body.append(menu);
+    try {
+      const r = await fetch("/sentex-actions?h=" + m[1], { headers: { "HX-Request": "true" } });
+      if (!r.ok || !menu.isConnected) return closeSxMenu();
+      menu.innerHTML = await r.text();
+      if (window.htmx) htmx.process(menu);
+      // kept inside the viewport: a badge near the right or bottom edge opens it leftward
+      // or upward
+      const b = menu.getBoundingClientRect();
+      if (b.right > innerWidth) menu.style.left = Math.max(0, innerWidth - b.width - 4) + "px";
+      if (b.bottom > innerHeight) menu.style.top = Math.max(0, innerHeight - b.height - 4) + "px";
+      const first = menu.querySelector("button");
+      if (first) first.focus();
+    } catch (e) { closeSxMenu(); }
+  });
+  document.addEventListener("click", (ev) => {
+    const menu = $("#sx-menu");
+    if (!menu) return;
+    if (!menu.contains(ev.target)) return closeSxMenu();
+    if (ev.target.closest("a, button")) menu.hidden = true;
+  });
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeSxMenu(); });
+  document.addEventListener("scroll", closeSxMenu, { passive: true });
+  document.addEventListener("htmx:afterSettle", () => { const m = $("#sx-menu"); if (m && m.hidden) m.remove(); });
 
   // ---- folding a framed region ------------------------------------------
 
@@ -201,11 +248,47 @@
     renderHistory();
   }
 
+  const termQ = (e) => new URLSearchParams(e.href.slice("/term".length)).get("q");
+  const handleOf = (e) => e.href.slice("/sentex/".length);
+  const HANDLE_KINDS = ["literal", "rule"];
+
+  // The history is recorded against whichever KB was active at the visit, so once per
+  // panel drawn the server says which entries the active KB holds (`/history/known`) and
+  // the rest are forgotten.  Only an entry that was asked about is dropped: one recorded
+  // while the answer was on its way stays.  A KB still loading is not judged
+  // (`complete: false`), since what it lacks may not have arrived yet.
+  function pruneHistory(panel) {
+    if (panel.dataset.pruned) return;
+    panel.dataset.pruned = "1";
+    const h = readHistory();
+    const terms = h.term.map(termQ);
+    const handles = HANDLE_KINDS.flatMap((k) => h[k].map(handleOf));
+    if (!terms.length && !handles.length) return;
+    const qs = terms.map((q) => "t=" + encodeURIComponent(q))
+      .concat(["handles=" + handles.join(",")]).join("&");
+    fetch("/history/known?" + qs)
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((known) => {
+        if (!known.complete) return;
+        const askedT = new Set(terms), keptT = new Set(known.terms);
+        const askedH = new Set(handles), keptH = new Set(known.handles.map(String));
+        const now = readHistory();
+        now.term = now.term.filter((e) => !askedT.has(termQ(e)) || keptT.has(termQ(e)));
+        HANDLE_KINDS.forEach((k) => {
+          now[k] = now[k].filter((e) => !askedH.has(handleOf(e)) || keptH.has(handleOf(e)));
+        });
+        writeHistory(now);
+        renderHistory();
+      })
+      .catch(() => {});
+  }
+
   // built from elements and textContent, never from markup, since every label came out
   // of localStorage
   function renderHistory() {
     const panel = $("#history"), body = panel && panel.querySelector(".history-body");
     if (!body) return;
+    pruneHistory(panel);
     const h = readHistory();
     body.replaceChildren();
     HISTORY_KINDS.forEach(([kind, title]) => {
@@ -345,7 +428,7 @@
 //      re-indents the line the caret is on.  Both read the delimiters to the left of the
 //      caret; neither needs the parse the server does.
 //   3. Completion.  The symbol before the caret is a prefix; `/complete` answers the
-//      terms it could become, off the KB's term roster.  Tab and Enter take the
+//      terms it could become, off the KB's term-name set.  Tab and Enter take the
 //      highlighted one, the arrows move, Escape closes the list without closing the
 //      editor.
 //   4. Submitting a one-line editor.  The goal box is a `rows="1"` editor, so Enter has

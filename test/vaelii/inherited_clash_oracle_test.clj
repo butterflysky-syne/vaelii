@@ -17,9 +17,11 @@
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.test :refer [deftest is]]
+            [clojure.walk :as walk]
             [vaelii.core :as v]
             [vaelii.impl.decide.inherited :as inherited]
             [vaelii.impl.discovery :as discovery]
+            [vaelii.impl.inherit :as inherit]
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.types.reasoning :as reasoning]
@@ -108,6 +110,11 @@
    :standing  (into #{}
                     (for [[_ ng] (inherited/inherited-clashes kb)]
                       [(:sentence ng) (:vantages ng)]))
+   :members   (into #{}
+                    (comp (keep #(p/get-sentex (:records kb) %))
+                          (map (juxt :sentence :context))
+                          (map #(tu/handle-free kb %)))
+                    (:members (:inherited @(reasoning/nogood-candidates kb))))
    :dilemmas  (into #{} (map clash-key) (v/contradictions kb))
    :conflicts (into #{} (map clash-key) (v/conflicts kb))
    :joined    (into #{} (map clash-key) (v/contradictions kb 'CxIcJoin))})
@@ -207,6 +214,34 @@
                                 (repeatedly 60 #(rand-separated-op rng))))]
       (is (nil? r) (str "seed " seed " " (when r (divergence r)))))))
 
+(defn- rand-type-edge-op
+  "`rand-separated-op`, or in one write in three a membership of `ic_sub` or a `genl` edge
+  between the membership types, asserted or retracted: `ic_sub` below a part of the
+  partition, and the preserved `ic_down` below `ic_dsup`, which goes below a part."
+  [^java.util.Random rng]
+  (let [pick (fn [xs] (nth xs (.nextInt rng (count xs))))
+        edge #(let [[a b] (pick '[[ic_sub ic_plain] [ic_sub ic_up] [ic_down ic_dsup]
+                                  [ic_dsup ic_plain] [ic_dsup ic_whole]])]
+                (list 'genl a b))]
+    (case (.nextInt rng 9)
+      0 [:assert (list 'ic_sub (pick types)) (pick ctxs) {:strength :monotonic}]
+      1 [:assert (edge) (pick ctxs) {:strength :monotonic}]
+      2 [:retract (edge) (pick ctxs)]
+      (rand-separated-op rng))))
+
+(defn- type-edge-streams [seeds]
+  (doseq [seed seeds]
+    (let [rng (java.util.Random. (long seed))
+          r   (run-stream (into separated-declarations
+                                (repeatedly 60 #(rand-type-edge-op rng))))]
+      (is (nil? r) (str "seed " seed " " (when r (divergence r)))))))
+
+(deftest a-sample-of-streams-over-edges-between-membership-types-finds-the-same-inherited-clashes
+  (type-edge-streams (range 3)))
+
+(deftest ^:slow streams-over-edges-between-membership-types-find-the-same-inherited-clashes
+  (type-edge-streams (range 3 20)))
+
 ;; ---- oracle 2: directed streams -----------------------------------------
 
 (deftest a-second-known-true-claim-is-read-where-the-first-was-carried
@@ -303,12 +338,11 @@
     (is (nil? (run-stream joined-last)))
     (is (= reference (settled joined-last true) (settled joined-last false)))))
 
-(def ^:private swept-claim
+(def ^:private guarded-claim
   "A standing clash whose stored side a guarded rule concludes, beside a second entry.
   The reading is known-true and the conclusion `:default`, so the conclusion loses the
-  clash and nothing is reported.  A `:monotonic` blocker sweeps the conclusion, so the
-  settle's second pass reads a region handle with no record; the release derives it
-  again."
+  clash and nothing is reported.  A `:monotonic` blocker stores the conclusion with a
+  guard defeat, and its retraction withdraws the defeat."
   '[[:assert (transitiveInArgInverse ibig 1 genl) CxIcBase {:strength :monotonic}]
     [:assert (genl ic_mid ic_top) CxIcBase {:strength :monotonic}]
     [:assert (genl ic_low ic_mid) CxIcBase {:strength :monotonic}]
@@ -323,16 +357,11 @@
     [:retract (ic_skip ic_side) CxIcBase]
     [:retract (icLink ic_side ic_low) CxIcBase]])
 
-(deftest a-claim-a-guard-block-sweeps-leaves-the-clash-it-stood-in
-  (is (seq (:standing (settled (take 7 swept-claim) true))) "the derived claim clashes")
-  (is (empty? (:standing (settled (take 8 swept-claim) true))) "the block sweeps it")
-  (is (nil? (run-stream swept-claim))))
-
 (def ^:private hidden-claim
-  "`swept-claim` with its blocker `:default`: the firing is stored, and its guard defeat at
+  "`guarded-claim` with its blocker `:default`: the firing is stored, and its guard defeat at
   the firing's own placement joins the nogood's defeat of the same loser as one `defeat`
   handle.  The clash stands, since detection reads the network (design rulings 13 and 20)."
-  (assoc-in swept-claim [7 3] {}))
+  (assoc-in guarded-claim [7 3] {}))
 
 (defn- hidden-reads
   "The conclusion `(ibig ic_side ic_low)` at CxIcBase: whether it is stored and believed,
@@ -367,6 +396,26 @@
         "the guard is out of force at CxIcBelow, and the nogood's defeat keeps the claim out")
     (is (nil? (run-stream hidden-claim)))))
 
+(defn- verdict-reads
+  "The rows where the justification verdicts disagree with belief over every sentex
+  stored in the four contexts, at each of them (`tu/verdict-violations`)."
+  [kb]
+  (let [cs (conj ctxs 'CxIcJoin)]
+    (tu/verdict-violations kb (into [] (comp (mapcat #(v/sentexes-in-context kb %)) (map :id)) cs) cs)))
+
+(deftest every-prefix-of-the-hidden-claim-stream-reads-its-verdicts-as-its-belief
+  (is (= (repeat (count hidden-claim) [])
+         (map #(settled (take % hidden-claim) true verdict-reads)
+              (range 1 (inc (count hidden-claim)))))))
+
+(deftest a-guard-defeat-reads-alike-whatever-its-blocker-is-spelled
+  ;; `ia_skip` sorts before the claim's functor and `ic_skip` after it
+  (let [spelled (walk/postwalk-replace {'ic_skip 'ia_skip} hidden-claim)]
+    (doseq [n [8 9]]
+      (is (= (settled (take n hidden-claim) true hidden-reads)
+             (settled (take n spelled) true hidden-reads))
+          (str "step " n)))))
+
 (def ^:private retracted-reasons
   "A standing conflict beside a second entry, its members `:monotonic`, then the mark, the
   declaration and an edge the reading rests on retracted and the first two asserted
@@ -393,7 +442,7 @@
   retracted.  In the first stream the edge carries the `asymmetric` mark down to `icSub`
   (`tax/props-over`); in the second it makes `icSub`'s claim one of `ibig`'s.  The edge is
   neither a member of the entry nor its stored claim, and moves no input of the memo's
-  stamp, so the entry is re-asked only because the retracted edge's sentence, kept under
+  key, so the entry is re-asked only because the retracted edge's sentence, kept under
   `:left` (`discovery/note-removed!`), reaches it."
   (let [edges '[[:assert (genl ic_low ic_mid) CxIcBase {:strength :monotonic}]
                 [:assert (genl ic_mid ic_top) CxIcBase {:strength :monotonic}]
@@ -461,7 +510,7 @@
 
 (defn- two-pass-settle
   "One settle over a batch that stores `n` claims and a standing clash beside a fact that
-  blocks a guarded firing, so the settle runs a second pass whose window still holds every
+  blocks a guarded firing, so the settle runs a second pass whose touched set still holds every
   claim.  `[snapshot questions passes]` under `incremental?`, `questions` the
   `preserving-entry` calls the settle made."
   [n incremental?]
@@ -491,8 +540,8 @@
       (finally (tu/clear-kb! kb)))))
 
 (deftest a-later-pass-asks-only-the-claims-an-earlier-pass-moved
-  ;; The window a pass reads spans the settle, so a second pass that read it whole would
-  ;; ask every claim the first asked again; the discovery reads what the window recorded
+  ;; The touched set a pass reads spans the settle, so a second pass that read it whole would
+  ;; ask every claim the first asked again; the discovery reads what the touched set recorded
   ;; since its own last mark (`jtms/touched-since`).  The exhaustive arm asks every pass.
   (let [n 60
         [si qi pi] (two-pass-settle n true)
@@ -553,6 +602,67 @@
     (is (>= ni n) (str ni " entries stand before the retractions"))
     (is (every? #(< % 10) qi) (str "the incremental arm asked " qi))
     (is (every? #(>= % (dec n)) qe) (str "the exhaustive arm asks every entry: " qe))))
+
+;; ---- the republish ------------------------------------------------------------
+
+(defn- standing-clashes!
+  "Build `n` standing inherited clashes in CxIcBase: each `:default` `(ibig ic_lotwo_i
+  ic_lo_i)` against the monotonic `(ibig ic_hi_i ic_hitwo_i)`, which reaches its converse
+  through `(genl ic_lo_i ic_hi_i)` and `(genl ic_lotwo_i ic_hitwo_i)` with both positions
+  preserved along `genl`."
+  [kb n]
+  (let [M {:strength :monotonic}
+        t (fn [s i] (symbol (str s i)))]
+    (build-ontology! kb)
+    (doseq [d '[(type_relation_predicate ibig) (transitiveInArgInverse ibig 1 genl)
+                (transitiveInArgInverse ibig 2 genl)]]
+      (v/assert kb d 'CxIcBase M))
+    (v/with-deferred-settle kb
+      (doseq [i (range n)]
+        (v/assert kb (list 'genl (t "ic_lo_" i) (t "ic_hi_" i)) 'CxIcBase M)
+        (v/assert kb (list 'genl (t "ic_lotwo_" i) (t "ic_hitwo_" i)) 'CxIcBase M)
+        (v/assert kb (list 'ibig (t "ic_lotwo_" i) (t "ic_lo_" i)) 'CxIcBase {})
+        (v/assert kb (list 'ibig (t "ic_hi_" i) (t "ic_hitwo_" i)) 'CxIcBase M)))))
+
+(defn- republished
+  "`[snapshot standing per-settle]` for `ops` after `n` standing clashes under
+  `incremental?`: the standing clashes before the ops, and per settle the clashes the
+  candidate index took (`install-inherited!`) or the member sets it read again
+  (`update-inherited!`)."
+  [n ops incremental?]
+  (let [kb      (if incremental? (tu/fresh) (tu/isolated-fresh))
+        settles (atom [])
+        install inherited/install-inherited!
+        revise  inherited/update-inherited!]
+    (try
+      (binding [discovery/*incremental-preserving* incremental?]
+        (standing-clashes! kb n)
+        (let [standing (count (inherited/inherited-clashes kb))]
+          (with-redefs [inherited/install-inherited!
+                        (fn [kb ngs] (swap! settles conj (count ngs)) (install kb ngs))
+                        inherited/update-inherited!
+                        (fn [kb changes sets-of] (swap! settles conj (count changes))
+                          (revise kb changes sets-of))]
+            (run! #(apply-op! kb %) ops))
+          [(snapshot kb) standing @settles]))
+      (finally (tu/clear-kb! kb)))))
+
+(deftest a-write-beside-standing-clashes-republishes-only-the-sets-it-moved
+  ;; An unrelated fact, its retraction and a claim of the preserved predicate no clash
+  ;; reads hand the candidate index no set; retracting and restoring one clash's claim
+  ;; hands it that clash's set.  The exhaustive arm hands it every standing clash.
+  (let [n   40
+        ops '[[:assert (ic_probe IcC) CxIcBase {}]
+              [:retract (ic_probe IcC) CxIcBase]
+              [:assert (ibig ic_pu ic_pv) CxIcLeft {}]
+              [:retract (ibig ic_lotwo_0 ic_lo_0) CxIcBase]
+              [:assert (ibig ic_lotwo_0 ic_lo_0) CxIcBase {}]]
+        [si ni ri] (republished n ops true)
+        [se _ re]  (republished n ops false)]
+    (is (= si se) (pr-str (diff si se)))
+    (is (= n ni) (str ni " clashes stand before the ops"))
+    (is (every? #(<= % 1) ri) (str "the incremental arm republished " ri))
+    (is (every? #(>= % (dec n)) re) (str "the exhaustive arm republishes every clash: " re))))
 
 ;; ---- a declaration in the region -------------------------------------------
 
@@ -618,6 +728,85 @@
         [se]    (membership-settles ops false)]
     (is (= si se) (pr-str (diff si se)))
     (is (= [0 0 0] qi) (str "the incremental arm asked " qi))))
+
+;; ---- a `genl` edge into a separated type ----------------------------------
+
+(defn- edge-settles
+  "`n` stored memberships `(ic_wheel w)` of a type `disjoint` from `ic_red`, a predicate
+  preserved along `icPartOf` whose claim `(ic_red IcCar)` reaches `(ic_red IcHw)`
+  through `(icPartOf IcHw IcCar)`, the membership `(ic_hub IcHw)` and the sentences
+  `extra`, every sentence `:monotonic`.  Then each op of `ops` under its own settle.
+  `[snapshot questions]` under `incremental?`, `questions` the `preserving-entry` calls
+  each op's settle made."
+  [n extra ops incremental?]
+  (let [kb    (if incremental? (tu/fresh) (tu/isolated-fresh))
+        calls (atom 0)
+        orig  @#'discovery/preserving-entry
+        m     {:strength :monotonic}]
+    (try
+      (binding [discovery/*incremental-preserving* incremental?]
+        (build-ontology! kb)
+        (v/with-deferred-settle kb
+          (run! #(apply-op! kb %)
+                (concat (for [s (concat '[(transitive icPartOf) (transitiveInArgInverse ic_red 1 icPartOf)
+                                          (genl ic_wheel thing) (genl ic_hub thing)
+                                          (disjoint ic_red ic_wheel) (ic_red IcCar)
+                                          (icPartOf IcHw IcCar) (ic_hub IcHw)]
+                                        extra)]
+                          [:assert s 'CxIcBase m])
+                        (for [i (range n)]
+                          [:assert (list 'ic_wheel (symbol (str "IcEw" i))) 'CxIcBase m]))))
+        (let [qs (with-redefs [discovery/preserving-entry
+                               (fn [kb s] (swap! calls inc) (orig kb s))]
+                   (mapv (fn [op] (reset! calls 0) (apply-op! kb op) @calls) ops))]
+          [(snapshot kb) qs]))
+      (finally (tu/clear-kb! kb)))))
+
+(defn- edge-questions
+  "`edge-settles` over 8 and over 32 memberships for `(genl ic_hub ic_wheel)` written,
+  retracted and written again: `{n questions}`, with each snapshot asserted equal to the
+  exhaustive arm's and holding the edge's clash."
+  [extra]
+  (let [edge '(genl ic_hub ic_wheel)
+        ops  [[:assert edge 'CxIcBase {:strength :monotonic}]
+              [:retract edge 'CxIcBase]
+              [:assert edge 'CxIcBase {:strength :monotonic}]]]
+    (into {} (for [n [8 32]
+                   :let [[si qi] (edge-settles n extra ops true)
+                         [se]    (edge-settles n extra ops false)]]
+               (do (is (= si se) (pr-str (diff si se)))
+                   (is (seq (:conflicts si)) "the edge's clash stands")
+                   [n qi])))))
+
+(deftest a-genl-edge-asks-the-memberships-below-its-lower-end-and-none-below-its-upper
+  ;; `(genl ic_hub ic_wheel)` places `ic_hub` under a type separated from `ic_red`, so
+  ;; `(ic_hub IcHw)` beside the reached `(ic_red IcHw)` is a clash.  The edge moves the
+  ;; separations of the types at or below `ic_hub` alone, so its settles ask as many
+  ;; entries over 8 memberships of `ic_wheel` as over 32.
+  (let [qs (edge-questions [])]
+    (is (= (qs 8) (qs 32)) (str "questions per settle " qs))))
+
+(deftest a-genl-edge-asks-a-predicate-preserved-along-genl-at-its-closure-terms-alone
+  ;; With `ic_red` preserved along `genl` too and the crossing narrowing off, the edge moves
+  ;; `ic_red`, and its questions are the facts at the terms of the edge's closure, not
+  ;; `ic_red`'s extent and the memberships of every type separated from it.
+  (with-redefs [inherit/crossing-closure-cap 0]
+    (let [qs (edge-questions '[(transitiveInArgInverse ic_red 1 genl)])]
+      (is (= (qs 8) (qs 32)) (str "questions per settle " qs)))))
+
+(deftest a-genl-edge-above-a-preserved-type-places-the-clash-of-the-memberships-it-separates-in-either-order
+  ;; `(genl ic_dsup ic_hard)` places the preserved `ic_dn`, below `ic_dsup`, under
+  ;; `ic_hard`, which is disjoint from `ic_plain`, so the stored `(ic_plain ic_mid)` beside
+  ;; the reached `(ic_dn ic_mid)` is a clash.  Neither end of the edge is separated from a
+  ;; preserved predicate.
+  (let [w    #(vector :assert % 'CxIcBase {:strength :monotonic})
+        edge (w '(genl ic_dsup ic_hard))
+        base (mapv w '[(transitiveInArgInverse ic_dn 1 genl) (genl ic_mid ic_top)
+                       (disjoint ic_hard ic_plain) (genl ic_dn ic_dsup) (ic_dn ic_top)
+                       (ic_plain ic_mid)])
+        late (settled (conj base edge) true)]
+    (is (seq (:conflicts late)) "the clash stands")
+    (is (= (settled (into [edge] base) true) late) "the edge written first or last")))
 
 (defn- build-route!
   "The shared ontology, and a membership predicate `ic_red` preserved along `icPartOf`:
@@ -807,3 +996,9 @@
     ;; seed 201's eighteenth write is a denial whose clash a mark carried across the install
     ;; hid
     (reopened-streams [201] 18)))
+
+(deftest a-monotonic-blocker-reads-as-a-default-one-and-the-clash-stands
+  (is (seq (:standing (settled (take 7 guarded-claim) true))) "the derived claim clashes")
+  (is (= (settled (take 8 hidden-claim) true hidden-reads)
+         (settled (take 8 guarded-claim) true hidden-reads)))
+  (is (nil? (run-stream guarded-claim))))

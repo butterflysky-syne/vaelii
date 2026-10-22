@@ -29,11 +29,12 @@
 (def ^:private S 'CxSocialWorld)
 
 (defn- refusal
-  "The `:type` of the ex-info `assert` throws for `sentence`, or `:stored` when it takes
-  it.  Discriminating on the type is the contract; the message is for a reader."
+  "The `:type` of the ex-info `assert` throws for `sentence`, or of the argument conviction
+  it holds the stored fact inert under (`tu/write-type`), or `:stored` when it takes it
+  and holds nothing.  Discriminating on the type is the contract; the message is for a
+  reader."
   [kb sentence context]
-  (try (v/assert kb sentence context) :stored
-       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (or (tu/write-type kb #(v/assert kb sentence context)) :stored))
 
 ;; ---- what a kind is, and what it rules out ------------------------------
 
@@ -105,7 +106,7 @@
       (is (v/ask? kb '(tangible Bone1)))            ; a supertype of food
       (is (not (v/ask? kb '(vehicle Bone1)))))            ; but only what actually follows
     (testing "asking for all of an individual's inferred types"
-      (is (= '#{food tangible causal spatial spatiotemporal temporal uninterrupted thing}
+      (is (= '#{food tangible causal physical spatial spatiotemporal temporal uninterrupted thing}
              (set (map #(get % '?t) (v/ask kb '(?t Bone1) '?ctx))))))))
 
 ;; ---- arithmetic, and the ordering derived from it ------------------------
@@ -492,7 +493,7 @@
   (testing "so the ownership rule reaches the parts written beside it"
     (is (seq (v/sentexes-matching kb '(owns Tom Chimney1) S))))
   (testing "and not the parts written in the sibling theory"
-    (is (seq (v/sentexes-matching kb '(partOf Engine1 Car1) N)))
+    (is (seq (v/sentexes-matching kb '(tangiblePartOf Engine1 Car1) N)))
     (is (empty? (v/sentexes-matching kb '(owns Tom Engine1) '?ctx))))
   (testing "a context sees up its own ancestor set and no further"
     (is (v/sees? kb N 'CxBiology))

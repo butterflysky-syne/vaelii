@@ -69,7 +69,7 @@ it claims to, not about the absence of a login on a tool that never offered one.
 - **No destructive path is reachable by GET**, so a link, a prefetch or a crawler
   cannot change a KB.
 - **`lein browser` is a development command and pairs the browser with an nREPL**, both
-  pinned to `127.0.0.1` with no way to say otherwise from the profile. An nREPL is
+  bound to `127.0.0.1` with no way to say otherwise from the profile. An nREPL is
   arbitrary code execution by design; a write route with no authentication beside one
   on a reachable interface is a remote shell. Never run `lein browser` on a machine
   where either port is exposed.
@@ -124,7 +124,7 @@ it claims to, not about the absence of a login on a tool that never offered one.
   response body is `str`-coerced where it is built. An injection that survives that is
   a bug.
 - **Foreign-format readers are a separate repository.** This tree ships no reader and
-  parses no third-party format; `foreign_contract_test.clj` pins that. Parser hardening
+  parses no third-party format; `foreign_contract_test.clj` asserts that. Parser hardening
   reports belong to
   [`vaelii-foreign`](https://github.com/vaelii/vaelii-foreign/blob/main/.github/SECURITY.md),
   whose whole surface is untrusted input.

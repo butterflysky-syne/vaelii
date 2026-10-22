@@ -1,12 +1,12 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.runlog-format-test
-  "The run ledger's columns and format version, pinned.
+  "The run log's columns and format version, frozen.
 
   `scripts/lib/runlog.sh` appends one row to `logs/runs.tsv` per check run, and
   vaelii-top reads it.  vaelii-top lives in another repository (vaelii-tools), so
   nothing in this one fails when the ledger's shape changes under it.  This test
-  runs the writer into a scratch file and pins what it wrote: the header, the
+  runs the writer into a scratch file and asserts what it wrote: the header, the
   field count of a row, and the `format` value.
 
   ## On failure
@@ -16,7 +16,7 @@
   - **The writer renames or drops a column, or a value means something else.**  Raise
     `RUNLOG_FORMAT` in `runlog.sh`, then change `columns` and `row-format` below.
   - Either way, vaelii-top's `runs.parse_ledger` in vaelii-tools owes a matching
-    change: it reads the names this test pins."
+    change: it reads the names this test freezes."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
@@ -53,13 +53,13 @@
 (defn- rows [^File ledger]
   (mapv #(str/split % #"\t" -1) (str/split-lines (slurp ledger))))
 
-(deftest a-new-ledger-carries-the-pinned-columns
+(deftest a-new-run-log-carries-the-expected-columns
   (with-ledger
     (fn [ledger]
       (is (zero? (:exit (record! ledger))))
       (is (zero? (:exit (record! ledger))))
       (let [[header & body] (rows ledger)]
-        (testing "the header names the pinned columns, in order"
+        (testing "the header names the expected columns, in order"
           (is (= columns header)))
         (testing "every row has one field per column"
           (is (= 2 (count body)))

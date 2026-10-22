@@ -5,7 +5,7 @@
   (`vaelii.impl.asp.solve-context`, the `do/label` and `do/classify` imperatives).
 
   The feature's whole claim is that a solve becomes a **persisted, inert artifact** that
-  leaves the always-true base KB untouched, so the tests pin exactly that:
+  leaves the always-true base KB untouched, so the tests assert exactly that:
 
     * an `assumptionRule` never forward-chains — its head is a choice, not a truth;
     * an inert fact is stored and inspectable but never IN, so it forms no nogood and
@@ -617,11 +617,11 @@
                         (res/believed-at? kb h base))]
          h)))
 
-(deftest the-solve-rule-roster-answers-what-the-extent-walk-answers
+(deftest the-solve-rule-set-answers-what-the-extent-walk-answers
   ;; Rules of every solve kind in three contexts, one a sibling the base cannot see, plus a
-  ;; derived assumption rule and a chaining rule the roster must leave out.  Across
+  ;; derived assumption rule and a chaining rule the set must leave out.  Across
   ;; arrival orders, and after a retraction, a defeat and a withdrawn genlCx edge, the
-  ;; roster read equals the walk, and its content order does not move with the order.
+  ;; set read equals the walk, and its content order does not move with the order.
   (tu/with-terms [candidate color flag hasTone clashOf Tom CxMid CxLow CxSide]
     (let [orders (atom #{})]
       (doseq [seed [1 2 3 4]]

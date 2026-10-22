@@ -364,7 +364,7 @@
 ;; tie-group machinery is sound only while they agree on everything ELSE — a
 ;; divergence on ground terms would let the pre-numbering order and the final
 ;; numbered order disagree about which candidates even form a tie group.  Nothing
-;; but a comment tied them together; this pins it.  Privates reached via #' —
+;; but a comment tied them together; this asserts it.  Privates reached via #' —
 ;; the invariant is exactly about internals no public fn exposes.
 
 (deftest cmp-blind-agrees-with-cmp-term-on-variable-free-terms

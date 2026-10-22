@@ -120,8 +120,8 @@
       :else           nil)))
 
 (defn- sharpen-overlap
-  "`bounds` intersected with `stp/overlap-window-with-support`'s window for `i1` and `i2`,
-  as `[bounds-or-nil handles]`.  The window is read in only when its `[dimension unit]` is
+  "`bounds` intersected with `stp/overlap-window-with-support`'s overlap window for `i1` and `i2`,
+  as `[bounds-or-nil handles]`.  The overlap window is read in only when its `[dimension unit]` is
   `dim`, and its handles join the support only then; otherwise `[bounds #{}]`."
   [kb context dim i1 i2 bounds]
   (if-let [[[wdim wlo whi] wsup] (stp/overlap-window-with-support kb context i1 i2)]
@@ -131,7 +131,7 @@
 (defn- solve-overlap
   "`(overlapDuration I1 I2 D)`: `overlap-bounds` over both lengths and the possible Allen
   relations, sharpened, bound or checked.  The support is both length readings,
-  `iv/allen-support` for the pair and the metric window's support."
+  `iv/allen-support` for the pair and the metric overlap window's support."
   [kb goal context]
   (let [[_ i1 i2 d] goal]
     (when (and (interval-term? i1) (interval-term? i2))

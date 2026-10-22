@@ -266,7 +266,7 @@
                                                         (map (comp second key)))
                                               state))}}]
     (trove/log! {:level :warn :id ::sign-inconsistency :data entry})
-    (violations/report-unstamped kb entry)))
+    (violations/report-without-run kb entry)))
 
 (defn- build-reading
   "The believed sign facts of `context` resolved, as `{:state … :inconsistent? …}`."
@@ -283,7 +283,7 @@
   is a node over the supports it was derived from; `possible-signs` reads one out as a
   handle set.
 
-  Cached on the KB's `:qcn` atom and stamped with `observe/change-clock`, as
+  Cached on the KB's `:qcn` atom and keyed by `observe/change-clock`, as
   `qcn-kb/read-network` is.  An inconsistency is reported once per KB, context and state
   (`observe/newly-seen?`)."
   [kb context]

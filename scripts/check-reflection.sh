@@ -14,7 +14,7 @@
 # 8 seconds to 74, which is longer than every other lint check combined. It is covered
 # instead by `scripts/gate.sh`, which greps the test stage's own output — `lein test`
 # already compiles every test namespace under the same flag, so those warnings are on
-# stderr for free. Both halves are gated; neither is gated twice. Say so out loud when
+# stderr for free. Both halves are checked; neither is checked twice. Say so out loud when
 # changing either, because an unstated split is how the next four warnings sit unread
 # in whichever half nobody covered.
 #

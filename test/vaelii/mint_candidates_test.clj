@@ -7,7 +7,7 @@
   `special/withdrawal-candidates` reads them off whichever of the mint family's contexts
   and `sub`'s descendants is fewer.  A `recover` moves every `genlCx` edge, and filtering
   every descendant of every edge by what it sees costs a `sees?` walk per descendant even
-  when the roster names a handful of contexts.  The candidates must
+  when the mint family names a handful of contexts.  The candidates must
   be the ones `tax/context-down` gives."
   (:require [clojure.test :refer [deftest is]]
             [vaelii.core :as v]
@@ -118,7 +118,7 @@
           (comp (keep #(p/get-justification recs %))
                 (filter #(special/mint-informant? (:informant %)))
                 (map :consequence)
-                (filter #(some-> (p/get-sentex recs %) :sentence (@#'special/roster-term))))
+                (filter #(some-> (p/get-sentex recs %) :sentence (@#'special/mint-term))))
           (p/justification-ids recs))))
 
 (deftest the-mint-family-files-the-records-a-stored-mint-justification-concludes

@@ -21,7 +21,7 @@
                           ^HashMap    run      ; centre -> long[1], whole-run self-time
                           ^HashMap    cur      ; centre -> long[1], this settle's self-time
                           ^ArrayList  settles  ; finished per-settle records (maps)
-                          ^longs      t         ; last charge stamp (nanos)
+                          ^longs      t         ; last charge time (nanos)
                           ^longs      insettle  ; 1 while inside a settle bracket, else 0
                           ^longs      region    ; this settle's relabelled region size
                           ^longs      passes])  ; this settle's pass count
@@ -45,9 +45,9 @@
       (let [a (long-array 1)] (.put m k a) a)))
 
 (defn- charge!
-  "Charge the interval since the last stamp to the centre on top of the stack (or the
-  right sentinel when no span is open), and re-stamp.  The one primitive every enter,
-  leave and bracket goes through."
+  "Charge the interval since the last charge time to the centre on top of the stack (or
+  the right sentinel when no span is open), and record the time again.  The one primitive
+  every enter, leave and bracket goes through."
   [^Clock c ^long now]
   (let [^ArrayDeque st (.stack c)
         ^longs tarr  (.t c)

@@ -118,10 +118,10 @@
   ;; that leaf the index model is the right one.
   ;;
   ;; It counts registry consultations, which the cost ranking is what makes, so the
-  ;; ranking is pinned on whatever the run installed rather than the test standing aside
+  ;; ranking is forced on whatever the run installed rather than the test standing aside
   ;; under `VAELII_PLAN=0`, which deletes the question.  This test only: the rest of the
   ;; file answers the same under the sweep.
-  (tu/with-pinned [#'plan/*enabled*]
+  (tu/with-shipped [#'plan/*enabled*]
     (let [p1 (tu/tmp-pred) p2 (tu/tmp-pred) p3 (tu/tmp-pred) p4 (tu/tmp-pred) q (tu/tmp-pred)
           a (tu/tmp-ind) b (tu/tmp-ind) c (tu/tmp-ind) d (tu/tmp-ind) e (tu/tmp-ind)]
       ;; backward, so the conclusion is not stored and a chainer has to expand the rule —
@@ -217,7 +217,7 @@
 ;; Congruence, which is the half a flat class lookup cannot answer: the closure is keyed by
 ;; symbol, so a compound argument is never a key in it.  Normalizing the whole argument in
 ;; one lookup leaves `(F 5 Kilogram)` unchanged and reports it different from `(F 5 Kg)`
-;; with the merge believed; `res/representative-term` descends instead, and these pin the
+;; with the merge believed; `res/representative-term` descends instead, and these assert the
 ;; difference in both directions so neither can regress unnoticed.
 
 (tu/deftest-kb different-descends-into-compound-arguments
@@ -390,7 +390,7 @@
 
 (tu/deftest-kb the-transitive-licence-is-read-from-the-asking-context-by-the-prover
   ;; `applicable?` reads `(transitive p)` from the vantage — the prover's own half of
-  ;; the licence scoping `inherit_test` pins for preservation.  A fresh KB, because
+  ;; the licence scoping `inherit_test` asserts for preservation.  A fresh KB, because
   ;; CxUniverse decontextualizes `transitive` and would lift the declaration where
   ;; every context sees it.
   (tu/with-terms [reaches X Y Z CxA CxB]
@@ -508,7 +508,7 @@
 (tu/deftest-kb the-walk-travels-only-hops-the-asker-can-see
   ;; And each hop is read *from the asking context*: a middle hop stored where the
   ;; asker cannot see it is a break in the chain, not an edge of it.  The licence has
-  ;; the same scoping (`inherit_test`); this pins the hops themselves.
+  ;; the same scoping (`inherit_test`); this asserts the hops themselves.
   (tu/with-terms [reachesTo A B C CxA CxB]
     (v/with-deferred-settle kb
       (v/assert kb (list 'genlCx CxA 'CxUniverse) 'CxUniverse)
@@ -527,7 +527,7 @@
   ;; `ArgTypeProver` types a term from how it is *used*, and a usage is a stored fact
   ;; with a context: a reader that cannot see `(eats Muffet Bone1)` must not learn from
   ;; it that Bone1 is food.  The declaration half was already scoped
-  ;; (`res/constraining-predicates`, through `matches-visible`); this pins the tuple
+  ;; (`res/constraining-predicates`, through `matches-visible`); this asserts the tuple
   ;; half beside it.
   (tu/with-terms [eats food_t Muffet Bone1 CxA CxB]
     (v/with-deferred-settle kb

@@ -3,8 +3,8 @@
 (ns vaelii.retrieval-completeness-test
   "Retrieval against **ground truth**, not against another retrieval path.
 
-  The other two retrieval oracles are *relative*: `arg_root_retrieval_test` pins the
-  argument roots against the trie, `matches_hierarchical_test` pins the set-algebra
+  The other two retrieval oracles are *relative*: `arg_root_retrieval_test` checks the
+  argument roots against the trie, `matches_hierarchical_test` checks the set-algebra
   path against the nested fan-out.  Each proves two mechanisms agree, which is exactly
   what they are for — and neither can see a shape where *both* are wrong.  An open
   negative literal was such a shape: a negative key holds its whole body as one token,
@@ -85,7 +85,7 @@
                   (list 'not (list dog '?x))          ; nothing ground but the functor
                   (list 'not (list parentOf '?x Ann)) ; ground arg AFTER a variable
                   (list 'not (list parentOf Cid '?y)) ; ground arg in a LEFT PREFIX
-                  (list 'not (list '?p '?x))          ; nothing pinned at all
+                  (list 'not (list '?p '?x))          ; nothing bound at all
                   (list 'not (list '?p Tom))]]
       (v/assert-many kb facts CxProbe {:strength :monotonic})
       (doseq [[label bindings]

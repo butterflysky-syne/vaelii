@@ -43,7 +43,7 @@
   the sentence is in and its own chaining has settled.  `opts` is the assert's, carried
   through to the chain a computed `genlCx` edge's merges run.
 
-  Two questions in order, behind one gate:
+  Two questions in order, behind one presence check:
 
   - `nat/reconcile-nats!` — the collision merge a rename may have caused, and the
     correspondence a value, an application or a declaration arriving last leaves to
@@ -53,8 +53,8 @@
     justified so they belief-follow (docs/context-nat.md), and settled
     (`settle-computed-edges`).
 
-  **One gate covers all of it**, `nat/any-reified-constants?`: a KB with a reifiable
-  function or a stored `termOfUnit` map.  A context slot mints a `cx/` constant with no
+  **One presence check covers all of it**, `nat/any-reified-constants?`: a KB with a reifiable
+  function or a stored `natFormula` map.  A context slot mints a `cx/` constant with no
   declaration, so the map count is what admits a KB whose only constants are contexts.  A
   KB that has minted nothing and declares no reifiable function pays neither the
   `any-context-subrelations?` index read nor the correspondence count."
@@ -75,7 +75,7 @@
   absent with nothing for the JTMS to revive.  `context-nat/reconcile-revivals` rebuilds
   it against the settled belief, and settles what it built.
 
-  Gated internally on the KB declaring a context function."
+  It runs only when the KB declares a context function, which it checks itself."
   [kb]
   (settle-computed-edges kb (context-nat/reconcile-revivals kb) nil))
 
@@ -85,10 +85,10 @@
   false)
 
 (defn- remove-orphaned-nats!
-  "Remove every reified constant no live use references any more — its `termOfUnit`
+  "Remove every reified constant no live use references any more — its `natFormula`
   map and materialized result types would otherwise dangle a raw `nat/` symbol.
 
-  **Both kinds of constant, at one gate and by one rule** (docs/nat.md,
+  **Both kinds of constant, behind one presence check and by one rule** (docs/nat.md,
   docs/context-nat.md).  An object `nat/` constant is referenced by the sentences that
   name it; a `cx/` context is referenced by those *and* by whatever is stored in it, so
   the last fact leaving an empty reified context is as much an orphaning removal as the
@@ -101,7 +101,7 @@
   `sink` is the teardown's removal record (`integrate/*removed-sink*`), or nil to ask
   the whole KB.  With one, each round's candidates are the constants the sentexes
   removed since the last round named, and the cost is the region's rather than the KB's
-  whole `termOfUnit` population's.  `retract!` is the teardown entry point to take each
+  whole `natFormula` population's.  `retract!` is the teardown entry point to take each
   bookkeeping handle out with.
 
   **A removal is what makes a candidate, and belief is what settles one** — the two are
@@ -137,10 +137,10 @@
           (recur (count removed) (inc guard)))))))
 
 (defn collect-orphans!
-  "Sweep a reified NAT orphaned by a teardown — its termOfUnit map and materialized types
+  "Sweep a reified NAT orphaned by a teardown — its natFormula map and materialized types
   would dangle a raw `nat/` symbol (docs/nat.md), and an emptied `cx/` context would be
-  a place nothing can reach and nothing is in (docs/context-nat.md).  Gated on
-  `nat/any-reified-constants?`, and suppressed while already removing orphans.  `retract!` is the teardown entry point the
+  a place nothing can reach and nothing is in (docs/context-nat.md).  It runs
+  only when `nat/any-reified-constants?` holds, and is suppressed while already removing orphans.  `retract!` is the teardown entry point the
   sweep takes each bookkeeping handle out with.
 
   Two arms, and which one a caller takes turns on whether it can name the region the

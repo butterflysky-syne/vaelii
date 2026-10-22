@@ -12,7 +12,7 @@
   given KB only one of them runs — and a divergence would be a silently different
   *answer*, not a crash.
 
-  So this pins them against each other directly, on randomized KBs, comparing the raw
+  So this tests them against each other directly, on randomized KBs, comparing the raw
   claim set rather than the verdict: a future change to `undercut?` or `verdict` could
   hide a retrieval difference behind an unchanged yes/no, and the set is what those
   read.  The shapes are the ones the two paths could disagree on — several claims at
@@ -168,13 +168,13 @@
     (is (empty? (both-paths-agree kb (list largerThan bird_t cat_t)))
         "bird is not below animal, so nothing reaches this tuple")))
 
-(tu/deftest-kb one-preserved-position-pins-the-other-on-both-paths
+(tu/deftest-kb one-preserved-position-binds-the-other-on-both-paths
   (tu/with-terms [dog_t animal_t cat_t largerThan]
     (v/with-deferred-settle kb
       (v/assert kb (list 'genl dog_t animal_t) ctx)
       (v/assert kb (list 'transitiveInArgInverse largerThan 1 'genl) ctx))
     (v/assert kb (list largerThan animal_t cat_t) ctx)
-    (testing "the pinned argument must match exactly"
+    (testing "the ground argument must match exactly"
       (is (seq (both-paths-agree kb (list largerThan dog_t cat_t))))
       (is (empty? (both-paths-agree kb (list largerThan dog_t animal_t)))))))
 

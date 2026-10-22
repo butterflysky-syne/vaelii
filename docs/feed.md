@@ -41,7 +41,7 @@ relabelled and which of that region was believed when it first touched it; `prev
 information a feed needs is already computed on every mutation, and without this it is
 thrown away.
 
-This is not a cache and not a materialized view. The three are easily conflated under
+This is not a cache and not a replica. The three are easily conflated under
 one heading, and they are three different features; this is the one that exists.
 
 ## Belief, not storage
@@ -79,9 +79,9 @@ both the consequence report and a feed event call it. An application that got di
 answers from the two would have no way to tell which was the KB's.
 
 The alternative — snapshot the believed set, mutate, diff — is O(KB) per write and is
-what [defenses.md](defenses.md#the-touched-window-is-a-superset-not-the-flip-set)
+what [defenses.md](defenses.md#the-touched-set-is-a-superset-not-the-flip-set)
 measures at 4.4 ms / 41.6 ms / 401 ms over 2.7k / 23k / 224k sentexes. `lein perf`'s
-`feed-listener-scaling` is the gate that says the feed does not do that; wired to diff the believed set it reads 7.2× growth against a 2.0× bound, and 0.7×
+`feed-listener-scaling` is the perf check that says the feed does not do that; wired to diff the believed set it reads 7.2× growth against a 2.0× bound, and 0.7×
 as built.
 
 ## One settle is one event
@@ -218,11 +218,11 @@ KB — but it also means a slow listener slows the writer, and this engine has o
 ([storage.md](storage.md), "The single-writer contract"). A listener that does real work
 should hand the event to a queue and return.
 
-**Registering off the writer's thread has a window, and the wire closes it.** `settle-finish`
+**Registering off the writer's thread has a race window, and the wire closes it.** `settle-finish`
 reads `feed/wants-region?` *before* assembling a region — that is what keeps a KB nobody is
 listening to from building the two sets it would have nowhere to put — so a `core/watch`
 that lands between that read and the delivery misses the settle in flight: the region was
-never assembled, and there is nothing to hand the new listener. The window is one settle
+never assembled, and there is nothing to hand the new listener. The race window is one settle
 wide and only exists for a registration racing a write, which single-threaded callers never
 do. Across the wire it does not exist at all: `:watch` takes the daemon's write monitor
 ([operations.md](operations.md)), so every settle that finished before it returned is
@@ -242,7 +242,7 @@ and start from what it says. A feed is how belief *moves*, never how it is first
   the half that would send the retraction.
 - **Anything during `recover` / `reindex`.** They relabel everything, so a feed running
   through one would hand a reconnecting application the whole KB as newly believed. Off
-  under `settle/*rebuilding?*`, the same gate the settle's cut notices take and for
+  under `settle/*rebuilding?*`, the same condition the settle's cut notices take and for
   the same reason: the entry means *newly*, and on a rebuild there is no newly.
 - **A retraction, and every datum its sweep deleted.** `retract!` and an `edit!`
   `:remove` delete the premise and every conclusion that rested only on it; each is in the
@@ -314,7 +314,7 @@ The daemon registers an ordinary listener of its own per subscription; that list
 files each event into a bounded ring, and a caller reads the ring forward. **The events
 are the same events** — one settle files one region, `dispatch-feed!` renders it once,
 and an in-process listener and a wire subscription over the same KB are handed that one
-answer. `feed_wire_test` pins the equality through a full EDN round trip, since a client
+answer. `feed_wire_test` asserts the equality through a full EDN round trip, since a client
 with none of this repo's classes on its classpath is who the wire is for.
 
 **A cursor counts events, not handles.** It starts at 0 and advances by one per delivered
@@ -388,7 +388,7 @@ bulk-loading KB it is also the row holding the most heap.
 
 **The registry is per handler**, beside the monitor: a token names a subscription *on this
 daemon*, so two handlers over one KB are two daemons and neither answers the other's
-token. A daemon owns its KB for its lifetime, so a subscription pins nothing the handler
+token. A daemon owns its KB for its lifetime, so a subscription keeps nothing reachable the handler
 was not already holding.
 
 **A feed ends when its KB's stores do.** `close!` drops every listener registered on the
@@ -432,7 +432,7 @@ progress, and progress is not belief moving. Nothing in the browser subscribes.
   and re-derives what it swept is one event; a batch that threw reports nothing and the
   next settle reports what it left; the feed and `edit-with-consequences!` are the same
   answer on the same batch — two mechanisms sharing their entry shapes and nothing else,
-  so agreement is evidence rather than tautology, and an equality merge is pinned
+  so agreement is evidence rather than tautology, and an equality merge is tested
   separately because its displaced spelling loses belief with no relabel.
 - **Reentrancy**: delivery is registration order; a thrower loses its own event and its
   neighbour still runs and the write stands; a listener that asserts is delivered its own
@@ -448,9 +448,9 @@ progress, and progress is not belief moving. Nothing in the browser subscribes.
   listeners.
 
 Two cost claims are tested rather than asserted. `lein perf`'s
-`feed-listener-scaling` is the scaling gate, over both listener shapes at once because
+`feed-listener-scaling` is the scaling perf check, over both listener shapes at once because
 the standing query is the one that would re-run something. And the `delay` over the
-entries is pinned by counting calls at the renderer: a standing query whose goal matches
+entries is tested by counting calls at the renderer: a standing query whose goal matches
 nothing must render **zero** entries, where a plain listener renders the diff.
 
 `test/vaelii/feed_wire_test.clj` — 22 tests over the transport, and none of them re-tests
@@ -467,7 +467,7 @@ what an event means:
   included, with its token refused afterwards.
 - **The refusals**: six goal shapes, a contextless goal and a goalless context refused on
   the wire under the in-process `:type`, registering nothing; the token vocabulary and the
-  ceiling as (status, `:type`) pairs, which `wire_contract_test` pins beside the daemon's
+  ceiling as (status, `:type`) pairs, which `wire_contract_test` asserts beside the daemon's
   own.
 - **The monitor**: a write completes while a long poll is parked, and the poll wakes on
   the notify rather than on its timeout; a wait with nothing to report answers empty and

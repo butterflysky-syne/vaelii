@@ -36,5 +36,6 @@ JVM_OPTS="${JVM_OPTS:-} $(start_jvm_opts)"
 export JVM_OPTS
 
 echo "vaelii dev: browser :${VAELII_WEB_PORT:-3000}, profiler :${VAELII_PROFILER_PORT:-8080}, loading $KB" >&2
-exec lein browser :headless
+PROFILES="$(start_profiles "$KB")"
+exec lein ${PROFILES:+with-profile "$PROFILES"} browser :headless
 }

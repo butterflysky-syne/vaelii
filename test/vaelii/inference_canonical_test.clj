@@ -120,7 +120,7 @@
     (tu/with-terms [GdOnly GdOther]
       (v/assert kb (list litOf GdOnly) CxGround)
       (v/assert kb (list litOf GdOther) CxGround)
-      ;; the consequent pins its first argument, so proving (fixedOf ?a ?b) fixes ?a
+      ;; the consequent binds its first argument, so proving (fixedOf ?a ?b) fixes ?a
       (v/assert-rule kb [(list litOf '?y)] (list fixedOf GdOnly '?y) CxGround
                      {:direction :backward})
       (is (= #{{'?a GdOnly '?b GdOnly} {'?a GdOnly '?b GdOther}}

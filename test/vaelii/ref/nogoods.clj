@@ -52,6 +52,9 @@
   `families` is the vector `vaelii.ref.believe` decides. No clash is refused (decision
   D8): every conviction here is a nogood.
 
+  `negates` reads two tuples of one argument list the way a mark reads its tuples, its
+  sides read down the `genl` closure.
+
   Left out, and for the world extraction to refuse rather than for this namespace to
   read: `disjoint_metatype`, `sibling_disjoint`, `separating`, `partition`,
   `orthogonal`, `siblingDisjointException`, `transitiveInArg`, a `transitiveInArgInverse` over any
@@ -342,8 +345,8 @@
 (defn- holding-edges
   "The `[u v]` edges of the view's closure that hold for every term: each believed `(genl
   u v)` whose class at the view is `:monotonic` or that joins two terms spelled as
-  predicates (on the forced-monotonic roster, docs/reference.md D10), and the part edges
-  of each believed `covering`, a roster declaration (docs/taxonomy.md, \"A cover states
+  predicates (in the forced-monotonic set, docs/reference.md D10), and the part edges
+  of each believed `covering`, a cover declaration (docs/taxonomy.md, \"A cover states
   the specialization it rests on\")."
   [view]
   (into []
@@ -367,6 +370,15 @@
         (recur (into seen fresh) (into (pop todo) fresh)))
       seen)))
 
+(defn- holding-view
+  "`view` with `:genl` read over the `holding-edges` `adj` alone, and the believed `genl`
+  sentences among `edges` that are holding edges: the closure a denial contraposes
+  through. A `:default` edge applies forward and does not contrapose (docs/inference.md,
+  \"Under a negation the fan reverses\")."
+  [view edges adj]
+  [(assoc view :genl #(holding-up adj %))
+   (filterv (fn [[_ u v]] (contains? (get adj u) v)) edges)])
+
 (defn- separation-deniers
   "The members that deny part `p` of a cover held by the membership of type `s` of term
   `x` through a separation (docs/taxonomy.md, \"A separation answers a denial\"), each
@@ -389,20 +401,20 @@
 
 (defn covering
   "The `:covering` nogoods at the view's context. docs/taxonomy.md, \"Covering: a whole
-  and the parts named against it\" and \"The coverage inference is gated on explicit
+  and the parts named against it\" and \"The coverage inference is conditional on explicit
   negation\".
 
   A believed `(covering W P1 ... Pn)` is refuted for a term `X` by a believed membership
   `(S X)` with `W` in `S`'s `genl` closure together with, for every part `Pi`, a believed
-  denial `(not (Qi X))` with `Qi` in `Pi`'s closure. A denial of a supertype of a part
-  denies the part: `(not (q X))` with `(genl p1 q)` rules out `(p1 X)`. Members: the
-  membership and one denial per part, as a set, so one denial ruling out two parts is one
-  member. A part with two such denials gives one nogood per choice of denial. `:ground`:
+  denial `(not (Qi X))` with `Qi` in `Pi`'s closure over the `holding-edges`. A denial of
+  a supertype of a part denies the part: `(not (q X))` with a `:monotonic` `(genl p1 q)`
+  rules out `(p1 X)`. Members: the membership and one denial per part, as a set, so one
+  denial ruling out two parts is one member. A part with two such denials gives one nogood per choice of denial. `:ground`:
   the declaration and the `genl` edges from `S` up to `W` and from each `Pi` up to its
   `Qi`. A believed membership `(S' X)` of another type a believed `disjoint` separates from
   `Pi` over `:monotonic` edges denies `Pi` as well (`separation-deniers`), and is the member
   for that part, its declaration and edges in `:ground`. A part with no such denier leaves
-  the cover unrefuted: the cover is gated on explicit negation and never on absence.
+  the cover unrefuted: the cover is conditional on explicit negation and never on absence.
 
   The declaration is not a member, for `disjoint`'s reason (docs/taxonomy.md): a nogood
   that defeated the cover would find no violation on the next pass and revive it.
@@ -419,6 +431,7 @@
                           (filter #(some-> (denial-of %) membership?) (:believed view)))
         decls   (filterv (fn [[_ t1 t2]] (not= t1 t2)) (declarations view 'disjoint 2))
         adj     (reduce (fn [m [u v]] (update m u (fnil conj #{}) v)) {} (holding-edges view))
+        [hview hedges] (holding-view view edges adj)
         by-term (group-by second (filter membership? (:believed view)))]
     (collect
      (concat
@@ -429,8 +442,8 @@
                               (concat
                                (for [den  (get denials x)
                                      :let [q (first (denial-of den))]
-                                     :when (contains? (up view p) q)]
-                                 {:member den :ground (route-edges view edges p q)})
+                                     :when (contains? (up hview p) q)]
+                                 {:member den :ground (route-edges hview hedges p q)})
                                (separation-deniers view edges adj decls by-term s x p)))]
             :when (every? seq per-part)
             combo (combinations per-part)]
@@ -450,22 +463,25 @@
   families\".
 
   A believed membership `(s X)` is refuted by a believed denial `(not (q X))` with `q` in
-  `s`'s `genl` closure and distinct from `s`: `(dog Rex)`, `(genl dog animal)` and `(not
-  (animal Rex))` cannot all hold. Members: the membership and the denial. `:ground`: the
-  `genl` edges on the routes from `s` up to `q`. With `q` equal to `s` the pair is a
+  `s`'s closure over the `holding-edges` and distinct from `s`: `(dog Rex)`, a `:monotonic`
+  `(genl dog animal)` and `(not (animal Rex))` cannot all hold. A `:default` edge does
+  not contrapose, so over `(genl dog animal)` at `:default` the denial stands (issue #188).
+  Members: the membership and the denial. `:ground`: the holding `genl` edges on the
+  routes from `s` up to `q`. With `q` equal to `s` the pair is a
   negation nogood, which belongs to no family here."
   [view]
-  (let [edges   (genl-edges view)
+  (let [adj     (reduce (fn [m [u v]] (update m u (fnil conj #{}) v)) {} (holding-edges view))
+        [hview edges] (holding-view view (genl-edges view) adj)
         denials (group-by #(second (denial-of %))
                           (filter #(some-> (denial-of %) membership?) (:believed view)))]
     (collect
      (for [[s x :as m] (filter membership? (:believed view))
            den (get denials x)
            :let [q (first (denial-of den))]
-           :when (and (not= q s) (contains? (up view s) q))]
+           :when (and (not= q s) (contains? (up hview s) q))]
        {:kind    :supertype
         :members #{m den}
-        :ground  (route-edges view edges s q)}))))
+        :ground  (route-edges hview edges s q)}))))
 
 ;; ---- inherited (transitiveInArgInverse) -------------------------------------
 
@@ -593,6 +609,33 @@
            :when (and (not= a b) (= a a') (= b b'))]
        {:kind :anti-symmetric :members #{t1 t2} :ground (mark-edges view edges d p [t1 t2])}))))
 
+;; ---- negates -------------------------------------------------------------------
+
+(defn negates
+  "The `:negates` nogoods at the view's context. docs/taxonomy.md, \"Predicate metadata\"
+  (the `negates` entry).
+
+  A believed `(negates P R)` convicts two believed tuples `(Q1 a …)` and `(Q2 a …)` of one
+  argument list with `P` in `Q1`'s `genl` closure and `R` in `Q2`'s, in either order of
+  the two sides. Members: the two tuples, or one tuple whose functor has both sides in its
+  closure, `(negates P P)` included. `:ground`: the declaration and the predicate edges
+  from each tuple's functor up to its side. A declaration whose sides' lengths clash is
+  left out: the reference models no arity binding."
+  [view]
+  (let [edges  (genl-edges view)
+        tuples (filterv tuple? (:believed view))]
+    (collect
+     (for [[_ p r :as d] (declarations view 'negates 2)
+           [a b] (distinct [[p r] [r p]])
+           t1 tuples
+           :when (contains? (up view (first t1)) a)
+           t2 tuples
+           :when (and (= (rest t1) (rest t2)) (contains? (up view (first t2)) b))]
+       {:kind    :negates
+        :members (hash-set t1 t2)
+        :ground  (into #{d} (concat (route-edges view edges (first t1) a)
+                                    (route-edges view edges (first t2) b)))}))))
+
 ;; ---- the wiring --------------------------------------------------------------
 
 (def families
@@ -600,4 +643,4 @@
   order of their names. `vaelii.ref.believe` sorts the nogoods it decides on content, so
   this order changes no answer."
   [anti-symmetric anti-transitive asymmetric covering disjoint functional inherited
-   irreflexive supertype])
+   irreflexive negates supertype])

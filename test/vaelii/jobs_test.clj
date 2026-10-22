@@ -42,7 +42,7 @@
         (is (= :done (get-in j [:progress :phase])))
         (is (= 2 (get-in j [:progress :done])))
         (is (= 3 (get-in j [:progress :total])))))
-    (testing "and the view is safe to render: no cancel flag, no future, no KB"
+    (testing "and the public job is safe to render: no cancel flag, no future, no KB"
       (let [j (jobs/job id)]
         (is (nil? (:cancel j)))
         (is (nil? (:future j)))
@@ -79,13 +79,13 @@
   (let [release (promise)
         id      (jobs/submit {:label "Wait for the test" :kind :test}
                              (fn [_] @release {:done true}))]
-    (testing "a job that has not settled inside the window is answered as it stands —
+    (testing "a job that has not settled inside the fast-path time window is answered as it stands —
               which is what sends a caller to the progress screen rather than to a result
               that does not exist yet"
       (is (= :running (:status (jobs/wait id 30)))))
     (deliver release true)
     (is (= :done (:status (settled id))))
-    (testing "and a job that settled before the window closes is answered finished, which
+    (testing "and a job that settled before the time window closes is answered finished, which
               is the whole of the fast path"
       (is (= :done (:status (jobs/wait id jobs/fast-path-ms)))))))
 
@@ -380,7 +380,7 @@
 (deftest a-progress-report-from-a-swept-job-files-nothing
   ;; the other half of the sweep: a wedged job's thread keeps reporting, and writing under
   ;; an id the registry has dropped would file half a job — a progress reading with no
-  ;; `:started`, which every view then subtracts from
+  ;; `:started`, which every public job then subtracts from
   (let [reported (promise)
         id       (jobs/submit {:label "Keeps talking" :kind :test}
                               (fn [progress!]
@@ -453,7 +453,7 @@
 
 (deftest cancelling-a-settled-job-leaves-its-terminal-status
   ;; the :cancelling write goes through update-job! guarded on the job not having
-  ;; settled: stamped over a just-filed :done, the job never settled, the sweep kept
+  ;; settled: written over a just-filed :done, the job never settled, the sweep kept
   ;; it, `writer` kept naming it, and every later writing job was refused against
   ;; work that had already finished
   (let [id (jobs/submit {:label "Done already" :kind :test} (constantly {:ok true}))]

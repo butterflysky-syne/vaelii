@@ -26,7 +26,7 @@
   * **Durable bookkeeping.**  The tombstone sets, the released premise marks and the
     hidden flag live in a small `KvBackend` under reserved keys, mirrored in atoms for
     the read path.  Every mutation writes through, and a mount rebuilds the atoms from
-    it, so remounting a durable overlay over the same base serves the same merged view:
+    it, so remounting a durable overlay over the same base serves the same merged contents:
     a deleted base record stays deleted, a released premise stays released.  An
     ephemeral fork passes an in-RAM bookkeeping backend and pays nothing for the
     machinery.
@@ -41,12 +41,13 @@
   **The fork's belief is rebuilt, not overlaid.**  The JTMS is not storage — it is a
   separate protocol (`vaelii.impl.jtms`) over derived state — and the engine already has the
   operation that computes it from records: `recover`.  So a fork gets its own network by
-  recovering over the merged view, and nothing here layers one truth-maintenance graph
+  recovering over the merged contents, and nothing here layers one truth-maintenance graph
   over another."
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [vaelii.impl.capabilities :as cap]
             [vaelii.impl.io.fingerprint :as fp]
+            [vaelii.impl.observe :as observe]
             [vaelii.impl.protocols :as p]))
 
 ;; ---- reserved bookkeeping keys --------------------------------------------
@@ -57,15 +58,18 @@
 (def ^:private pv-tombstone-key ::provenance-tombstoned)
 (def ^:private released-key     ::premise-released)
 (def ^:private watermark-key    ::base-watermark)
-(def ^:private pinned-key       ::base-pinned)
+(def ^:private digested-key     ::base-digested)
+;; A durable fork's bookkeeping may hold the same handle set under this second key, which
+;; the mount reads beside `digested-key` and nothing writes.
+(def ^:private digested-key-alt ::base-pinned)
 
 (defn- digest-key
   "Where the digest of the base record at handle `h` is kept, once the fork has written
-  something that depends on it (`pin!`)."
+  something that depends on it (`record-base-digest!`)."
   [h]
   [::base-digest h])
 
-;; ---- the fast view + its write-through --------------------------------------
+;; ---- the atom mirror + its write-through ------------------------------------
 ;; Each atom is a mirror of one bookkeeping key; every mutation writes both, and a mount
 ;; reads the atoms back out of the backend.  The atoms are what the read path touches, so
 ;; a durable bookkeeping backend costs the reads nothing.
@@ -81,8 +85,8 @@
   (when (integer? id) (long id)))
 
 (defn- sample
-  "A handle the **merged** view holds, given the two halves' own samples and a predicate
-  saying whether the merged view keeps one — `nil` only when neither half holds anything.
+  "A handle the **merged** contents hold, given the two halves' own samples and a predicate
+  saying whether the merged contents keep one — `nil` only when neither half holds anything.
 
   `nil` is the part that decides it.  Every caller of a sampler reads it as *this store is
   empty* (`kb/write-hazards`, `kb/discharge-over-empty-store!`, `open-kb`'s recovery
@@ -114,19 +118,24 @@
     (fp/record-hash h sx)
     (when-let [j (p/get-justification base h)] (fp/justification-hash h j))))
 
-(defn- pin!
+(defn- digested?
+  "Does the bookkeeping hold a base digest for handle `h`, under either key?"
+  [meta-kv h]
+  (or (p/kv-member? meta-kv digested-key h) (p/kv-member? meta-kv digested-key-alt h)))
+
+(defn- record-base-digest!
   "Record what the base holds at `id` before the fork writes something that depends on it
   — a tombstone, an override, a released mark — so a mount over a base that holds a
-  different record there is refused (`changed-pins`) instead of applying the write to it.
-  A handle at or above `base-top`, the base's `next-id` at the mount, is one the fork
-  minted, so an ordinary write pays one comparison and nothing else; a handle already
-  pinned keeps its first digest, which is the record the fork's state was written over."
+  different record there is refused (`changed-base-records`) instead of applying the write
+  to it.  A handle at or above `base-top`, the base's `next-id` at the mount, is one the
+  fork minted, so an ordinary write pays one comparison and nothing else; a handle already
+  digested keeps its first digest, which is the record the fork's state was written over."
   [base meta-kv base-top hidden? id]
   (when-let [h (handle id)]
-    (when (and (< h (long base-top)) (not @hidden?) (not (p/kv-member? meta-kv pinned-key h)))
+    (when (and (< h (long base-top)) (not @hidden?) (not (digested? meta-kv h)))
       (when-let [d (base-digest base h)]
         (p/kv-put meta-kv (digest-key h) d)
-        (p/kv-add-to-set meta-kv pinned-key h)))))
+        (p/kv-add-to-set meta-kv digested-key h)))))
 
 (defrecord OverlayRecordStore [overlay base meta-kv counter base-top
                                hidden? sx-tombstoned jd-tombstoned pv-tombstoned released]
@@ -138,7 +147,8 @@
 
   (put-sentex [this sentex]
     (let [id (long (or (:id sentex) (p/next-id this)))]
-      (pin! base meta-kv base-top hidden? id)
+      (observe/keep-before! this [:sentex id] #(p/get-sentex this id))
+      (record-base-digest! base meta-kv base-top hidden? id)
       ;; an explicit handle (an import, a revival) must carry the counter with it, or the
       ;; next mint would reissue it and overwrite a record with no error
       (swap! counter max id)
@@ -158,9 +168,10 @@
   ;; answers the record the fork held before the call or the one it holds after it.  In
   ;; the other order a read between them misses the overlay, finds no tombstone, and
   ;; answers the base's record, which the fork had overridden.
-  (delete-sentex! [_ id]
+  (delete-sentex! [this id]
     (let [id (handle id)]
-      (pin! base meta-kv base-top hidden? id)
+      (observe/keep-before! this [:sentex id] #(p/get-sentex this id))
+      (record-base-digest! base meta-kv base-top hidden? id)
       (when-not @hidden?
         (when (p/get-sentex base id)
           (note! sx-tombstoned meta-kv sx-tombstone-key id)
@@ -170,7 +181,7 @@
             (note! pv-tombstoned meta-kv pv-tombstone-key id))))
       (when (p/get-sentex overlay id) (p/delete-sentex! overlay id))
       ;; Provenance dies with its record on both concrete stores, and the overlay may
-      ;; hold a stamp for a handle whose *record* it never overrode — `put-provenance`
+      ;; hold provenance for a handle whose *record* it never overrode — `put-provenance`
       ;; writes to the overlay whatever side the record is on.  So the drop is stated
       ;; here rather than left to be a consequence of deleting the record.
       (p/delete-provenance! overlay id))
@@ -178,7 +189,8 @@
 
   (put-justification [this justification]
     (let [id (long (or (:id justification) (p/next-id this)))]
-      (pin! base meta-kv base-top hidden? id)
+      (observe/keep-before! this [:justification id] #(p/get-justification this id))
+      (record-base-digest! base meta-kv base-top hidden? id)
       (swap! counter max id)
       (let [r (p/put-justification overlay (assoc justification :id id))]
         (when (contains? @jd-tombstoned id) (unnote! jd-tombstoned meta-kv jd-tombstone-key id))
@@ -189,9 +201,10 @@
         (when-not (or @hidden? (contains? @jd-tombstoned (handle id)))
           (p/get-justification base id))))
 
-  (delete-justification! [_ id]
+  (delete-justification! [this id]
     (let [id (handle id)]
-      (pin! base meta-kv base-top hidden? id)
+      (observe/keep-before! this [:justification id] #(p/get-justification this id))
+      (record-base-digest! base meta-kv base-top hidden? id)
       (when-not @hidden?                        ; tombstones first, as in `delete-sentex!`
         (when (p/get-justification base id) (note! jd-tombstoned meta-kv jd-tombstone-key id))
         (when (p/get-provenance base id) (note! pv-tombstoned meta-kv pv-tombstone-key id)))
@@ -200,7 +213,7 @@
     nil)
 
   (put-provenance [_ id prov]
-    (pin! base meta-kv base-top hidden? id)
+    (record-base-digest! base meta-kv base-top hidden? id)
     (let [r (p/put-provenance overlay id prov)]
       (when (contains? @pv-tombstoned (handle id))
         (unnote! pv-tombstoned meta-kv pv-tombstone-key id))
@@ -213,7 +226,7 @@
 
   (delete-provenance! [_ id]
     (let [id (handle id)]
-      (pin! base meta-kv base-top hidden? id)
+      (record-base-digest! base meta-kv base-top hidden? id)
       (when (and (not @hidden?) (p/get-provenance base id))
         (note! pv-tombstoned meta-kv pv-tombstone-key id))
       (p/delete-provenance! overlay id))
@@ -237,7 +250,7 @@
   ;; first, then mark it in the overlay like any other handle.
   (mark-premise [this id strength]
     (let [id (long id)]
-      (pin! base meta-kv base-top hidden? id)
+      (record-base-digest! base meta-kv base-top hidden? id)
       (when-not (p/get-sentex overlay id)
         (when-let [sx (p/get-sentex this id)]
           (p/put-sentex overlay (assoc sx :id id))))
@@ -249,7 +262,7 @@
 
   (unmark-premise! [this id]
     (let [id (long id)]
-      (pin! base meta-kv base-top hidden? id)
+      (record-base-digest! base meta-kv base-top hidden? id)
       (if (p/get-sentex overlay id)
         (p/unmark-premise! overlay id)
         ;; materialize the override only when there is a mark to remove — the teardown
@@ -348,7 +361,7 @@
   ;; A fork's own records are `:memory` or `:disk` (a `:pg` overlay is refused at
   ;; `open-kb`), neither of which prefetches, so the overlay arm is a no-op today and is
   ;; here so a later one is not silently skipped.  The base arm is the point: a fork
-  ;; `recover`s over the merged view, which walks every record it inherits, and over a
+  ;; `recover`s over the merged contents, which walks every record it inherits, and over a
   ;; `:pg` base that is a round trip apiece without the chunk hint.
   ;;
   ;; What it costs a fork over a base that does **not** prefetch: `cap/prefetcher` answers
@@ -401,13 +414,14 @@
                (some #(seq (p/kv-members meta-kv %))
                      [sx-tombstone-key jd-tombstone-key pv-tombstone-key released-key]))))
 
-(defn- changed-pins
-  "The pinned handles (`pin!`) at which the base no longer holds the record the fork's
-  state was written over — a base rebuilt in another order, or one that lost a record.
-  One read per pinned handle."
+(defn- changed-base-records
+  "The digested handles (`record-base-digest!`) at which the base no longer holds the
+  record the fork's state was written over — a base rebuilt in another order, or one that
+  lost a record.  One read per digested handle."
   [base meta-kv]
   (into [] (remove #(= (base-digest base %) (p/kv-get meta-kv (digest-key %))))
-        (sort (p/kv-members meta-kv pinned-key))))
+        (sort (into (set (p/kv-members meta-kv digested-key))
+                    (p/kv-members meta-kv digested-key-alt)))))
 
 (defn- overridden-unlike
   "The handles at which this fork holds a record that the base also holds with different
@@ -450,7 +464,7 @@
   sentence answers `unknown` through the fork.  A fork that has written nothing is a
   fresh fork, and mounts."
   [overlay base meta-kv {:keys [watermark base-next own-next index-cleared?]}]
-  (let [changed (changed-pins base meta-kv)]
+  (let [changed (changed-base-records base meta-kv)]
     (when (seq changed)
       (refuse-overlap! (str "the base records at " (count changed) " handle(s) the fork removed"
                             " or overrode are not the ones it removed or overrode")
@@ -476,7 +490,7 @@
   holding the overlay's record-level bookkeeping.
 
   The mount reads the bookkeeping back — so a durable overlay remounted over the same
-  base serves the merged view it was left in — and seeds the handle counter above both
+  base serves the merged contents it was left in — and seeds the handle counter above both
   stores' watermarks, which is what keeps a minted handle out of the base's range even
   after a restart.  It records the base's watermark in the bookkeeping, and refuses
   (`:fork-base-overlap`) a remount over a base that has changed since, once the fork has

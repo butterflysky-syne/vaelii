@@ -30,7 +30,7 @@
       (is (re-find #"Story"    (name CxStory))))
     (testing "a type temp named after a bare word stays as ambiguous as the word"
       ;; `dog` satisfies both conventions and is disambiguated by arity, so the temp
-      ;; is spelled to be usable either way — underscores would pin it to arity 1
+      ;; is spelled to be usable either way — underscores would restrict it to arity 1
       (is (nm/predicate? dog))
       (is (empty? (nm/problems (list dog Muffet) CxStory)))
       (is (empty? (nm/problems (list dog Muffet Muffet) CxStory))))
@@ -225,7 +225,7 @@
     ;; descending into it would judge `+` and every structural NAT functor by naming rules that
     ;; were never about them
     (is (empty? (nm/problems '(evaluate Sum (+ 1 2)) 'CxWell)))
-    (is (empty? (nm/problems '(termOfUnit Rod1 (QuantityFn 5 Meter)) 'CxWell)))))
+    (is (empty? (nm/problems '(natFormula Rod1 (QuantityFn 5 Meter)) 'CxWell)))))
 
 (deftest ist-names-a-context
   (is (empty? (nm/problems '(ist CxUniverse (flies Tweety)) 'CxWell)))
@@ -437,7 +437,7 @@
                '(isa Muffet Dog Extra)]]
       (is (nil? (nm/advice s)) (pr-str s))))
   (testing "advise! is silent under :naming :off, which asks for no policing"
-    ;; reach past the once-per-process gate by asking the pure fn either side of it
+    ;; reach past the once-per-process check by asking the pure fn either side of it
     (is (some? (nm/advice '(isa Muffet Dog))))
     (is (nil? (nm/advise! :off '(isa Muffet Dog) 'CxUniverse)))))
 
@@ -504,7 +504,7 @@
     (is (seq? (read-string "'centaur'-mythical")))
     (is (= :sense (v/term-role (read-string "_'centaur'-mythical"))))))
 
-;;; ── the roster and its renderer are one thing ─────────────────────────
+;;; ── the class table and its renderer are one thing ────────────────────
 
 (def ^:private class-samples
   "One sentence per `problem-classes` key, and the context to check it in."
@@ -519,10 +519,10 @@
 
 (deftest every-problem-class-renders-a-message
   ;; `problem-classes` is a map and `message` a `case` over its keys, so the two drift in
-  ;; a direction nothing else looks: a class the roster names and `problems*` emits with
+  ;; a direction nothing else looks: a class the table names and `problems*` emits with
   ;; no arm to render it throws `IllegalArgumentException: No matching clause` out of
-  ;; `assert`, where the contract is an `ex-info` carrying `:type :naming`.  The roster
-  ;; test above checks the other direction — that an emitted class is one the roster
+  ;; `assert`, where the contract is an `ex-info` carrying `:type :naming`.  The class
+  ;; test above checks the other direction — that an emitted class is one the table
   ;; names — and the two together are what make the pairing total.
   (testing "a new class owes this test a sentence that produces it"
     (is (= (set (keys nm/problem-classes)) (set (keys class-samples)))))

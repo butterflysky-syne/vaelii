@@ -51,9 +51,9 @@
   which `decide` never weighs. An edge OUT at `C` carries no mark there, and a
   `:default` edge on the reach leaves the verdict a `:monotonic` edge would give. The
   view had this shape before D7, and D7 changed no code in this namespace.
-  `world/check-world` sets a denial of a mark, of a declaration and of a predicate `genl`
-  edge aside as inert (D10, D11, D17), and `decide` never takes a roster member OUT, so a
-  mark's reach at `C` is the stored predicate edges visible at `C`.
+  `decide` never takes a forced-monotonic member OUT, and a denial of a mark, of a
+  declaration or of a predicate `genl` edge loses its negation nogood to the stored one
+  (D10, D11), so a mark's reach at `C` is the stored predicate edges visible at `C`.
 
   **A verdict does not bind a reader against its own view** (docs/reference.md D3). A
   context below a vantage decides from its own view, and believes what the vantage took
@@ -91,8 +91,8 @@
   world's genlCx edges (`edges`, `{sub #{super}}` off `context-edges`) from `c`.
 
   Every genlCx edge is `:monotonic` (docs/reference.md D1: `world/check-world` stores a
-  genlCx write `:monotonic` and sets a denial or a rule concluding one aside as inert), so
-  `up(C)` is a function of the stored edges alone and is fixed for the
+  genlCx write `:monotonic` and sets a rule concluding one aside as inert, and a denial of
+  one moves no edge), so `up(C)` is a function of the stored edges alone and is fixed for the
   whole computation. The closure is global, not scoped by visibility: an edge counts
   whatever context stores it (docs/contexts.md, \"Context-scoped constraint checks\").
   A genlCx path caps no class, since each of its edges is `:monotonic`.
@@ -359,10 +359,10 @@
       (if (= next state) state (recur next)))))
 
 (defn- void-at?
-  "Does rule sentex `r` conclude a literal on the roster `forced?` reads, or its denial,
-  without being a roster rule there: a `set/defaultRule`, an `unknown`, an exception, or
-  an antecedent off that roster (docs/reference.md D17)?  Such a rule fires at no
-  context whose roster holds its conclusion."
+  "Does rule sentex `r` conclude a literal in the forced-monotonic set `forced?` reads, or its denial,
+  without being a forced-monotonic rule there: a `set/defaultRule`, an `unknown`, an exception, or
+  an antecedent outside that set (docs/reference.md D17)?  Such a rule fires at no
+  context whose forced-monotonic set holds its conclusion."
   [forced? r]
   (let [{:keys [consequent antecedents unknowns]} (:parsed r)
         body (if (world/denial? consequent) (second consequent) consequent)]
@@ -380,23 +380,21 @@
   match climbs are the premise edges and coverings believed at `c`: no rule concludes
   either in v1. No rule reads an inherited claim (`world/check-world` refuses a rule
   reading a preserved predicate or one above it), so derivation runs before
-  `inherit-at` and reads none.  `:forced?` reads the roster at `c`: the global roster
-  (`world/forced?`) and the predicates a roster declaration visible at `c` names; a denial
+  `inherit-at` and reads none.  `:forced?` reads the forced-monotonic set at `c`: the baseline set
+  (`world/forced?`) and the predicates a forced-monotonic declaration visible at `c` names; a denial
   of a literal on it is no premise there, and a rule concluding one fires there only as
-  a roster rule (`void-at?`, docs/reference.md D17)."
+  a forced-monotonic rule (`void-at?`, docs/reference.md D17)."
   [prep c out]
   (let [sees     (up-with (:edges prep) c)
         vis      (fn [homes] (select-keys homes sees))
-        ;; the predicates a roster declaration visible at `c` puts on the roster there
-        declared (into #{} (keep (fn [[s homes]] (when (and (world/roster-declaration? s)
+        ;; the predicates a forced-monotonic declaration visible at `c` makes forced-monotonic there
+        declared (into #{} (keep (fn [[s homes]] (when (and (world/forced-declaration? s)
                                                             (seq (vis homes)))
                                                    (second s))))
                        (:premises prep))
         forced?  (fn [s] (or (world/forced? s) (and (seq? s) (contains? declared (first s)))))
         supports (into {} (for [[s homes] (:premises prep)
                                 :when (not (contains? out s))
-                                ;; a denial of a literal on the roster here is inert
-                                :when (not (and (world/denial? s) (forced? (second s))))
                                 :let [v (vis homes)]
                                 :when (seq v)]
                             [s v]))
@@ -596,19 +594,24 @@
     `:anti-symmetric` nogood whose members differ only in symbol arguments: `:merge`,
     nobody OUT (docs/reference.md D6: the engine merges the two terms, and equality is
     outside the reference);
-  - no `:default` member off the forced-monotonic roster (`forced?`, the roster at the
-    reading context; `world/forced?` when not given) otherwise:
-    `:hard`, nobody OUT, since a roster member is never a loser (D7, D10–D13);
-  - exactly one `:default` member off the roster: `:defeat`, that member is the `:loser`;
-  - two or more `:default` members off the roster: `:dilemma`, nobody OUT.
+  - exactly one member a denial `(not S)` of a forced-monotonic member `S` (`forced?`,
+    the set at the reading context; `world/forced?` when not given): `:defeat`, that
+    denial is the `:loser` at either class (invariant 2);
+  - no `:default` member outside the forced-monotonic set otherwise: `:hard`, nobody OUT,
+    since a forced-monotonic member is never a loser (D7, D10–D13);
+  - exactly one `:default` member outside the set: `:defeat`, that member is the `:loser`;
+  - two or more `:default` members outside the set: `:dilemma`, nobody OUT.
 
   The ground is not weighed. Defeat-class is the only axis (docs/nmtms.md, \"There is
   no second axis\"), so nothing breaks a tie."
   ([class ng] (decide class ng world/forced?))
   ([class ng forced?]
-   (let [cs   (into {} (map (juxt identity class)) (:members ng))
-         weak (keep (fn [[s c]] (when (and (= :default c) (not (forced? s))) s)) cs)]
+   (let [cs    (into {} (map (juxt identity class)) (:members ng))
+         weak  (keep (fn [[s c]] (when (and (= :default c) (not (forced? s))) s)) cs)
+         yield (filter #(and (world/denial? %) (contains? cs (second %)) (forced? (second %)))
+                       (keys cs))]
      (cond (and (every? #{:monotonic} (vals cs)) (symbol-merge? ng)) (assoc ng :verdict :merge)
+           (= 1 (count yield)) (assoc ng :verdict :defeat :loser (first yield))
            (empty? weak)      (assoc ng :verdict :hard)
            (= 1 (count weak)) (assoc ng :verdict :defeat :loser (first weak))
            :else              (assoc ng :verdict :dilemma)))))
@@ -661,7 +664,7 @@
   world where a from-scratch re-decision had no fixpoint before D14; under D14 both
   readings settle there at the first round's defeat. The grounds-first order is what the
   test `scenario-b-in-one-context-the-edge-is-decided-before-the-clash-read-through-it`
-  pins."
+  asserts."
   [prep c families]
   (loop [out #{} decided []]
     (let [d         (derive-at prep c out)

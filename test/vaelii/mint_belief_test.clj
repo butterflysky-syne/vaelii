@@ -1,17 +1,17 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.mint-belief-test
-  "A rule a **generator** stamps out is *derived* content: it is justified by the
+  "A rule a **generator** generates is *derived* content: it is justified by the
   firing that minted it, never marked a premise, so the ordinary relabel un-believes
   it the moment what licensed it goes (`chain/mint-rule`, docs/generators.md).  These
-  pin that invariant against **defeat** — the case retraction tests do not reach.  A
+  assert that invariant against **defeat** — the case retraction tests do not reach.  A
   defeat is a reader's verdict: the mark stays IN in the network and its own context
   withdraws it, and with it the mint and everything the mint concludes
   (docs/nmtms.md, \"A defeat is scoped to its vantage\").
 
   `generator_test`'s `retracting-the-fill-retracts-the-rule` and
   `rejoin_belief_test` cover the *retraction* of a fill (which SWEEPS the mint's node
-  outright) and the two *re-join* firing paths.  Neither pins what happens when the
+  outright) and the two *re-join* firing paths.  Neither asserts what happens when the
   mark that licensed the mint is **defeated** rather than retracted.  The claim under
   test is that its belief moves: the mint's sole justification names the mark handle as
   an antecedent, so a reader that withdraws the mark withdraws the mint, and every
@@ -24,7 +24,7 @@
   correctly IN for the whole scenario (nothing in the engine defeats a rule, only its
   conclusion — docs/nmtms.md).  A `(->> rules (remove generator?) first)` helper picks
   *it* up, not the derived mint, and then reports a believed rule after the defeat, which
-  looks like a soundness hole.  `the-marker-default-is-not-the-mint` pins the two apart:
+  looks like a soundness hole.  `the-marker-default-is-not-the-mint` tells the two apart:
   the marker is a premise, the mint is derived, and only the mint's belief moves."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
@@ -35,7 +35,7 @@
 (use-fixtures :each (tu/neutral))
 
 (defn- the-mint
-  "The one *derived* stamped rule in `ctx` concluding `pred` — a rule with an
+  "The one *derived* generated rule in `ctx` concluding `pred` — a rule with an
   antecedent, not a generator, and **not a premise**.  Found by what it concludes and
   by its being derived, so it can never be confused with the marker default the
   generator fires on (which is an asserted premise concluding a fact)."
@@ -50,7 +50,7 @@
 (defn- build-mint!
   "Assert a generator, a marker default and one fill so a rule is minted; return the
   derived mint's sentex map.  `(trig pbigger)` fires the marker to conclude
-  `(mark pbigger)`, on which the generator fires to stamp out
+  `(mark pbigger)`, on which the generator fires to generate
   `(implies (pbigger ?x ?y) (seen ?x))`."
   [kb mark seen trig pbigger ctx]
   (v/assert kb (list 'implies (list mark '?rel)
@@ -68,7 +68,7 @@
   (tu/with-terms [pmark pseen trig pbigger CxMB]
     (let [mint (build-mint! kb pmark pseen trig pbigger CxMB)
           mh   (:id mint)]
-      (is (some? mint) "a rule was stamped")
+      (is (some? mint) "a rule was generated")
       (testing "before the defeat the mint is a derived, believed rule"
         (is (not (v/premise? kb mh)) "the mint is derived, not a premise")
         (is (seq (v/supporting-justifications kb mh))
@@ -92,7 +92,7 @@
   ;; withdraws it.
   (tu/with-terms [pmark pseen trig pbigger dog cat CxMB]
     (let [mint (build-mint! kb pmark pseen trig pbigger CxMB)]
-      (is (some? mint) "a rule was stamped")
+      (is (some? mint) "a rule was generated")
       (v/assert kb (list 'not (list pmark pbigger)) CxMB {:strength :monotonic})
       (is (not (v/in? kb (:id mint))) "the mint is withdrawn")
       (testing "a tuple the mint would range over arrives, and draws nothing believed"
@@ -107,7 +107,7 @@
   ;; The marker `defaultRule (implies (trig ?p) (mark ?p))` is a stored rule concluding
   ;; a fact — not a generator — so a `(remove generator?) first` helper returns *it*,
   ;; and it is an asserted PREMISE, correctly believed for the whole scenario.  Mistaking
-  ;; it for the mint is what makes a defeated mint *look* like it stays believed.  Pin the
+  ;; it for the mint is what makes a defeated mint *look* like it stays believed.  Tell the
   ;; two apart: the marker stays IN as a premise, only the derived mint's belief moves.
   (tu/with-terms [pmark pseen trig pbigger CxMB]
     (let [mint (build-mint! kb pmark pseen trig pbigger CxMB)

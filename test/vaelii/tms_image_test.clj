@@ -34,7 +34,7 @@
 
 (defn- built [seed n] (first (build seed n)))
 
-(defn- without-window [snap] (dissoc snap :touched :touched-in :touched-new :touched-out))
+(defn- without-touched [snap] (dissoc snap :touched :touched-in :touched-new :touched-out))
 
 (defn- result= [a b]
   (if (map? a)
@@ -46,9 +46,9 @@
   (doseq [seed (range 1 121)]
     (let [t (built seed 80)
           r (from-bytes (image-bytes t))]
-      (is (= (without-window (jtms/snapshot t)) (without-window (jtms/snapshot r)))
+      (is (= (without-touched (jtms/snapshot t)) (without-touched (jtms/snapshot r)))
           (str "seed " seed))
-      (is (empty? (:touched (jtms/snapshot r))) "a reloaded network starts its window empty"))))
+      (is (empty? (:touched (jtms/snapshot r))) "a reloaded network starts its touched set empty"))))
 
 (deftest a-reloaded-network-answers-every-later-operation-alike
   (doseq [seed (range 1 81)]

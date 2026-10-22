@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.rete-oracle-test
-  "The correctness gate for the incremental matcher (`vaelii.impl.rete`).
+  "The correctness oracle test for the incremental matcher (`vaelii.impl.rete`).
 
   The engine keeps the semi-naive `vaelii.impl.chain` as the **reference**
   implementation and holds the incremental network to it, exactly as the taxonomy
@@ -10,7 +10,7 @@
 
     * matcher-level — `rete/rete-match-pattern` must return the *same set* as
       `res/match-pattern` for every probe pattern over a populated KB.  This is the
-      one place the network can differ, so it is pinned directly.
+      one place the network can differ, so it is asserted directly.
 
     * end-to-end — the same randomized sequence of rule/fact asserts and retracts,
       run once through the reference chain and once through the incremental matcher,
@@ -305,7 +305,7 @@
                       (parentOf I9 ?z)       ; no matches
                       (siblingOf ?x I1)      ; symmetric, needs the mirror
                       (siblingOf I1 ?y)      ; symmetric, other order
-                      ;; symmetric with BOTH arguments open — the structure that pins the
+                      ;; symmetric with BOTH arguments open — the structure that tests the
                       ;; dedup key.  One stored fact answers twice and differently (the
                       ;; mirror swaps the bindings), so a dedup keyed on the handle alone
                       ;; drops the second; the palindrome above is the other side of the
@@ -315,10 +315,10 @@
                       (dog ?a)               ; subtype (poodle satisfies)
                       (bird ?b)
                       (holdsTitleTo ?p ?a)   ; binary fan-out (leasesFrom satisfies)
-                      (holdsTitleTo I5 ?a)   ; …with the leading value pinned
+                      (holdsTitleTo I5 ?a)   ; …with the leading value bound
                       (fatherOf ?x ?y)       ; the sub-predicate on its own
                       (betweenIn ?x ?y ?z)   ; ternary fan-out (strictlyBetweenIn satisfies)
-                      (betweenIn I0 ?y ?z)   ; …with the leading value pinned
+                      (betweenIn I0 ?y ?z)   ; …with the leading value bound
                       ;; commutative from position 2: the pattern's order is not the
                       ;; stored row's, so only the arrangement fan reaches it
                       (covers I0 ?x I1 ?y)

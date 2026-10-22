@@ -16,7 +16,7 @@
     from a claim.
   - **Response** (`answers`, `disputes`, `endorses`, `justifies`) — a META-SENTEX on
     the target sentex, naming it by handle `(sentexHandle H)`, asserted in the
-    RESPONDER's own context and stamped with the responder as creator.  Each response
+    RESPONDER's own context with the responder recorded as creator.  Each response
     predicate is declared `target_following_predicate` in `CxSpeechActs`, so retracting a
     target sweeps its replies with it (`core/retract-following-metas!`).  Two facts
     force this: the cascade needs BOTH the meta-sentex AND the mark (an unmarked meta
@@ -30,7 +30,7 @@
 
   Additive, like the sibling koinii modules: requires only the public core API and koinii
   `identity` — nothing under `vaelii.impl`, and nothing in core loads it.  Every write goes
-  through the provenance-stamping `assert` path, never `bulk-assert-facts!`."
+  through the provenance-recording `assert` path, never `bulk-assert-facts!`."
   (:require [vaelii.core :as v]
             [vaelii.koinii.identity :as id]))
 
@@ -62,7 +62,7 @@
 
 (defn assert-claim
   "The `asserts` move: originate a claim.  A bare assertion of `claim` in `agent`'s own
-  context, stamped `agent` as creator — NO `asserts` wrapper, because provenance already
+  context, recording `agent` as creator — NO `asserts` wrapper, because provenance already
   records who asserted (first-writer-wins), so wrapping would only duplicate it.  A
   second agent re-asserting the same sentence in the same context writes no new
   provenance, which is exactly why an endorsement must be its own object.  Returns the
@@ -76,7 +76,7 @@
 
 (defn pose-query
   "The `queries` move: originate a query NODE `(queries agent question)` in `agent`'s own
-  context, stamped `agent` as creator — the node a responder later answers by handle.
+  context, recording `agent` as creator — the node a responder later answers by handle.
   Minted (unlike `assert-claim`) because a question must be told apart from a claim.
   Returns the query node's handle."
   ([kb agent question] (pose-query kb agent question (id/context-for agent)))
@@ -84,7 +84,7 @@
    (id/check-registry-write! agent ctx)
    (v/assert kb (list 'queries agent question) ctx {:creator agent})))
 
-;; ---- response acts: meta-sentexes on the target, stamped by the responder -
+;; ---- response acts: meta-sentexes on the target, created by the responder -
 
 (defn endorse
   "The `endorses` response act: `agent` stands behind the claim at `target-handle`.  A
@@ -117,7 +117,7 @@
 
 (defn dispute
   "The `disputes` response act: `agent` challenges the claim at `target-handle`.  Does
-  two writes in `agent`'s own context, both stamped creator `agent`:
+  two writes in `agent`'s own context, both recording creator `agent`:
 
   1. the REBUTTING claim — the negation of the target's sentence — so the pair surfaces
      in `(v/contradictions kb)` (both sides believed at their defeat class);

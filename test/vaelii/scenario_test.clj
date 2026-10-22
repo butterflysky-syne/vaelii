@@ -49,7 +49,7 @@
   (tu/with-terms [A B D]
     (v/assert kb (list 'before A B) C)
     (v/assert kb (list 'before B D) C)
-    (testing "every pair is pinned by the facts and their composition, so the scenario is
+    (testing "every pair is determined by the facts and their composition, so the scenario is
               the network itself and there is no second one"
       (let [ss (scen/scenarios iv/allen kb C {:limit 5})]
         (is (= 1 (count ss)))
@@ -67,7 +67,7 @@
 
 (tu/deftest-kb an-underdetermined-network-yields-a-consistent-arrangement
   (tu/with-terms [A B D]
-    ;; meets ∘ metBy pins the two ends together and says nothing about the two starts
+    ;; meets ∘ metBy joins the two ends together and says nothing about the two starts
     (v/assert kb (list 'meets A B) C)
     (v/assert kb (list 'metBy B D) C)
     (is (= #{:finishes :finished-by :equal} (iv/possible-allen-relations kb C A D))
@@ -77,7 +77,7 @@
         (is (complete? s 3)))
       (testing "and it is one path consistency accepts — nothing empties"
         (is (consistent? iv/allen s)))
-      (testing "the pairs the facts pinned keep what they were given"
+      (testing "the pairs the facts determined keep what they were given"
         (is (= #{:meets} (get s [A B])))
         (is (= #{:met-by} (get s [B D]))))
       (testing "and the open pair takes one of the three that were left"
@@ -182,7 +182,7 @@
   (tu/with-terms [A B D]
     (v/assert kb (list 'nonTangentialProperPart A B) C)
     (v/assert kb (list 'nonTangentialProperPart B D) C)
-    (testing "RCC-8 composition pins the whole network, so there is one arrangement"
+    (testing "RCC-8 composition determines the whole network, so there is one arrangement"
       (let [ss (scen/scenarios sp/rcc8 kb C {:limit 5})]
         (is (= 1 (count ss)))
         (is (= #{:ntpp} (get (first ss) [A D])))))

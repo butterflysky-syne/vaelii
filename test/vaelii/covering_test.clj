@@ -66,13 +66,13 @@
 
 ;; ---- what a partition separates, and what a bare cover does not ----------
 
-(tu/deftest-kb a-recovered-kb-holds-the-roster-and-the-edges-a-partition-stated
+(tu/deftest-kb a-recovered-kb-holds-the-declaration-and-the-edges-a-partition-stated
   (tu/with-terms [animal dog cat Rex]
     (v/assert kb (list 'partition animal dog cat) 'CxUniverse)
     (v/assert kb (list dog Rex) 'CxUniverse)
     (v/recover kb)
     (is (v/ask? kb (list animal Rex) 'CxUniverse) "the part edge was replayed")
-    (is (v/disjoint? kb dog cat) "and so was the roster that separates the parts")))
+    (is (v/disjoint? kb dog cat) "and so was the declaration that separates the parts")))
 
 (tu/deftest-kb a-bare-cover-leaves-its-parts-free-to-overlap
   (tu/with-terms [animal dog cat Rex]
@@ -163,15 +163,15 @@
     (v/assert kb (list 'disjoint animal plant) 'CxUniverse)
     (is (= :ok (outcome kb (list 'covering animal plant dog) 'CxUniverse)))))
 
-;; ---- the roster is one key, whatever order it is written in -------------
+;; ---- the part list is one key, whatever order it is written in ----------
 
-(tu/deftest-kb a-part-roster-written-in-another-order-is-one-declaration
+(tu/deftest-kb a-part-list-written-in-another-order-is-one-declaration
   (tu/with-terms [animal dog cat]
     (let [tx (reasoning/taxonomy kb)]
       (v/assert kb (list 'covering animal dog cat) 'CxUniverse)
       (v/assert kb (list 'covering animal cat dog) 'CxUniverse)
       (is (= 1 (count (tax/covers-of tx animal)))
-          "one roster, whichever order the parts arrived in"))))
+          "one declaration, whichever order the parts arrived in"))))
 
 ;; ---- separating: the separation without the coverage --------------------
 
@@ -187,24 +187,42 @@
       (v/assert kb (list animal Rex) 'CxUniverse)
       (is (empty? (v/conflicts kb))))))
 
-(tu/deftest-kb a-roster-edge-is-one-genl-step-read-from-the-roster-s-context
+(tu/deftest-kb a-cover-edge-is-one-genl-step-read-from-the-declaration-s-context
   (tu/with-terms [animal dog cat CxA CxB]
     (doseq [c [CxA CxB]] (v/assert kb (list 'genlCx c 'CxUniverse) 'CxUniverse))
     (v/assert kb (list 'separating animal dog cat) CxA)
     (testing "the parts are the whole's direct specs, and the whole each part's direct genl"
       (is (= #{dog cat} (v/direct-specs kb animal CxA)))
       (is (= #{animal} (v/direct-genls kb dog CxA))))
-    (testing "a context that does not see the roster reads no step"
+    (testing "a context that does not see the declaration reads no step"
       (is (= #{} (v/direct-specs kb animal CxB)))
       (is (= #{} (v/direct-genls kb dog CxB))))
     (testing "the global arity reads every edge"
       (is (= #{dog cat} (v/direct-specs kb animal))))
-    (testing "separating-covers lists the roster disjoint? reads"
+    (testing "separating-covers lists the part lists disjoint? reads"
       (is (some (fn [[w ps]] (and (= animal w) (= #{dog cat} (set ps))))
                 (v/separating-covers kb))))))
 
-(tu/deftest-kb a-roster-edge-counts-in-min-genls-and-max-specs
-  ;; `puppy ⊂ dog` is stated, `dog ⊂ animal` is the roster's, and `(genl puppy animal)` is
+(tu/deftest-kb covers-of-answers-every-believed-cover-over-one-whole
+  (tu/with-terms [animal dog cat bird fish plant CxA]
+    (v/assert kb (list 'genlCx CxA 'CxUniverse) 'CxUniverse)
+    (v/assert kb (list 'partition animal dog cat) 'CxUniverse)
+    (v/assert kb (list 'covering animal bird fish) CxA)
+    (let [h (v/assert kb (list 'separating animal fish cat dog) 'CxUniverse)]
+      (v/assert kb (list 'partition plant dog cat) 'CxUniverse)
+      (testing "each kind, with its parts sorted by printed name, in every context"
+        (is (= #{[:partition (vec (sort-by str [dog cat]))]
+                 [:covering (vec (sort-by str [bird fish]))]
+                 [:separating (vec (sort-by str [fish cat dog]))]}
+               (v/covers-of kb animal))))
+      (testing "a retracted cover leaves the answer"
+        (v/retract! kb h)
+        (is (= #{:partition :covering} (set (map first (v/covers-of kb animal)))))))
+    (testing "a type no cover has for its whole answers the empty set"
+      (is (= #{} (v/covers-of kb dog))))))
+
+(tu/deftest-kb a-cover-edge-counts-in-min-genls-and-max-specs
+  ;; `puppy ⊂ dog` is stated, `dog ⊂ animal` is the cover declaration's, and `(genl puppy animal)` is
   ;; stated beside them
   (tu/with-terms [animal dog cat puppy CxA CxB]
     (doseq [c [CxA CxB]] (v/assert kb (list 'genlCx c 'CxUniverse) 'CxUniverse))
@@ -214,7 +232,7 @@
     (testing "the one-step adjacency holds the stated edge to the whole"
       (is (= #{dog animal} (v/direct-genls kb puppy CxA)))
       (is (= #{dog cat puppy} (v/direct-specs kb animal CxA))))
-    (testing "the nearest neighbours leave it out, through the roster's edge"
+    (testing "the nearest neighbours leave it out, through the cover's edge"
       (is (= #{dog} (v/min-genls kb puppy CxA) (v/min-genls kb puppy)))
       (is (= #{dog cat} (v/max-specs kb animal CxA) (v/max-specs kb animal))))
     (testing "a context that does not see the edges reads none"
@@ -265,16 +283,16 @@
       (doseq [i (range 8)]
         (tax/add-cover t (symbol (str "w" i)) ['a 'b] :covering (+ 20 i)))
       (is (= want (over))))
-    (testing "a separating roster claims no coverage"
+    (testing "a separating declaration claims no coverage"
       (tax/add-cover t 'mammal ['cat 'dog] :separating 30)
       (is (= want (over))))))
 
-(tu/deftest-kb the-three-spellings-are-three-declarations-over-one-roster
+(tu/deftest-kb the-three-spellings-are-three-declarations-over-one-part-list
   (tu/with-terms [animal dog cat]
     (let [c (v/assert kb (list 'covering animal dog cat) 'CxUniverse)]
       (is (not (v/disjoint? kb dog cat)) "covering alone separates nothing")
       (v/assert kb (list 'separating animal dog cat) 'CxUniverse)
-      (is (v/disjoint? kb dog cat) "the separating roster does")
+      (is (v/disjoint? kb dog cat) "the separating declaration does")
       (v/retract! kb c)
       (is (v/disjoint? kb dog cat)
           "and dropping the coverage claim leaves the separation standing"))))
@@ -284,8 +302,8 @@
 (tu/deftest-kb a-cover-separated-clash-is-weighed-like-any-other
   ;; The separation a `partition` makes is the fourth spelling of disjointness, and a KB
   ;; declaring no other is the case that says whether every reader knows about it.  The
-  ;; settle's gate takes four set-emptiness reads for this reason: shutting on a cover
-  ;; leaves the pair stored and never weighed, while `disjoint?` goes on answering true.
+  ;; settle's presence check takes four set-emptiness reads for this reason: a check that
+  ;; skipped a cover would leave the pair stored and never weighed, while `disjoint?` goes on answering true.
   (testing "two defeasible memberships are a dilemma, as they are under (disjoint A B)"
     (tu/with-kb [kb]
       (tu/with-terms [animal dog cat Rex]

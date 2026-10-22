@@ -40,7 +40,7 @@ capital to arity 2 and above.
 
 ## What a Cyclist's habits do here
 
-**`arg` derives, it does not gate.** `(arg eats 1 animal)` — the shipped ontology's
+**`arg` derives, it does not refuse.** `(arg eats 1 animal)` — the shipped ontology's
 own declaration — over `(eats Fern Kibble)` derives `(animal Fern)`, a justified
 sentex that retracts like any conclusion, and refuses nothing on what `Fern` is already
 known to be. Where `Fern` is a `plant`, which `(separating organism animal plant)`
@@ -52,7 +52,7 @@ A **literal** is still refused: its EDN kind is knowable from the value itself a
 kinds sit in the same `genl` lattice, so `(parentOf 212 Mary)` is refused `:arg-type` —
 212 is a `number`, and `number` does not reach `organism`.
 
-Cyc's gate is the opt-out reading, `VAELII_ASSERTIVE_ARG_TYPES=0`: there the declaration
+Cyc's refusal is the opt-out reading, `VAELII_ASSERTIVE_ARG_TYPES=0`: there the declaration
 refuses `(eats Fern Kibble)` with `:type :arg-type` because the hierarchy places `Fern`
 somewhere that does not reach `animal`, and a symbol the hierarchy places nowhere the
 asserting context can see passes.
@@ -77,10 +77,10 @@ be decided → [solving.md](solving.md).
 | in Cyc | here | what changes |
 |---|---|---|
 | `negationPreds`, unary | `(disjoint P Q)` | native, because collections *are* predicates; closed under `genl` |
-| `negationPreds`, binary and up | a pair of implication rules | no declarative form — see below |
+| `negationPreds`, binary and up | `(negates P Q)` | read down `genl` on both sides; two tuples of one argument list are a placed nogood, and a ground denial is answered from the other side — see below |
 | `disjoint` | `disjoint` | same reading, and `(disjoint_metatype M)` makes every member pairwise disjoint without writing the pairs |
 | `SiblingDisjointCollectionType` | `sibling_disjoint` | a mark on the collection; its `genl`-specializations are pairwise disjoint unless one genls the other, the clique keyed off the genl closure rather than written |
-| `siblingDisjointExceptions` (plural) | `siblingDisjointException` | exempts one pair from the separation marks: the sibling mark, a `disjoint_metatype` and a `partition` or `separating` roster, not a stated `disjoint`; read at the reader, so a context that does not see it reads the pair separated, and pair-local |
+| `siblingDisjointExceptions` (plural) | `siblingDisjointException` | exempts one pair from the separation marks: the sibling mark, a `disjoint_metatype` and a `partition` or `separating` declaration, not a stated `disjoint`; read at the reader, so a context that does not see it reads the pair separated, and pair-local |
 | `SymmetricBinaryPredicate` | `(symmetric P)` | |
 | `AsymmetricBinaryPredicate` | `(asymmetric P)` | convicts a claim whose **converse** is believed; it does not make `P` irreflexive, and `(P a a)` is admitted |
 | `genlInverse` | `genlInverse` | same reading: binary `genl` with arguments 1 and 2 swapped, read by the matching fan, so a fact, a rule antecedent and a justification all see it; `(inverse P Q)` is the stronger biconditional |
@@ -90,13 +90,15 @@ be decided → [solving.md](solving.md).
 | `completeExtentEnumerable` | `(closed_extent_predicate P)` | a **counterpart**, not a translation. Both say a predicate's extent is complete, and three things differ: it is **belief-following** (a defeated or retracted member leaves the extent) rather than a claim about what is stored; it is **context-scoped**, read from the asking context's `genlCx` ancestor set, so one theory may close what a sibling reading the same predicate leaves open; and the extent it closes is what level 6 derives, so a member reachable only by backward chaining is not in it. Closure stays choosable per goal as well, by `unknown` / `thereExists` / `forall` → [naf.md](naf.md) |
 | `notAssertible` | — | no equivalent |
 
-Binary mutual exclusion is written as the two rules, and `(not S)` is a stored sentex
-with its own handle rather than an absence:
+Mutual exclusion above arity 1 is one declaration:
 
 ```clojure
-(v/assert-rule kb ['(likes ?x ?y)]    '(not (dislikes ?x ?y)) 'CxSomeContext)
-(v/assert-rule kb ['(dislikes ?x ?y)] '(not (likes ?x ?y))    'CxSomeContext)
+(v/assert kb '(negates likes dislikes) 'CxSomeContext)
 ```
+
+A believed `(likes Ann Bob)` beside a believed `(dislikes Ann Bob)` is one placed nogood,
+and `ask? (not (dislikes Ann Bob))` is true while `(likes Ann Bob)` is believed. No
+`(not S)` is stored per fact ([taxonomy.md](taxonomy.md#predicate-metadata)).
 
 `(inverse P Q)` is the inverse that `ask?`, `query` and a transitive walk read; a forward
 rule's antecedent does not join it ([inference.md](inference.md#where-the-machinery-stops)).
@@ -147,10 +149,10 @@ spellings, differing only in where the witness lands:
 
 | you pass | belief | whose view must hold the answer | where the witness goes |
 |---|---|---|---|
-| `CxEverything` | **ignored** | — *(the store, not a view)* | — |
-| `?var` (incl. the default `?ctx`) | followed | every literal in **one** view | unified into that variable |
-| `CxInference` | followed | every literal in **one** view | `:context`, beside the bindings |
-| a real `Cx…` | followed | every literal in **this** view | — |
+| `CxEverything` | **ignored** | — *(the store, not a context's view)* | — |
+| `?var` (incl. the default `?ctx`) | followed | every literal in **one** context's view | unified into that variable |
+| `CxInference` | followed | every literal in **one** context's view | `:context`, beside the bindings |
+| a real `Cx…` | followed | every literal in **this** context's view | — |
 | `CxNothing` | followed (vacuously) | the empty view — the provers alone | — |
 
 Two axes, not a ladder. `CxEverything` is the odd one out and not by a degree: it is a
@@ -236,8 +238,8 @@ antecedent is `:not-range-restricted`. A cycle through negation is `:not-stratif
 it is refused at assert time rather than diagnosed later.
 
 A rule whose consequent is *itself* a rule is not an error — it is a **generator**, and it
-fires, stamping out a real indexed rule with concrete functors, justified by the firing
-so that retracting the generator un-believes what it stamped. Variables the enclosing
+fires, generating a real indexed rule with concrete functors, justified by the firing
+so that retracting the generator un-believes what it generated. Variables the enclosing
 antecedents also mention are holes filled at mint time, and a hole may stand in functor
 position. Nesting is not capped. → [generators.md](generators.md)
 
@@ -250,8 +252,8 @@ position. Nesting is not capped. → [generators.md](generators.md)
 - One equality partition behind `rewriteOf` / `sameAs` / `equals` → [equality.md](equality.md)
 - Defeasible defaults with exceptions → [exceptions.md](exceptions.md)
 - The relation-property marks, enforced rather than recorded: `symmetric`, `asymmetric`,
-  `transitive`, `reflexive`, `functional`, `functionalInArg`, `inverse`, `irreflexive`,
-  `anti_symmetric`, `anti_transitive`, `equivalence_relation`, `injection`, `surjection`,
+  `transitive`, `reflexive`, `functional`, `functionalInArg`, `inverse`, `negates`,
+  `irreflexive`, `anti_symmetric`, `anti_transitive`, `equivalence_relation`, `injection`, `surjection`,
   `bijection`, `arity` and `variable_arity` → [taxonomy.md](taxonomy.md). `functionalInArg` is the one with no Cyc
   counterpart to map from: it names the *determined* argument rather than fixing it at 2,
   so a composite determinant — `(namespace, path) → object` — is sayable in one declaration
@@ -264,7 +266,6 @@ position. Nesting is not capped. → [generators.md](generators.md)
 - Rename
 - Natural-language generation
 - `notAssertible`, `assertedMoreSpecifically`
-- `negationPreds` above arity 1 — the paired rules above are the translation
 - Strict well-formedness mode
 
 `transitiveViaArg` is **not** on this list — it is spelled `transitiveInArg` here, in the

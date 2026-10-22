@@ -8,7 +8,7 @@
   the whole corpus costs the same as one that does not.  The class of regression this
   catches is that one: a guard, a closure walk or a check whose cost is a function of what
   the KB holds rather than of what the write names.  Each probe runs under the counting
-  instrument (`vaelii.impl.profile`, the one `assert_cost_test` pins) and reports its
+  instrument (`vaelii.impl.profile`, the one `assert_cost_test` asserts against) and reports its
   index operations, record fetches and wall-clock milliseconds.  **A ceiling is a count
   first**: a count does not move with the machine's load, so it can sit close to what a
   probe costs today, and a walk of a full-size corpus lands orders of magnitude over it.

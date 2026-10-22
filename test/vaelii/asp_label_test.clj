@@ -26,7 +26,7 @@
   lives — brave/cautious enumeration over optimal answer sets is a property of the
   encoding and the backend, not of any particular KB — and it is untouched.
 
-  Sections 2 and 3 are KB-level, and what they pin is now the *negative* contract: a
+  Sections 2 and 3 are KB-level, and what they assert is now the *negative* contract: a
   KB holding a dilemma has arbitrated nothing, so `classify` must report nothing and
   `label-context` must record nothing. Silence is the correct answer, and the risk it
   guards against is real — a classifier that read current belief instead of the

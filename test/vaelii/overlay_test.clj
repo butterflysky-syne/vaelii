@@ -8,8 +8,8 @@
   * **The base is never written.**  A fork asserts, derives, retracts and clears, and the
     base's records, premises and index come back byte-identical.  That is what lets any
     number of forks in one JVM share one frozen base with no protocol between them.
-  * **The merged view is the KB.**  A fork over an *empty* base behaves exactly like a
-    plain backend (the `KvBackend` contract, and the suite-parity gate — see
+  * **The merged contents are the KB.**  A fork over an *empty* base behaves exactly like a
+    plain backend (the `KvBackend` contract, and the suite-parity run — see
     `scripts/test-backends.sh`), and over a populated one the engine reasons across the
     protocol without knowing it is there: an inherited fact matches, an inherited rule fires
     over a fork-local fact, and retracting an inherited premise in the fork sweeps what
@@ -19,6 +19,7 @@
             [vaelii.core :as v]
             [vaelii.impl.capabilities :as cap]
             [vaelii.impl.disk.backend :as disk]
+            [vaelii.impl.io.fingerprint :as fp]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.kv :as kv]
             [vaelii.impl.memory :as mem]
@@ -205,7 +206,7 @@
     (v/clear! base)))
 
 (deftest a-fork-inherits-the-bases-preservation
-  ;; The preservation reads — the declaration gates, the claim, the licence — cross
+  ;; The preservation reads — the declaration presence checks, the claim, the licence — cross
   ;; the protocol like every other read: a fork-local `genl` edge fires the base's rule
   ;; through the base's declaration and claim, fork-side only, and the base comes
   ;; back byte-identical.
@@ -230,7 +231,7 @@
 
 (deftest a-fork-answers-the-bases-excepts-and-defeats
   ;; The excepts and defeats are read off the index, so a fork reads its base's through
-  ;; the merged view.
+  ;; the merged contents.
   (let [base (doto (v/open-kb {:backend :memory :space [::except-base] :recover? false})
                (v/clear!))]
     (v/assert base '(genlCx CxOverlayEx CxUniverse) 'CxUniverse {:strength :monotonic})
@@ -279,7 +280,7 @@
   ;; the merged projection reads its pairs with `first`: the tiered backend's
   ;; kv-entries yields plain vectors where the map-backed ones yield MapEntrys, so a
   ;; fork whose own index is `:dense` threw ClassCastException on any walk of the
-  ;; merged view — an export of such a fork died before its first frame
+  ;; merged contents — an export of such a fork died before its first frame
   (let [base (fresh-base 10)
         f    (v/fork base {:index :dense})]
     (v/assert f '(dog Rex) 'CxOverlay {:strength :monotonic})
@@ -357,7 +358,7 @@
 
 (deftest reindexing-a-fork-rebuilds-the-merged-index-from-the-merged-records
   ;; `reindex` throws the whole index away and rebuilds it from the records, and on a
-  ;; fork both of those are the merged view — which is what the O(1) `kv-clear!` marker
+  ;; fork both of those are the merged contents — which is what the O(1) `kv-clear!` marker
   ;; is for: without it the base's entries would survive the wipe and be counted twice.
   (let [base   (fresh-base 11)
         before (base-snapshot base)
@@ -385,7 +386,7 @@
       (is (= n0 (v/sentex-count base)))
       (is (= 2 (v/count-with-functor f 'dog)))
       (is (= 1 (v/count-with-functor base 'dog)))
-      (is (= 2 (v/count-with-arg f 1 'Rex)) "the argument root counts the merged view"))
+      (is (= 2 (v/count-with-arg f 1 'Rex)) "the argument root counts the merged contents"))
     (testing "a delete of an inherited record moves them back"
       (v/retract! f (v/handle-of f '(dog Muffet) 'CxOverlay))
       (is (= 1 (v/count-with-functor f 'dog)))
@@ -409,7 +410,7 @@
   ;; cardinality shortcut.  The two cost differently and that is documented; what they may
   ;; never do is *answer* differently, because a fork would then plan every query touching
   ;; its own writes against a fan-out the matcher does not see.  So each prefix below is
-  ;; checked against the child set it counts, and pinned to a number that says which road
+  ;; checked against the child set it counts, and asserted at a number that says which road
   ;; it took.
   (let [base (fresh-base 12)]
     (doseq [o '[Bob Cid]]
@@ -462,7 +463,7 @@
 
 ;; ---- the portable projection ----------------------------------------------
 
-(deftest the-index-projection-of-a-fork-is-the-merged-view
+(deftest the-index-projection-of-a-fork-is-the-merged-contents
   ;; `index-entries` is what an export of a fork writes, and it is the one read at which
   ;; a posting has to be merged without knowing any backend's private representation —
   ;; the contract says entries arrive as Clojure sets, which is what makes it possible.
@@ -481,12 +482,12 @@
         (is (empty? (filter (fn [k] (or (keyword? k) (and (vector? k) (keyword? (first k))
                                                           (namespace (first k)))))
                             (keys entries)))))
-      (testing "the term roster merges too — inherited names, plus and minus the fork's"
+      (testing "the term-name set merges too — inherited names, plus and minus the fork's"
         (let [terms (set (v/terms f))]
           (is (contains? terms 'Muffet) "a name the fork inherited and left alone")
           (is (contains? terms 'Rex)  "one the fork introduced")
           (is (not (contains? terms 'Ann))
-              "and one the fork's retraction retired — the roster is derived from the
+              "and one the fork's retraction retired — the term-name set is derived from the
                merged postings, so it is not merely the base's plus more"))))
     (v/clear! base)))
 
@@ -511,7 +512,7 @@
 
 ;; ---- durability -----------------------------------------------------------
 
-(deftest a-durable-fork-remounts-onto-the-same-merged-view
+(deftest a-durable-fork-remounts-onto-the-same-merged-contents
   ;; The record-level bookkeeping — the tombstones and released premise marks — is not
   ;; derivable from the overlay's own records (nothing there records the *absence* of an
   ;; inherited one), so it has to be as durable as the fork is.  Close the fork's stores
@@ -640,8 +641,8 @@
 
 (deftest a-fork-is-refused-over-a-base-rebuilt-in-another-order
   ;; The base did not grow, so no watermark sees it — but the handle the fork's tombstone
-  ;; names now holds another sentence, which the tombstone would hide.  The fork pinned
-  ;; the base record it removed, and the mount compares.
+  ;; names now holds another sentence, which the tombstone would hide.  The fork recorded
+  ;; the digest of the base record it removed, and the mount compares.
   (let [n      (gensym)
         mk     (fn [tag ss]
                  (let [kb (doto (v/open-kb {:backend :memory :space [tag n] :recover? false})
@@ -670,6 +671,28 @@
         (disk/close-dir! dir)
         (rm-rf! dir)
         (doseq [kb [base same turned]] (v/clear! kb))))))
+
+(deftest a-fork-whose-digests-sit-under-the-alternate-key-is-checked-on-remount
+  ;; A durable fork's bookkeeping may hold its digested handles under `::ostore/base-pinned`
+  ;; rather than `::ostore/base-digested`.  The mount reads both keys: a matching digest
+  ;; under the alternate key mounts, and a stale one is refused naming its handle.
+  (let [n      (gensym)
+        base   (doto (mem/memory-record-store {:space [::alt-key-base n]}) p/clear-records!)
+        own    (doto (mem/memory-record-store {:space [::alt-key-fork n]}) p/clear-records!)
+        h      (p/put-sentex base {:sentence '(dog Muffet) :context 'CxOverlay})
+        digest (fp/record-hash h (p/get-sentex base h))
+        meta   (fn [i d]
+                 (doto (mem/memory-kv-backend {:space [::alt-key-meta n i]})
+                   p/kv-clear!
+                   (p/kv-put [::ostore/base-digest h] d)
+                   (p/kv-add-to-set ::ostore/base-pinned h)))]
+    (testing "a digest that matches the base record mounts"
+      (is (some? (ostore/overlay-record-store own base (meta 1 digest)))))
+    (testing "a digest that no longer matches is refused, naming the handle"
+      (let [e (try (ostore/overlay-record-store own base (meta 2 "stale")) nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :fork-base-overlap (:type (ex-data e))))
+        (is (= [h] (:handles (ex-data e))))))))
 
 (deftest a-fork-with-no-recorded-watermark-is-checked-by-content
   ;; A fork mounted before the watermark was recorded has no range to probe, so its own
@@ -709,7 +732,7 @@
         (let [f2 (v/fork base {:backend :disk-log :dir dir})]
           (is (= '#{(dog Muffet) (dog Rex)}
                  (sentences (v/sentexes-matching f2 '(dog ?x) 'CxOverlay)))
-              "with both halves of the merged view intact")
+              "with both halves of the merged contents intact")
           (v/close! f2)))
       (testing "and the base is untouched — it is mounted read-only and shared"
         (is (= '#{(dog Muffet)} (sentences (v/sentexes-matching base '(dog ?x) 'CxOverlay)))))
@@ -721,7 +744,7 @@
 ;; ---- the empty-base degeneracy, at KB level -------------------------------
 
 (deftest a-fork-of-an-empty-base-is-an-ordinary-kb
-  ;; The suite-parity gate in miniature: with nothing to merge, every code path above
+  ;; The suite-parity run in miniature: with nothing to merge, every code path above
   ;; must reduce to the plain backend's.  (`VAELII_TEST_BACKEND=overlay` runs the whole
   ;; suite this way — see scripts/test-backends.sh.)
   (let [base (doto (v/open-kb (assoc (base-opts 9) :recover? false)) (v/clear!))
@@ -797,12 +820,12 @@
         (is (= 5 @counter)))
       (finally (reset! counter prior)))))
 
-(deftest a-durable-fork-own-index-is-stamped-and-gated
+(deftest a-durable-fork-own-index-records-its-layout-and-is-layout-checked
   ;; The fork's own `:disk-log` index half carries the layout sentinel like any plain
-  ;; `:disk-log` index: unstamped, the next `index-layout-version` bump would replay its
+  ;; `:disk-log` index: without one, the next `index-layout-version` bump would replay its
   ;; keys cleanly and miss every read whose shape moved — the base gets a clean
   ;; `:stale-index-layout` refusal, and without this the fork got silence.  The half
-  ;; is the fork's own to rebuild, so a stale stamp rebuilds from the fork's own
+  ;; is the fork's own to rebuild, so a stale sentinel rebuilds from the fork's own
   ;; records rather than refusing.
   (let [base (fresh-base 9)
         dir  (tmpdir)]
@@ -810,9 +833,9 @@
       (let [f (v/fork base {:backend :disk-log :dir dir})]
         (v/assert f '(dog Rex) 'CxOverlay {:strength :monotonic})
         (is (.isFile (java.io.File. (str dir "/index/layout.edn")))
-            "the fork's own index half is stamped at open"))
+            "the fork's own index half gets its sentinel at open"))
       (disk/close-dir! dir)
-      ;; a stamp from another key layout: the shape an old build's fork leaves behind
+      ;; a sentinel naming another key layout: the shape an old build's fork leaves behind
       (spit (str dir "/index/layout.edn")
             (pr-str {:index-layout (dec kv/index-layout-version)}))
       (testing "remounted under a moved layout, the fork's own half is rebuilt"
@@ -822,16 +845,16 @@
               "the fork-local fact is findable again")
           (is (= (pr-str {:index-layout kv/index-layout-version})
                  (slurp (str dir "/index/layout.edn")))
-              "and the stamp is current")))
+              "and the sentinel is current")))
       (finally
         (disk/close-dir! dir)
         (rm-rf! dir)
         (v/clear! base)))))
 
 (deftest a-durable-base-under-a-moved-key-layout-is-refused-rather-than-mounted
-  ;; `open-kb`'s layout gate reads the *fork's* directory, so a base named by `:base` opts
+  ;; `open-kb`'s layout check reads the *fork's* directory, so a base named by `:base` opts
   ;; slips past it — and a mounted index whose key shape moved reads as populated while
-  ;; every query whose keys moved answers nothing.  The repair the gate makes elsewhere is
+  ;; every query whose keys moved answers nothing.  The repair the layout check makes elsewhere is
   ;; a clear-and-rebuild, which is a write, and a base is mounted read-only: so this arm
   ;; refuses and names the directory to open as a KB of its own first.
   (let [dir    (tmpdir)
@@ -849,11 +872,11 @@
       (let [b (v/open-kb {:backend :disk-log :dir dir :recover? false})]
         (v/assert b '(dog Muffet) 'CxOverlay {:strength :monotonic})
         (is (.isFile (java.io.File. (str dir "/index/layout.edn")))
-            "the base's own open stamped it"))
+            "the base's own open wrote it"))
       (disk/close-dir! dir)
-      (is (= :mounted (forked)) "a current stamp is what a fork mounts over")
+      (is (= :mounted (forked)) "a current sentinel is what a fork mounts over")
       (disk/close-dir! dir)
-      ;; the stamp an older build's key layout leaves behind
+      ;; the sentinel an older build's key layout leaves behind
       (spit (str dir "/index/layout.edn")
             (pr-str {:index-layout (dec kv/index-layout-version)}))
       (let [d (forked)]
@@ -872,11 +895,11 @@
 (deftest a-durable-fork-remount-keeps-its-removals-and-its-merged-counts
   ;; The fork's own index half is its *delta* over the base — copy-on-write counters
   ;; holding base+net, and removal records for the inherited postings it took out — so
-  ;; the coverage gate reads it through the merged mount, against the merged records:
+  ;; the coverage check reads it through the merged mount, against the merged records:
   ;; the own half's counters against the fork's own record count disagree on every
   ;; healthy fork that has written anything, and an own-half rebuild would drop the
   ;; removals and leave own-only counters shadowing the base's.  So a remount under
-  ;; `:recover? :auto` — the opts spelling, which runs the gate where `fork` passes
+  ;; `:recover? :auto` — the opts spelling, which runs the coverage check where `fork` passes
   ;; `:recover? false` — rebuilds nothing, the inherited fact the fork retracted stays
   ;; retracted, and the root count is the merged one.
   (let [base   (fresh-base 10)
@@ -913,7 +936,7 @@
       (testing "the first remount"
         (check! (remount!)))
       (disk/close-dir! dir)
-      (testing "and the second — a remount writes nothing the gate would then misread"
+      (testing "and the second — a remount writes nothing the coverage check would then misread"
         (check! (remount!)))
       (finally
         (disk/close-dir! dir)
@@ -922,7 +945,7 @@
 
 (deftest a-fork-whose-own-index-lost-its-tail-is-rebuilt-on-remount
   ;; the damaged twin of the healthy remount above: the own half's log is shorter than
-  ;; its clean marker recorded, so the coverage gate rebuilds the merged index
+  ;; its clean marker recorded, so the coverage check rebuilds the merged index
   (let [base   (fresh-base 11)
         dir    (tmpdir)
         logged (atom [])]
@@ -955,14 +978,14 @@
 
 (defn- watched-base
   "`inner`, carrying the two capabilities a base may have and the engine's own stores do
-  not: every prefetch hint recorded into `hints` by kind, and — when `pin` is non-nil — a
+  not: every prefetch hint recorded into `hints` by kind, and — when `fixed-id` is non-nil — a
   sampler that always names that one handle, so a test can put the base's sample on
   exactly the handle the fork is about to take out rather than hoping it lands there.
 
   A `reify` rather than a `with-redefs`: a protocol method dispatches on the value's type
   and never reads the var root, so a redef of one intercepts nothing and the test would
   pass for the buggy and the fixed code alike."
-  [inner hints pin]
+  [inner hints fixed-id]
   (reify
     p/RecordStore
     (put-sentex [_ sx] (p/put-sentex inner sx))
@@ -986,9 +1009,9 @@
     p/Tallying
     (sentex-tally        [_] (cap/count-sentexes inner))
     (justification-tally [_] (cap/count-justifications inner))
-    (a-sentex-id         [_] (or pin (cap/some-sentex-id inner)))
+    (a-sentex-id         [_] (or fixed-id (cap/some-sentex-id inner)))
     (a-justification-id  [_] (cap/some-justification-id inner))
-    (a-premise-id        [_] (or pin (cap/some-premise-id inner)))
+    (a-premise-id        [_] (or fixed-id (cap/some-premise-id inner)))
 
     p/Prefetching
     (prefetch-sentexes!       [_ ids] (swap! hints update :sentexes (fnil into []) ids) nil)
@@ -1036,7 +1059,7 @@
               :overlay (fork-opts n)
               :recover? :auto}))
 
-(deftest a-forks-sampler-never-names-a-handle-the-merged-view-dropped
+(deftest a-forks-sampler-never-names-a-handle-the-merged-contents-dropped
   ;; `Tallying`'s samplers are how `open-kb`'s recovery branch and `kb/write-hazards` ask
   ;; *does this store hold anything* without materializing `base u overlay - tombstoned`.
   ;; So the answer has to be a handle `get-sentex` answers for, and `nil` has to mean
@@ -1046,7 +1069,7 @@
         before  (base-snapshot base)
         victim  (v/handle-of base '(dog Muffet) 'CxOverlay)
         watched (watched-base (:records base) (atom {}) victim)]
-    (testing "the pin holds, so the fallback is under test rather than a coincidence"
+    (testing "the fixed sample holds, so the fallback is under test rather than a coincidence"
       (is (= victim (p/a-sentex-id watched)))
       (is (= victim (p/a-premise-id watched))))
 
@@ -1059,7 +1082,7 @@
               p (cap/some-premise-id recs)]
           (is (some? h) "a fork that deleted one record still holds the rest")
           (is (not= victim h) "and never names the handle it tombstoned")
-          (is (contains? (set (p/sentex-ids recs)) h) "the sample is in the merged roster")
+          (is (contains? (set (p/sentex-ids recs)) h) "the sample is in the merged handle set")
           (is (some? (p/get-sentex recs h)) "and it fetches")
           (is (some? p) "the premise sampler survives the same deletion")
           (is (contains? (set (p/premise-ids recs)) p)))))
@@ -1087,7 +1110,7 @@
     (v/clear! base)))
 
 (deftest a-forks-recovery-walk-hints-the-base-that-can-use-one
-  ;; A fork gets its own belief by `recover`ing over the MERGED view, so it walks every
+  ;; A fork gets its own belief by `recover`ing over the MERGED contents, so it walks every
   ;; record and justification it inherits — which over a base whose fetch is a network
   ;; round trip is the one place `Prefetching` pays for itself.  The decorators are the
   ;; only thing between that walk and the base, so a hint they swallowed would be lost
@@ -1111,19 +1134,19 @@
       (v/reindex f)
       (is (seq (:sentexes @hints)) "reindex fetches every live record and hints them")
       (is (= (set (p/sentex-ids (:records f))) (set (:sentexes @hints)))
-          "the hint covers the merged roster, which is what the walk consumes"))
+          "the hint covers the merged handle set, which is what the walk consumes"))
     (is (= before (base-snapshot base)) "and hinting wrote nothing")
     (v/clear! base)))
 
 (deftest every-write-op-on-a-frozen-base-is-refused-by-name
   ;; `a-frozen-base-refuses-every-write` above takes one op per half.  This takes the
-  ;; whole roster, because invariant 1 of docs/overlay.md is structural rather than
+  ;; whole list of ops, because invariant 1 of docs/overlay.md is structural rather than
   ;; reviewed: a base shared by N forks is only shared if *nothing* can write it, and a
   ;; single method that forwarded to the base instead of refusing is exactly the hole
   ;; that claim rules out.  Each refusal names the op in `:op`, which is what a caller
   ;; reading the ex-data can act on, so that is what is asserted.
-  (let [b   (frozen/frozen-kv (mem/memory-kv-backend {:space [::frozen-roster]}))
-        r   (frozen/frozen-records (mem/memory-record-store {:space [::frozen-roster]}))
+  (let [b   (frozen/frozen-kv (mem/memory-kv-backend {:space [::frozen-ops]}))
+        r   (frozen/frozen-records (mem/memory-record-store {:space [::frozen-ops]}))
         ops [["kv-put"               #(p/kv-put b [:x] 1)]
              ["kv-delete"            #(p/kv-delete b [:x])]
              ["kv-increment"         #(p/kv-increment b [:x])]
@@ -1142,8 +1165,9 @@
              ["mark-premise"         #(p/mark-premise r 1 :default)]
              ["unmark-premise!"      #(p/unmark-premise! r 1)]
              ["clear-records!"       #(p/clear-records! r)]]
-        ;; one `is` over the whole roster, not one per op: the count of assertions a
-        ;; test makes is a gate, and it must not read the length of this vector
+        ;; one `is` over the whole table, not one per op: the runners compare a test's
+        ;; assertion count across configurations, so it must not read the length of this
+        ;; vector
         outcome (into {} (map (fn [[op f]]
                                 [op (try (f)
                                          :no-refusal

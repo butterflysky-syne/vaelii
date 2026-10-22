@@ -282,34 +282,34 @@
         (sandbox/reset! kb (symbol (:ctx a)))
         (sandbox/reset! kb (symbol (:ctx b)))))))
 
-;; ---- the roster ------------------------------------------------------------
+;; ---- the eviction table ----------------------------------------------------
 
 (def ^:private minute 60000)
 (def ^:private day (* 24 60 minute))
 (def ^:private t0 (* 1000 minute))
 
 (defn- admit
-  "`roster` after the browser's admission of fresh sandbox `ctx` at `t` under `cap`, and
+  "`table` after the browser's admission of fresh sandbox `ctx` at `t` under `cap`, and
   its one write."
-  [roster ctx t cap]
-  (let [[r _] (#'sandbox/room roster cap t day)]
+  [table ctx t cap]
+  (let [[r _] (#'sandbox/room table cap t day)]
     (#'sandbox/wrote (#'sandbox/enter r ctx 0 t) ctx 2 t)))
 
 (defn- used-for
-  "`roster` with `ctx` entered at `from` and written once a minute for `n` minutes."
-  [roster ctx from n]
+  "`table` with `ctx` entered at `from` and written once a minute for `n` minutes."
+  [table ctx from n]
   (reduce (fn [r i] (#'sandbox/wrote r ctx (* 3 (inc i)) (+ from (* i minute))))
-          (#'sandbox/enter roster ctx 0 from)
+          (#'sandbox/enter table ctx 0 from)
           (range n)))
 
 (defn- flood
-  "`roster` after `n` fresh one-write sandboxes are admitted at `t` under `cap`."
-  [roster n t cap]
-  (reduce (fn [r i] (admit r (symbol (str "CxSandboxFlood" i)) (+ t i) cap)) roster (range n)))
+  "`table` after `n` fresh one-write sandboxes are admitted at `t` under `cap`."
+  [table n t cap]
+  (reduce (fn [r i] (admit r (symbol (str "CxSandboxFlood" i)) (+ t i) cap)) table (range n)))
 
 (deftest a-sandbox-used-for-twenty-minutes-survives-a-flood-of-fresh-ones
   (let [cap 4
-        r   (used-for @#'sandbox/empty-roster 'CxSandboxLong t0 21)
+        r   (used-for @#'sandbox/empty-eviction-table 'CxSandboxLong t0 21)
         out (flood r (* 3 cap) (+ t0 (* 20 minute) 1000) cap)]
     (is (contains? (:entries out) 'CxSandboxLong))
     (is (= cap (count (:entries out))))
@@ -317,13 +317,13 @@
 
 (deftest a-sandbox-idle-past-the-horizon-is-reset-first
   (let [cap 4
-        r   (used-for @#'sandbox/empty-roster 'CxSandboxLong t0 21)
+        r   (used-for @#'sandbox/empty-eviction-table 'CxSandboxLong t0 21)
         [_ gone] (#'sandbox/room (flood r (dec cap) (+ t0 (* 20 minute)) cap)
                                  cap (+ t0 (* 21 minute) day) day)]
     (is (= ['CxSandboxLong] gone) "whatever its history")))
 
 (deftest of-two-equal-histories-the-more-recently-used-is-kept
-  (let [r (-> @#'sandbox/empty-roster
+  (let [r (-> @#'sandbox/empty-eviction-table
               (used-for 'CxSandboxEarly t0 5)
               (used-for 'CxSandboxLate t0 5)
               (#'sandbox/used 'CxSandboxEarly (+ t0 (* 6 minute)))
@@ -333,7 +333,7 @@
     (is (= ['CxSandboxEarly] gone))))
 
 (deftest an-eviction-raises-the-level-so-an-unused-sandbox-falls-behind
-  (let [r (-> @#'sandbox/empty-roster
+  (let [r (-> @#'sandbox/empty-eviction-table
               (used-for 'CxSandboxA t0 10)
               (used-for 'CxSandboxB t0 10))
         [r' gone] (#'sandbox/room r 2 (+ t0 (* 11 minute)) day)
@@ -346,7 +346,7 @@
         (is (< h-before (get-in r'' [:entries 'CxSandboxC :h])))
         (is (= ['CxSandboxB] (second (#'sandbox/room r'' 2 (+ t0 (* 21 minute)) day))))))))
 
-(tu/deftest-kb a-rebuilt-roster-holds-every-live-sandbox-as-fresh
+(tu/deftest-kb a-rebuilt-eviction-table-holds-every-live-sandbox-as-fresh
   (let [a (fresh-sandbox) b (fresh-sandbox)]
     (sandbox/open kb a)
     (sandbox/open kb b)

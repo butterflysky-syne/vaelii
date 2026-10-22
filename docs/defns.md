@@ -4,7 +4,8 @@
   membership to a defining condition on the member `?x`, expanded into ordinary forward
   rules at assert so the entailment inherits indexing, TMS support, retraction and
   belief-following, plus the two registry provers that evaluate a condition at query
-  time and the negative answer a violated necessary gives.
+  time, the negative answer a violated necessary gives, and what a `:monotonic` definition
+  decides about a literal value at the argument check.
 - **Not here:** the argument-type declarations `arg` / `genlArg` a term is checked and
   entailed against → [argtypes.md](argtypes.md); carrying a stated claim across a
   transitive relation → [inherit.md](inherit.md); the `genl` / `disjoint` collection
@@ -66,7 +67,7 @@ question is asked instead, below.
 ## The rule is derived, so retraction and belief follow it
 
 The companion rule is **justified by the `defn*` fact alone** — the mint a generator
-makes for a stamped rule (`chain/mint-rule`), minus the join bindings. It is not a
+makes for a generated rule (`chain/mint-rule`), minus the join bindings. It is not a
 premise: nobody asserted it, and it stands only while the `defn*` fact it rests on is
 believed.
 
@@ -109,7 +110,10 @@ built out of *computed* predicates is neither: `(defnSufficient positive_integer
 evaluables answer rather than on facts anybody asserted. No conjunct of it is a stored
 literal that binds `?x`, so the join has nothing to compute `integer` against, and a
 sufficient condition of that shape expands to **no** companion rule (the rule
-`check-naf-closed` would refuse, [naf.md](naf.md)). `(positive_integer 7)` therefore does
+`check-naf-closed` would refuse, [naf.md](naf.md)). Every value kind (`integer`, `string`,
+`number`, `boolean`, `keyword`, `character`) is computed the same way
+(`sentex/deferred-predicates`), so `(defnSufficient label (string ?x))` expands to no
+companion rule either. `(positive_integer 7)` therefore does
 not arrive by forward chaining. Two provers in the registry answer the question where it
 is asked instead.
 
@@ -120,7 +124,7 @@ therefore defined by the shape check alone — `(defnSufficient dotted_quad (mat
 ?x "\d+\.\d+\.\d+\.\d+"))`, the pattern a Clojure string so each backslash is written
 twice — with no separate `(string ?x)` conjunct, since `matchesPattern` already answers
 false for a non-string. The
-match runs through a step-limited view, so a catastrophically-backtracking pattern is a
+match runs through a step-limited wrapper, so a catastrophically-backtracking pattern is a
 `:pattern-too-costly` refusal rather than an unbounded match, and a pattern that does not
 compile is refused at the assert entry point.
 
@@ -192,6 +196,40 @@ A modeller who wants a negative conclusion drawn from the *absence* of a conditi
 it as knowledge: an `(unknown …)` antecedent for negation as failure ([naf.md](naf.md)),
 or a `disjoint` declaration and an explicit `not` for a genuine exclusion
 ([taxonomy.md](taxonomy.md)).
+
+## A definition decides a literal value at the argument check
+
+An argument declaration judges a literal value by its kind
+([argtypes.md](argtypes.md#the-quoted-twin)), so a type with no `genl` edge to a value
+kind convicts every value under it. A `:monotonic` definition of the type decides the
+value first. `checks/value-outside?` reads it through one reader,
+`provers/value-definition`, for `arg` and `quotedArg` under both readings and in the
+settle's refresh:
+
+```clojure
+(v/assert kb '(defnIff character_string (string ?x)) 'CxUniverse {:strength :monotonic})
+(v/assert kb '(arg nameString 2 character_string) 'CxUniverse)
+(v/assert kb '(nameString Bob "Foo") 'CxUniverse)   ; believed
+(v/assert kb '(nameString Ann 5) 'CxUniverse)       ; held inert
+```
+
+The conditions are read in the provers' order:
+
+1. A necessary condition of a strict supertype of the type, false on the value, convicts it.
+2. Otherwise a sufficient condition of the type or of a subtype, true on the value, admits it.
+3. Otherwise a necessary condition of the type, false on the value, convicts it.
+4. Otherwise the value's kind decides, as it does with no definition.
+
+Only a definition whose live class is `:monotonic` (`res/holding-class`) decides. A
+`:default` definition is defeasible, so it convicts nothing and admits nothing. A
+condition decides only when every conjunct is an evaluable predicate or its negation:
+the built-in ones (`provers/evaluable-predicates`) or a KB's evaluatables. A conjunct
+naming a stored predicate is one a literal value cannot be tested on, and a pattern too
+costly to match decides nothing. The value check reads a `defnIff` as both a sufficient
+and a necessary condition. The two defn provers read the `defnSufficient` and
+`defnNecessary` facts only. A definition stored, removed or relabelled moves the
+holds under every declaration naming a type at, above or below the one it defines
+([argtypes.md](argtypes.md#an-argument-that-fails-its-declared-type-is-held-inert)).
 
 ## The vocabulary
 

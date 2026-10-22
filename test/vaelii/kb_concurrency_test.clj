@@ -257,7 +257,7 @@
 (deftest a-held-reader-and-the-writer-share-no-cache-entry
   ;; While a settle holds belief, a reader derives what it reads from the belief the
   ;; settle began from, and the writer from the network it is deciding.  The change clock
-  ;; each stamps a cache entry with keeps the two apart, in both directions.
+  ;; each keys a cache entry by keeps the two apart, in both directions.
   (let [cache  (atom {})
         opened (promise)
         done   (promise)
@@ -271,7 +271,7 @@
                      (finally (observe/close-hold! h)))))
         wclock (deref opened 10000 nil)]
     (is (and wclock (not (neg? (long wclock)))) "the writer reads the clock itself")
-    (is (neg? (observe/change-clock)) "a reader beside the hold reads a clock no writer stamps")
+    (is (neg? (observe/change-clock)) "a reader beside the hold reads a clock no writer keys by")
     (is (= [:reader] (vec (literal-cache/lookup cache ::k (constantly [:reader])))))
     (deliver done true)
     (is (= [:writer] (vec @writer)) "the writer computes past the reader's entry")

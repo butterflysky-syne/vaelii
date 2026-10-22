@@ -1,11 +1,11 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
-(ns vaelii.refusal-roster-test
+(ns vaelii.refusal-types-test
   "Every refusal the tree can raise, checked for the two things that make a refusal
   usable: **a test provokes it**, and **a reader can look it up**.
 
-  `type_contract_test` pins the `:type` vocabulary — which words exist. This asks the
-  next question of each word, and it is the question a roster of names cannot answer: a
+  `type_contract_test` asserts the `:type` vocabulary — which words exist. This asks the
+  next question of each word, and it is the question a list of names cannot answer: a
   keyword nothing throws at in a test is a branch nobody has run, and a keyword written
   down nowhere is a `:type` a caller meets in a `catch` with no way to find out what it
   means. Both failures are invisible to every other check here, because both leave the
@@ -65,18 +65,18 @@
 (def ^:private keyword-literal
   #":([A-Za-z][A-Za-z0-9-]*(?:/[A-Za-z][A-Za-z0-9-]*)?)")
 
-(def ^:private roster-holding-tests
+(def ^:private list-holding-tests
   "The test files that name refusal keywords as **data** rather than asserting on them:
-  this namespace and the two rosters beside it. Scanning them would make every keyword
+  this namespace and the two vocabulary tests beside it. Scanning them would make every keyword
   its own coverage, which is the one way a coverage test can be green and mean nothing."
-  #{"refusal_roster_test.clj" "type_contract_test.clj" "violation_roster_test.clj"})
+  #{"refusal_types_test.clj" "type_contract_test.clj" "violation_kinds_test.clj"})
 
 (defn- test-files []
   (->> (file-seq (io/file "test"))
        (filter #(.isFile ^File %))
        (map #(.getPath ^File %))
        (filter #(str/ends-with? % ".clj"))
-       (remove #(roster-holding-tests (.getName (io/file ^String %))))
+       (remove #(list-holding-tests (.getName (io/file ^String %))))
        sort))
 
 (def ^:private defn-form

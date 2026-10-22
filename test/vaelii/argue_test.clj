@@ -114,7 +114,7 @@
 (tu/deftest-kb argue-a-prover-answered-side-carries-the-one-node-the-search-took
   ;; `genl` transitivity is the registry's answer, not a rule's — nothing is stored, so
   ;; the JTMS has no why, and the search's tree is the single `:leaf` node it walked.
-  ;; True, and as much as the search knows: pinned because it is the shape every
+  ;; True, and as much as the search knows: asserted because it is the shape every
   ;; taxonomy-, evaluatable- and calculus-answered side reports
   (tu/with-terms [dog animal Muffet]
     (v/assert kb (list dog Muffet) 'CxUniverse)
@@ -175,10 +175,10 @@
 
 (tu/deftest-kb argue-refuses-an-option-it-does-not-read-at-its-own-entry-point
   ;; `argue` reaches `query` only when `:max-depth` is there and takes the
-  ;; no-rule-expansion `ask` arm otherwise, so a roster checked downstream is not checked
+  ;; no-rule-expansion `ask` arm otherwise, so a key set checked downstream is not checked
   ;; at all for exactly the misspelling that matters: `{:max-deph 3}` would answer
   ;; `:unknown` for a sentence a rule derives, which is the failure the docstring says
-  ;; must not happen.  The check is `argue`'s own, and the roster is `query`'s.
+  ;; must not happen.  The check is `argue`'s own, and the key set is `query`'s.
   (tu/with-terms [dog has_fur Muffet]
     (v/assert kb (list dog Muffet) 'CxUniverse)
     (v/assert-rule kb [(list dog '?x)] (list has_fur '?x) 'CxUniverse {:direction :backward})
@@ -190,12 +190,12 @@
         (doseq [opts [{:max-deph 3} {:max-depth 3 :max-deph 4} {:nonsense 1}]]
           (let [d (refusal opts)]
             (is (= :unknown-option (:type d)) (pr-str opts))
-            (is (= (vec (sort v/query-opt-keys)) (:options d)) "and the refusal names the roster")
+            (is (= (vec (sort v/query-opt-keys)) (:options d)) "and the refusal names the key set")
             (is (seq (:unknown d))))))
       (testing "a non-map opts too"
         (is (= :unknown-option (:type (refusal :oops))))
         (is (= :unknown-option (:type (refusal [:max-depth 3])))))
-      (testing "and every rostered key still answers"
+      (testing "and every accepted key still answers"
         (is (= :true (:verdict (v/argue kb goal 'CxUniverse {:max-depth 3}))))
         (is (= :true (:verdict (v/argue kb goal 'CxUniverse
                                         {:max-depth 3 :strategy :depth-first}))))

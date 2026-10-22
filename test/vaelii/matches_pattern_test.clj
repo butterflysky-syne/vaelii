@@ -5,7 +5,7 @@
   subtype resolve **by evaluation**, the way `integer` lets the sign-refined integer
   collections resolve (docs/defns.md).  `(matchesPattern ?string ?pattern)` holds when the
   whole of `?string` matches the regular expression `?pattern`, both ground strings; the
-  match runs through a step-limited view, and a pattern that does not compile is refused at
+  match runs through a step-limited wrapper, and a pattern that does not compile is refused at
   the assert entry point."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
@@ -37,7 +37,7 @@
 
 (tu/deftest-kb a-string-subtype-admits-by-evaluation
   ;; matchesPattern already answers false for a non-string subject, so the shape check
-  ;; alone defines the subtype — no separate (string ?x) conjunct, which is not evaluable.
+  ;; alone defines the subtype, with no separate (string ?x) conjunct.
   (tu/with-terms [dotted_quad]
     (v/assert kb (list 'genl dotted_quad 'string) 'CxUniverse)
     (v/assert kb (list 'defnSufficient dotted_quad (list 'matchesPattern '?x ipv4-pattern)) 'CxUniverse)

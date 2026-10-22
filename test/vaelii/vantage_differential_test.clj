@@ -62,7 +62,7 @@
     (v/assert kb (list (types 0) (inds (rint r 3))) (ctxs (rint r nctx)))
     (v/assert kb (list 'genl (types 0) (types 1)) (ctxs (rint r nctx)))
     ;; An argument-type declaration, sometimes.  Its point is not the declaration but what
-    ;; it does to the *domain gate*: `ArgTypeProver` gates on its argument being an
+    ;; it does to the *domain check*: `ArgTypeProver` applies only when its argument is an
     ;; individual, so a type literal is fact-only as written and stops being fact-only once
     ;; a join binds it.  Without one of these in the world, no generated goal can leave
     ;; post-hoc's domain halfway through, and the re-ask on the substituted literal is
@@ -98,7 +98,7 @@
            ;; hid: the shape needs the merged name in the goal, not only in the store.
            (list (preds 1) (inds 1) '?y)
            (list (preds 0) '?a (inds 0))
-           ;; Two goals the stored-fact prover is NOT alone on, so the domain gate is
+           ;; Two goals the stored-fact prover is NOT alone on, so the domain check is
            ;; exercised rather than assumed: `genl` walks the cached closure (a two-hop
            ;; answer is in no stored sentex), and a ground membership reaches the argument
            ;; -type prover.  Both must come back through the fan.

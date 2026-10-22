@@ -129,15 +129,15 @@
 
 (deftest an-unload-during-a-chain-answers-without-waiting-for-it
   ;; A chaining job holds the process-wide write monitor for its whole run.  This job
-  ;; stands in for one: it claims the KB as its writer and holds the monitor until the
-  ;; gate opens.
+  ;; stands in for one: it claims the KB as its writer and holds the monitor until
+  ;; `release` is delivered.
   (let [kb      tu/*kb*
         other   (tu/isolated-fresh)
         monitor @#'web/write-monitor
-        gate    (promise)
+        release (promise)
         held    (promise)
         id      (jobs/submit {:label "Chain base" :kind :chain :writes kb}
-                             (fn [_] (locking monitor (deliver held true) (deref gate 60000 nil))))]
+                             (fn [_] (locking monitor (deliver held true) (deref release 60000 nil))))]
     (catalog/register! "other" "Other KB" other)
     (try
       (deref held 10000 nil)
@@ -154,11 +154,11 @@
           (let [l (deref (future (POST "/kbs/load" {"id" "core"})) 5000 ::parked)]
             (is (not= ::parked l) "the load waited behind the parked unload")
             (is (= 200 (:status l))))
-          (deliver gate true)
+          (deliver release true)
           (is (= 200 (:status (deref u 10000 nil))))
           (is (nil? (catalog/entry "other")))))
       (finally
-        (deliver gate true)
+        (deliver release true)
         (jobs/wait id 10000)
         (tu/clear-kb! other)))))
 
@@ -186,7 +186,7 @@
     (is (re-find #"no such base" (:body r)) "the note names the field and the value")
     (is (re-find #"core, starter" (:body r)) "and what the option does offer")
     (is (nil? (catalog/entry "generated#1")) "nothing was loaded"))
-  (testing "and the roster is the option's own, so the legal spellings still pass"
+  (testing "and the accepted set is the option's own, so the legal spellings still pass"
     (let [ok (POST "/kbs/load" {"id" "generated" "types" "6" "individuals" "6"
                                 "facts" "6" "rules" "1" "predicates" "4" "layers" "2"
                                 "contexts" "1" "branching" "3" "forward" "0"
@@ -342,15 +342,26 @@
             r  (parked-behind-an-unload "late" #(op {:op :watch :args []}))]
         (is (= [404 :not-found] [(:status r) (get-in r [:edn :type])]))
         (is (empty? (v/watchers kb)))))
-    (testing "a page write answers with the refusal page and stores nothing"
-      (let [kb (late-kb!)
-            r  (parked-behind-an-unload
-                "late" #(POST "/assert" {"text" (pr-str (list likesOf Ann Bob))
-                                         "ctx"  "CxUniverse"}))]
-        (is (= 200 (:status r)))
-        (is (re-find #"Nothing was written" (str (:body r))))
-        (is (re-find #"unloaded" (str (:body r))))
-        (is (zero? (v/sentex-count kb)))))))
+    ;; a page write is an `:edit` job: it claims the KB's writer before it waits for the
+    ;; monitor, so the unload arriving behind it is refused as `:still-writing`, the way
+    ;; it is for a chain, and the write lands on the KB that is still loaded
+    (testing "a page write holds the writer, so the unload is refused and the write lands"
+      (let [kb      (late-kb!)
+            monitor @#'web/write-monitor
+            out     (promise)
+            ^Runnable run (bound-fn []
+                            (deliver out (try (POST "/assert" {"text" (pr-str (list likesOf Ann Bob))
+                                                               "ctx"  "CxUniverse"})
+                                              (catch Throwable e e))))
+            t       (Thread. run)]
+        (locking monitor
+          (.start t)
+          (is (tu/await-blocked-on monitor 10000) "the write's job is parked on the monitor")
+          (is (= 200 (:status (POST "/kbs/unload" {"key" "late"}))))
+          (is (some? (catalog/entry "late")) "and the unload left the entry in place"))
+        (is (= 200 (:status (deref out 10000 ::no-answer))))
+        (is (= 1 (v/sentex-count kb)) "the write landed on the KB still loaded")
+        (catalog/unload! "late")))))
 
 (deftest a-chain-whose-kb-is-unloaded-before-its-job-is-submitted-does-not-run
   ;; `/chain` reads its refusals and then submits; an unload landing between the two finds
@@ -539,6 +550,6 @@
 
 (deftest the-catalog-page-costs-no-kb-scan
   (testing "the listing reads counts that were computed once, when each KB loaded — a
-            page that summed a corpus per view would be unusable at eleven million"
+            page that summed a corpus per page render would be unusable at eleven million"
     (let [e (catalog/entry "base")]
       (is (= (v/sentex-count tu/*kb*) (:sentexes (:stats e)))))))

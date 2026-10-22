@@ -75,14 +75,14 @@
 
 (defonce ^{:private true
            :doc "A `(fn [kb region was-in])` that renders the region and calls the listeners, or nil.
-  Installed by `vaelii.core` at load; nil means nothing above this layer has claimed
-  the registry, and `deliver!` is a single deref."}
+  Installed by `vaelii.core/watch` on its first call; nil means no watch has run in this
+  process, and `deliver!` is a single deref."}
   dispatch
   (atom nil))
 
 (defn install-dispatch!
-  "Register the renderer `deliver!` hands each region to — `vaelii.core`'s, once, when
-  it loads.  Global rather than per-KB for `observe`'s reason: the function dispatches
+  "Register the renderer `deliver!` hands each region to — `vaelii.core`'s, installed by
+  each `watch`.  Global rather than per-KB for `observe`'s reason: the function dispatches
   on the `kb` it is handed, so every live KB shares one installation and each keeps its
   own listeners."
   [f]
@@ -152,7 +152,7 @@
   (boolean (when-let [a (:feed kb)] (seq (:listeners @a)))))
 
 (defn wants-region?
-  "Would a region filed now reach anybody?  The gate `settle-finish` reads **before**
+  "Would a region filed now reach anybody?  The presence check `settle-finish` reads **before**
   assembling one, so a KB nobody is listening to never builds the two sets it would have
   had nowhere to put — see `note-region!`.  Whether the feed is on is the feed's own
   question, which is why both halves of it live here rather than at the call site."
@@ -177,7 +177,7 @@
 
   Called behind `wants-region?`, which is what keeps the caller from *assembling* a region
   for a KB nobody is listening to — the re-check here is so this is safe to call anyway,
-  not the gate that makes it free."
+  not the presence check that makes it free."
   [kb region was-in]
   (when (and (wants-region? kb) (seq region))
     (swap! (:feed kb) (fn [s] (let [filed (:region s)]

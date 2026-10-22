@@ -39,8 +39,8 @@
   than no index, because every lookup then answers confidently and short.
 
   **Framing** is the chunked layout `vaelii.impl.io.frames` writes and reads: a
-  run of `[int32 length][compressed chunk]`, each chunk an independent compression
-  window over back-to-back nippy frames.  Constant memory on both sides — the writer
+  run of `[int32 length][compressed chunk]`, each chunk an independent compressed
+  stream over back-to-back nippy frames.  Constant memory on both sides — the writer
   holds one chunk, never the corpus.  `meta.edn` *states* the framing rather than
   implying it through a version number, because the engine's dumps number their own
   format and a reader must never have to guess.
@@ -60,6 +60,7 @@
             [vaelii.impl.kv :as kv]
             [vaelii.impl.observe :as observe]
             [vaelii.impl.opts :as opts]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.reasoning-image :as reasoning-image]
             [vaelii.impl.sentex :as sx])
@@ -92,8 +93,8 @@
   0.3s, `:gzip` 463 kB in 1.0s, `:xz` 331 kB in 2.4s.  So `:gzip` is the default — it
   eats most of what the field names cost, at a speed nobody notices — and `:xz`
   (LZMA2) buys another 28% for 2.3x the write, the trade a multi-gigabyte archive is
-  usually willing to make.  Its encoder is **per chunk** — a chunk is its own compression
-  window, which is what lets a reader decompress any one of them — so one is allocated and
+  usually willing to make.  Its encoder is **per chunk** — a chunk is its own compressed
+  stream, which is what lets a reader decompress any one of them — so one is allocated and
   dropped per chunk rather than held for the stream, and `vaelii.impl.io.frames` sizes its
   dictionary to a chunk (`xz-dict-bytes`) so that allocation is 24 MB rather than 93.
   Either way the peak is one encoder, whatever the corpus.  `:none` is the opt-out.
@@ -153,17 +154,18 @@
   A handle whose record has gone is skipped rather than written as a hole, so the
   count `meta.edn` reports is the count the stream holds.
 
-  `tap` (optional) is called with `[handle record]` for each frame written, so a caller
+  `tap`, when non-nil, is called with `[handle record]` for each frame written, so a caller
   that needs to see every record — the index fingerprint does — rides the walk the writer
-  is already making rather than making a second one."
-  ([store fetch ids] (record-frames store fetch ids nil))
-  ([store fetch ids tap]
-   (keep (fn [id]
-           (when-let [rec (fetch store id)]
-             (when tap (tap id rec))
-             (cond-> (into {} rec)
-               (some? (:antecedent rec)) (assoc :sentence (sx/sentence-of rec)))))
-         ids)))
+  is already making rather than making a second one.  `r` is a `vaelii.impl.progress`
+  reporter ticked once per handle."
+  [store fetch ids tap r]
+  (keep (fn [id]
+          (progress/tick! r)
+          (when-let [rec (fetch store id)]
+            (when tap (tap id rec))
+            (cond-> (into {} rec)
+              (some? (:antecedent rec)) (assoc :sentence (sx/sentence-of rec)))))
+        ids))
 
 (defn- provenance-frames
   "The `[handle provenance-map]` frames for the handles that have one.  Provenance is
@@ -173,9 +175,13 @@
   **Justification handles as well as sentex ones.**  `core/add-provenance` writes under
   whatever handle it is given, the provenance store is keyed by handle rather than by
   kind, and the two kinds draw from one counter — so a walk over the sentexes alone
-  drops every stamp a caller put on a firing."
-  [store ids]
-  (keep (fn [id] (when-let [prov (p/get-provenance store id)] [id prov])) ids))
+  drops every provenance map a caller put on a firing.  `r` is a `vaelii.impl.progress`
+  reporter ticked once per handle."
+  [store ids r]
+  (keep (fn [id]
+          (progress/tick! r)
+          (when-let [prov (p/get-provenance store id)] [id prov]))
+        ids))
 
 ;;; ── the marker ────────────────────────────────────────────────────────
 
@@ -196,7 +202,7 @@
 
 (defn- writer-id
   "How the writing build names itself in `meta.edn`: the `vaelii.build` system
-  property or `VAELII_BUILD` when a build stamps one (a blank one stamps nothing), else
+  property or `VAELII_BUILD` when a build sets a build label (a blank one sets none), else
   the git HEAD, else `dev`.
   Diagnostic only — a dump that will not read is first a question about which build
   wrote it."
@@ -255,8 +261,12 @@
   [^File d index fingerprint frame-opts]
   (let [idx-d (io/file d frames/index-dir)]
     (.mkdirs idx-d)
-    (let [n (frames/write-frames! (io/file idx-d frames/index-entry-file) (snapshot/index-frames index)
-                                  frame-opts)]
+    (let [n (with-open [r (progress/start ::write-index
+                                          "export: write the index entries"
+                                          nil)]
+              (frames/write-frames! (io/file idx-d frames/index-entry-file)
+                                    (progress/each r (snapshot/index-frames index))
+                                    frame-opts))]
       (spit (io/file idx-d frames/index-meta-file)
             (with-out-str
               (binding [*print-length* nil *print-level* nil]
@@ -295,14 +305,14 @@
   so it is opt-in rather than the default.
 
   `:belief? true`, the default, also writes `reasoning/`: the KB's reasoning image
-  (`vaelii.impl.reasoning-image`), stamped with content fingerprints of the sentexes and the
+  (`vaelii.impl.reasoning-image`), written with content fingerprints of the sentexes and the
   justifications this dump streams, taken on the same two walks.  An import that lands
   exactly those records under the same source identity installs it in place of `recover`.
   It is written only for a KB on the dense network, with the default provers and solver,
   whose network covers its records; the summary's `:reasoning-image` is `:written`,
   `:not-writable` or `:omitted` (`:belief? false`).  A phase `:belief` reports it.  **It
   is declined, as `:not-writable`, when the change clock moved during the export**: the
-  network is read after the walks and stamped with their fingerprints, so a write between
+  network is read after the walks and written with their fingerprints, so a write between
   the two would install on import as belief the streamed records never had.
 
   `dir` must not exist or must be empty (`:type :not-empty`), and `meta.edn` is
@@ -344,26 +354,36 @@
          ;; the fingerprint rides the sentex walk rather than making a second one —
          ;; the writer already fetches every record, and on `:disk` that is a page read
          ;; apiece
-         ;; the reasoning image rides the same two walks: its stamp is the content
+         ;; the reasoning image rides the same two walks: its fingerprint is the content
          ;; fingerprint of the sentexes and of the justifications this dump streams
          image?   (and belief? (reasoning-image/writable? kb))
          fprint   (when (or index? image?) (fp/accumulator))
          jprint   (when image? (fp/accumulator fp/justification-hash))
-         sx-n (frames/write-frames! (io/file d frames/sentex-file)
-                                    (record-frames records p/get-sentex sx-ids fprint)
-                                    (assoc frame-opts :on-chunk (chunk :sentexes (count sx-set))))
-         j-n  (frames/write-frames! (io/file d frames/justification-file)
-                                    (record-frames records p/get-justification j-ids jprint)
-                                    (assoc frame-opts :on-chunk (chunk :justifications (count j-set))))
+         sx-n (with-open [r (progress/start ::write-sentexes
+                                            "export: write the sentexes"
+                                            (count sx-set))]
+                (frames/write-frames! (io/file d frames/sentex-file)
+                                      (record-frames records p/get-sentex sx-ids fprint r)
+                                      (assoc frame-opts :on-chunk (chunk :sentexes (count sx-set)))))
+         j-n  (with-open [r (progress/start ::write-justifications
+                                            "export: write the justifications"
+                                            (count j-set))]
+                (frames/write-frames! (io/file d frames/justification-file)
+                                      (record-frames records p/get-justification j-ids jprint r)
+                                      (assoc frame-opts
+                                             :on-chunk (chunk :justifications (count j-set)))))
          ;; `seq` realizes only as far as the first handle carrying provenance, so a KB
          ;; with none writes no file rather than an empty one.  The total is unknown
          ;; until the walk ends — a filter over the record handles, not a stream with a
          ;; count of its own — so the phase reports progress against nil.
-         prov (when provenance?
-                (seq (provenance-frames records (concat sx-ids j-ids))))
-         p-n  (if prov
-                (frames/write-frames! (io/file d frames/provenance-file) prov
-                                      (assoc frame-opts :on-chunk (chunk :provenance nil)))
+         p-n  (if provenance?
+                (with-open [r (progress/start ::write-provenance
+                                              "export: write the provenance"
+                                              (+ (count sx-set) (count j-set)))]
+                  (if-let [prov (seq (provenance-frames records (concat sx-ids j-ids) r))]
+                    (frames/write-frames! (io/file d frames/provenance-file) prov
+                                          (assoc frame-opts :on-chunk (chunk :provenance nil)))
+                    0))
                 0)
          i-n  (if index?
                 (write-index! d (:index kb) (fprint)
@@ -373,7 +393,7 @@
                  (on-progress {:phase :reasoning-image :done 0 :total 1})
                  (reasoning-image/write-sections!
                   kb (io/file d reasoning-image/dir-name)
-                  (reasoning-image/stamp kb {:sentexes (fprint) :justifications (jprint)})
+                  (reasoning-image/manifest-for kb {:sentexes (fprint) :justifications (jprint)})
                   #(= clock (observe/change-clock))))]
      (on-progress {:phase :meta :done 0 :total 1})
      (write-meta! d (array-map

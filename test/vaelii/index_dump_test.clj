@@ -48,7 +48,7 @@
 
 ;; Own db numbers, outside the suite's block, one pair per backend — this namespace is
 ;; *about* the four backends, so it names them all rather than running on whichever one
-;; the suite's gate selected.
+;; the suite's configuration selected.
 (def ^:private index-backends
   [{:backend :memory          :space 88}
    {:backend :memory-dense    :space 88}
@@ -84,8 +84,8 @@
 (defn- build!
   "Every index family in one KB: the trie (ragged paths, a numeric token, a negative
   fact), all three roots, the rule index, the exception index, the term index, the
-  roster, and the mint family, which an argument declaration's mints write with the
-  entailment pinned on.  An index dump that dropped a family would otherwise pass on the
+  term-name set, and the mint family, which an argument declaration's mints write with the
+  entailment forced on.  An index dump that dropped a family would otherwise pass on the
   families it did keep."
   [kb {:keys [bird penguin animal flies feathered parentOf grandparentOf
               Tweety Opus Ann Bob Cid ctx]}]

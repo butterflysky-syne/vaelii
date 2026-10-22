@@ -23,15 +23,16 @@
 
   ## A level check, not a backend
 
-  The sink is Trove's console backend and the ranking below is the whole of what this
-  puts in front of it.  The ranking covers Trove's seven levels rather than the five the
+  The sink prints one short line per call (`line`) and the ranking below is the whole of
+  what this puts in front of it.  The ranking covers Trove's seven levels rather than the five the
   dial takes, so a message at `:fatal` or `:report` sorts above `:error` and prints
   under every setting instead of falling to a rank of zero and being suppressed by all
   of them."
   (:require [clojure.string :as str]
             [taoensso.trove :as trove]
-            [taoensso.trove.console :as console]
-            [vaelii.impl.config :as config]))
+            [vaelii.impl.config :as config])
+  (:import [java.time LocalTime]
+           [java.time.format DateTimeFormatter]))
 
 (def levels
   "Trove's levels, ranked.  A level this map does not name — nil, or a typo in a `log!`
@@ -71,19 +72,48 @@
   [level]
   (>= (long (get levels level 0)) (long (get levels @dial 0))))
 
-(def ^:private sink
-  "Trove's console backend, unfiltered — `enabled?` is the filter in front of it.  A
-  delay because building it resolves a timestamp formatter, and a process that never
-  turns the dial should not pay for one."
-  (delay (console/get-log-fn {:min-level :trace})))
+(def ^:private clock
+  "The `HH:mm:ss` local time a console line opens with."
+  (DateTimeFormatter/ofPattern "HH:mm:ss"))
+
+(defn- short-ns
+  "`ns` without its `vaelii.impl.`, `vaelii.host.` or `vaelii.` prefix."
+  [ns]
+  (str/replace (str ns) #"^vaelii\.(?:impl\.|host\.)?" ""))
+
+(defn- line
+  "The console text of one log call, without its newline.  An `:info` line is the local
+  time and the message.  A louder line adds its level and short namespace; a
+  `:debug` or `:trace` line adds those and then the id and the `:data` map.  An error
+  follows on a line of its own."
+  [ns level id {:keys [msg data error]}]
+  (let [debug? (< (long (get levels level 0)) (long (levels :info)))]
+    (str (.format ^DateTimeFormatter clock (LocalTime/now))
+         (when-not (= :info level)
+           (str " " (str/upper-case (name level)) " " (short-ns ns) ":"))
+         (when msg (str " " msg))
+         (when (or debug? (nil? msg))
+           (str (when id
+                  (str " " (if (and (keyword? id) (= (namespace id) (str ns)))
+                             (str "::" (name id))
+                             id)))
+                (when (seq data) (str " " (pr-str data)))))
+         (when error (str "\n  " error)))))
+
+(defn- sink
+  "The console backend: `line` to `*out*`, written whole so a line from another thread
+  cannot land inside it."
+  [ns _coords level id payload]
+  (let [s (str (line ns level id (force payload)) "\n")]
+    (print s)
+    (flush)))
 
 (def ^:private log-fn
   "The one value this namespace ever installs into `*log-fn*`: the level check, then the
   console backend.  One value, installed idempotently, so turning the dial twice leaves
   one backend rather than two."
-  (delay (let [emit @sink]
-           (fn vaelii-log-fn [ns coords level id payload]
-             (when (enabled? level) (emit ns coords level id payload))))))
+  (delay (fn vaelii-log-fn [ns coords level id payload]
+           (when (enabled? level) (sink ns coords level id payload)))))
 
 (defn set-level
   "Set the dial to `level` and install the console backend at the root of

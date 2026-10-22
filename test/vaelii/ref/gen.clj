@@ -145,7 +145,7 @@
   carries a kind that fixes its argument shape:
 
   - `:plain` — two individuals; marks `irreflexive`, `anti_transitive`, `functional`,
-    `functionalInArg`, `anti_symmetric`.  Two symbol fillers colliding under a mark are
+    `functionalInArg`, `anti_symmetric`, and `negates` with a predicate of its kind.  Two symbol fillers colliding under a mark are
     a merge only when both are `:monotonic` (decision D6), which `merge-disagreements`
     reads through the engine's equality.
   - `:num` — two integers in 1..3; the same marks.  Two integers never merge.
@@ -194,8 +194,10 @@
                   (>= (count types) 3)      (conj :covering)
                   (#{:plain :num} kind)     (into [:functional :functional-in-arg
                                                    :anti-symmetric :irreflexive
-                                                   :anti-transitive])
-                  (= :type-arg kind)        (conj :transitive-in-arg))]
+                                                   :anti-transitive :negates])
+                  (= :type-arg kind)        (conj :transitive-in-arg))
+        ;; a `negates` partner of the same argument shape, `pred` itself among them
+        partner #(pick rng (vec (for [q predicates :when (= kind (:kind q))] (:pred q))))]
     (case (pick rng options)
       :disjoint          (let [[a b] (type-pair rng types)]
                            (list* 'disjoint (sort [a b])))
@@ -208,6 +210,7 @@
       :functional        (list 'functional pred)
       :functional-in-arg (list 'functionalInArg pred (inc (.nextInt ^Random rng 2)))
       :anti-symmetric    (list 'anti_symmetric pred)
+      :negates           (list* 'negates (sort [pred (partner)]))
       :transitive-in-arg (list 'transitiveInArgInverse pred 1 'genl))))
 
 (defn- violation
@@ -237,24 +240,25 @@
                                                             (repeatedly 6 arg))))]
                 (when b (list p a b))))))))))
 
-(def ^:private menu-roster-functors
-  "The functors of the writes `fact-write` draws that are on the forced-monotonic roster:
+(def ^:private menu-forced-functors
+  "The functors of the writes `fact-write` draws that are forced-monotonic:
   the `genlCx` edge and every `declaration`."
   '#{genlCx disjoint covering functional functionalInArg anti_symmetric irreflexive
-     anti_transitive})
+     anti_transitive negates})
 
 (defn- fact-write
   "One non-rule write drawn from the menu: a `genlCx` edge, a `genl` edge or its denial, a
-  membership or its denial, a tuple or its denial, a declaration, a denial of a roster
+  membership or its denial, a tuple or its denial, a declaration, a denial of a forced-monotonic
   write (one among `acc`, the writes drawn before it, when there is one), or a
   `violation` of a mark among `acc`.  Every write takes a random strength: the reference
   and the engine both read a write of `vaelii.ref.world/forced-monotonic` as never a
-  loser and a `genlCx` write as `:monotonic`, and both hold a denial of one inert."
+  loser and a `genlCx` write as `:monotonic`, and both defeat a denial of one beside it
+  at either strength."
   [rng {:keys [contexts types individuals predicates] :as pools} acc]
   (let [ctx   #(pick rng contexts)
         kind  (weighted rng (cond-> [[2 :genl] [1 :genl-denial] [5 :member] [2 :member-denial]
                                      [3 :tuple] [1 :tuple-denial] [3 :declaration]
-                                     [1 :roster-denial]]
+                                     [1 :forced-denial]]
                               (>= (count contexts) 2) (conj [2 :genl-cx])
                               (some #(#{'irreflexive 'anti_symmetric} (functor-of (:sentence %)))
                                     acc)
@@ -272,7 +276,7 @@
       :tuple         (write (fix-self (tuple rng (pick rng predicates) pools)) (ctx))
       :tuple-denial  (write (list 'not (fix-self (tuple rng (pick rng predicates) pools))) (ctx))
       :declaration   (write (declaration rng pools) (ctx))
-      :roster-denial (let [prior (filterv #(contains? menu-roster-functors (first (:sentence %)))
+      :forced-denial (let [prior (filterv #(contains? menu-forced-functors (first (:sentence %)))
                                           acc)
                            s     (if (seq prior)
                                    (:sentence (pick rng prior))
@@ -473,14 +477,14 @@
            {:sentence (list tu ind) :context lo :strength (strength rng)}])))))
 
 (defn- declared-below
-  "The writes that put a type on the roster by a declaration below the context its
+  "The writes that make a type forced-monotonic by a declaration below the context its
   memberships are stated in (docs/reference.md D17), or nil when the pools hold fewer than
   two contexts or the two types drawn are related by a written edge.  For two contexts
   `hi` before `lo` in the pool, two types `ta` and `tb`, and an individual `I`: `(genlCx
   lo hi)`, `(disjoint ta tb)`, `(ta I)` and `(tb I)` in `hi`, and
   `(forced_monotonic_predicate ta)` in `lo`; with a second individual `J` no drawn write
   names under `ta`, a `:monotonic` `(not (ta J))` and a `(ta J)` in `hi`.  `lo` reads
-  `(tb I)` defeated and the denial inert; `hi` reads a dilemma and `(ta J)` defeated.  Half
+  `(tb I)` and the denial defeated; `hi` reads a dilemma and `(ta J)` defeated.  Half
   the draws state the declaration in `CxUniverse` and add `(genlCx hi CxUniverse)`, so both
   contexts read the declaration (docs/reference.md D17).  A drawn rule may read or conclude
   `ta`."
@@ -521,7 +525,7 @@
   `blocker-below`, and a quarter of the worlds the writes of `declared-below`, each less
   any `[sentence context]` pair already drawn.  Every write of
   `vaelii.ref.world/forced-monotonic` is never a loser, a `genlCx` write is read
-  `:monotonic`, and a denial of one is inert.
+  `:monotonic`, and a denial of one loses its negation nogood at either strength.
   `:contexts` holds every generated context plus `CxUniverse` when an edge names it."
   [seed opts]
   (let [rng    (Random. (long seed))
@@ -594,16 +598,16 @@
            (mem/drop-record-space! space)
            (mem/drop-index-space! space)))))
 
-(def ^:private roster-context
-  "The context the roster declarations of a world KB are stored in: one no world context
+(def ^:private forced-context
+  "The context the forced-monotonic declarations of a world KB are stored in: one no world context
   sees, so no comparison reads them.  Each names a baseline member, which every reader
-  reads on the roster wherever its declaration is stated (`decide/global?`)."
-  'CxRefRoster)
+  reads as forced-monotonic wherever its declaration is stated (`decide/global?`)."
+  'CxRefForced)
 
 (defn load-world!
   "A fresh KB on a space of its own, opened with `opts`, holding the
   `forced_monotonic_predicate` declaration of `genlCx` and of every functor in
-  `menu-roster-functors` and the `(forced_monotonic_between_predicates genl)` declaration
+  `menu-forced-functors` and the `(forced_monotonic_between_predicates genl)` declaration
   (core.txt declares them, and a world KB loads no upper layer), then the
   writes of `order` (a vector of the world's writes) asserted in that order.  A write
   `assert` refuses with an `ex-info` is recorded as
@@ -615,9 +619,9 @@
   (let [space [::ref (swap! space-counter inc)]
         kb    (v/open-kb (merge {:backend :memory :space space :recover? false} opts))]
     (try
-      (doseq [f (sort (conj menu-roster-functors 'genlCx))]
-        (v/assert kb (list 'forced_monotonic_predicate f) roster-context))
-      (v/assert kb '(forced_monotonic_between_predicates genl) roster-context)
+      (doseq [f (sort (conj menu-forced-functors 'genlCx))]
+        (v/assert kb (list 'forced_monotonic_predicate f) forced-context))
+      (v/assert kb '(forced_monotonic_between_predicates genl) forced-context)
       {:kb      kb
        :space   space
        :refused (into []
@@ -988,7 +992,7 @@
 
 (defn- context-up
   "`c` plus every context it sees over the `genlCx` writes of `writes` (every such write
-  counts: decision D1 makes each one monotonic, and a denial of one inert)."
+  counts: decision D1 makes each one monotonic, and a denial of one moves no edge)."
   [writes c]
   (let [adj (reduce (fn [m {[f a b] :sentence}]
                       (if (= 'genlCx f) (update m a (fnil conj #{}) b) m))

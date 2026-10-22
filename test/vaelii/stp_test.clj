@@ -237,7 +237,7 @@
                   (stp/narrow 'Ae 'Bs 1 1))
           pc  (stp/close net (stp/nodes net))]
       (is (= [0 0] (stp/overlap-bounds-from-endpoints pc '[As Ae] '[Bs Be])))))
-  (testing "a network that pins nothing bounds nothing"
+  (testing "a network that constrains nothing bounds nothing"
     (let [[lo hi] (stp/overlap-bounds-from-endpoints {} '[As Ae] '[Bs Be])]
       (is (= 0 lo))
       (is (not (Double/isFinite (double hi)))))))
@@ -275,7 +275,7 @@
 (tu/deftest-kb the-derived-bound-is-the-tightest-one-entailed
   (load-time-units kb)
   (tu/with-terms [P Q R]
-    ;; P to Q is stated loosely and pinned exactly by the way round through R
+    ;; P to Q is stated loosely and determined exactly by the way round through R
     (v/assert kb (list 'temporalDistance P Q '(QuantityIntervalFn 10 20 Minute)) C)
     (v/assert kb (list 'temporalDistance P R '(QuantityFn 5 Minute)) C)
     (v/assert kb (list 'temporalDistance R Q '(QuantityFn 8 Minute)) C)
@@ -547,7 +547,7 @@
   (load-time-units kb)
   (tu/with-terms [A B As Ae Bs Be]
     (two-hours-apart! kb A B As Ae Bs Be)
-    (testing "the narrowing pins the pair both ways"
+    (testing "the narrowing determines the pair both ways"
       (let [narrowed (stp/allen-narrowing kb C)]
         (is (= #{:before} (get narrowed [A B])))
         (is (= #{:after} (get narrowed [B A])))))

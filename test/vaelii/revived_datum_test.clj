@@ -161,7 +161,7 @@
             "with the merge in force")))))
 
 (deftest a-revival-re-seeds-what-flipped-not-the-settles-whole-region
-  (testing "the seed is the flip, and its size does not follow the window's"
+  (testing "the seed is the flip, and its size does not follow the touched set's"
     ;; One deferred batch loads `n` facts and lifts a defeat, so one settle's region holds
     ;; the whole load beside the single datum that came back.
     (let [flipped
@@ -185,7 +185,7 @@
           few  (flipped 4)
           many (flipped 32)]
       (is (= few many)
-          (str "the re-seed followed the window rather than the flip: " few
+          (str "the re-seed followed the touched set rather than the flip: " few
                " datums at n=4, " many " at n=32")))))
 
 ;; ---- the equality entry point --------------------------------------------------

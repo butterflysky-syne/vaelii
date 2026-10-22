@@ -283,7 +283,7 @@
             {} (range 1 n))))
 
 (defn- total-order
-  "`(before Ii Ii+1)` over `n` intervals — dense: path consistency pins every pair."
+  "`(before Ii Ii+1)` over `n` intervals — dense: path consistency determines every pair."
   [n]
   (let [node #(symbol (str "I" %))]
     (reduce (fn [net i]
@@ -326,6 +326,6 @@
   (let [net            (total-order 40)
         ns             (nodes-of net)
         [answer swept] (sweeps net ns iv/allen-algebra)]
-    (is (pos? swept) "a network that pins every pair does not drain inside the budget")
+    (is (pos? swept) "a network that determines every pair does not drain inside the budget")
     (is (= (qcn/path-consistent-naive net ns iv/allen-algebra) answer)
         "and the fallback reaches the same fixpoint, which is the whole point of a budget")))

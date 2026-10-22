@@ -179,7 +179,7 @@
       (print-known "irreflexive self tuple" known)
       (is (empty? fails) (failure-text "irreflexive self tuple" fails (count orders))))))
 
-;; Decisions D1, D7, D10–D13 and D17: a write the forced-monotonic roster rules out is
+;; Decisions D1, D7, D10–D13 and D17: a write the forced-monotonic set rules out is
 ;; stored and inert, never refused, so the engine stores it in every order and equals the
 ;; reference, which sets it aside.
 
@@ -201,21 +201,21 @@
   ;; so the tuple is believed at CxA and OUT at CxB.
   ;;
   ;;   CxUniverse  (genl dog thing) (genl cat thing) (disjoint dog cat) monotonic
-  ;;   CxA         (partOf Kit Kit) default   (dog Kit) default
-  ;;               (partOf ?x ?x) => (cat ?x) monotonic
-  ;;   CxB sees CxA: (irreflexive partOf)
-  (tu/with-terms [partOf dog cat Kit CxA CxB]
+  ;;   CxA         (tangiblePartOf Kit Kit) default   (dog Kit) default
+  ;;               (tangiblePartOf ?x ?x) => (cat ?x) monotonic
+  ;;   CxB sees CxA: (irreflexive tangiblePartOf)
+  (tu/with-terms [tangiblePartOf dog cat Kit CxA CxB]
     (let [wiring  [(w (list 'genl dog 'thing) U) (w (list 'genl cat 'thing) U)
                    (w (list 'genlCx CxA U) U) (w (list 'genlCx CxB CxA) U)
                    (w (list 'disjoint dog cat) U :monotonic)]
-          content [(w (list 'irreflexive partOf) CxB :monotonic)
-                   (w (gen/forward (list 'implies (list partOf '?x '?x) (list cat '?x))) CxA
+          content [(w (list 'irreflexive tangiblePartOf) CxB :monotonic)
+                   (w (gen/forward (list 'implies (list tangiblePartOf '?x '?x) (list cat '?x))) CxA
                       :monotonic)
-                   (w (list partOf Kit Kit) CxA)
+                   (w (list tangiblePartOf Kit Kit) CxA)
                    (w (list dog Kit) CxA)]
           world    {:contexts #{U CxA CxB} :writes (into wiring content)}
-          expected {CxA {(list partOf Kit Kit) true (list cat Kit) true (list dog Kit) true}
-                    CxB {(list partOf Kit Kit) false (list cat Kit) false (list dog Kit) true}}
+          expected {CxA {(list tangiblePartOf Kit Kit) true (list cat Kit) true (list dog Kit) true}
+                    CxB {(list tangiblePartOf Kit Kit) false (list cat Kit) false (list dog Kit) true}}
           orders   (mapv #(into wiring %) (gen/permutations content))
           {fails :failures known :known} (expected-failures world orders expected)]
       (is (= [] (reference-agrees world expected)))
@@ -223,7 +223,7 @@
       (is (empty? fails) (failure-text "irreflexive loser beside a disjoint pair" fails
                                        (count orders))))))
 
-(deftest a-denial-of-a-roster-literal-is-inert-in-every-order
+(deftest a-denial-of-a-forced-monotonic-literal-loses-to-it-in-every-order
   ;;   CxUniverse  (genl dog thing) (genl cat thing)
   ;;   CxA         (disjoint dog cat) default, stored monotonic   (not (disjoint dog cat))
   ;;               (dog Rex) default   (cat Rex) monotonic
@@ -240,10 +240,10 @@
           orders  (mapv #(into wiring %) (gen/permutations content))
           {fails :failures known :known} (expected-failures world orders want)]
       (is (empty? (reference-agrees world want)))
-      (print-known "inert denial" known)
-      (is (empty? fails) (failure-text "inert denial" fails (count orders))))))
+      (print-known "denial of a forced literal" known)
+      (is (empty? fails) (failure-text "denial of a forced literal" fails (count orders))))))
 
-(deftest a-rule-concluding-a-roster-literal-from-a-plain-antecedent-is-inert-in-every-order
+(deftest a-rule-concluding-a-forced-monotonic-literal-from-a-plain-antecedent-is-inert-in-every-order
   ;;   CxA  (kindPair ?a ?b) => (disjoint ?a ?b)   (kindPair bird fish)
   ;;        (bird Tweety) default   (fish Tweety) default
   (tu/with-terms [kindPair bird fish Tweety CxA]
@@ -359,7 +359,7 @@
   ;;   CxUniverse  (disjoint ta tb) monotonic   (ta Ind) default   (tb Ind) default
   ;;     └─ CxA    (forced_monotonic_predicate ta)
   ;;
-  ;; CxA reads `ta` on the roster, so `(tb Ind)` loses there; CxUniverse reads a dilemma.
+  ;; CxA reads `ta` as forced-monotonic, so `(tb Ind)` loses there; CxUniverse reads a dilemma.
   (tu/with-terms [ta tb Ind CxA]
     (let [ws     [(w (list 'genlCx CxA U) U)
                   (w (list 'disjoint ta tb) U :monotonic)
@@ -374,11 +374,11 @@
       (print-known "declaration below a dilemma" known)
       (is (empty? fails) (failure-text "declaration below a dilemma" fails (count orders))))))
 
-(deftest a-declaration-below-a-denial-makes-it-inert-only-where-it-is-seen-in-every-order
+(deftest a-declaration-below-a-denial-makes-it-lose-only-where-it-is-seen-in-every-order
   ;;   CxUniverse  (not (ta Ind)) monotonic   (ta Ind) default
   ;;     └─ CxA    (forced_monotonic_predicate ta)
   ;;
-  ;; CxA reads the denial inert; CxUniverse reads `(ta Ind)` defeated by it.
+  ;; CxA reads the denial defeated by `(ta Ind)`; CxUniverse reads `(ta Ind)` defeated by it.
   (tu/with-terms [ta Ind CxA]
     (let [ws     [(w (list 'genlCx CxA U) U)
                   (w (list 'not (list ta Ind)) U :monotonic)
@@ -555,6 +555,29 @@
       (is (= [] (reference-agrees world expected)))
       (print-known "chain in three contexts" known)
       (is (empty? fails) (failure-text "chain in three contexts" fails (count orders))))))
+
+(deftest a-negates-pair-through-a-sub-predicate-is-decided-where-both-are-seen-in-every-order
+  ;; A `negates` pair is read down the `genl` closure, and is decided by the reader that
+  ;; sees both tuples.
+  ;;
+  ;;   CxUniverse  (negates scornsP admiresP)  (genl sneersAtP scornsP) monotonic
+  ;;   CxA (sneersAtP Ida Jo) monotonic   CxB (admiresP Ida Jo)
+  ;;   CxW sees CxA CxB
+  (tu/with-terms [scornsP admiresP sneersAtP Ida Jo CxA CxB CxW]
+    (let [wiring  (into [(w (list* 'negates (sort [scornsP admiresP])) U :monotonic)
+                         (w (list 'genl sneersAtP scornsP) U :monotonic)]
+                        (for [[sub sup] [[CxA U] [CxB U] [CxW CxA] [CxW CxB]]]
+                          (w (list 'genlCx sub sup) U)))
+          content [(w (list sneersAtP Ida Jo) CxA :monotonic)
+                   (w (list admiresP Ida Jo) CxB)]
+          world    {:contexts #{U CxA CxB CxW} :writes (into wiring content)}
+          expected {CxB {(list admiresP Ida Jo) true}
+                    CxW {(list admiresP Ida Jo) false (list sneersAtP Ida Jo) true}}
+          orders   (mapv #(into wiring %) (gen/permutations content))
+          {fails :failures known :known} (expected-failures world orders expected)]
+      (is (= [] (reference-agrees world expected)))
+      (print-known "negates pair through a sub-predicate" known)
+      (is (empty? fails) (failure-text "negates pair through a sub-predicate" fails (count orders))))))
 
 (deftest a-pair-across-a-context-edge-is-decided-at-the-joint-reader-in-every-order
   ;; Decision D16: a functional collision and an asymmetric converse whose two tuples are

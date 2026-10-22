@@ -34,7 +34,7 @@
     the principal it mints attests each write with the deployment key (`*attest-key*`).
     Both checks run in the process that holds the key, never on the wire.
 
-  Every write goes through the provenance-stamping `assert` path — NEVER
+  Every write goes through the provenance-recording `assert` path — NEVER
   `bulk-assert-facts!`, which binds `*bulk-load?*` and writes no provenance at all."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
@@ -404,7 +404,7 @@
       (:creator a))))
 
 (defn- write
-  "The one provenance-stamping write chokepoint.  Enforces the write boundary, binds
+  "The one provenance-recording write chokepoint.  Enforces the write boundary, binds
   `*creator*` to the principal id, rides its provenance hints in the open map, and goes
   through `v/assert` — never `bulk-assert-facts!`.  Under a `:proof-tier` principal
   `authenticate` minted it attests the write (`attest!`); a principal claiming
@@ -495,7 +495,7 @@
   The row it retracts is read through `sole-registry-match`, whose docstring holds the
   reason: the overwrite must not rest on an unordered set having exactly one member."
   [kb principal agent-id new-value]
-  (check-write-boundary! principal registry-context)      ; admin-gate the retract too
+  (check-write-boundary! principal registry-context)      ; admin check on the retract too
   (when-let [sx (sole-registry-match kb (list 'trustLevel agent-id '?v))]
     (v/retract! kb (:id sx)))
   (ingest-into kb principal registry-context (list 'trustLevel agent-id new-value)))

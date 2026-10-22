@@ -29,7 +29,7 @@
   House rules: gensym'd temporaries via `tu/with-terms`; engine vocabulary
   (`equals`, `reifiable_function`, `QuantityFn`, `Kilogram`, contexts) literal; the
   neutral fixture asserts the KB is restored.  CxUniverse is loaded because the NAT
-  bookkeeping (`termOfUnit`, `result`) rides real vocabulary."
+  bookkeeping (`natFormula`, `result`) rides real vocabulary."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.nat :as nat]
@@ -312,11 +312,13 @@
   (and (= 'not (first sentence))
        (let [[f a b] (second sentence)] (and (= 'equals f) (= a b)))))
 
-(tu/deftest-kb a-denied-instance-of-a-schematic-equation-is-inert
-  ;; `equals` is on the forced-monotonic roster, so a denial of one ground instance is
-  ;; stored as stated and never believed (docs/nmtms.md, "The forced-monotonic roster"):
-  ;; the equation rewrites the denied instance as it rewrites every other, in either
-  ;; arrival order and at either strength, and no twin denies reflexivity.
+(tu/deftest-kb a-denied-instance-of-a-schematic-equation-leaves-the-rewrite-standing
+  ;; A denial of one ground instance is stored as stated.  The equation answers the
+  ;; instance without storing it, so no negation nogood pairs the two and the denial is
+  ;; believed (docs/nmtms.md, "A denial of a forced-monotonic literal is believed until the
+  ;; literal is"); `equals` is forced-monotonic, so the denial moves no rewrite: the
+  ;; equation rewrites the denied instance as it rewrites every other, in either arrival
+  ;; order and at either strength, and no twin denies reflexivity.
   (doseq [strength [:monotonic :default]
           denial-first? [false true]]
     (testing (str strength " denial, denial first: " denial-first?)
@@ -333,7 +335,7 @@
           (v/assert kb (list other_chain (ff Tom)) CxA {:strength :monotonic})
           (v/assert kb (list other_chain (ff Ann)) CxA {:strength :monotonic})
           (is (some? (v/sentex kb h)) "the denial is stored as stated")
-          (is (false? (v/in? kb h)) "and not believed")
+          (is (true? (v/in? kb h)) "and believed, with no stored instance beside it")
           (is (not-any? #(reflexive-denial? (:sentence %)) (v/sentexes-in-context kb CxA))
               "no stored sentex denies reflexivity")
           (is (= [true true true true]

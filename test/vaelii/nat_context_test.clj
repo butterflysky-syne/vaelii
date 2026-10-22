@@ -4,14 +4,14 @@
   "**Object** reified NATs are not contexts — docs/nat.md, docs/naming.md, docs/contexts.md.
   (Context-denoting `Cx*Fn` NATs reify to a `cx/` constant that *is* a context — that is
   the deliberate exception, and its own contract is `docs/context-nat.md` +
-  `context_nat_test`.  This namespace pins the object case that stays refused.)
+  `context_nat_test`.  This namespace asserts the object case that stays refused.)
 
   An object reified NAT is an opaque `nat/`-namespaced constant standing for a term; a
   context is a `Cx`-prefixed name (or a `cx/` context constant).  For an object NAT the two
   roles are orthogonal — reification settles *term identity*, a context is *where a sentex
   is stored* — and nothing bridges them, so a `nat/` constant can neither be wired into the
-  `genlCx` hierarchy nor name the context a sentex is stored in.  Two independent gates hold
-  the line, and this namespace pins both:
+  `genlCx` hierarchy nor name the context a sentex is stored in.  Two independent checks
+  refuse it, and this namespace tests both:
 
   - `wff/genlCx-problems` refuses a `genlCx` edge whose argument is not `Cx`-shaped
     (`:not-well-formed`), so a reified constant can never become a node of the hierarchy;
@@ -25,11 +25,10 @@
   every policy."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.impl.nat :as nat]
             [vaelii.test-util :as tu]))
 
-(use-fixtures :once (tu/loaded core-context/load-into))
+(use-fixtures :once (tu/loaded tu/load-core!))
 (use-fixtures :each (tu/neutral))
 
 (defn- refusal
@@ -60,7 +59,7 @@
       (is (not (contains? (set (v/contexts kb)) k))
           "a minted constant is no node of the context hierarchy"))))
 
-;; ---- gate 1: genlCx refuses a reified NAT as a context edge ---------------
+;; ---- check 1: genlCx refuses a reified NAT as a context edge --------------
 
 (tu/deftest-kb genlCx-refuses-a-reified-nat-node
   ;; `genlCx-problems` checks both arguments with `naming/context?`, so neither a NAT
@@ -80,7 +79,7 @@
         (is (= :not-well-formed
                (refusal #(v/assert kb (list 'genlCx 'CxUniverse k) 'CxUniverse))))))))
 
-;; ---- gate 2: a reified NAT cannot name the context a sentex is in ---------
+;; ---- check 2: a reified NAT cannot name the context a sentex is in --------
 
 (tu/deftest-kb a-reified-nat-cannot-name-a-context-slot
   (tu/with-terms [MtFn Story1 likes Tom Ann]
@@ -105,7 +104,7 @@
 (tu/deftest-kb naming-off-stores-into-a-nat-symbol-but-it-is-an-island
   ;; The store itself has no objection to a `nat/` symbol in the context slot — the
   ;; objection is the naming check's.  Turn the entry point off and the sentex stores and reads
-  ;; back from that symbol; but genlCx still refuses to wire it (gate 1 is wff, not
+  ;; back from that symbol; but genlCx still refuses to wire it (check 1 is wff, not
   ;; naming), so the symbol sees nothing and no context sees it.  It is a bucket, never
   ;; a member of the hierarchy — which is why a reified NAT is unreachable as a *working*
   ;; context under every policy.

@@ -65,13 +65,13 @@ rather than rebuilt, since rebuilding is a write and a base is mounted read-only
 that directory as a KB once, which clears and rebuilds it, then mount the fork over it.
 
 The fork's own durable half is held to the same sentinel and, under `:recover? :auto`,
-to the coverage gate ([storage.md](storage.md)) — both read **through the merged
+to the coverage check ([storage.md](storage.md)) — both read **through the merged
 mount**. The own half is the fork's delta, not an index of its own records: its
 counters hold base+net and its removal records say which inherited postings the fork
 took out, so its seal compared against the fork's own record count disagrees on every
 healthy fork that has written anything. Read through the mount, the seal and the root
 count are the merged index's and compare against the merged records, so a remount of a
-healthy fork rebuilds nothing. When either gate does trip, the repair is the one
+healthy fork rebuilds nothing. When either check does trip, the repair is the one
 `reindex` makes on any fork (below): clear the merged index, which hides the base, and
 rebuild it from the merged records into the own half.
 
@@ -79,7 +79,7 @@ rebuild it from the merged records into the own half.
 
 `KvIndexStore` (`vaelii.impl.kv`) implements every index family over one substrate — the
 count-aware trie, the context / functor / argument roots, the rule index, the exception
-re-check index, the inverted term index and the term roster — and it holds no state of
+re-check index, the inverted term index and the term-name set — and it holds no state of
 its own: every read bottoms out in `kv-members`, `kv-count`, `kv-intersect` or
 `kv-get`, and every write in `kv-batch`. So a single `KvBackend` decorator merges the
 entire index, and the trie walker, the matcher, the planner, the TMS and the query layers
@@ -102,7 +102,7 @@ every family but the trie. An index with neither refuses with `:unforkable-index
 **The TMS is not storage.** Belief lives behind its own protocol (`vaelii.impl.jtms`,
 with `dense-jtms` as a second implementation) over state derived from the records. A fork
 therefore gets its *own* network, and the engine already has the operation that computes one
-from records: `recover`. So `fork` recovers over the merged view rather than layering one
+from records: `recover`. So `fork` recovers over the merged contents rather than layering one
 truth-maintenance graph over another. One pass over the merged records, which is what
 `recover` costs anywhere.
 
@@ -145,9 +145,9 @@ into first ([density.md](density.md)). Over a flat-map base the two roads read t
 `kv-members` is a reference return; over a `:dense` base, where the posting has to be
 materialized into a Clojure set first, counting through the merge cost ~13 ms per call on
 a 100,000-handle root — a selectivity read, per conjunct, on a key the fork had never
-written to. `lein perf --only overlay-selectivity` is the gate. `kv-member?` is the same
+written to. `lein perf --only overlay-selectivity` is the perf check. `kv-member?` is the same
 observation at member granularity: it probes both sides rather than merging them, which is
-what keeps the `reads/watched-rule?` gate O(1) across the `KvBackend` protocol.
+what keeps the `reads/watched-rule?` membership check O(1) across the `KvBackend` protocol.
 
 So the two roads cost differently and must answer alike, and that is what
 `overlay_test`'s `count-children-answers-the-same-on-both-roads-through-the-merge` holds:
@@ -189,10 +189,10 @@ deliberately, because that is what the caller asked for.
   now also holds) rather than served over it, and the refused mount releases the fork's
   directory lock. A fork that has written nothing mounts.
   A base rebuilt in another order grows nothing, so before the fork writes a tombstone,
-  an override or a released mark at a base handle it **pins** the base record there — a
-  content digest in the bookkeeping — and a mount over a base holding another record at a
-  pinned handle is refused the same way, naming it. A write at a handle the fork minted
-  pins nothing. A fork whose bookkeeping holds no watermark, mounted before it was
+  an override or a released mark at a base handle it **records the base digest** there —
+  the content digest of the base record, in the bookkeeping — and a mount over a base
+  holding another record at a digested handle is refused the same way, naming it. A write
+  at a handle the fork minted records no digest. A fork whose bookkeeping holds no watermark, mounted before it was
   recorded, is checked once by content instead: each of its own records at a handle the
   base holds must match the base's record except in its strength, as an override does.
   What none of this sees is a fork justification or except naming a base handle the fork
@@ -209,7 +209,7 @@ deliberately, because that is what the caller asked for.
 - **Durable bookkeeping.** The tombstone sets, the released marks and the cleared flag
   live in a small `KvBackend` beside the overlay, mirrored in atoms for the read path.
   Every mutation writes through and a mount rebuilds the atoms from it, so remounting a
-  durable fork over the same base serves the merged view it was left in. An in-RAM fork
+  durable fork over the same base serves the merged contents it was left in. An in-RAM fork
   gets an in-RAM one and pays nothing for the machinery. That one is keyed on the fork's
   `:space` and lives as long as the process, so a fork cleared and then reopened on the
   same `:space` still hides its base, as a cleared durable fork does after a remount.
@@ -227,11 +227,11 @@ deliberately, because that is what the caller asked for.
 - **The optional capabilities cross the protocol.** A base may carry `Tallying` and
   `Prefetching` ([storage.md](storage.md)), and both are answered *through* the fork
   rather than lost at it. The three samplers ask each half for one handle instead of
-  building the merged roster, falling back to the roster only when the handle sampled is
+  building the merged handle set, falling back to that set only when the handle sampled is
   one this fork tombstoned or released — so `nil` still means *empty*. The two tallies are
   the merged count and nothing cheaper, since `|base| + |own \ base| − |tombstoned|` needs
   both sets. The prefetch hint is forwarded to both halves; a fork's own records never
-  prefetch, so it is the base's that matters — a fork `recover`s over the merged view, and
+  prefetch, so it is the base's that matters — a fork `recover`s over the merged contents, and
   a base whose fetch is a round trip is exactly what the hint is for.
 
 **Counts need no delta bookkeeping.** A `RecordStore` exposes handle *sets*, not

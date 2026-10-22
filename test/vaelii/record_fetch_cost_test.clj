@@ -4,7 +4,7 @@
   "What an operation costs the **record store**, as counted fetches — the other index,
   and the one `assert_cost_test` cannot see.
 
-  That gate counts `IndexStore` reads and this one counts `RecordStore` fetches, and the
+  That counted test counts `IndexStore` reads and this one counts `RecordStore` fetches, and the
   two come apart exactly where it hurts.  `kb/find-sentex-handle` asked the trie for a
   sentence's handle with `p/lookup`, whose wildcard token fans over every stored sentex of
   the same *shape*, and then read the record of each to find the one that was actually
@@ -14,7 +14,7 @@
   those is a positional slot read, a positional frame read and a nippy thaw past the LRU —
   orders above what any index read costs — and nothing counted them.
 
-  `p/leaf-at` is the fix and the budgets below are the gate: a non-ground `handle-of`
+  `p/leaf-at` is the fix and the budgets below enforce it: a non-ground `handle-of`
   fetches **no** records, because the exact leaf of an α-renamed key holds only sentexes
   that share the sentence's shape and a KB of ground facts stores none there.  A change
   back to a matching read makes that number the size of the extent.
@@ -24,7 +24,8 @@
   `assert_cost_test`'s reasons, unchanged: the quantity is an integer the engine computes,
   so there is no warm-up, no tail mean and no tolerance, and it reads the same on a loaded
   box.  Exact equality rather than a ceiling, so a legitimate improvement **fails this
-  gate** and is re-pinned by the commit that earns it, carrying its own size as data.
+  test**, and the commit that earns it rewrites the expected number, carrying its own size
+  as data.
 
   ## What it does not catch
 
@@ -36,7 +37,7 @@
     reaching into its state map is not either — a tally that counted both would be a
     reading of which backend is running rather than of what the engine asked for.
   - **A configuration other than the shipped one**, and a backend other than `:memory`.
-    Both are pinned below for `assert_cost_test`'s reasons."
+    Both are fixed below for `assert_cost_test`'s reasons."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
@@ -55,7 +56,7 @@
   100)
 
 (def ^:private fetch-space
-  "The KB every workload runs on: in-RAM, its own space, the reference TMS — pinned for
+  "The KB every workload runs on: in-RAM, its own space, the reference TMS — fixed for
   `assert_cost_test`'s reasons.  The **backend**, because a budget is a claim about one
   store and the durable one answers a fetch from an LRU whose contents depend on what ran
   before it; the **TMS**, because `VAELII_TEST_TMS=dense` walks a different support graph
@@ -132,7 +133,7 @@
 ;; Measured, not designed, at `n` = 100 — what the engine does today, written down so the
 ;; next change to any of these numbers is visible.  A failure prints the delta per kind.
 ;;
-;; A kind is **absent rather than pinned at 0**, and that is the stronger claim: a kind a
+;; A kind is **absent rather than held at 0**, and that is the stronger claim: a kind a
 ;; workload never fetches is a key the tally never emits, so one fetch of it fails the
 ;; budget.  The two `handle-of` budgets are empty maps for exactly that reason, and they
 ;; are the point of the file.
@@ -171,7 +172,7 @@
 
 (defn- measure
   "Run one workload under the instrument and return its fetch tally.  The KB is built
-  inside the pinned configuration too: a corpus laid down under one reader and priced
+  inside the fixed configuration too: a corpus laid down under one reader and priced
   under another would be a workload nobody runs."
   [build]
   (tu/with-shipped-config
@@ -198,7 +199,7 @@
       (let [got (measure build)]
         (is (= fetches got)
             (format (str "%s: the record-fetch budget moved.\n%s\n"
-                         "  If this change is intended, re-pin the number — the diff is "
+                         "  If this change is intended, update the expected number — the diff is "
                          "the change's own record-store cost.\n"
                          "  If it is not, an operation started paging records the index "
                          "was already answering for, which no `:reads` budget can see.")
@@ -260,13 +261,13 @@
                "it — a record is paged before its belief is asked again ("
                (:fetches narrow) " -> " (:fetches wide) ")")))))
 
-(deftest a-genl-edge-pages-the-mint-roster-not-the-extent-below-it
+(deftest a-genl-edge-pages-the-mint-family-not-the-extent-below-it
   ;; A `genl` edge asks whether it made a minted membership redundant, and a member below
   ;; its sub-type can only be asked about a mint it holds.  It paged every membership below
-  ;; the sub-type to learn its term and then looked the term up in the roster — during an
+  ;; the sub-type to learn its term and then looked the term up in the mint family — during an
   ;; ontology install into a large store, half of a settle.  The edge's other reads page the
   ;; members too, for reasons of their own, so what is priced is the difference pruning
-  ;; makes: with one mint in the roster, it must not grow with the members.
+  ;; makes: with one mint in the family, it must not grow with the members.
   (tu/with-shipped-config
     (let [probe (fn [population prune?]
                   (binding [checks/*assertive-arg-types?* true
@@ -286,7 +287,7 @@
           pruning (fn [population]
                     (- (long (:fetches (probe population true)))
                        (long (:fetches (probe population false)))))]
-      (is (:minted (probe 20 true)) "the declaration minted its membership, so the roster holds one")
+      (is (:minted (probe 20 true)) "the declaration minted its membership, so the mint family holds one")
       (is (= (pruning 20) (pruning 200))
           (str "what pruning pages on a genl edge must be flat in the members below it that "
                "hold no mint (" (pruning 20) " -> " (pruning 200) ")")))))
@@ -357,7 +358,7 @@
                     (- (long (:cost (probe depth edges true)))
                        (long (:cost (probe depth edges false)))))
           per-30  (fn [depth] (- (pruning depth 40) (pruning depth 10)))]
-      (is (:minted (probe 5 10 true)) "the declaration minted its membership, so the roster holds one")
+      (is (:minted (probe 5 10 true)) "the declaration minted its membership, so the mint family holds one")
       (is (= (per-30 5) (per-30 20))
           (str "what thirty more edges add to pruning in a recover must not grow with the "
                "subtree under them (" (per-30 5) " -> " (per-30 20) ")")))))

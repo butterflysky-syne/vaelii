@@ -32,15 +32,15 @@
             [vaelii.impl.types.reasoning :as reasoning]
             [vaelii.test-util :as tu]))
 
-;; The planner is pinned ON here whatever the run installed.  `VAELII_PLAN=0` runs the
+;; The planner is forced ON here whatever the run installed.  `VAELII_PLAN=0` runs the
 ;; whole suite with conjunctions in the order they were written — the sweep that holds
 ;; the claim this file's `planning-changes-no-answers-…` makes on twelve trials against
 ;; every conjunction the suite runs — and under it the questions below have no subject:
 ;; "the selective literal goes first" is a claim about a planner that is not planning.
 ;; So this file answers for the shipped planner under every configuration, which keeps
-;; its assertion count identical across all of them (`tu/pinning`), and the sweep's work
+;; its assertion count identical across all of them (`tu/shipped-fixture`), and the sweep's work
 ;; is done by the other 305 namespaces.
-(use-fixtures :each (tu/neutral-fresh tu/fresh) (tu/pinning [#'plan/*enabled*]))
+(use-fixtures :each (tu/neutral-fresh tu/fresh) (tu/shipped-fixture [#'plan/*enabled*]))
 
 (defn- permutations [coll]
   (if (<= (count coll) 1)
@@ -67,7 +67,7 @@
       (is (= 1 (plan/est-matches kb (list parentOf Tom Bob) #{}))))))
 
 (tu/deftest-kb a-bound-token-is-not-charged-an-average
-  ;; The one-sidedness `:prune?` rests on, pinned as the case that breaks it.  A bound
+  ;; The one-sidedness `:prune?` rests on, asserted as the case that breaks it.  A bound
   ;; variable takes ONE value at run time, and the value it takes may be the one the
   ;; whole prefix sits under — so charging it `count-at / count-children` is an
   ;; expectation, and an expectation of 1 is not a proof of anything.  Three facts over
@@ -111,7 +111,7 @@
 (tu/deftest-kb an-open-functor-is-costed-by-the-argument-root
   ;; `(?type Muffet)` names no predicate, so neither functor-keyed model applies: there
   ;; is no subtype closure to fan and no predicate extent to count.  The matcher answers it
-  ;; from the position-1 argument roots (a slot-roster union), so the estimate has to be
+  ;; from the position-1 argument roots (a slot-set union), so the estimate has to be
   ;; that same count — costing it by the trie (which stops dead at the open first token)
   ;; charges the whole KB.
   (tu/with-terms [animal dog Muffet Other CxPlan]
@@ -134,7 +134,7 @@
 
 (tu/deftest-kb a-dotted-rest-pattern-is-not-ranked-free
   ;; `(rel . ?args)` splices a whole argument list, so no argument sits at a position
-  ;; the trie key or an argument root pins, and the marker itself is not a term —
+  ;; the trie key or an argument root binds, and the marker itself is not a term —
   ;; both models answer 0 for it, which would rank the literal cheapest and hoist a
   ;; whole extent to the front of the conjunction.
   (tu/with-terms [rel dog Tom Bob Rex CxPlan]
@@ -230,7 +230,7 @@
         (is (= 12 (plan/est-matches kb (list linksTo '?x '?x) #{})))))))
 
 (tu/deftest-kb est-rows-reports-rows-and-no-columns-for-the-shapes-the-trie-cannot-walk
-  ;; A negative literal keys under [:false …], a dotted rest pins no position, an open
+  ;; A negative literal keys under [:false …], a dotted rest binds no position, an open
   ;; functor names no predicate extent — so the walk that counts a column never starts.  Each still
   ;; needs a row count, and it comes from the bound; what must not happen is a column
   ;; being invented, because a fabricated count ranks as a reading in the next join and
@@ -371,7 +371,7 @@
   "The model's expected prefix size against the count the engine actually returns for
   that prefix, per join depth: `q = max(est/actual, actual/est)`.
 
-  This is the gate on the cost model itself, and it is measured *before* any claim
+  This is the regression test on the cost model itself, and it is measured *before* any claim
   about the plans the model produces — judging a cost model by the cost of its plans
   is two inferences downstream of the defect and reports \"the plan is bad\" without
   reporting that the estimator is why.  Flat in `k` means the estimates compose;
@@ -445,7 +445,7 @@
   ;; it divides its extent by the literal's own distinct count at that position.  It is
   ;; deliberately NOT `est-matches`' business — that one is a bound, and a bound that
   ;; narrowed on a binding would be an expectation wearing a proof's clothes
-  ;; (`a-bound-token-is-not-charged-an-average`).  So the two are pinned apart here:
+  ;; (`a-bound-token-is-not-charged-an-average`).  So the two are asserted apart here:
   ;; the join model narrows, the per-literal bound does not, and neither double-counts.
   (tu/with-terms [parentOf Tom Bob Ann Cid Dee CxPlan]
     (doseq [[p c] [[Tom Bob] [Tom Ann] [Bob Cid] [Ann Cid] [Cid Dee]]]
@@ -571,7 +571,7 @@
 (tu/deftest-kb at-two-literals-the-cheaper-one-leads-and-that-is-already-optimal
   ;; Two is the common width — a rule's antecedents — and the width at which costing
   ;; the plan and costing the next literal provably agree: both orders end on the same
-  ;; join, so the costs differ only by the leading literal's own extent.  Pinned
+  ;; join, so the costs differ only by the leading literal's own extent.  Asserted
   ;; because it is why the search is not run here, not merely why it need not be.
   (tu/with-terms [linkOne linkTwo linkThree loose Node CxPlan]
     (chain-kb! kb CxPlan [linkOne linkTwo linkThree loose Node] 6 3)
@@ -799,7 +799,7 @@
         (is (= [n w] (plan/order kb [n w] CxPlan {:est-override huge})))
         (is (= [n w] (plan/order kb [w n] CxPlan {:est-override huge}))))
       (testing "and `explain` reports the model that chose the order, not the one it replaced"
-        ;; the failure this pins: an order chosen under the override, reported with the
+        ;; the failure this asserts against: an order chosen under the override, reported with the
         ;; index's own numbers beside it — a plan whose stated reason contradicts it,
         ;; which is worse than no reason, since the number is what a reader debugs from
         (let [[a b :as steps] (plan/explain kb [w n] CxPlan {:est-override huge})]
@@ -1015,7 +1015,7 @@
                    (list ancestorOf '?x '?z) CxPlan {:direction :forward})
     (doseq [[p c] [[Aa Bb] [Bb Cc] [Cc Dd]]]
       (v/assert kb (list parentOf p c) CxPlan))
-    (testing "the literal sharing the consequent's functor is pinned last"
+    (testing "the literal sharing the consequent's functor is placed last"
       (let [ordered (plan/order kb [(list ancestorOf '?y '?z) (list parentOf '?x '?y)]
                                 CxPlan {:consequent-pred ancestorOf})]
         (is (= parentOf   (first (first ordered))))
@@ -1062,7 +1062,7 @@
 (tu/deftest-kb an-evaluable-antecedent-still-computes-under-planning
   ;; An evaluable is reachable through the *prover* stack, so the conjunction that
   ;; exercises it is a rule's antecedents (planned by `resolution/planned-antecedents`)
-  ;; rather than a `prove` goal vector — see the limitation pinned below.
+  ;; rather than a `prove` goal vector — see the limitation asserted below.
   (tu/with-terms [age young Tom Bob Cid CxPlan]
     (v/assert kb (list age Tom 30) CxPlan)
     (v/assert kb (list age Bob 40) CxPlan)

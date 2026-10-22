@@ -166,7 +166,7 @@
 (tu/deftest-kb a-disjoint-antecedent-matches-every-separation-a-query-answers
   (doseq [[label separate]
           {"a partition"                    (fn [w a b _] [(list 'partition w a b)])
-           "a separating roster"            (fn [w a b _] [(list 'separating w a b)])
+           "a separating declaration"       (fn [w a b _] [(list 'separating w a b)])
            "a disjoint_metatype"            (fn [_ a b m] [(list 'disjoint_metatype m)
                                                            (list m a) (list m b)])
            "a sibling_disjoint parent"      (fn [w a b _] [(list 'sibling_disjoint w)
@@ -206,23 +206,23 @@
            (set (map '?y (v/query kb (list qualifies qa '?y) U)))
            #{qb pug}))))
 
-(tu/deftest-kb a-separation-firing-rests-on-the-roster-and-the-edges-it-climbed
+(tu/deftest-kb a-separation-firing-rests-on-the-declaration-and-the-edges-it-climbed
   (tu/with-terms [pairOf qualifies whole qa qb pug]
-    (let [roster (v/assert kb (list 'partition whole qa qb) U)
+    (let [decl   (v/assert kb (list 'partition whole qa qb) U)
           edge   (v/assert kb (list 'genl pug qa) U)]
       (v/assert kb (separated-rule pairOf qualifies) U)
       (v/assert kb (list pairOf pug qb) U)
       (is (holds? kb (list qualifies pug qb) U))
       (let [named (set (tree-seq coll? seq (v/why kb (v/handle-of kb (list qualifies pug qb) U))))]
-        (is (contains? named roster))
+        (is (contains? named decl))
         (is (contains? named edge)))
       (testing "the edge going takes the conclusion"
         (v/retract! kb edge)
         (is (nil? (v/handle-of kb (list qualifies pug qb) U))))
-      (testing "and so does the roster going"
+      (testing "and so does the declaration going"
         (v/assert kb (list pairOf qa qb) U)
         (is (holds? kb (list qualifies qa qb) U))
-        (v/retract! kb roster)
+        (v/retract! kb decl)
         (is (not (holds? kb (list qualifies qa qb) U)))))))
 
 (tu/deftest-kb an-exception-withdraws-a-separation-firing-and-its-retraction-restores-it
@@ -285,16 +285,16 @@
         (is (not (holds? kb (list qualifies qa qb) U)))))))
 
 (tu/deftest-kb the-separation-join-reads-the-same-whichever-ingredient-arrived-last
-  (let [orders {"rule, pair, edge, roster" [:rule :pair :edge :roster]
-                "roster, rule, pair, edge" [:roster :rule :pair :edge]
-                "roster, edge, pair, rule" [:roster :edge :pair :rule]
-                "rule, roster, edge, pair" [:rule :roster :edge :pair]}]
+  (let [orders {"rule, pair, edge, cover" [:rule :pair :edge :cover]
+                "cover, rule, pair, edge" [:cover :rule :pair :edge]
+                "cover, edge, pair, rule" [:cover :edge :pair :rule]
+                "rule, cover, edge, pair" [:rule :cover :edge :pair]}]
     (doseq [[label order] orders]
       (testing label
         (tu/with-terms [pairOf qualifies whole qa qb pug]
           (let [step {:rule   #(v/assert kb (separated-rule pairOf qualifies) U)
                       :pair   #(v/assert kb (list pairOf pug qb) U)
                       :edge   #(v/assert kb (list 'genl pug qa) U)
-                      :roster #(v/assert kb (list 'partition whole qa qb) U)}]
+                      :cover #(v/assert kb (list 'partition whole qa qb) U)}]
             (doseq [k order] ((step k)))
             (is (holds? kb (list qualifies pug qb) U))))))))

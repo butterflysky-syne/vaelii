@@ -4,7 +4,7 @@ name: test
 # (docs/storage.md) and there are seven legal record×index pairs plus the
 # overlay decorator, but a pull request does not need all eight: the axis a
 # change is most likely to break and least likely to notice is DURABILITY, so
-# the gate runs the two ends of it — everything in RAM, and everything on disk —
+# the required checks run the two ends of it — everything in RAM, and everything on disk —
 # and deep.yml carries the full matrix. `scripts/test-backends.sh` is the
 # same eight runs locally, and anything touching storage, the index, records or
 # recovery owes it one before it lands.
@@ -62,7 +62,7 @@ jobs:
   # The newest cached weights per leg, looked up and not downloaded. The key goes
   # to every shard of the leg, which restores exactly that entry. A lookup that
   # fails leaves the key empty and the shards on the committed files, so the cache
-  # service being down never stops the gate.
+  # service being down never stops the required checks.
   weights-plan:
     name: weights-plan
     if: github.event_name != 'schedule' || github.repository_owner == 'vaelii'
@@ -89,17 +89,17 @@ jobs:
           lookup-only: true
 
   # The in-RAM end of the durability axis, split across eight runner VMs, each
-  # reporting under its own name and all eight gated by the `memory` job below.
+  # reporting under its own name and all eight collected by the `memory` job below.
   #
   # `memory` and `disk` are REQUIRED checks on `develop`, and what makes that
   # safe is that this workflow carries no path filter: it runs on every pull
-  # request, so both gates always report. DO NOT ADD A `paths-ignore` here. A
+  # request, so both required checks always report. DO NOT ADD A `paths-ignore` here. A
   # workflow skipped by a path filter never reports at all — not as passed,
   # not as skipped — so a required check that names it leaves every pull
   # request the filter matched unmergeable forever. The two are one decision.
   #
-  # A doc-only change runs the suite and passes it, and that is the price of
-  # the gate being a gate rather than a reading. `docs/**` is not inert with
+  # A doc-only change runs the suite and passes it, because a required check
+  # that skips a change reports nothing about it. `docs/**` is not inert with
   # respect to the suite anyway: config_surface_test reads docs/operations.md
   # and holds its configuration table to every switch the tree reads, and
   # scripts/check-doc-drift.py stands aside on that one file because the test
@@ -108,8 +108,8 @@ jobs:
     name: memory-shard-${{ matrix.shard }}
     needs: weights-plan
     # A scheduled run does work only where Actions minutes are free. Push and
-    # pull_request are untouched: this job is the gate, and a gate that skips is
-    # not one. deep.yml carries the long form of the argument.
+    # pull_request are untouched: this job is a required check, and a required
+    # check that skips reports nothing. deep.yml carries the long form of the argument.
     if: github.event_name != 'schedule' || github.repository_owner == 'vaelii'
     runs-on: ubuntu-latest
     # A balanced shard is predicted at about 6m: 298s of namespace time in run
@@ -134,7 +134,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 25
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           distribution: temurin
           java-version: '25'
@@ -234,7 +234,7 @@ jobs:
           retention-days: 1
 
   # Branch protection on `develop` requires the bare `memory` context, so the
-  # shard legs report through this gate rather than under their own names.
+  # shard legs report through this required check rather than under their own names.
   # Branch protection stores the JOB name, so the context is the bare `memory` —
   # the `test / memory` spelling is the pull-request UI's, and typing that into a
   # required-checks list names a check that never reports. Renaming this job
@@ -271,7 +271,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 25
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           distribution: temurin
           java-version: '25'
@@ -341,7 +341,7 @@ jobs:
           retention-days: 1
 
   # Branch protection on `develop` requires the bare `disk` context, so the four
-  # shard legs report through this gate rather than under their own names —
+  # shard legs report through this required check rather than under their own names —
   # renaming it strands every pull request (the naming note on `memory` says
   # why). `always()` because a skipped job never reports, which a required
   # check reads as missing, not as passed.
@@ -374,7 +374,7 @@ jobs:
 
       - name: Download the memory timings
         if: needs.memory-shard.result == 'success'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: timings-memory-*
           path: target/ci/timings-memory
@@ -401,7 +401,7 @@ jobs:
 
       - name: Download the disk timings
         if: needs.disk-shard.result == 'success'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: timings-disk-*
           path: target/ci/timings-disk
@@ -448,26 +448,26 @@ jobs:
   # clingo` on the strength of it sounding plausible.
   #
   # The consequence for this job: it covers the ASPIF path, the subprocess
-  # protocol and every solver-gated test, and it does **not** cover the JNA
+  # protocol and every solver-dependent test, and it does **not** cover the JNA
   # binding. That gap is real and is named in BEFORE_RELEASE_TODO §D.
   #
-  # `VAELII_ASP_SOLVER=clasp` pins the routing. In AUTO mode the engine picks
-  # clingo for small programs and clasp for large ones, so an unpinned leg would
+  # `VAELII_ASP_SOLVER=clasp` fixes the routing. In AUTO mode the engine picks
+  # clingo for small programs and clasp for large ones, so a leg with no fixed solver would
   # silently change what it tests the day a runner image ships libclingo.
   #
-  # The solver-gated namespaces, not the whole `:default` selector. Ten namespaces
-  # gate on the solver today — the four `asp_*`, plus labeling, solve-context,
+  # The solver-dependent namespaces, not the whole `:default` selector. Ten namespaces
+  # are conditional on the solver today — the four `asp_*`, plus labeling, solve-context,
   # koinii-schedule and the constraint / sudoku / tsp solve tests — and the other
   # 314 answer the same on this leg as on `memory`, which already ran them.
   #
   # A hand-written list goes stale, and this one had: the comment said "eight" while
   # the tree held ten. So the list is DERIVED — `scripts/asp-namespaces.sh`
-  # greps `test/` for the gate on every run, so a namespace that starts reading
-  # `solver/available?` is covered the day it lands. `vaelii.asp-roster-test` pins the
-  # same scan against a committed roster, so the set changing is a red suite and a
+  # greps `test/` for the solver availability call on every run, so a namespace that starts reading
+  # `solver/available?` is covered the day it lands. `vaelii.asp-namespaces-test` checks the
+  # same scan against a committed list, so the set changing is a red suite and a
   # diff a reviewer sees rather than a silent widening of what this job runs.
   #
-  # Measured: the gated bodies are 298 assertions of the suite's 156,412, and the ten
+  # Measured: the solver-dependent bodies are 298 assertions of the suite's 156,412, and the ten
   # namespaces run in 11s locally against 27.4 minutes for the whole suite — which is
   # what put this job over its 30-minute limit on 2026-09-04 (runs 33926520569,
   # 33930657662).
@@ -483,7 +483,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 25
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           distribution: temurin
           java-version: '25'
@@ -525,13 +525,13 @@ jobs:
           lein run -m clojure.main -e "(require '[vaelii.impl.asp.clasp :as clasp]) (when-not (clasp/available?) (System/exit 1))"
           echo "clasp/available? is true"
 
-      # The roster test first and on its own: it is what says the list below is the
-      # whole of what gates on the solver, so a scan that has stopped matching must
+      # The namespace-list test first and on its own: it is what says the list below is the
+      # whole of what is conditional on the solver, so a scan that has stopped matching must
       # fail here rather than quietly hand `lein test` a short list.
-      - name: The solver-gated roster is current
-        run: lein test vaelii.asp-roster-test
+      - name: The solver namespace list is current
+        run: lein test vaelii.asp-namespaces-test
 
-      - name: Run the solver-gated namespaces (with clasp)
+      - name: Run the solver-dependent namespaces (with clasp)
         id: suite
         env:
           VAELII_ASP_SOLVER: clasp
@@ -539,7 +539,7 @@ jobs:
           set -o pipefail
           mkdir -p target/ci
           namespaces="$(./scripts/asp-namespaces.sh | tr '\n' ' ')"
-          echo "solver-gated namespaces: $namespaces"
+          echo "solver-dependent namespaces: $namespaces"
           [ -n "$namespaces" ]
           lein test $namespaces 2>&1 | tee target/ci/test-asp.log
 

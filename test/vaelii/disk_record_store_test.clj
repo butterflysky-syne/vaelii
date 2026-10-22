@@ -13,9 +13,9 @@
             [vaelii.impl.disk.files :as f]
             [vaelii.impl.disk.record-store :as drs]
             [vaelii.impl.disk.tokens :as dtok]
+            [vaelii.impl.handle-set :as hs]
             [vaelii.impl.memory :as mem]
             [vaelii.impl.protocols :as p]
-            [vaelii.impl.roster :as roster]
             [vaelii.impl.types.sentex :as sentex-types])
   (:import [java.io RandomAccessFile]
            [java.nio.file Files]
@@ -155,7 +155,7 @@
 ;; The flags word (premise bit + strength rank) is a cache over the durable record and is
 ;; not crash-atomic: a 24-byte slot straddles a page, so a torn flags page across a crash
 ;; can persist a handle's new frame while leaving the old flags.  A clean open trusts the
-;; slot; a **dirty** open must reconcile it against the records.  These pin that it does,
+;; slot; a **dirty** open must reconcile it against the records.  These assert that it does,
 ;; on both a stale rank and a stale bit, tokenized and not — and that a clean open does not.
 
 (defn- corrupt-slot-flags!
@@ -571,8 +571,8 @@
 
 ;; ---- the dead ratio ------------------------------------------------------
 ;; The durability daemon probes `dead-ratio` on its fsync tick.  Each kind answers off a
-;; `live-bytes` counter its writes maintain, so these pin the counter to the walk of the
-;; idx it stands in for, and pin that a probe makes no such walk.
+;; `live-bytes` counter its writes maintain, so these check the counter against the walk of
+;; the idx it stands in for, and assert that a probe makes no such walk.
 
 (defn- scanned-live-bytes
   "The live frame bytes of kind `k`, summed over a walk of its idx."
@@ -764,7 +764,7 @@
               (is (= '(p 99) (:sentence (p/get-sentex s @added))) "the concurrent store survived")
               (is (= :monotonic (:strength (p/get-sentex s 3))) "the concurrent re-store applied")
               (is (= #{3} (p/premise-ids s))))
-            (testing "the in-RAM view reopens byte-identical"
+            (testing "the store's in-RAM contents reopen byte-identical"
               (let [survivors (p/sentex-ids s)
                     content   (into {} (map (fn [id] [id (p/get-sentex s id)])) survivors)]
                 (drs/close! s)
@@ -1067,7 +1067,7 @@
               (is (some? (cached s :sentexes (peek ids))) "the newest write is held")
               (is (nil? (cached s :sentexes (first ids))) "the oldest is not")
               ;; reading an evicted id re-admits it, which is what makes the order LRU
-              ;; rather than a fixed window over the writes
+              ;; rather than first-in first-out over the writes
               (p/get-sentex s (first ids))
               (is (some? (cached s :sentexes (first ids))) "a read promotes what it paged in")
               (is (= cap (.size ^java.util.Map (:cache (:sentexes (:kinds s)))))
@@ -1082,7 +1082,7 @@
   ;; premise on every recover — answers off the 24 bytes the open walk already reads,
   ;; without paging the record for one keyword.  Proven white-box: with the hot-record
   ;; cache cold, a strength read must leave it cold, because a record fetch would populate
-  ;; it (`hot-cache-stays-consistent-with-the-store` pins that a `get-sentex` caches).
+  ;; it (`hot-cache-stays-consistent-with-the-store` asserts that a `get-sentex` caches).
   (with-tmp
     (fn [dir]
       (let [s (drs/open-record-store dir)
@@ -1436,9 +1436,9 @@
             (is (= '(p 1) (:sentence (p/get-sentex s2 a))))
             (finally (drs/close! s2))))))))
 
-(deftest the-live-roster-answers-beside-a-writer
+(deftest the-live-handle-set-answers-beside-a-writer
   ;; The live-handle set is a `Roaring64Bitmap` mutated in place
-  ;; (`vaelii.impl.roster`'s `LiveRoster`), which is what takes it from 45 bytes a handle
+  ;; (`vaelii.impl.handle-set`'s `LiveHandleSet`), which is what takes it from 45 bytes a handle
   ;; to about one bit.  What that costs is a monitor, and this is the claim the monitor
   ;; has to hold: the store supports readers beside its one writer
   ;; (`docs/storage.md`, the single-writer contract), and a bitmap read beside a
@@ -1493,8 +1493,8 @@
                 "and so is a non-handle, which `contains?` on the set it replaces answered"))
           (finally (drs/close! s)))))))
 
-(deftest the-premise-roster-answers-beside-a-writer
-  ;; The premise set is a `LiveRoster` under the sentexes kind lock, the same
+(deftest the-premise-set-answers-beside-a-writer
+  ;; The premise set is a `LiveHandleSet` under the sentexes kind lock, the same
   ;; representation as the live-handle set above.  Its two reads, an enumeration and a
   ;; first premise, must hold beside a writer that puts and marks, for the same reason.
   (with-tmp
@@ -1539,10 +1539,10 @@
             (try (is (= (set (range 3 (+ n 2))) (p/premise-ids s2)))
                  (finally (drs/close! s2)))))))))
 
-(deftest the-enumerations-answer-an-immutable-roster
+(deftest the-enumerations-answer-an-immutable-handle-set
   ;; The three enumerations answer the snapshot taken under the kind lock, a
-  ;; `HandleRoster`, rather than a `PersistentHashSet<Long>` built from it.  A later write
-  ;; does not reach a roster already handed out, and the roster compares equal to the
+  ;; `HandleSet`, rather than a `PersistentHashSet<Long>` built from it.  A later write
+  ;; does not reach a handle set already handed out, and the handle set compares equal to the
   ;; Clojure set with the same members from either side of `=`.
   (with-tmp
     (fn [dir]
@@ -1554,13 +1554,13 @@
                 sxs (p/sentex-ids s)
                 js  (p/justification-ids s)
                 ps  (p/premise-ids s)]
-            (is (every? roster/roster? [sxs js ps]) "each enumeration is a roster")
+            (is (every? hs/handle-set? [sxs js ps]) "each enumeration is a handle set")
             (is (= #{a b} sxs))
-            (is (= sxs #{a b}) "and equal from the roster's side too")
+            (is (= sxs #{a b}) "and equal from the handle set's side too")
             (is (= #{j} js))
             (is (= #{a} ps))
             (is (contains? sxs (int a)) "a handle boxed as an Integer is the same member")
-            (testing "a write after the call leaves the roster already handed out as it was"
+            (testing "a write after the call leaves the handle set already handed out as it was"
               (let [c (p/put-sentex s {:sentence '(p 3) :context 'C :strength :default})]
                 (p/delete-sentex! s a)
                 (is (= #{a b} sxs))

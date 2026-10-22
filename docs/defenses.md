@@ -80,7 +80,7 @@ everything it licensed — a *validity* role, not a ground. A rule takes `:defau
 its own assertion says otherwise, exactly as a fact does, so capping on it too would drop
 every datum an ordinary rule licensed to `:default`. This is why a rule's own class
 (`:strength`, what `defeat-class` answers for its handle) and its defeasibility
-(`:defeasible`, which `set/defaultRule` spells and `chain/rule-view-of` reads to decide
+(`:defeasible`, which `set/defaultRule` spells and `chain/rule-fields-of` reads to decide
 what its firings confer) are two slots: only the second moves belief, and nothing in the
 engine defeats a rule, so the first takes part in no contest.
 
@@ -153,9 +153,9 @@ grew with the KB.
 So the guarantee is carried in three pieces, and they are secured three different ways.
 **Equivalence** — a region relabel reaches the same labels a global one would — is
 semantic, and `jtms_dense_oracle_test` holds it by comparing the whole network after every
-step. **Containment** — the flips sit inside the published window and the window inside
+step. **Containment** — the flips sit inside the published set and the touched set inside
 the region — is what says a small region was *asked for*; the oracle checks it on both
-networks after every step, and `jtms_locality_test` measures the published window across
+networks after every step, and `jtms_locality_test` measures the published set across
 graph sizes on both, since a widened region answers identically and would pass a
 comparison of labels alone.
 
@@ -169,7 +169,7 @@ is where the bitmap-rebuild shape hides — it satisfies equivalence, satisfies 
 pays nothing per boundary node, and still grows with the KB. Nothing structural rules it
 out and no unit test reaches the scale that shows it, so it is held by `lein bench-jtms`
 and by review. Which is why it is written into the `Tms` docstring beside the three
-obligations that do have gates: an implementation that is never told about a claim cannot
+obligations that a test does enforce: an implementation that is never told about a claim cannot
 be held to it.
 
 ### Where the five properties stop
@@ -178,9 +178,9 @@ The README states five properties that hold everywhere. The places below are whe
 subsystem holds one of them short, each for a reason its own page states. A reader who
 holds a subsystem to the README checks it against this list first. A place that departs
 from a property and is not listed here is a defect, and so is a row whose reason is
-missing. The last column names the test that pins the departure, or `none`.
+missing. The last column names the test that asserts the departure, or `none`.
 
-| property | where | what stops, and why | pinned by |
+| property | where | what stops, and why | tested by |
 |---|---|---|---|
 | order | a capped read ([anytime.md](anytime.md#the-one-idea-bound-a-lazy-stream-keep-the-tail)) | A `:max-results` cap, or `take` over `ask` or `query`, keeps *k* answers in the order the index holds their handles. Sorting the matches by content first would realize the whole extent the cap bounds. | `order_independence_test/a-capped-answer-is-one-of-the-answers-whichever-fact-arrived-first` |
 | order | a merge sweep past `tax/*exposure-instance-budget*` ([taxonomy.md](taxonomy.md#what-a-declaration-reaches-back-over), [equality.md](equality.md#functional-infers-equality-instead-of-throwing)) | The sweep reads a prefix of its extent in posting order, so which instances a cut sweep examines depends on arrival. Content order would force the extent the budget bounds. Each cut files a `…-truncated` violation (`core/violations`, "Bounded"). | `order_independence_test/a-revived-genl-edge-merges-up-to-the-budget-and-names-the-cut` |
@@ -194,13 +194,13 @@ missing. The last column names the test that pins the departure, or `none`.
 | locality | a `conversionFactor` arriving ([quantity.md](quantity.md#what-a-comparison-rests-on)) | The datum re-joins every forward rule with a comparison antecedent, since nothing connects the unit table to a comparison by predicate. | `computed_support_test/the-unit-table-may-arrive-last` |
 | locality | a metric bound's support ([stp.md](stp.md#what-a-derived-bound-rests-on)) | Past the walk bound, a bound rests on every supporter in its network, a sound superset. The walk is bounded because a successor chain can go round a zero-weight cycle without end. | `none` |
 | locality | the derived-value caches ([caches.md](caches.md#the-bound-cleared-wholesale-not-evicted)) | A cache clears wholesale at its bound or on any state change, never by entry. | `literal_cache_engine_test/an-unrelated-assertion-retires-every-entry` |
-| scoping | the checks a shared structure needs ([contexts.md](contexts.md#where-a-relation-property-is-read-from), [taxonomy.md](taxonomy.md)) | The `genl` cycle check, the `genlCx` closure and argument sorting read every context, because each decides a structure every reader shares: a type cycle, the visibility relation, and a sentex's one storage key. The stratification graph fans over the global spec closure, since a narrowed fan would admit an unstratified rule set. Lint E17 holds the roster of global closure callers. | `context_scoping_test/the-genl-cycle-check-is-global-on-purpose`, `/the-genlCx-closure-is-global-on-purpose`, `/argument-sorting-is-a-storage-key-and-so-is-global` |
+| scoping | the checks a shared structure needs ([contexts.md](contexts.md#where-a-relation-property-is-read-from), [taxonomy.md](taxonomy.md)) | The `genl` cycle check, the `genlCx` closure and argument sorting read every context, because each decides a structure every reader shares: a type cycle, the visibility relation, and a sentex's one storage key. The stratification graph fans over the global spec closure, since a narrowed fan would admit an unstratified rule set. Lint E17 holds the allowlist of global closure callers. | `context_scoping_test/the-genl-cycle-check-is-global-on-purpose`, `/the-genlCx-closure-is-global-on-purpose`, `/argument-sorting-is-a-storage-key-and-so-is-global` |
 | scoping | a relation property ([contexts.md](contexts.md#where-a-relation-property-is-read-from)) | A `decontextualized_predicate` declaration is lifted into `CxUniverse`, so every context reads it. A relation's algebra is a claim about the relation, not about a subject matter. | `context_scoping_test/predicate-metadata-is-a-licence-the-whole-kb-holds` |
 | scoping | a NAT's mint ([nat.md](nat.md#typing-an-application-that-is-never-minted)) | The mint reads its result declarations globally and materializes into `CxUniverse`, because what a term denotes does not vary by reader. The check on an application stays scoped. | `arggenl_test/a-result-declaration-a-context-cannot-see-does-not-refuse-it` |
 | scoping | the browser's term graph ([web.md](web.md#a-terms-shape-drawn)) | One edge in two contexts is drawn once, and the graph labels no edge with a context. | `none` |
 | belief | levels 0 and 1 ([levels.md](levels.md#operators)) | The two levels answer about storage, so a defeated sentex keeps its handle there. The floor defaults to level 2. | `property_cells_test/levels-read-no-defeated-fact` |
 | belief | `CxEverything` ([contexts.md](contexts.md#cxeverything-syntactic-and-a-named-opt-out-of-belief-filtering)) | The named opt-out reads the store with no belief and no context filter. The as-stored reads (`reads/as-stored-…`, lint E16) and a profile's counts read storage the same way, under names that say so. | `query_context_test/cxeverything-sees-a-defeated-default` |
-| state | the refusal record ([exceptions.md](exceptions.md), [nmtms.md](nmtms.md#3-separated-state)) | Refused rule firings and the `:constraint`, `:lift` and `:mint` entries are sentences no store holds, so `recover` re-derives them, and a `:constraint` entry of a rule no trigger watches is not re-derived. | `lein lint`'s `derived` check, `HOLDS_CONTENT` |
+| state | the refusal record ([exceptions.md](exceptions.md), [nmtms.md](nmtms.md#3-separated-state)) | Firings a closed extent or a separation refuses, and the `:constraint`, `:lift` and `:mint` entries, are sentences no store holds, so `recover` re-derives them, and a `:constraint` entry of a rule no trigger watches is not re-derived. | `lein lint`'s `derived` check, `HOLDS_CONTENT` |
 | state | the rete matcher's alpha memories ([nmtms.md](nmtms.md#3-separated-state)) | Under `VAELII_RETE=1` or `rete/track!`, the matcher keeps stored facts by functor and argument in its own index beside the IndexStore. | `lein lint`'s `derived` check, `OUTSIDE_INDEX` |
 | belief | a reader thread beside the writer ([storage.md](storage.md#the-single-writer-contract)) | A read takes the postings and then belief per candidate, so a match stored or withdrawn between the two reads is missing. Beside a settle, belief is held but the taxonomy closures are read as the settle moves them. One state per read needs a realized answer and a retry, or a versioned store. | `none` |
 
@@ -213,12 +213,12 @@ derives nothing ([quantity.md](quantity.md#the-table)).
 The network sits behind a `Tms` protocol with a `:reference` and a `:dense` implementation
 rather than one adaptable structure, and two properties are why — both easy to assume and
 both wrong. (What a *third* one would owe is not restated per implementation: the `Tms`
-docstring lists the four obligations with the gate that holds each.)
+docstring lists the four obligations with the test that enforces each.)
 
 A dense network cannot simply replace the reference. `RoaringBitmap` is mutable, and
-`jtms_atomicity_test` pins that a mutation applies all-or-nothing; a mutable bitmap inside
+`jtms_atomicity_test` asserts that a mutation applies all-or-nothing; a mutable bitmap inside
 a persistent value would break `swap!`'s retry and let a reader observe a half-applied
-relabel. So the dense one serializes its writers on the exclusive stamp of a `StampedLock`
+relabel. So the dense one serializes its writers on the write lock of a `StampedLock`
 and validates its readers against them (below), while the reference one gets its consistent
 snapshot from a single deref.
 
@@ -293,7 +293,7 @@ carries a fourth scan that is about cost rather than order: `sort-by` runs its k
 inside the comparator, so a key that reads the KB is a taxonomy closure re-read
 ~2·n·log₂n times where `nm/sort-by-content-key` reads it n times.
 
-### The touched window is a superset, not the flip set
+### The touched set is a superset, not the flip set
 
 `settle` publishes the region it moved so three readers — a consequence preview, a
 consequence report, a change feed ([preview.md](preview.md), [feed.md](feed.md)) — get one
@@ -301,7 +301,7 @@ answer instead of each diffing the believed set at O(KB) per write. A preview bu
 that diff measured 4.4 ms / 41.6 ms / 401 ms at 2.7k / 23k / 224k stored sentexes, against
 0.72 / 0.65 / 0.63 ms over the region (corpora from `vaelii.host.io.generate`, 40
 predicates and 200 types, one rule, a one-fact batch that fires it; median of fifteen
-after a warm-up). The window deliberately means *what I published about this datum may be
+after a warm-up). The touched set deliberately means *what I published about this datum may be
 out of date*, which is a shade larger than *whose belief flipped*.
 
 That extra shade is required. A **redundant justification** — a second derivation of an
@@ -311,7 +311,7 @@ O(derived²) to O(derived). Belief does not move, so no label does; but in a dil
 engine declines to decide, and the *reason* it hands back is the whole answer — so the
 consequence's handle is noted as touched even on the fast path, O(1) at the write. Polling
 every standing pair for its support count at report time would be O(standing) per settle
-instead. Every consumer reads the window as a superset, so an extra handle costs a
+instead. Every consumer reads the touched set as a superset, so an extra handle costs a
 re-derivation and never a wrong answer.
 
 ### The settle memoizes standing clashes
@@ -326,14 +326,14 @@ One check per standing pair per settle is quadratic in the clashes a load create
 at roughly 35 ms an assert with 300 standing definitional clashes against under 10 ms with
 50; `lein perf`'s `clash-arbitration` and `negation-arbitration` hold the per-assert cost
 flat in the standing set. The index is sound because it reads as **values** every input a
-separation reads — the separating and covering rosters, the disjoint metatypes' membership
-and the `siblingDisjointException` exemptions (`tax/separation-stamp`) — and the lower end of
+separation reads — the separating and covering part lists, the disjoint metatypes' membership
+and the `siblingDisjointException` exemptions (`tax/separation-inputs`) — and the lower end of
 every `genl` edge that moved (`tax/moves-since`), and reads the separations again over the
 type pairs a move can reach.
 
 The rule the whole scheme rests on: **a nogood whose detection reads a belief-following
 cache its own member supports is not stable.** That is why an arity binding is a ground of
-its nogood and never a member: the binding is on the forced-monotonic roster, so no defeat
+its nogood and never a member: the binding is forced-monotonic, so no defeat
 removes the premise the conviction reads, and the nogood is the offending tuple alone.
 
 ### An un-merge re-seeds through a second channel
@@ -369,7 +369,7 @@ cache that follows belief, so a defeat aimed at the `(arity P n)` declaration re
 conviction's own premise: the offending sentex goes on standing, nothing can look at the
 pair again, and the KB is left holding exactly what the check exists to catch — silently,
 because the report is derived from the pair too. So the binding is a ground on the
-forced-monotonic roster, and the nogood is the tuple alone
+forced-monotonic set, and the nogood is the tuple alone
 ([taxonomy.md](taxonomy.md#arity)).
 
 The line is **not** "a member the detection reads through". That wording indicts
@@ -379,8 +379,8 @@ edges the reach travelled. Defeating one of those does dissolve the detection, a
 is the answer rather than the bug, because an inherited claim has no sentex of its own for a
 defeat to reach instead of its reasons; withdrawing the reach withdraws the claim, and the
 reason stays defeated so it stays withdrawn. The two are separated by what stands
-afterwards, not what the detection touched. `nogood_admissibility_test` pins the member
-sets of all three shipped sources against the criterion.
+afterwards, not what the detection touched. `nogood_admissibility_test` asserts the
+member sets of all three shipped sources against the criterion.
 
 ### Discovery does not read argument preservation downward
 
@@ -449,15 +449,15 @@ all, and a monotonic handle is never given an atom.
 
 Defends [namespaces.md](namespaces.md).
 
-### The two recursion calls live in wiring.clj, not at the call sites
+### The recursion calls live in wiring.clj, not at the call sites
 
 The engine's requires run one way, from `kb` up through `checks`, `special`,
 `integrate`, `chain` and `settle` to `vaelii.core`, and the compiler checks every edge.
-Two calls break that order, and both live in `impl/wiring.clj` instead of at the
-call site that needs them.
+Four recursion targets break that order, and all four live in `impl/wiring.clj` instead
+of at the call site that needs them.
 
-Neither is a misplaced function waiting to be moved somewhere that restores the one-way
-order — both are genuine mutual recursion. `assert-sentence` is called back from
+None is a misplaced function waiting to be moved somewhere that restores the one-way
+order — each is genuine mutual recursion. `assert-sentence` is called back from
 `impl/nat.clj`, `impl/skolem.clj` and `impl/quasiquote.clj` because storing is a whole
 assert — naming, the definitional checks, the index, chaining, settle — so the write path
 itself runs chaining, and chaining mints a constant by calling back into that same write
@@ -466,7 +466,11 @@ needs, not in how the code happens to be arranged, so no rearrangement removes i
 `solve-goal` is the prover registry that `impl/resolution.clj` calls to discharge a
 deferred antecedent, and `unknown` runs that same registry back over its own argument —
 negation-as-failure is mutually recursive with the chainer that asked for it, not merely
-calling down into it.
+calling down into it. `impl/except.clj` asks `impl/inherit.clj`'s claim walk for a second
+route, and the claim walk matches facts through `res/matches-visible`, which reads the
+excepts back through `except`; moving the walks out of `inherit` leaves that loop intact.
+`impl/oplog.clj` replays a sealed store's logged frames through `vaelii.core`'s write entry
+points during the `open-kb` that loads it.
 
 A layering *inversion* — a namespace above `vaelii.core` that consumes its public API — is
 a different case, and none is written here: a call that can point downward is made to point
@@ -483,11 +487,14 @@ ordinary downward delegations.
 Gathering the two in one file beats leaving each as a `requiring-resolve` at its own
 call site. Scattered, a `requiring-resolve` is invisible: nothing counts it, nothing
 stops the next one, and the set of places the layering is broken can only be recovered
-by grepping for it. Gathered, they are an inventory — two entries, each owing the
-reason it cannot be an ordinary require — and `lein lint`'s E8 fails a written-out
+by grepping for it. Gathered, they are an inventory — each entry owing the reason it
+cannot be an ordinary require — and `lein lint`'s E8 fails a written-out
 `requiring-resolve` anywhere else under `src/`, excepting the optional dependencies it
 names by target. Only the written-out form breaks the one-way order: a symbol computed off
-a keyword-dispatch registry names no edge at read time, so E8 never sees one. A call with a
+a keyword-dispatch registry names no edge at read time, so E8 never sees one. An atom a
+higher namespace fills at load is the same edge with no `requiring-resolve` at all, and
+E20 fails that form: a lower namespace that answers wrongly until a higher one has loaded
+depends on load order, which a `requiring-resolve` does not. A call with a
 real downward fix takes the fix; one that lands in the inventory argues for itself in
 writing first.
 
@@ -505,7 +512,7 @@ shape, `checks` to convict, `settle` to sweep — so a namespace holding arms si
 **top** of the require order by construction. Put the data there with them and `taxonomy`
 cannot read it, which is precisely the namespace that most needs to know which relations
 it closes. So the data goes to the bottom, requiring nothing but `clojure.*`, and every
-layer above reads it: [predicates.md](predicates.md) lists the seven views that result.
+layer above reads it: [predicates.md](predicates.md) lists the seven projections that result.
 
 Splitting them buys a check that adjacency cannot give. Two halves written side by side
 agree because whoever wrote them agreed; the agreement is maintained by review, and review
@@ -544,7 +551,7 @@ protocol read is refused outside the implementers (`lein lint`'s E16). The as-st
 is the one that had to be named rather than left as the default, because it is the one
 whose omission is silent: a missing belief filter answers *more* than it should, and more
 is what an unfiltered read looks like whether or not anybody chose it. Naming it also
-forces the docstring, which is where the actual argument lives — the roster in the lint
+forces the docstring, which is where the actual argument lives — the allowlist in the lint
 check records that a caller has a reason, and the docstring says what it is.
 
 The same argument, one relation over, produces `tax/genls-global` beside `tax/genls`
@@ -644,7 +651,7 @@ The `:columnar` and `:dense` index backends hold their mutable state in
 labels its edges from (`vaelii.impl.tokens`), in a bare `HashMap` and `ArrayList` —
 rather than behind a lock or an atom, unlike the
 rest of the engine's single-writer contract. Making them synchronized would buy a
-consistent view for an incidental reader thread — one who reads the index
+consistent snapshot for an incidental reader thread — one who reads the index
 concurrently with the writer, such as a browser thread beside a REPL's KB — but the
 engine's own single writer never needs that guarantee, since it is always the
 thread doing the writing. The walk reads these fields at every frontier node, which
@@ -661,13 +668,12 @@ KB, so it must honour the incidental-reader guarantee itself. It does, through a
 `StampedLock`: point reads run optimistically and validate, so the steady-state read
 stays lock-free like the index walk, while a reader that races a relabel is validated
 into a consistent retry rather than left to tear. What the steady-state `in?` pays for
-that is a stamp read and a validate, and no allocation — the torn case is marked with an
-interned keyword, measured at 0 extra bytes against the unlocked read. The dense probe is
-still an order of magnitude faster than the reference network's hash-set lookup it stands
-in for as the default ([density.md](density.md)), so unlike the index there is no
-hot-loop tax to weigh against the guarantee. Iterating reads take a
-shared stamp outright; they already allocate O(nodes), so the acquisition is lost in
-the walk.
+that is an optimistic read and a validate, and no allocation — the torn case is marked
+with an interned keyword, measured at 0 extra bytes against the unlocked read. The dense
+probe is still an order of magnitude faster than the reference network's hash-set lookup
+it stands in for as the default ([density.md](density.md)), so unlike the index there is
+no hot-loop tax to weigh against the guarantee. Iterating reads take a shared read lock
+outright; they already allocate O(nodes), so the acquisition is lost in the walk.
 
 ### A reasoning image is installed whole or not at all
 
@@ -687,10 +693,13 @@ that wrote it: an image written after a recover is that recover, and one written
 by a KB built assert by assert carries that KB's labels, which equal a recover's because
 belief is order independent.
 
-The stamp covers the source as well as the records because a label is a function of both:
+The manifest covers the source as well as the records because a label is a function of both:
 the same records under a changed settle rule label differently. The source identity hashes
-the engine definitions recovery and the write entry points can run, read as forms with
-comments and docstrings removed. A prose edit keeps an image, and so does an edit to a
+the engine definitions recovery and the belief-deriving write entry points can run, read
+as forms with comments and docstrings removed. A write whose whole effect is records, an
+import among them, is outside it, since the records fingerprint covers what it wrote, and
+so is any entry point a registry names only by keyword (`vaelii.core`'s `write-ops` and
+`read-ops`). A prose edit keeps an image, and so does an edit to a
 definition recover never reaches; an edit to a definition it reaches discards the image.
 The walk over definitions reads no local scope, so a local that shares a var's name reaches
 the var, and the digest covers more forms than recover runs rather than fewer. A KB running a prover or evaluatable registered from outside the engine takes no image,
@@ -729,7 +738,7 @@ that wants them, which is the site that can afford it.
 
 The disk store takes the substitution one layer in rather than at the boundary: it *holds* the
 bitmap and still *answers* a Clojure set
-([storage.md](storage.md#the-enumerations-and-what-a-roster-costs)). Residency and a
+([storage.md](storage.md#the-enumerations-and-what-a-handle-set-costs)). Residency and a
 caller's peak allocation are separate arguments, and keeping them apart is what let the
 first be won without touching the second.
 
@@ -754,13 +763,13 @@ frame is a field map and carries no class name by the format's own rule
 every leaf a sentence may carry is a type nippy has an id for. So a name in a file is a
 name this engine did not write, whatever it turns out to be.
 
-A **version pin** holds the wrap to the nippy release it was written against. Only the
-`Serializable` allowlist is a published hook; the other two readers are gated by wrapping
+An **expected-version check** holds the wrap to the nippy release it was written against. Only the
+`Serializable` allowlist is a published hook; the other two readers are restricted by wrapping
 nippy's own vars, and nippy's call to `serializable-allowed?` is an implementation detail
 of the same release. A bump that renamed any of the three would fail the namespace at
 load, which is visible enough — but one that kept the names and stopped routing a class name
 through them would install cleanly and cover less, which on a deserialization boundary is
-the worst available outcome. So `thaw/pinned-nippy-version` states the release the wrap
+the worst available outcome. So `thaw/expected-nippy-version` states the release the wrap
 was written against, the resolved dependency is read off its own Maven descriptor, and a
 mismatch refuses to load. The cost is one line per upgrade; what it provides is that the three
 attachment points are re-read by a person each time the dependency moves.
@@ -791,13 +800,13 @@ way, so a file that merely has the right name decides how much goes into the hea
 data stream is read after its manifest has said what it is.
 
 The store sentinel gets the other half of the same argument. A `format.edn` cut mid-write
-is refused (`:unreadable-store`) rather than stamped with today's version — the absent
-sentinel's treatment — because a directory whose stamp was being written is a directory
+is refused (`:unreadable-store`) rather than rewritten with today's version — the absent
+sentinel's treatment — because a directory whose sentinel was being written is a directory
 whose *records* were being written at the same moment, and adopting whatever is beside it
 as today's layout is the one reading that is certainly wrong. An index's `layout.edn`
 reads the same damage the opposite way, as `:stale`: it answers "can I prove these entries
-are keyed the way this build keys them", a torn stamp proves nothing, and the answer to
-an unprovable stamp is a rebuild from the records. An index is a cache and records are
+are keyed the way this build keys them", a torn sentinel proves nothing, and the answer to
+an unprovable sentinel is a rebuild from the records. An index is a cache and records are
 not, and that difference is the whole of why one refuses and the other rebuilds.
 
 ### A bulk load installs by compare-and-set, not by overwrite
@@ -913,7 +922,7 @@ is filed under one catch-all bucket (`protocols/var-consequent-key`) that
 `resolution/concluding-rule-handles` unions into every backward answer, since a rule
 concluding `(?p …)` could conclude any predicate once `?p` binds. So the half the engine can
 key is kept and the half it cannot is refused, rather than refusing both. The workaround for
-the refused half is the instantiated rule, one per predicate, or a generator that stamps
+the refused half is the instantiated rule, one per predicate, or a generator that generates
 them with the functor ground.
 
 An **inert** rule (`set/inertRule`) is exempt from the antecedent refusal — it runs in
@@ -944,7 +953,7 @@ then decides it.
 ### The mints are an index family over the justifications
 
 A mint is a fact about a stored justification: its informant is an argument declaration.
-Three other homes were considered for the roster of mints the settle's withdrawal reads
+Three other homes were considered for the set of mints the settle's withdrawal reads
 ([indexing.md](indexing.md#10-the-mint-family)).
 
 - **An atom on the `Reasoning` value**, refilled by `recover` from its justification walk
@@ -1144,22 +1153,26 @@ taxonomy pays the per-test cost, to fix a case that exists only where a scoped d
 a set of handles, is skipped in a KB that holds neither, and costs one backward claim
 search per justification resting on a hidden handle at the reader.
 
-### A write's report reads the belief before it at its entry point
+### A write's report reads the KB before it off a record of what it moved
 
-Defends [nmtms.md](nmtms.md#the-published-window).
+Defends [nmtms.md](nmtms.md#the-published-set).
 
 A placed `defeat` moves belief with no relabel, so the belief before a write has to come
-from somewhere. The alternative is to derive it after the write: take the defeats the
-write stored or removed and re-read each target, and what rests on it, by the read walk
-with those moves reversed. That reading takes every other input from the network as it
-stands. A write that also lowers a member's class, removes a `genlCx` edge under a
-standing defeat or moves an exemption reads a before-state that was never held: the
-400-world sweep of `feed_test` reports a believed `contradicts` as added, and misses a
-target a re-placed nogood stopped hiding. A reading taken at the entry point, over what the
-write's sentences can move, is exact, and a write with no listener and no sink takes none.
-A reading over what every standing defeat reaches is exact too, and costs a write naming
-no nogood member one read walk per consequence of each standing defeat; it is kept for a
-write the entry point cannot classify.
+from somewhere. Two alternatives are rejected.
+
+Deriving it after the write from the defeat moves alone takes every other input from the
+network as it stands. A write that also lowers a member's class, removes a `genlCx` edge
+under a standing defeat or moves an exemption then reads a before-state that was never
+held: the 400-world sweep of `feed_test` reports a believed `contradicts` as added, and
+misses a target a re-placed nogood stopped hiding.
+
+A reading at the entry point, over the handles a write's sentences can move, is exact only
+where the sentences classify the write. A write it cannot classify (a forward-rule trigger,
+an interpreted functor, a deferred batch) falls back to reading every standing defeat's
+reach, one read walk per consequence of each standing defeat.
+
+The record keeps only what the write moves, so its size and the report's walk grow with the
+write and not with the standing defeats.
 
 ### A later route replaces the firing's route rather than joining it
 
@@ -1416,7 +1429,7 @@ long.
 
 ### A generator cycle is refused, not depth-capped
 
-A rule that concludes a rule stamps out new rules as it fires, so two generators that feed
+A rule that concludes a rule generates new rules as it fires, so two generators that feed
 each other mint without end. The tempting bound is a depth cap: let the cycle run *n*
 rounds and stop. That makes the KB's contents a function of how long the chainer ran — the
 same knowledge loaded twice holds different rules, and reloading it from nothing does not
@@ -1494,8 +1507,8 @@ well-formedness check over the rule dependency graph, rather than evaluated unde
 some fixed pick of stable model. An exception is not the only edge that closes one, so
 the graph is not walked from the excepted rules: `checks/negative-edge-rules` starts at
 every rule a negative edge leaves — an `exceptWhen`, an `(unknown S)`, an aggregate, a
-closed-extent negative, or a `different` — because a roster short of one of those is a
-roster some cycle passes through no member of, and a cycle nothing walks is a cycle that
+closed-extent negative, or a `different` — because a starting set short of one of those is a
+set some cycle passes through no member of, and a cycle nothing walks is a cycle that
 stores. Refusing the assert is what keeps every stored rule set stratified, which is what
 lets the exception evaluator stay within one settle pass instead of hosting its own
 model-selection machinery.
@@ -1541,11 +1554,11 @@ Defends [anytime.md](anytime.md).
 `:search`), not a per-prover time estimate. Wall-clock is a real measurement; a
 per-prover millisecond estimate is not — no implementation has a way to compute one, so
 it would be a constant standing in for a number nobody measured, and a real budget
-cannot be gated against a number nobody measured. The qualitative tier asks a question
+cannot be checked against a number nobody measured. The qualitative tier asks a question
 every prover can answer without a measurement instead: is the result looked up, computed,
-or searched for? Admission stays coarse for the same reason there is no finer gate:
-reading a prover's `est-bindings` against the remaining budget would gate on the same kind
-of unmeasured estimate.
+or searched for? Admission stays coarse for the same reason there is no finer check:
+reading a prover's `est-bindings` against the remaining budget would decide on the same
+kind of unmeasured estimate.
 
 The `:search` tier stays in the taxonomy even though the shipped registry occupies none
 of it. The tier is a claim about what a prover **may** cost, not a census of the ones
@@ -1578,7 +1591,7 @@ is told. `prove` returns a vector of solutions and `provable?` returns a boolean
 neither shape has room for that: a truncated vector is indistinguishable from the whole
 answer of a KB that knows less, and `false` from a search that stopped looking is
 indistinguishable from a KB that does not say so. Silently returning either is the same
-failure `assert`'s option rosters exist to refuse — an answer taken at a setting nobody
+failure `assert`'s option key sets exist to refuse — an answer taken at a setting nobody
 chose, arriving in the structure of one somebody did — and it is worse here, because the
 setting *is* the ceiling the daemon filled in on a request that named no clock at all.
 
@@ -1791,7 +1804,7 @@ together: the browser's write route, unauthenticated, and an nREPL, arbitrary co
 execution by design. Either one on a shared network interface is a risk that stays local to what
 it grants; combined, a request that reaches the browser can drive the REPL, and a REPL
 is a way past every check the browser's own write routes enforce. So the pairing is not
-configurable — the profile pins nREPL to `127.0.0.1` rather than trusting Leiningen's
+configurable — the profile binds nREPL to `127.0.0.1` rather than trusting Leiningen's
 own default, and the browser binds loopback with no flag to widen it. Exposing the
 browser to another interface stays `--listen` on `-main`, which starts no REPL at all,
 so the one config that is reachable off-machine never carries the arbitrary-code-execution

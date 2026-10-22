@@ -73,7 +73,7 @@
 
 (deftest the-other-process-branch-still-names-another-jvm
   ;; The branch a `tryLock` that *returns nil* takes — a lock a different process holds,
-  ;; which no single-JVM test can stage.  Its message is pinned here so splitting the two
+  ;; which no single-JVM test can stage.  Its message is asserted here so splitting the two
   ;; diagnoses did not leave the real cross-process one saying nothing useful.
   (let [msg (#'lock/conflict-message "/some/kb" "4321@host since 2026-01-01T00:00:00Z")]
     (is (re-find #"locked by another JVM" msg))
@@ -338,7 +338,7 @@
 (deftest public-close-releases-the-directory-and-a-reopen-recovers-by-default
   ;; the public pair end-to-end: `open-kb` threads the directory onto the KB's `:dir`,
   ;; and `close!` releases it through that slot.  Were the threading broken, close!
-  ;; would silently no-op — so the pin is that the lock is genuinely gone and a fresh
+  ;; would silently no-op — so the assertion is that the lock is genuinely gone and a fresh
   ;; open over the same directory reads the data back.
   (with-tmp
     (fn [dir]
@@ -490,18 +490,18 @@
 
 (deftest a-durable-index-built-against-other-records-is-refused
   ;; A `:disk-log` index over records on a server is a directory and a database joined by
-  ;; nothing but one opts map, so the directory is stamped with the database it describes
+  ;; nothing but one opts map, so the directory records the database it describes
   ;; and a later open naming a different one is refused.  The coverage check beside it
   ;; cannot stand in: that compares record *counts*, and two unrelated stores of the same
   ;; size agree — after which handles resolve to another store's sentences and a re-assert
   ;; mints a second handle for one already stored.
   ;;
-  ;; The `:pg` store is the sibling adapter's and is resolved lazily; a RAM store stands in
-  ;; at that one call, because the gate reads the stamp file and the `:pg` opts and never
-  ;; the store.
+  ;; The `:pg` store is the sibling adapter's and is resolved lazily; a RAM store stands
+  ;; in at that one call, because the identity check reads the records-identity file and
+  ;; the `:pg` opts and never the store.
   (let [records (mem/memory-record-store {:space [::pg-stand-in]})
         opened  (fn [dir url]
-                  (with-redefs-fn {#'kb/pg-record-store-ctor (fn [] (fn [_spec] records))}
+                  (with-redefs-fn {#'kb/adapter-ctor (fn [_records] (fn [_spec] records))}
                     (fn []
                       (try (v/open-kb {:records :pg :index :disk-log :dir dir
                                        :pg url :recover? false})
@@ -511,16 +511,16 @@
       (with-tmp
         (fn [dir]
           (is (= :opened (opened dir "jdbc:postgresql://localhost/one"))
-              "the first open stamps the directory rather than refusing it")
+              "the first open writes the records identity rather than refusing the directory")
           (backend/close-dir! dir)
-          (testing "the same database reopens — the stamp is an identity, not a seal"
+          (testing "the same database reopens — the records identity names a store and seals nothing"
             (is (= :opened (opened dir "jdbc:postgresql://localhost/one")))
             (backend/close-dir! dir))
           (testing "and another database over that index is refused by name"
             (let [d (opened dir "jdbc:postgresql://localhost/two")]
               (is (= :stale-index-records (:type d)))
               (is (not (lock/held? dir)) "and the refused open released the lock it took")
-              (is (= ["localhost" 5432 "one" nil] (:stamped d))
+              (is (= ["localhost" 5432 "one" nil] (:recorded d))
                   "naming the store the index was built against")
               (is (= ["localhost" 5432 "two" nil] (:records d))
                   "and the one this KB brought")
@@ -528,7 +528,7 @@
       (finally (p/clear-records! records)))))
 
 (deftest a-short-index-log-is-detected-and-rebuilt
-  ;; The two instruments beside the layout gate, each driven through the loss that
+  ;; The two instruments beside the layout check, each driven through the loss that
   ;; defeats the other.  A tail lost *with the clean marker in place* is a file that
   ;; is not the one that was closed — arbitrary keys of a compacted log, where the
   ;; root count and even the batch seal may survive — and the length disagreement is
@@ -557,7 +557,7 @@
                   (build! dir)
                   (lop! dir 64)
                   (is (reopened-finds-all? dir)))))
-    (testing "a torn tail with no marker loses a batch seal, and the gate sees it"
+    (testing "a torn tail with no marker loses a batch seal, and the open detects it"
       (with-tmp (fn [dir]
                   ;; the crash shape is an *append-mode* log — compaction runs on
                   ;; close, and a crashed process never closed — so build one:
@@ -596,7 +596,7 @@
   ;; configuration.
   ;;
   ;; The barrier is what makes it a test rather than a coin flip: a rewrite of a
-  ;; test-sized log is over in microseconds, so the window has to be held open at the
+  ;; test-sized log is over in microseconds, so the race window has to be held open at the
   ;; exact point rather than slept at.
   (with-tmp
     (fn [dir]

@@ -6,7 +6,7 @@
   partition behind the three relations, recomputed on edge change like the `genl`
   and `genlCx` closures beside it.
 
-  Each test pins one decision from [docs/equality.md](../../docs/equality.md) and
+  Each test asserts one decision from [docs/equality.md](../../docs/equality.md) and
   carries a comment naming it.  The shape under test is three assertable relations
   feeding **one equivalence closure**
 
@@ -461,7 +461,7 @@
 ;; every term in the KB that is not `Y`, so it is refused rather than answered
 ;; explosively."
 ;;
-;; SPEC NOTE — "refused" is not pinned to a mechanism by the doc.  Since `different`
+;; SPEC NOTE — "refused" is not tied to a mechanism by the doc.  Since `different`
 ;; is a **prover**, and a prover declares `applicable?`, the reading taken here is
 ;; that an open goal makes it inapplicable, so `ask` yields nothing and the goal drops
 ;; out of `query-plan` (which lists applicable provers only).  The alternative reading
@@ -602,7 +602,7 @@
 ;; justification rather than a side effect is what makes it safe ... the merge is
 ;; justified, `why` names exactly which declaration and which two facts caused it."
 ;; A silent merge would be the dangerous version of this feature, so the *inspectable*
-;; half is pinned separately from the *reversible* half below.
+;; half is asserted separately from the *reversible* half below.
 
 (tu/deftest-kb why-on-a-functional-merge-names-the-declaration-and-both-facts
   (tu/with-terms [motherOf Tom CxFam]
@@ -856,8 +856,8 @@
 (defn- rule-concluded-merge!
   "Assert a rule concluding `(rel ?x ?y)` from a fact of `aliasOf`, plus one fact naming
   the spelling the merge retires, and fire it.  `aliasOf` is declared on the
-  forced-monotonic roster where the rule is stated, since a firing concludes an equality
-  only from roster antecedents.  Returns `[lo hi]` — the elected representative and the retired
+  forced-monotonic set where the rule is stated, since a firing concludes an equality
+  only from forced-monotonic antecedents.  Returns `[lo hi]` — the elected representative and the retired
   spelling."
   [kb rel aliasOf caresFor Tom context]
   (let [[lo hi] (sort [(tu/tmp-ind "Ann") (tu/tmp-ind "Ann")])]
@@ -909,7 +909,7 @@
                    (list devotedTo '?x '?y) CxAlias {:direction :forward})
     (let [[lo hi] (sort [(tu/tmp-ind "Ann") (tu/tmp-ind "Ann")])]
       (v/assert kb (list lives lo) CxAlias)
-      ;; a firing concludes an equality only from roster antecedents
+      ;; a firing concludes an equality only from forced-monotonic antecedents
       (v/assert kb (list 'forced_monotonic_predicate aliasOf) CxAlias)
       (v/assert-rule kb [(list aliasOf '?x '?y)] (list 'sameAs '?x '?y) CxAlias {:direction :forward})
       (v/assert kb (list caresFor hi Tom) CxAlias)
@@ -1038,7 +1038,7 @@
 ;; So the reconcile is narrowed to the region the settle moved plus what migration just
 ;; handed it, and the narrowing is a claim about what cannot have changed.  A wrong
 ;; claim is a stale supersession — a spelling left hidden after the merge that hid it is
-;; gone, which is the caller's own premise withheld — so the cost gate is followed by
+;; gone, which is the caller's own premise withheld — so the cost check is followed by
 ;; the three cases it must never trade.  The unit counted is `kb/rewrite-term*`, one
 ;; call per displaced spelling re-examined.
 
@@ -1147,14 +1147,14 @@
             "and believed again once nothing normalizes it")))))
 
 ;; DECISION (regression): the equality relations relate NAMES — their arguments are
-;; mentions, like a quoting_function's — so a merge must not rewrite a denial OF the merge
+;; mentions, like a quoting function's — so a merge must not rewrite a denial OF the merge
 ;; into the vacuous `(not (sameAs A A))`.  Without that, a monotonic denial of a default
 ;; merge was silently superseded and the merge stood (docs/equality.md, the flagged case).
 
 (tu/deftest-kb a-denial-of-an-equality-leaves-a-default-merge-standing-in-either-order
-  ;; the equality relations are on the engine's baseline roster, so on this bare KB too
-  ;; the merge is never a loser and a denial of it is held OUT (decision 13); the merge
-  ;; keeps the strength it was written at
+  ;; the equality relations are in the baseline forced-monotonic set, so on this bare KB too
+  ;; the merge is never a loser and a :monotonic denial of it loses to it (decision 13);
+  ;; the merge keeps the strength it was written at
   (doseq [denial-first? [false true]]
     (tu/with-terms [A B]
       (let [deny  #(v/assert kb (list 'not (list 'sameAs A B)) 'CxUniverse {:strength :monotonic})
@@ -1163,7 +1163,7 @@
             d     (if denial-first? (v/handle-of kb (list 'not (list 'sameAs A B)) 'CxUniverse) (deny))]
         (is (v/same-class? kb A B) (str "denial first: " denial-first?))
         (is (= :default (v/defeat-class kb merge)))
-        (is (not (v/in? kb d)) "the denial is held OUT")))))
+        (is (not (v/in? kb d)) "the denial loses")))))
 
 (deftest the-mention-set-mirrors-the-canonical-equality-predicate-set
   ;; `res/equality-mention-heads` is `rewrite/equality-relations`, a copy of
@@ -1178,7 +1178,7 @@
 ;; The stored equation is never restated, so no read may call it retired; `ask` reads the
 ;; closure for the symmetric, reflexive and transitive forms and enumerates a bound
 ;; symbol's class.  The stated sentence reaching none of `ask?`, `prove` and
-;; `sentexes-matching` is the failure this pins, and each column below is one of them.
+;; `sentexes-matching` is the failure this asserts against, and each column below is one of them.
 
 (defn- equation-reads
   "Every read of `pred` over `a` / `b` / `c`, where `(pred a b)` and `(sameAs b c)` are

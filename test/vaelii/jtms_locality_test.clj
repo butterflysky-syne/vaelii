@@ -18,10 +18,10 @@
   Two instruments, because one of them reaches only one network.  `regions-touched`
   redefines `relabel-region*`, which is the reference's own fixpoint, and gives the
   finest reading — one entry per region the operation asked for.  The closing section
-  measures the published `touched` window instead: coarser, but it is on the `Tms`
+  measures the published `touched` set instead: coarser, but it is on the `Tms`
   protocol, so the same claim is checked against the network the engine actually ships.
   That gap is worth closing here rather than in the differential oracle, which compares
-  `snapshot` — labels, not the window — so a dense relabel that widened to the whole
+  `snapshot` — labels, not the touched set — so a dense relabel that widened to the whole
   graph would answer identically and pass.
 
   Pure — no store, no fixture.  Helpers are duplicated from
@@ -91,24 +91,24 @@
         (is (= [1] (regions-touched #(justify tms 77777 [0] 999999)))
             (str "region grew with the graph at n=" n))))))
 
-(deftest a-redundant-justification-relabels-nothing-and-is-still-in-the-window
+(deftest a-redundant-justification-relabels-nothing-and-is-still-in-the-touched-set
   ;; The two halves of the fast path, and each is a bug without the other.
   ;;
   ;; **Relabels nothing** is what collapses a recursive forward load from O(derived²):
   ;; an already-IN node feeds its consequences identically on one witness or two, so a
   ;; second derivation must not walk its forward closure again.
   ;;
-  ;; **Still in the window** is what a reader of `touched` needs, and belief cannot say
-  ;; it: a reader of the window that kept an answer about the datum keeps one that reads
+  ;; **Still in the touched set** is what a reader of `touched` needs, and belief cannot say
+  ;; it: a reader of the touched set that kept an answer about the datum keeps one that reads
   ;; fewer reasons than the KB holds.  `touched-in` takes it too — the datum was believed before, and a
-  ;; window that said otherwise would read as "newly believed" to `preview` and the feed.
+  ;; touched set that said otherwise would read as "newly believed" to `preview` and the feed.
   (doseq [n sizes]
     (let [tms (fan-of n)]
       (jtms/reset-touched! tms)
       (is (every? zero? (regions-touched #(justify tms 77777 [0] 1)))
           (str "a second witness for an already-believed conclusion relabelled at n=" n))
       (is (contains? (jtms/touched tms) 1)
-          "the consequence is not in the window, so a stale report is served for it")
+          "the consequence is not in the touched set, so a stale report is served for it")
       (is (contains? (jtms/touched-in tms) 1)
           "and it reads as newly believed, which it is not"))))
 
@@ -163,11 +163,27 @@
           (str "node-class ran " @calls " times at depth " n
                "; a round-robin sweep would run ~" (* n n))))))
 
+(deftest dense-region-classes-evaluates-a-node-once-per-rise-not-once-per-justification
+  ;; Premise 0 rises to :monotonic and n :default justifications [0 i] conclude node 1,
+  ;; which stays :default: 0's rise reaches node 1 through each of 0's n dependents.
+  (let [n     400
+        tms   (dense/create-dense-tms)
+        calls (atom 0)
+        orig  @#'dense/node-class]
+    (premise tms 0)
+    (dotimes [i n]
+      (premise tms (+ 10 i))
+      (justify tms (+ 5000 i) [0 (+ 10 i)] 1 :default))
+    (with-redefs-fn {#'dense/node-class (fn [& a] (swap! calls inc) (apply orig a))}
+      #(jtms/add-premise tms 0 :monotonic))
+    (is (= [:monotonic :default] (mapv #(jtms/defeat-class tms %) [0 1])))
+    (is (< @calls 8) (str "node-class ran " @calls " times over " n " justifications"))))
+
 ;; ---- sweep! semantics ---------------------------------------------------
 ;;
 ;; `sweep!` is `retract!`'s collector without the retraction, and `exceptWhen` makes
 ;; it a routine path rather than a retraction-only one.  Every existing test reaches
-;; it through `retract!` or through a full `settle`, so its own contract is unpinned.
+;; it through `retract!` or through a full `settle`, so its own contract is untested elsewhere.
 
 (deftest sweep-collects-the-whole-closure-of-its-seeds
   ;; The seeds are where the walk *starts*, not what it collects: a blocked
@@ -253,13 +269,13 @@
 ;; fixpoint — so it says nothing about the network the engine actually ships.  The dense
 ;; one writes the whole relabel a second time against bitmaps and primitive-keyed maps,
 ;; and the differential oracle compares the two on `snapshot`, which carries labels and
-;; not the window: a dense operation that widened its region back to the whole graph
+;; not the touched set: a dense operation that widened its region back to the whole graph
 ;; answers identically and is invisible there.
 ;;
 ;; `touched` is the instrument that works at the protocol — it is on the protocol, both
 ;; implementations maintain it, and it is what `preview`, the consequence report and the
 ;; change feed read (docs/preview.md, docs/feed.md).  What locality claims about it is
-;; not a constant but a *shape*: the window of an operation on one pair does not grow
+;; not a constant but a *shape*: the touched set of an operation on one pair does not grow
 ;; when the graph around it does.
 
 (def ^:private networks
@@ -276,7 +292,7 @@
       (justify tms (+ 1000 i) [(* 2 i)] (inc (* 2 i))))
     tms))
 
-(defn- window-of
+(defn- touched-by
   "The datums `f` relabelled, read through the protocol rather than through one
   implementation's internals."
   [tms f]
@@ -285,49 +301,49 @@
   (jtms/touched tms))
 
 (defn- flat-across-sizes
-  "The window size `op` produces at each of `sizes`, as a vector — so a failure prints
+  "The touched-set size `op` produces at each of `sizes`, as a vector — so a failure prints
   the structure that grew rather than just that one number was wrong."
   [make op]
-  (mapv (fn [n] (let [tms (fan-on make n)] (count (window-of tms #(op tms))))) sizes))
+  (mapv (fn [n] (let [tms (fan-on make n)] (count (touched-by tms #(op tms))))) sizes))
 
-(deftest every-representation-scopes-its-window-to-the-region
+(deftest every-representation-scopes-its-touched-set-to-the-region
   (doseq [[label make] networks]
     (testing label
-      (testing "blocking one derivation publishes a window that does not grow with the graph"
+      (testing "blocking one derivation publishes a touched set that does not grow with the graph"
         (let [ws (flat-across-sizes make #(jtms/set-blocked % #{1000}))]
-          (is (apply = ws) (str label ": window sizes " (pr-str ws) " across " (pr-str sizes)))
-          (is (<= (first ws) 2) (str label ": the window is the datum and its closure"))))
-      (testing "unblocking publishes a window scoped to what was blocked"
+          (is (apply = ws) (str label ": touched-set sizes " (pr-str ws) " across " (pr-str sizes)))
+          (is (<= (first ws) 2) (str label ": the touched set is the datum and its closure"))))
+      (testing "unblocking publishes a touched set scoped to what was blocked"
         (let [ws (mapv (fn [n]
                          (let [tms (fan-on make n)]
                            (jtms/set-blocked tms #{1000})
-                           (count (window-of tms #(jtms/set-blocked tms #{})))))
+                           (count (touched-by tms #(jtms/set-blocked tms #{})))))
                        sizes)]
-          (is (apply = ws) (str label ": window sizes " (pr-str ws)))
+          (is (apply = ws) (str label ": touched-set sizes " (pr-str ws)))
           (is (<= (first ws) 2) (str label ": the release reaches only what was blocked"))))
-      (testing "a settle that blocks nothing publishes an empty window"
+      (testing "a settle that blocks nothing publishes an empty touched set"
         (let [tms (fan-on make 500)]
-          (is (empty? (window-of tms #(jtms/set-blocked tms #{}))))))
-      (testing "a new justification publishes a window around its conclusion"
+          (is (empty? (touched-by tms #(jtms/set-blocked tms #{}))))))
+      (testing "a new justification publishes a touched set around its conclusion"
         (let [ws (flat-across-sizes make #(justify % 77777 [0] 999999))]
-          (is (apply = ws) (str label ": window sizes " (pr-str ws)))
+          (is (apply = ws) (str label ": touched-set sizes " (pr-str ws)))
           (is (<= (first ws) 2) (str label ": a new conclusion is not a graph-wide event"))))
-      (testing "the window is the forward closure, so a chain is reached and nothing else"
+      (testing "the touched set is the forward closure, so a chain is reached and nothing else"
         (let [tms (fan-on make 500)]
           (justify tms 9001 [1] 100001)
           (justify tms 9002 [100001] 100002)
-          (let [w (window-of tms #(jtms/set-blocked tms #{1000}))]
+          (let [w (touched-by tms #(jtms/set-blocked tms #{1000}))]
             (is (= #{1 100001 100002} (set w))
                 (str label ": the blocked datum and its two descendants, not the other 499 pairs"))))))))
 
-(deftest every-representation-keeps-a-redundant-witness-in-the-window
-  ;; The window's *superset* half, which the scoping tests above cannot see: a second
+(deftest every-representation-keeps-a-redundant-witness-in-the-touched-set
+  ;; The touched set's *superset* half, which the scoping tests above cannot see: a second
   ;; derivation of an already-believed conclusion moves no label, and the conclusion is
-  ;; noted as touched anyway (docs/defenses.md, "The touched window is a superset, not
+  ;; noted as touched anyway (docs/defenses.md, "The touched set is a superset, not
   ;; the flip set").  Both halves are needed and both are checked here.
   ;;
   ;; It is worth a protocol-level test because the failure is backend-specific and shows up
-  ;; far away: a reader of the window that kept an answer about a silently-arriving witness
+  ;; far away: a reader of the touched set that kept an answer about a silently-arriving witness
   ;; keeps one that reads fewer reasons than the KB holds — on one backend and not the
   ;; other.
   (doseq [[label make] networks]
@@ -337,11 +353,11 @@
         (jtms/ensure-node tms 1 1)
         (jtms/add-justification tms (jtms/->just 100 'firstRule [0] 1 {} :monotonic))
         (jtms/add-premise tms 2 :default)
-        (let [w (window-of tms #(jtms/add-justification
-                                 tms (jtms/->just 101 'secondRule [2] 1 {} :monotonic)))]
+        (let [w (touched-by tms #(jtms/add-justification
+                                  tms (jtms/->just 101 'secondRule [2] 1 {} :monotonic)))]
           (is (jtms/in? tms 1) (str label ": the conclusion was believed throughout"))
           (is (contains? (set w) 1)
-              (str label ": the consequence is outside the window, so a stale report is served for it"))
+              (str label ": the consequence is outside the touched set, so a stale report is served for it"))
           (is (contains? (set (jtms/touched-in tms)) 1)
               (str label ": it reads as newly believed, which it is not")))))))
 
@@ -370,9 +386,9 @@
           (str ns-sym " names the store protocols; the network holds no store"
                " (see the `Tms` docstring, obligation 4)")))))
 
-(deftest a-mark-reads-what-the-window-recorded-after-it
-  ;; `touched-since` is what a reader that asks the window more than once in it reads.
-  ;; Relabelling again a datum the window already holds is the case a set difference over
+(deftest a-mark-reads-what-the-touched-set-recorded-after-it
+  ;; `touched-since` is what a reader that asks the touched set more than once between resets reads.
+  ;; Relabelling again a datum the touched set already holds is the case a set difference over
   ;; `touched` drops, and a redundant witness is the one that moves no label.
   (doseq [[label make] networks]
     (testing label
@@ -389,11 +405,11 @@
             (justify tms 77778 [4] 5)
             (is (= #{5} (jtms/touched-since tms m2)) "each reader's mark reads from its own point")
             (is (= #{1 3 5} (jtms/touched-since tms m)) "and a later mark leaves an earlier one whole"))
-          (is (= (jtms/touched tms) (jtms/touched-since tms nil)) "a nil mark reads the whole window")
+          (is (= (jtms/touched tms) (jtms/touched-since tms nil)) "a nil mark reads the whole touched set")
           (jtms/reset-touched! tms)
           (justify tms 77779 [6] 7)
           (is (= (jtms/touched tms) (jtms/touched-since tms m))
-              "a mark from before the reset reads the whole window, not a stale epoch"))))))
+              "a mark from before the reset reads the whole touched set, not a stale epoch"))))))
 
 (deftest marks-taken-with-nothing-recorded-between-them-share-one-epoch
   ;; a settle takes a mark at each reconcile and discovery, and most of them follow no
@@ -403,7 +419,7 @@
       (let [tms (fan-on make 50)]
         (jtms/reset-touched! tms)
         (let [ms (vec (repeatedly 5 #(jtms/touch-mark tms)))]
-          (is (apply = ms) "five marks over an empty window are one")
+          (is (apply = ms) "five marks over an empty touched set are one")
           (justify tms 77777 [2] 3)
           (let [m2 (jtms/touch-mark tms)]
             (is (not= (first ms) m2) "a mark after a recording opens a new epoch")

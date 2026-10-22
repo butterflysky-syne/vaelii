@@ -1,14 +1,14 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.api-surface-test
-  "The published API surface, pinned: every public var of the six public namespaces,
-  with its arglists or a roster's members, frozen against `test/golden/api-surface.edn`.
+  "The published API surface, frozen: every public var of the six public namespaces,
+  with its arglists or a keyword-set var's members, frozen against `test/golden/api-surface.edn`.
 
-  **What this catches that the suite does not.**  `public_api_test` pins which
+  **What this catches that the suite does not.**  `public_api_test` asserts which
   namespaces are public — exhaustively, in both directions, so a new file outside
   `impl/`, `host/`, `koinii/` and `browser/` fails there — and then names a handful of entry points per namespace and
   checks they are present.  That is a floor, not a surface: `vaelii.core` alone
-  publishes well over a hundred vars, and nothing pins an arglist anywhere.  So a
+  publishes well over a hundred vars, and nothing freezes an arglist anywhere.  So a
   removed var no test happens to call, or an arity dropped from one that is called
   only the other way, is a breaking change for every consumer and a green suite here.
 
@@ -18,7 +18,7 @@
   sees is that the old spelling stopped working.  A golden makes that visible where it
   has to be visible, which is the review diff.
 
-  **A pin, not a freeze.**  `boundaries.md` is the rule about what may change;
+  **A record, not a rule.**  `boundaries.md` is the rule about what may change;
   this is the record of what did.  Adding a var is compatible and the golden still
   moves, because a surface that grows without anyone reading the diff is how six
   undocumented entry points arrive one at a time — the same argument
@@ -27,24 +27,24 @@
   ## On failure
 
   - **A REMOVED var, or CHANGED arglists, is breaking.**  Every consumer compiled
-    against it: `vaelii-foreign` and the downstream consumers on the roster are in this
+    against it: `vaelii-foreign` and the downstream consumers are in this
     tree's own orbit, and the artifact is on Clojars.  Restore it, or take the CONTRIBUTING §3.8 Breaking
     entry with the migration line naming the new spelling, and regenerate the golden in
     that commit.  `scripts/check-breaking-siblings.sh` reads the `*Breaks:*` tokens off
     that entry, so the entry is what makes the sibling sweep able to find anything.
   - **An ADDED var extends the published surface.**  Run `lein regen-goldens`, give it
     a docstring and a place in `docs/api.md`, and commit the golden in the same commit.
-  - **A REMOVED roster member is breaking**, as a removed var is: a caller sending that
+  - **A REMOVED keyword-set member is breaking**, as a removed var is: a caller sending that
     option key or op is refused where it was served.  An ADDED member is Additive
     (CONTRIBUTING §3.8), and fails only so the addition is read.
 
-  ## What is pinned, and what is not
+  ## What is frozen, and what is not
 
-  Var **names** and **arglists**, per namespace, and a **roster's members**.  A roster is
+  Var **names** and **arglists**, per namespace, and a **keyword-set var's members**.  A keyword-set var is
   a public var whose value is a non-empty collection of keywords or a map keyed by
   keywords: the `*-opt-keys` sets, `edit-batch-keys`, `vaelii.serve/ops`.  Its members
   are the contract, since a caller spells them, so the golden holds them as a sorted
-  vector.  Any other value (a number, a dynamic var's default) pins its name alone.  Not
+  vector.  Any other value (a number, a dynamic var's default) freezes its name alone.  Not
   docstrings and not other metadata: a golden that moved when a docstring was reworded
   would be regenerated without being read, which is the failure mode that makes a golden
   worthless.
@@ -58,11 +58,11 @@
   the tag today; it is here so the answer to \"this has to be public but is not API\"
   is a tag rather than an exception in this file.
 
-  The namespace roster is **derived from the tree** — every `.clj` under `src/vaelii`
+  The namespace list is **derived from the tree** — every `.clj` under `src/vaelii`
   outside `impl/`, `host/`, `koinii/` and `browser/` — rather than listed here.  `public_api_test`'s
-  `no-public-namespace-is-spelled-impl` pins that the derivation equals the six, so the
+  `no-public-namespace-is-spelled-impl` asserts that the derivation equals the six, so the
   two disagree only when one of them is wrong.  `koinii/` is out for the reason it is out
-  of the SPI and refusal rosters: it is an application shipped in this tree, a *consumer*
+  of the SPI and refusal-type lists: it is an application shipped in this tree, a *consumer*
   of the six rather than one of them (`docs/koinii.md`), and freezing its arglists here
   would put koinii's own development in the engine's compatibility contract.  `browser/` is
   out for the same reason: the browser is the second application (`docs/web.md`)."
@@ -96,8 +96,8 @@
                  (str/replace "/" ".") (str/replace "_" "-") symbol))
        sort))
 
-(defn- roster-members
-  "The members of a roster var, sorted, or nil when the value is not a roster.  A roster
+(defn- keyword-set-members
+  "The members of a keyword-set var, sorted, or nil when the value is not one.  A keyword set
   is a non-empty collection of keywords, or a map keyed by keywords."
   [v]
   (let [x  @v
@@ -106,8 +106,8 @@
       (vec (sort ks)))))
 
 (defn- surface-of
-  "`{var-name pin}` for one namespace.  A fn or macro pins its arglists as a string, a
-  roster var its members as a vector of keywords (`roster-members`), and any other var
+  "`{var-name frozen-value}` for one namespace.  A fn or macro freezes its arglists as a
+  string, a keyword-set var its members as a vector of keywords (`keyword-set-members`), and any other var
   `:var`, its name alone."
   [ns-sym]
   (require ns-sym)
@@ -116,7 +116,7 @@
                 (when-not (:no-doc (meta v))
                   [sym (if-let [a (:arglists (meta v))]
                          (pr-str (vec a))
-                         (or (roster-members v) :var))])))
+                         (or (keyword-set-members v) :var))])))
         (ns-publics ns-sym)))
 
 (defn current-surface
@@ -136,15 +136,15 @@
   (let [surface (current-surface)]
     (spit golden-file
           (str ";; Frozen public API surface — every public var of the six public\n"
-               ";; namespaces, with its arglists, or a roster var's members.\n"
+               ";; namespaces, with its arglists, or a keyword-set var's members.\n"
                ";; Regenerate: `lein regen-goldens`, and read vaelii.api-surface-test's\n"
                ";; docstring first — a removed var, a changed arglist or a removed\n"
-               ";; roster member is breaking.\n"
+               ";; keyword-set member is breaking.\n"
                (with-out-str (pprint/pprint surface))))))
 
 (defn- golden [] (edn/read-string (slurp golden-file)))
 
-;; ---- the pin, both ways -------------------------------------------------
+;; ---- the frozen surface, both ways --------------------------------------
 
 (deftest every-namespace-in-the-published-surface-is-still-published
   (let [current (current-surface)
@@ -198,11 +198,11 @@
                  " `lein regen-goldens`, give each one a docstring and a place in"
                  " docs/api.md, and commit the golden in this same commit."))))))
 
-;; ---- a roster's members, both ways --------------------------------------
+;; ---- a keyword-set var's members, both ways ----------------------------
 
-(defn- roster-pins
+(defn- keyword-set-entries
   "`[ns-sym var-sym frozen-members current-members]` for every var the golden and the
-  tree both pin as a roster."
+  tree both freeze as a keyword set."
   [current frozen]
   (for [ns-sym (sort (set/intersection (set (keys current)) (set (keys frozen))))
         :let   [cur (get current ns-sym)
@@ -211,7 +211,7 @@
         :when  (and (vector? (get gld v)) (vector? (get cur v)))]
     [ns-sym v (get gld v) (get cur v)]))
 
-(deftest a-roster-var-pins-its-members-and-another-value-its-name
+(deftest a-keyword-set-var-freezes-its-members-and-another-value-its-name
   (let [surface (current-surface)]
     (is (= (vec (sort (keys @(requiring-resolve 'vaelii.serve/ops))))
            (get-in surface '[vaelii.serve ops])))
@@ -219,8 +219,8 @@
            (get-in surface '[vaelii.core assert-opt-keys])))
     (is (= :var (get-in surface '[vaelii.core default-describe-limit])))))
 
-(deftest no-roster-member-has-been-removed
-  (doseq [[ns-sym v was now] (roster-pins (current-surface) (golden))]
+(deftest no-keyword-set-member-has-been-removed
+  (doseq [[ns-sym v was now] (keyword-set-entries (current-surface) (golden))]
     (let [removed (set/difference (set was) (set now))]
       (is (empty? removed)
           (str "BREAKING: " ns-sym "/" v " no longer holds " (sort removed)
@@ -229,14 +229,14 @@
                " line naming the new spelling, and regenerate the golden in that"
                " commit.")))))
 
-(deftest a-new-roster-member-is-recorded-in-the-golden
+(deftest a-new-keyword-set-member-is-recorded-in-the-golden
   ;; An added member breaks nobody (§3.8 Additive); this fails so the addition is read.
-  (doseq [[ns-sym v was now] (roster-pins (current-surface) (golden))]
+  (doseq [[ns-sym v was now] (keyword-set-entries (current-surface) (golden))]
     (let [added (set/difference (set now) (set was))]
       (is (empty? added)
           (str ns-sym "/" v " holds new member(s): " (sort added)
                " — compatible, but this extends the published surface. Run"
-               " `lein regen-goldens`, document each one where the roster is"
+               " `lein regen-goldens`, document each one where the keyword set is"
                " documented, and commit the golden in this same commit.")))))
 
 ;; ---- the two promises the golden's own failure message makes ------------

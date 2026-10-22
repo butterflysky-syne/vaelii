@@ -60,7 +60,7 @@ whatever the rule set, with no confluence or completion argument. The order is t
   symbols compared, then the arguments lexicographically. So `(f (g ?x)) = (g (f
   ?x))` orients (toward whichever root the precedence ranks lower), where a size-only
   rule would refuse it.
-- Both are gated by the **variable condition** (`var-dominates?`): every variable
+- Both are conditional on the **variable condition** (`var-dominates?`): every variable
   must occur at least as often in the bigger side as in the smaller. This is what
   keeps the order stable under *every* substitution — without it, a substitution
   duplicating a variable the smaller side has more of could make the rewrite grow.
@@ -113,9 +113,9 @@ integrate arm):
    schematic equation out of belief. Its denial is refused `:not-ground`, a rule
    concluding it is refused `:not-range-restricted`, a monotonic denial of a rewritten
    twin defeats the twin and leaves the equation IN, and a denial of a ground instance
-   is held OUT, since `equals` is on the forced-monotonic roster: it is never
+   is held OUT, since `equals` is forced-monotonic: it is never
    believed, and the equation rewrites that instance as it rewrites every other
-   ([nmtms.md](nmtms.md#the-forced-monotonic-roster)).
+   ([nmtms.md](nmtms.md#the-forced-monotonic-set)).
 2. **Migrate.** Every stored sentex the rule's LHS head reaches (`kb/find-sentexes`,
    one term-index lookup — a superset the per-sentex check narrows) gets a **rewritten
    twin** under the normal form, placed in the original's context, **derived and
@@ -135,9 +135,9 @@ congruence has.
 `kb/rewrite-term` is where symbol congruence and schematic normalization compose: it
 replaces every symbol with its class representative (ground congruence — the term
 index locates a merged term at any depth) and then normalizes the argument terms
-under the active rewrite rules. Both halves are **gated** — a KB with no merges pays a
-representative lookup per symbol, one with no schematic equations skips normalization
-(`tax/rewrite-rules` is empty).
+under the active rewrite rules. Each half runs only as far as the KB needs it: a KB with
+no merges pays a representative lookup per symbol, and one with no schematic equations
+skips normalization (`tax/rewrite-rules` is empty).
 
 Migration and every query path go through `rewrite-term`, so a stored term and a goal
 meet at one normal form. **All four query paths normalize the top goal**: `sentexes-matching` and
@@ -213,7 +213,7 @@ assertion order — the invariant [nmtms.md](nmtms.md) makes non-negotiable:
   overlapping rules that could rewrite one term pick
   the same winner regardless of which was asserted first — order-independence holds
   even for a non-confluent rule set. The order is derived once per rule *set*, not per
-  call: it is memoized in the taxonomy's `:rewrite-order` side atom, stamped on the
+  call: it is memoized in the taxonomy's `:rewrite-order` side atom, keyed by the
   identity of the `:rewrite-active` map, so every writer of that map retires it and no
   writer has to remember to. Without it every read carrying a context would pay the sort
   — `kb/rewrite-goal` calls `rewrite-term`, which reads this.
@@ -282,6 +282,6 @@ non-confluent set confluent), and AC-rewriting for permutative equations. See
   `recovered-supersessions` (the recover entry point).
 - Tests: `rewrite_test` (the pure algebra), `equational_test` (the integration:
   Part A, Part B, belief-following, termination, order-independence, KBO orientation,
-  the four-path parity, an except of the equation, a denial of an instance held OUT),
+  the four-path parity, an except of the equation, a denial of an instance),
   `recovery_test` (durability),
   `order_independence_test` (an except arriving and leaving around the facts).

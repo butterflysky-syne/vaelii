@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The suite across N JVMs instead of one.
 #
-# The test stage is the gate's long pole — 395s of a ~490s `:default` run — and it is
+# The test stage is `lein gate`'s long pole — 395s of a ~490s `:default` run — and it is
 # one JVM walking 187 namespaces in sequence.  Splitting it is safe for one reason:
 # **the in-memory registry is per-JVM**, so two runs over the same space number do not
 # collide (docs/storage.md).  Each shard is its own `lein test`, its own KB registry,
@@ -53,7 +53,7 @@ cd "$(dirname "$0")/.." || exit 1
 . scripts/lib/ns-timings.sh
 
 # Logs and scratch are **per run**; the timings are **per checkout**.  `gate.sh` hands
-# this a fresh `logs/gate/run-<pid>` so two gates in one working tree cannot read
+# this a fresh `logs/gate/run-<pid>` so two `lein gate` runs in one working tree cannot read
 # each other's shard logs.  The timings are feedback for the *next* run, so every run
 # in this checkout shares one file, under `logs/` beside `logs/runs.tsv`: `lein jar`,
 # `lein install` and `lein clean` empty `target/`, and a run after one of them would
@@ -152,21 +152,31 @@ awk -v jobs="$jobs" -v timings="$TIMINGS" -v ci="$CI_WEIGHTS" '
       for (j = i + 1; j <= NR; j++)
         if (w[order[j]] > w[order[i]]) { t = order[i]; order[i] = order[j]; order[j] = t }
 
-    for (b = 1; b <= jobs; b++) load[b] = 0
+    for (b = 1; b <= jobs; b++) { load[b] = 0; m[b] = 0 }
     for (k = 1; k <= NR; k++) {
       idx = order[k]; light = 1
       for (b = 2; b <= jobs; b++) if (load[b] < load[light]) light = b
       load[light] += w[idx]
-      printf "%d\t%s\t%.2f\n", light, ns[idx], w[idx]
+      mine[light, ++m[light]] = idx
+    }
+
+    # Each shard runs its namespaces lightest, heaviest, second lightest, second
+    # heaviest, and so on, so the runtime is spread evenly over the run.
+    for (b = 1; b <= jobs; b++) {
+      hi = 1
+      for (lo = m[b]; lo >= hi; lo--) {
+        idx = mine[b, lo]; printf "%d\t%s\t%.2f\n", b, ns[idx], w[idx]
+        if (hi < lo) { idx = mine[b, hi++]; printf "%d\t%s\t%.2f\n", b, ns[idx], w[idx] }
+      }
     }
   }
 ' <(printf '%s\n' "${namespaces[@]}") > "$assign_out"
 
 echo "running $n namespaces at $selector across $jobs shard(s) — $(revision_line) — logs in $OUT"
 # The same facts into the run directory, for a reader watching this run go.  The
-# shard logs carry the revision stamp but not the selector or the shard count,
+# shard logs carry the revision header but not the selector or the shard count,
 # and a bare `lein test-parallel` writes no other file here — `gate.sh` captures
-# this stdout into `test.log`, and a run outside the gate captures nothing.  So
+# this stdout into `test.log`, and a run outside `lein gate` captures nothing.  So
 # a watcher had nothing to read the plan off (vaelii-tools: vaelii-top/src/vtop/live.py).
 # A `shard-<b>` row per shard gives its namespace count: the split is by time, so
 # the counts are uneven.
@@ -186,12 +196,12 @@ for ((b = 1; b <= jobs; b++)); do
   log="$OUT/test.shard-$b.log"; timing="$OUT/test.timing-$b.tsv"
   shard_logs+=("$log")
   # The status comes from the marker the shard echoes, never from the pipeline: `tee`
-  # exits 0 over a red suite, which is exactly how a green gate hides one.
+  # exits 0 over a red suite, which is exactly how a green `lein gate` run hides one.
   # Namespaces first, THEN the selector: `split-selectors` splits leiningen's argv on
   # the first keyword and hands everything after a selector to that selector as its
   # own arguments — so `lein test :default <ns>` calls the `:default` predicate with
   # the namespace as a second argument and dies on arity, rather than filtering by it.
-  revision_stamp "shard $b" > "$log"
+  revision_header "shard $b" > "$log"
   (
     { lein test "${shard_ns[@]}" "$selector"; echo "SHARD-EXIT:$?"; } 2>&1 \
       | tee -a "$log" \

@@ -16,13 +16,12 @@
   test verifies stay literal."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.impl.taxonomy :as tax]
             [vaelii.impl.types.reasoning :as reasoning]
             [vaelii.test-util :as tu]
             [vaelii.world :as world]))
 
-(defn- core-context-kb [] (doto (tu/fresh) (core-context/load-into)))
+(defn- core-context-kb [] (doto (tu/fresh) (tu/load-core!)))
 (defn- starter-world-kb [] (doto (tu/fresh) (tu/load-starter!) (world/load-into)))
 
 (defn- one [bindings k] (get (first bindings) k))
@@ -164,20 +163,25 @@
 
 (deftest property-marks-reflexive-and-dual-property
   ;; meta_test covers symmetric/transitive/functional membership + enumeration;
-  ;; here: reflexive (empty then populated), functional enumeration, and a single
+  ;; here: reflexive (absent then present), functional enumeration, and a single
   ;; predicate carrying two algebraic properties.  Each mark is queryable directly.
+  ;; The starter KB ships reflexive predicates of its own, so the enumeration is
+  ;; measured before the mark and the test holds the difference to exactly the mark.
   (tu/with-neutral-kb [kb core-context-kb]
-    (let [sameSpotAs (tu/tmp-pred) heightOf (tu/tmp-pred) adjacentTo (tu/tmp-pred)]
-      (testing "with no reflexive metadata the enumeration is empty"
-        (is (empty? (v/ask kb '(reflexive ?p) '?ctx))))
+    (let [sameSpotAs (tu/tmp-pred) heightOf (tu/tmp-pred) adjacentTo (tu/tmp-pred)
+          reflexives #(set (map (fn [b] (get b '?p)) (v/ask kb '(reflexive ?p) '?ctx)))
+          before     (reflexives)]
+      (testing "before the mark the fresh predicate is not enumerated as reflexive"
+        (is (not (contains? before sameSpotAs)))
+        (is (not (v/ask? kb (list 'reflexive sameSpotAs)))))
       (v/assert kb (list 'reflexive sameSpotAs) 'CxUniverse)
       (v/assert kb (list 'functional heightOf)  'CxUniverse)
       (v/assert kb (list 'symmetric  adjacentTo) 'CxUniverse)
       (v/assert kb (list 'transitive adjacentTo) 'CxUniverse)     ; the same predicate, two properties
       (testing "reflexive/functional memberships answer and enumerate from the mark"
         (is (v/ask? kb (list 'reflexive sameSpotAs)))
-        (is (= #{sameSpotAs}
-               (set (map #(get % '?p) (v/ask kb '(reflexive ?p) '?ctx)))))
+        ;; the mark adds exactly the fresh predicate and nothing else
+        (is (= (conj before sameSpotAs) (reflexives)))
         ;; containment, not equality: CxUniverse declares (functional arity) itself,
         ;; so the shipped vocabulary is a member of this enumeration too
         (is (contains? (set (map #(get % '?p) (v/ask kb '(functional ?p) '?ctx)))
@@ -275,11 +279,16 @@
           (tu/with-entailing
             (v/assert kb (list priceOf plain 7) 'CxNaturalWorld)
             (is (v/handle-of kb (list widget plain) 'CxNaturalWorld))))
-        (testing "under the constraint-only reading it refuses a term placed outside it"
-          (v/assert kb (list 'dog bad) 'CxNaturalWorld)             ; bad is-a (real) dog ⇒ is-a thing, but not a widget
-          (is (thrown? clojure.lang.ExceptionInfo
-                       (tu/without-entailing
-                        (v/assert kb (list priceOf bad 5) 'CxNaturalWorld)))))))))
+        (testing "under the constraint-only reading it holds a term placed outside it inert"
+          ;; a symbol is convicted only by a type separated from the declared one
+          (v/assert kb (list 'disjoint widget 'dog) widgets)
+          (v/assert kb (list 'dog bad) 'CxNaturalWorld)
+          (tu/without-entailing
+           (is (= :arg-type (:type (tu/write-conviction kb (list priceOf bad 5) 'CxNaturalWorld))))
+           (is (= :definitional-clash
+                  (try (v/try-assert kb (list priceOf bad 5) 'CxNaturalWorld) nil
+                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+               "and try-assert refuses it")))))))
 
 ;; ---- recovery rebuilds the context topology and the derived stories ---------------
 

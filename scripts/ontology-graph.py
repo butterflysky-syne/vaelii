@@ -5,7 +5,7 @@
 
 The edges come from vaelii: scripts/ontology-edges.clj loads the upper ontology (with
 --include-middle, the starter) into an in-memory KB and prints the believed taxonomy,
-so an edge a cover roster or an intersection installs is drawn beside a stated genl.
+so an edge a cover declaration or an intersection installs is drawn beside a stated genl.
 The export is cached under target/, keyed by the KB files, that script and src/. The
 diagram has:
 
@@ -43,13 +43,13 @@ Usage:
   scripts/ontology-graph.py --engine dot --ratio 0.72 --text-scale 1.4
   scripts/ontology-graph.py --engine gridfold --out target/upper.svg
 
-`--ratio` is the height / width of the page or window the drawing fills. dot and
+`--ratio` is the height / width of the page or viewport the drawing fills. dot and
 gridfold keep the candidate layout that shows the labels largest on it. No layout is
 stretched to the ratio: spreading nodes apart adds whitespace and shrinks every label
 once the drawing is scaled to fit. `--text-scale` sets the dot label size against the
 fixed node spacing.
 
-In a browser the SVG covers the window: its shorter side fills the window and the
+In a browser the SVG covers the viewport: its shorter side fills the viewport and the
 longer side scrolls.
 """
 import argparse
@@ -537,7 +537,7 @@ def sheet_area(w, h, target):
     drawing, or the drawing's own area when `target` is None. Every engine keeps the
     candidate layout with the smallest: the labels are one size in every candidate, so
     the smallest sheet is the one that shows them largest when it is scaled to a page or
-    window of that shape."""
+    viewport of that shape."""
     return w * h if target is None else max(w, h / target) * max(h, w * target)
 
 
@@ -572,9 +572,9 @@ STAGGERS = (0, 2, 4)
 WRAPS = (0, 16, 10)
 
 
-def fit_to_window(svg_text):
-    """Size the root element in a browser to cover its window: the drawing scales until
-    it fills both window axes, so its shorter side fills the window and the longer side
+def fit_to_viewport(svg_text):
+    """Size the root element in a browser to cover its viewport: the drawing scales until
+    it fills both viewport axes, so its shorter side fills the viewport and the longer side
     scrolls. The width and height attributes stay for tools that read no CSS."""
     m = re.search(r'<svg\b[^>]*?viewBox="[\d.]+ [\d.]+ ([\d.]+) ([\d.]+)"', svg_text)
     if not m:
@@ -743,7 +743,7 @@ def main():
                     help="auto uses Graphviz dot when present, else gridfold; gridfold "
                     "and icicle and dendrogram are the built-in, dependency-free layouts")
     ap.add_argument("--ratio", type=float, default=None,
-                    help="height / width of the page or window to fill (0.72 for "
+                    help="height / width of the page or viewport to fill (0.72 for "
                     "landscape): dot and gridfold keep the candidate that shows the labels "
                     "largest on it, icicle draws to it; omitted, the smallest drawing wins")
     ap.add_argument("--direction", choices=sorted(DIRECTIONS), default="auto",
@@ -807,7 +807,7 @@ def main():
             doc = svg(best_gridfold(roots, children, depth, args.ratio), depth, home, edges,
                       legend_cx=legend_cx)
             used = "gridfold"
-    doc = fit_to_window(doc)
+    doc = fit_to_viewport(doc)
 
     if args.out == "-":
         sys.stdout.write(doc)

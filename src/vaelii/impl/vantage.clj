@@ -39,7 +39,7 @@
   applies, and `answers` hands anything else back to the fan and says so.  A narrowing that
   does not announce itself is indistinguishable from a covered case.
 
-  The two must return the same answers, witnesses included.  `query_context_test` pins the
+  The two must return the same answers, witnesses included.  `query_context_test` asserts the
   cases one at a time; `vantage_differential_test` compares them over generated lattices,
   and each of the five things above turns it red when removed."
   (:require [vaelii.impl.except :as exc]
@@ -285,10 +285,10 @@
   "Is this one literal answered by the stored-fact prover and nothing else?
 
   Asked of a literal rather than of the goal, because **the answer changes under
-  substitution**: `applicable?` gates on groundness for most provers — `ArgTypeProver` on
+  substitution**: `applicable?` tests groundness for most provers — `ArgTypeProver` tests
   whether the argument is an individual, the meta-constraint and quantity provers on the
   same kind of test — so `(zt_t ?a)` is fact-only as written and `(zt_t ZX)` is not, once a
-  join has bound `?a`.  A gate asked once of the goal as written therefore admits a
+  join has bound `?a`.  A check asked once of the goal as written therefore admits a
   conjunction whose second literal reaches a prover post-hoc never consults, and post-hoc
   answers with less than the fan.  So the join re-asks it of what it actually matches."
   [kb reg g]
@@ -315,10 +315,10 @@
   — its prover is not the fact prover — and cheaply, since `applicable?` is designed to be
   the cheap question.
 
-  This is the gate at the **entry point**, and it is not the whole of it: `applicable?` gates on
-  groundness, so a literal can leave the domain once a join binds it.  `fact-only?` is
-  re-asked of each substituted literal for that reason, and the join abandons where the
-  answer changes."
+  This is the domain check at the **entry point**, and it is not the whole of it:
+  `applicable?` tests groundness, so a literal can leave the domain once a join binds it.
+  `fact-only?` is re-asked of each substituted literal for that reason, and the join
+  abandons where the answer changes."
   [kb goals]
   (let [reg (provers/registry kb)]
     (every? #(fact-only? kb reg %) goals)))
@@ -343,7 +343,7 @@
   [tax goal-functor stored-functor]
   (when (and (symbol? goal-functor) (symbol? stored-functor)
              (not= goal-functor stored-functor))
-    ;; the global closure is the gate, exactly as it is forward: a functor pair the
+    ;; the global closure is the presence check, exactly as it is forward: a functor pair the
     ;; closure does not relate was matched by something else (a variable functor, say)
     ;; and has no path to witness.  A pair related across `genlInverse` edges is
     ;; witnessed at the parity the forward link carries (`chain/subsumption-links`).
@@ -385,11 +385,11 @@
               (fn [acc [b hs ctxs]]
                 (let [g  (res/substitute literal b)
                       gf (nm/functor g)]
-                  ;; **The domain gate, re-asked of the substituted literal.**  `placeable?`
+                  ;; **The domain check, re-asked of the substituted literal.**  `placeable?`
                   ;; saw this literal with its variables in, and binding them can bring a
                   ;; prover into scope that a pass of `matches-visible` alone never consults
                   ;; — a missing answer being as wrong as a wrong one.  Stage one needs no
-                  ;; re-ask: nothing is bound yet, so the literal is what the gate passed.
+                  ;; re-ask: nothing is bound yet, so the literal is what the check passed.
                   (if (and metered? (not (fact-only? kb reg g)))
                     (reduced abandoned)
                     (reduce
@@ -438,8 +438,8 @@
   fact twice under two names it knows denote one thing. `matches-visible` at `'?ctx` filters
   none of that, so post-hoc has to ask it of the placement instead of the read.
 
-  Gated on the KB having merged anything at all, exactly as `res/without-retired` gates
-  itself: every KB until somebody states an equality pays one deref for the whole query."
+  Runs only when the KB has merged anything at all, exactly as `res/without-retired`
+  does: every KB until somebody states an equality pays one deref for the whole query."
   [kb merged? supporters w]
   (let [visible (delay (res/visible-supporter-fn kb w))
         recs    (:records kb)]
@@ -459,7 +459,7 @@
 
   So a targeted supporter forces the same descent `res/exception-aware-placements` makes
   forward: enumerate the contexts that structurally see every ingredient, keep the ones that
-  see every *exact* supporter, and maximize those. `excepted-anywhere?` is the coarse gate,
+  see every *exact* supporter, and maximize those. `excepted-anywhere?` is the coarse presence check,
   so an ordinary answer — which is nearly every answer — takes no ancestor set walk at all and
   reaches the one-line path above."
   [kb supporters ctxs]

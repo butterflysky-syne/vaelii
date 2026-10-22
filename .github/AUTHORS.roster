@@ -6,13 +6,13 @@
 # enforces that against this file, and reports the `authorship` check on every
 # pull request.
 #
-# The two other gates cannot do this. cla-assistant records that an account
+# The two other required checks cannot do this. cla-assistant records that an account
 # completed an OAuth flow, and the DCO app matches a trailer string against the
 # commit's author field. Neither can ask whether the party named is a person, so
 # a signature and a sign-off both go green for an account that is not one. This
 # file is where that question is answered, once per contributor, by a maintainer.
 #
-# The gate reads this file **from the base branch**, so a pull request cannot
+# The `authorship` check reads this file **from the base branch**, so a pull request cannot
 # admit its own author. Adding a line is a maintainer commit to `develop`.
 #
 # Format: one person per line. The first token is the name we file them under;

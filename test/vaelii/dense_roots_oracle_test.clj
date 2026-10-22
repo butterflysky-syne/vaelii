@@ -9,7 +9,7 @@
 
     * the int-routed flat families — `:context-root`, `:term-index`, `:exception-index`
       — with symbol *and* ground-compound terms, plus the `:exception-index :rules`
-      roster, which is the one key packed whole rather than through the dictionary;
+      set, which is the one key packed whole rather than through the dictionary;
     * the leaves and node children of the predicate extent and both rule indexes, whose
       leaf `[key ctx]` rides its context's scope `(ctx, 0, ctx)`, a negated antecedent's
       `[:not p]` key among them;
@@ -21,9 +21,9 @@
       `argfam-id`), so a read has two dictionaries to miss in rather than one, and a
       node's children are contexts held as their dictionary ids.  This is the oracle
       that says the packed path answers what the memory backend answers.
-      `dense_routing_test` is what pins the routing decision itself, which no
+      `dense_routing_test` is what tests the routing decision itself, which no
       behavioural test can see;
-    * the `[:argument-slot pos term]` roster beside them, whose members are
+    * the `[:argument-slot pos term]` set beside them, whose members are
       **predicates rather than handles** and which stays in the fallback;
     * multi-family `kv-intersect`, and the fallback for unrecognized keys (counters /
       scalars — where the contract-test keyspace lives)."
@@ -101,10 +101,10 @@
              (p/kv-members d [:argument-root :handles '[q0 1 B0 C0]])))
       (is (= (p/kv-members m [:argument-root :handles '[q1 1 B0 C0]])
              (p/kv-members d [:argument-root :handles '[q1 1 B0 C0]]))))
-    ;; the slot roster beside them: same generic path, but its members are predicate
+    ;; the slot predicate set beside them: same generic path, but its members are predicate
     ;; *names* rather than handles, so a backend that assumed int postings everywhere
     ;; would fail here and nowhere else
-    (testing "the argument-slot roster holds predicates, not handles"
+    (testing "the argument-slot predicate set holds predicates, not handles"
       (doseq [b [m d]]
         (p/kv-add-to-set b [:argument-slot 1 'B0] 'q0)
         (p/kv-add-to-set b [:argument-slot 1 'B0] 'q1)

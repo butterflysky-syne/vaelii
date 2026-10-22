@@ -12,7 +12,7 @@
   closes one.
 
   **Cross-site request forgery.**  Any page the operator visits can `fetch` a loopback
-  URL.  `same-origin?` rejects the write whenever the browser stamps `Origin`.
+  URL.  `same-origin?` rejects the write whenever the browser sends `Origin`.
   `edn-body?` closes the case where it does not: `application/edn` is not a
   CORS-*simple* content type, so a browser must preflight it, and a server answering
   no CORS headers fails that preflight before the request is ever sent.
@@ -129,7 +129,7 @@
 
 (defn same-origin?
   "Does this request come from the browser's own copy of this site?  A write route
-  with no session to authenticate has to ask **who asked**: a browser stamps `Origin`
+  with no session to authenticate has to ask **who asked**: a browser sets `Origin`
   (falling back to `Referer`) on a form or fetch POST and a page on another site
   cannot forge it, so comparing it to the request's own `Host` rejects a cross-site
   write while leaving the browser's own pages alone.

@@ -2,7 +2,7 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.lead-side-cost-test
   "The cost *shape* `res/*lead-side* :auto` buys, as a counted invariant — the complement
-  of `matches_hierarchical_test`, which pins that the three lead sides return the same
+  of `matches_hierarchical_test`, which asserts that the three lead sides return the same
   *set*.  Same set, different cost, and this is the cost half.
 
   `:auto` leads a broad-type clash retrieval from the term's own postings (a handful)
@@ -20,14 +20,15 @@
   the engine computes, bit-identical across runs and machines, so the assertion is a shape
   (`:scoped` scales, `:auto` does not) rather than a threshold with a tolerance.
 
-  The **storage is inherited** and the **switches are pinned**.  A shape holds on every
+  The **storage is inherited** and the **switches are forced**.  A shape holds on every
   backend — the columnar index delegates its flat `key -> set` families to an embedded
   `KvIndexStore`, so the two this file sums are recorded there too — and running it on all
   eight is coverage.  The switches are `tu/with-shipped-config`, and here they are
   belt-and-braces rather than a rescue: the two bindings this fixture already makes decide
   everything this query shape reads, which
   `the-reading-is-the-same-whatever-else-is-switched` measures rather than assumes.  The
-  sibling gate `join_lead_cost_test` is the one where the pin carries weight."
+  sibling counted test `join_lead_cost_test` is the one where the shipped-config binding
+  decides the reading."
   (:require [clojure.test :refer [deftest is]]
             [vaelii.core :as v]
             [vaelii.impl.profile :as prof]
@@ -79,13 +80,13 @@
   ;; file's own two bindings already decide everything its query shape reads, and no
   ;; switch outside them moves the number.  `*arg-root-retrieval*` is the one that looks
   ;; like it should — it is what moves a read off `:argument-root`, the family summed
-  ;; above — and it gates the `:arg-roots` path for a ground argument STUCK BEHIND A
-  ;; VARIABLE.  `(lscBroadRel LscA ?y)` pins its first argument, so it is not that shape
+  ;; above — and it decides whether the `:arg-roots` path runs for a ground argument STUCK
+  ;; BEHIND A VARIABLE.  `(lscBroadRel LscA ?y)` binds its first argument, so it is not that shape
   ;; and the switch never applies.
   ;;
   ;; So this is an invariance rather than a rescue, and worth a test for the reason the
-  ;; sibling gate is: a query shape edited into the stuck form would start reading
-  ;; through a switch nothing here pins, and the number would move for a reason no line
+  ;; sibling counted test is: a query shape edited into the stuck form would start reading
+  ;; through a switch nothing here binds, and the number would move for a reason no line
   ;; in this file mentions.
   (let [base (arg-reads-at-width :auto 4)]
     (doseq [[label sym value] [["arg-root"      'vaelii.impl.resolution/*arg-root-retrieval* false]

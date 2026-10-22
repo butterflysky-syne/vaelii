@@ -82,7 +82,7 @@
       (is (not (v/ask? kb (list 'totalDuration (list 'list A B)
                                 '(QuantityIntervalFn 1 2.5 Hour)) C))))))
 
-(tu/deftest-kb the-dimension-gate-refuses-to-add-unlike-things
+(tu/deftest-kb the-dimension-check-refuses-to-add-unlike-things
   (load-time-units kb)
   (v/assert kb '(dimensionOf Metre Length) C)
   (tu/with-terms [A B]
@@ -326,7 +326,7 @@
       (is (= '(QuantityIntervalFn 0 1800 Second)
              (bound kb (list 'overlapDuration A B '?d)))))))
 
-(tu/deftest-kb a-pinned-window-without-both-lengths-answers-nothing
+(tu/deftest-kb a-determined-overlap-without-both-lengths-answers-nothing
   (load-time-units kb)
   (tu/with-terms [A B As Ae Bs Be]
     (v/assert kb (list 'length A '(QuantityFn 2 Hour)) C)
@@ -340,7 +340,7 @@
     (is (= '(QuantityFn 900 Second) (bound kb (list 'overlapDuration A B '?d))))))
 
 (tu/deftest-kb bounds-crossing-within-the-tolerance-collapse-to-a-point
-  ;; A's 0.3 s length against a window of 0.4 − 0.1 = 0.30000000000000004 s
+  ;; A's 0.3 s length against an overlap window of 0.4 − 0.1 = 0.30000000000000004 s
   (load-time-units kb)
   (tu/with-terms [A B As Ae Bs Be]
     (v/assert kb (list 'length A '(QuantityFn 0.3 Second)) C)

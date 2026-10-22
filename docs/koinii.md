@@ -27,8 +27,8 @@ It is an **application, not part of the engine**, and the tree says so: koinii l
 `src/vaelii/koinii/`, beside `impl/` rather than inside it, and requires nothing under
 `vaelii.impl` — every module is built on the public core API and the thin `vaelii.client`,
 exactly as an outside consumer would be (`public_api_test/koinii-reaches-into-no-impl`
-checks it). That is also why it is out of the engine's pinned rosters (the API golden, the
-SPI protocols, the refusal-type roster): koinii's own development would otherwise churn the
+checks it). That is also why it is out of the engine's frozen lists (the API golden, the
+SPI protocols, the refusal-type list): koinii's own development would otherwise churn the
 engine's compatibility contract. When koinii needs something the API does not publish, the
 answer is to publish it — `sort-by-content` is here for that reason — never to reach past
 it.
@@ -142,12 +142,13 @@ lattice distinguishes the two — `CxAtlas` and `CxDeploy` are spelled alike, an
 would make admission depend on what else had landed and in which order. A context nothing has
 claimed is admissible: the entry point refuses what a placement told it, not what it could guess.
 
-The **stamp** is fixed by the same id, and refused rather than bent: `channel/assert` stamps
-`:creator` the agent the handle names, and a caller passing a *different* `:creator` is
-refused (`:koinii/creator-mismatch`). Neither silent outcome is acceptable — honouring it
-lets an agent sign another's name, dropping it leaves a call that looks like it took — and
-ownership is required downstream, since `belief/disregard` will only withdraw a statement
-whose creator is the withdrawing agent. Passing the agent's own id is redundant and allowed.
+The **creator** is fixed by the same id, and refused rather than bent: `channel/assert`
+records `:creator` as the agent the handle names, and a caller passing a *different*
+`:creator` is refused (`:koinii/creator-mismatch`). Neither silent outcome is acceptable —
+honouring it lets an agent sign another's name, dropping it leaves a call that looks like
+it took — and ownership is required downstream, since `belief/disregard` will only
+withdraw a statement whose creator is the withdrawing agent. Passing the agent's own id is
+redundant and allowed.
 
 The auth **strength** is conditional on policy (decision D4):
 
@@ -217,7 +218,7 @@ whether a move stands on its own or answers another:
   question must be told apart from a claim.
 - **Response** (`answers`, `disputes`, `endorses`, `justifies`, `votesFor`,
   `votesAgainst`) — a **meta-sentex on the target**, naming it by handle, asserted in the
-  responder's own context and stamped with the responder as creator. The two ballots are
+  responder's own context with the responder recorded as creator. The two ballots are
   response acts like the rest, marks included: a vote is cast *on* a claim, so retracting
   the claim withdraws the votes rather than leaving a count standing over nothing.
 
@@ -262,7 +263,7 @@ that is *resolved*, not disputed. Two error classes are kept distinct and never 
   known-true that cannot both hold, which the engine has no grounds to prefer.
 
 The engine represents contradiction but answers it only whole-KB; koinii adds the
-**per-channel** view — "is there an open dispute *here*?" A dispute is observed by a context
+**per-channel** reading — "is there an open dispute *here*?" A dispute is observed by a context
 exactly where it can read **both** clashing sides, up the `genlCx` ancestor set. So a clash between
 Atlas's `P` and Boreas's `¬P` surfaces in the channel that sees both agent contexts and *not*
 in a sibling that sees only one — from a one-sided vantage there is no clash to see. The hot
@@ -297,13 +298,14 @@ records the dispute, pushes it to whoever is watching, and manages its life. Thr
 
   A ruling is found again by the `:adjudication` tag on its provenance, which holds the
   **set** of disputes it settles: canonical dedup gives one sentex per sentence and
-  context, so an arbiter upholding one claim against two opponents stamps a single handle
-  twice, and a single-valued tag would leave the earlier dispute reading no standing
-  ruling at all — then taking a second one beside the first. The dispute id is compared
-  in the sorted spelling `dispute-id` builds, since a caller may hold the pair either way
-  round. An arbiter who is **a party** to the dispute is refused (`:arbiter-is-party`): a
-  ruling lands in the arbiter's own context, so for a party it would restamp their own
-  claim or retract it, deleting the disputed sentence rather than settling the clash.
+  context, so an arbiter upholding one claim against two opponents records an adjudication
+  on a single handle twice, and a single-valued tag would leave the earlier dispute
+  reading no standing ruling at all — then taking a second one beside the first. The
+  dispute id is compared in the sorted spelling `dispute-id` builds, since a caller may
+  hold the pair either way round. An arbiter who is **a party** to the dispute is refused
+  (`:arbiter-is-party`): a ruling lands in the arbiter's own context, so for a party it
+  would re-record their own claim or retract it, deleting the disputed sentence rather
+  than settling the clash.
 
   Both of those reads follow **belief**, not storage. A defeated sentex stays stored on
   purpose (it can revive), so an unfiltered enumeration of an agent's context sees claims
@@ -325,9 +327,9 @@ records the dispute, pushes it to whoever is watching, and manages its life. Thr
   tallied by claimed voter name is spoofable under cooperative (one operator, many names),
   which is exactly the trust-weighting the identity design forbids, so `resolve-by-majority`
   refuses there (`:koinii/identity-unverified`). Counting stays open for transparency; only
-  the ruling is gated. Under `:proof-tier` it also refuses when any ballot on the claim,
-  a spoiling one included, carries no attestation naming its voter, and names those ballots
-  in `:unattested`. `adjudication/cast-ballot` casts the attested ballot through
+  the ruling requires the proof-tier policy. Under `:proof-tier` it also refuses when any
+  ballot on the claim, a spoiling one included, carries no attestation naming its voter,
+  and names those ballots in `:unattested`. `adjudication/cast-ballot` casts the attested ballot through
   `identity/ingest`; `channel/vote` and the wire cast unattested ones. One unattested ballot
   therefore blocks the ruling until it is retracted.
 
@@ -412,7 +414,7 @@ the pass throws, unless the stored position names it.
 **A poll that fails is a failure, whatever it threw.** `sync!` reads a `:type` off a refusal
 to tell a reaped subscription from anything else, but a transport is free to throw something
 carrying no type at all — and treating that as "no error" drops it into the drained-to-head
-arm, which persists a nil cursor and hands the caller its stale view as though the stream were
+arm, which persists a nil cursor and hands the caller its stale replica as though the stream were
 current. Silent loss is the failure this module exists to prevent, so any exception out of the
 poll is re-thrown with the original as its cause, and a poll answering no cursor is refused
 rather than stored.
@@ -428,10 +430,10 @@ survives long enough to be polled. Either way the pass ends in a refusal the cal
 on rather than in a `sync!` that re-reads forever without returning.
 
 **A consumer has one driving thread.** `sync!` is a read-modify-write over the stored cursor
-and the materialized view, and the cursor is a claim about what *this* replica has applied —
+and the replica, and the cursor is a claim about what *this* replica has applied —
 two drivers each advancing it apply half the stream apiece. `sync!` takes the consumer's own
 monitor (uncontended when the contract is kept), which stops an interleaving from corrupting
-the view outright; it does not make two drivers a sensible arrangement.
+the replica outright; it does not make two drivers a sensible arrangement.
 
 ## The other deployment shape: independent seats
 
@@ -514,7 +516,7 @@ adding one, or to state a limit rather than hide it.
 
 | | Decision | Why |
 |---|---|---|
-| **D1** | A reply is a meta-sentex on its target | The `target_following_predicate` cascade tears replies down with the target; first-writer-wins forces each act to be its own creator-stamped object. |
+| **D1** | A reply is a meta-sentex on its target | The `target_following_predicate` cascade tears replies down with the target; first-writer-wins forces each act to be its own object with its creator recorded. |
 | **D3** | Trust is a mutable number, not a fixed rank | An operator tier at bootstrap, overwritten by earned reputation; `functional`, so an update retracts-then-asserts rather than accumulating. |
 | **D4** | Identity strength is conditional on policy | Cooperative (trusted by convention) for notify-only; proof-tier (a verified credential, fail-closed) required once trust-resolve is on. |
 | **D5** | Moves are knowledge, not messages | A speech act is a sentex — queryable, retractable, auditable — so the conversation lives in the graph, not the client. |

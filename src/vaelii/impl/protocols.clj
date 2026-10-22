@@ -54,7 +54,7 @@
   ;; needs it rather than by every store on every enumeration.  The memory store answers a
   ;; `PersistentHashSet<Long>`, because that is what its own state already is.  The disk
   ;; store, and any store large enough for the shape to be the cost, answers
-  ;; `vaelii.impl.roster`'s compressed one instead, at 0.2 bytes a handle against 48–75.
+  ;; `vaelii.impl.handle-set`'s compressed one instead, at 0.2 bytes a handle against 48–75.
   ;;
   ;; The **tally** questions — how many, is there one at all — do not need the set and are
   ;; asked through `Tallying`'s helpers below, which fall back to these.
@@ -101,7 +101,7 @@
   before the KB has answered anything, and `import` asks the first again to report what it
   loaded.  On a store whose enumeration is a read of its own state those added no work.  On
   one whose enumeration is a **query** they cost the whole table: every handle over the
-  wire and a roster built out of it, to answer with one number.
+  wire and a handle set built out of it, to answer with one number.
 
   A store implements this when it can answer without enumerating — a `SELECT count(*)`, a
   `LIMIT 1` — and callers go through the helpers below, which fall back to the enumeration
@@ -111,9 +111,9 @@
   engine asks are on the protocol, so an implementer knows every one of them is worth a
   statement."
   (sentex-tally [store]
-    "How many live sentexes, without building the roster.")
+    "How many live sentexes, without building the handle set.")
   (justification-tally [store]
-    "How many live justifications, without building the roster.")
+    "How many live justifications, without building the handle set.")
   (a-sentex-id [store]
     "Some live sentex handle, or nil when the store holds none.  *Which* one is the
      store's choice — every caller either tests it for nil or reads the record to prove
@@ -123,24 +123,24 @@
   (a-premise-id [store]
     "Some handle marked a premise, or nil."))
 
-(defprotocol ImageStamping
-  "**Optional**: a record store an index image or a reasoning image may be stamped against.
-  Each image is written with the stamp its records answered at the time, and installed only
-  while they still answer the same one, so a stamp has to move whenever a record is added,
-  deleted or re-stored — a premise mark included — and differ between two unrelated stores.
-  It is read at every open and close of a KB keeping images, so it has to cost no walk of
-  the records.
+(defprotocol ImageFingerprinting
+  "**Optional**: a record store that fingerprints its records for an index image or a
+  reasoning image.  Each image is written with the fingerprint its records answered at the
+  time, and installed only while they still answer the same one, so a fingerprint has to
+  move whenever a record is added, deleted or re-stored — a premise mark included — and
+  differ between two unrelated stores.  It is read at every open and close of a KB keeping
+  images, so it has to cost no walk of the records.
 
   The `:disk` store answers off its slot files (`record-store/slot-fingerprint`,
   `reasoning-fingerprint`); the `:pg` adapter answers one row a trigger moves in the same
   transaction as each write.  A store that does not implement it keeps no image, and
   `open-kb` refuses the `:snapshot` index over it."
-  (index-stamp [store]
-    "The stamp an index image is validated against: any value, compared with `=`, that
-     moves when a sentex is added, deleted or re-stored.")
-  (belief-stamp [store]
-    "The stamp a reasoning image is validated against: as `index-stamp`, and moving when
-     a justification does too."))
+  (index-fingerprint [store]
+    "The fingerprint an index image is validated against: any value, compared with `=`,
+     that moves when a sentex is added, deleted or re-stored.")
+  (belief-fingerprint [store]
+    "The fingerprint a reasoning image is validated against: as `index-fingerprint`, and
+     moving when a justification does too."))
 
 (defprotocol RecordSink
   "An open bulk write.  A caller opens one with `capabilities/sentex-sink` /
@@ -177,7 +177,7 @@
   preserve its own numbering through one.
 
   `opts` is `{:premises? bool}` for a sentex sink — whether a record carrying a
-  `:strength` is rostered as a premise by the write.  It is an option because the engine's
+  `:strength` joins the premise set by the write.  It is an option because the engine's
   two import paths differ on it: the records-only pass marks inline, and the belief pass
   aggregates the marks afterwards over dump ids that collapsed onto one handle, where the
   record's own strength is the first frame's and the mark is the strongest.  A justification

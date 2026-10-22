@@ -117,7 +117,7 @@
 
 (tu/deftest-kb a-nearest-that-is-not-a-count-is-refused-rather-than-read-as-no-request
   ;; `{:nearest "3"}` read as no request answered the ordinary `:not-stored`, which is
-  ;; exactly what a goal no rule concludes gives — the silence the roster refuses for a
+  ;; exactly what a goal no rule concludes gives — the silence the key check refuses for a
   ;; misspelt key, here for a mistyped value.  Zero stays the request for nothing.
   (tu/with-terms [p goal A B CxOff]
     (v/assert kb (list 'genlCx CxOff 'CxUniverse) 'CxUniverse)

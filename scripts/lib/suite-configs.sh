@@ -14,12 +14,12 @@
 #              the supported opt-out from the entailment (docs/argtypes.md).
 #
 # `test-backends.sh` runs the first list, `test-sweeps.sh` the second, and
-# `test-matrix.sh` runs both at once — so the roster lives here rather than in the
+# `test-matrix.sh` runs both at once — so the configuration set lives here rather than in the
 # script that happened to need it first.  Adding a backend or a sweep is an edit to this
 # file and to nothing else.
 #
 # Three more readings of the same table live here for the same reason: the GROUP words a
-# runner takes in place of a list of names (`config_group`), the ROUTINE roster a bare
+# runner takes in place of a list of names (`config_group`), the ROUTINE configuration set a bare
 # run uses against the full sixteen (`ROUTINE_SKIP`), and what a changed FILE owes
 # (`config_owed_for_path`), which is how a change runs the configurations that could
 # disagree about it instead of all of them.
@@ -51,7 +51,7 @@ SWEEP_ENVS=(
   "VAELII_QUERY_ENGINE=inference VAELII_QUERY_STRATEGY=breadth-first"
 )
 
-# ---- the ROUTINE roster ---------------------------------------------------
+# ---- the ROUTINE configuration set ----------------------------------------
 #
 # What a bare `test-matrix.sh` runs, against the sixteen `full` runs.  Two
 # configurations sit it out, and both are the same one claim written a third time.
@@ -65,12 +65,12 @@ SWEEP_ENVS=(
 # are the cross-product for its own sake.
 #
 # They are also three of the five longest runs, at the head of a longest-first schedule,
-# which is what makes the difference readable rather than notional: the routine roster
+# which is what makes the difference readable rather than notional: the routine configuration set
 # finishes in about two thirds of the full one's wall clock.
 #
 # `full` is what a release runs, and what to run when the change is to the record/index
 # protocol itself.  Nothing is DROPPED here — a skipped configuration is named on the
-# console every time, because a roster that quietly shrank is a matrix that means less
+# console every time, because a configuration set that quietly shrank is a matrix that means less
 # than the word does.
 ROUTINE_SKIP=(disk-dense disk-columnar)
 
@@ -94,7 +94,7 @@ config_group() {
 }
 
 # Expand any GROUP words among the arguments and drop repeats, printing one
-# configuration per line in the ROSTER's own order rather than the caller's:
+# configuration per line in the TABLE's own order rather than the caller's:
 # `backends hier-off` and `hier-off backends` name the same set, a matrix reorders by
 # measured seconds anyway, and `config_owed_for_path` emits group words and
 # configuration names in the same breath.  Anything in neither table is dropped, so a
@@ -127,7 +127,7 @@ expand_configs() {
 #
 # The caller seeds `RANDOM` itself and prints the seed it used, so a run's order can be
 # replayed by giving that seed back.  `test-shuffle.sh` and `test-matrix.sh` both shuffle
-# their roster this way, and both accept the seed in an environment variable.
+# their configurations this way, and both accept the seed in an environment variable.
 shuffle_inplace() {
   local i j tmp n=${#SHUF[@]}
   for (( i = n - 1; i > 0; i-- )); do
@@ -162,7 +162,7 @@ config_owed_for_path() {
     # --- swapped: the file IS half of a configuration ---
     # one per representation this directory holds a half of: the durable log index,
     # the record store every durable pairing shares (`disk-memory` is the cheapest
-    # that reindexes over it), and the mapped image, whose writer, stamp and cadence
+    # that reindexes over it), and the mapped image, whose writer, manifest and cadence
     # live here too — so `index_snapshot.clj` owes the configuration it implements
     src/vaelii/impl/disk/*)              printf 'disk-log disk-memory disk-snapshot' ;;
     src/vaelii/impl/overlay/*)           printf 'overlay' ;;
@@ -233,7 +233,7 @@ config_owed_for_path() {
     |src/vaelii/impl/rewrite.clj \
     |src/vaelii/impl/caches.clj \
     |src/vaelii/impl/literal_cache.clj)  printf 'routine' ;;
-    # the roster and the verdict every belief read decides a placed nogood by, and the
+    # the forced-monotonic set and the verdict every belief read decides a placed nogood by, and the
     # candidate families the placement detectors read through the index
     src/vaelii/impl/decide.clj \
     |src/vaelii/impl/decide/*)           printf 'routine' ;;
@@ -247,7 +247,7 @@ config_owed_for_path() {
     # the public API every configuration's suite calls; `violations` there joins the
     # ledger to the `:forced-conclusion` entries read off the stored void firings
     src/vaelii/core.clj)                 printf 'routine' ;;
-    # the roster itself, and the harness that installs the switches: a change here
+    # the configuration set itself, and the harness that installs the switches: a change here
     # changes what every other run MEANS, so it owes all of them
     scripts/lib/suite-configs.sh \
     |test/vaelii/test_util.clj)          printf 'full' ;;
@@ -297,10 +297,10 @@ config_wants_disk() {
 # that for as long as they have existed; what follows is the same claim, checked.  Any
 # other difference is a run that skipped something the others ran — a namespace that
 # failed to load, a `deftest` that stood aside without saying so, a switch that turned a
-# gate off — and every one of those is indistinguishable from a green run.
+# check off — and every one of those is indistinguishable from a green run.
 #
 # No configuration stands aside, and the table is empty by design.  Where an assertion
-# pins an artifact of one implementation — the columnar trie's absent `:fan`
+# asserts an artifact of one implementation — the columnar trie's absent `:fan`
 # (`profile_test/the-fan-tally-counts-what-the-walk-touched`, docs/profile.md), the node
 # engine's one-solution-per-answer `prove` (the `tu/query-engine-override` sites in
 # `backward_test`, `query_test` and `inference_test`, docs/inference.md) — the test

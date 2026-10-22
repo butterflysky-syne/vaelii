@@ -124,7 +124,7 @@
 ;;
 ;; `nil` is deliberately NOT that mistake. `handle-of` answers nil for a sentence the KB
 ;; does not hold, so `(in? kb (handle-of kb s ctx))` is ordinary and its answer is
-;; `false`. Both halves are pinned because tightening the first without exempting the
+;; `false`. Both halves are asserted because tightening the first without exempting the
 ;; second is the easy over-correction.
 
 (deftest nil-is-a-question-with-an-answer-not-a-bad-handle

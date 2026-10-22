@@ -4,7 +4,7 @@
   "What conjunctive planning is worth, and — first — whether the cost model it rests on
   composes at all.
 
-  **The q-error curve is the gate, and it is read before any plan is timed.**  For each
+  **The q-error curve is the precondition, and it is read before any plan is timed.**  For each
   prefix of the chosen order, `q = max(est/actual, actual/est)` against the count the
   engine actually returns for that prefix.  Flat in the join depth means the estimates
   compose and an ordering built over them is worth having; growing in the depth means

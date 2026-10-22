@@ -42,7 +42,7 @@
 
   Neither CxLeft nor CxRight sees the other, so each is individually consistent and the
   clash exists only from a context below both.  The two bottoms are not redundant: they
-  pin that the verdict is a property of *what a context sees*, not of which context ran
+  assert that the verdict is a property of *what a context sees*, not of which context ran
   first or of state left behind by the first descent.
 
   STATUS.  Written before the implementation existed.  Every row passes;
@@ -53,7 +53,7 @@
   1, 2 and 4 unpended, alongside the five that never needed it (the arity-2 regression
   half, the composite-determinant case this mark exists for, and both 212-arity rows).
   Closing it took more than the accessor `functionalInArg` was missing from
-  `special/equate-under-context-edge`'s own predicate roster — `derive-functional-
+  `special/equate-under-context-edge`'s own predicate list — `derive-functional-
   equalities` (and its antisymmetric twin) now sweep every reader below a fact's own
   context on **every** arrival order, not only the genlCx-edge one, since these rows
   wire their contexts before their facts and so exercise the plain fact-arrival
@@ -75,13 +75,13 @@
   lesson.  Every row above turns on a pair of **symbol** fillers, so every one of them
   exercises the *merge* lane — `special/equate-existing` and the `derive-*` family.  The
   unmergeable pair takes an entirely different lane, `settle`'s arbitration sweep, and
-  `functionalInArg` had joined neither of that lane's two rosters: a declaration arriving
+  `functionalInArg` had joined neither of that lane's two trigger lists: a declaration arriving
   after two numbers convicted nothing, where `(functional P)` in the same order convicts.
   A generalization weaker than the special case it generalizes, on an axis no row here
   looked at, behind a docstring that argued the exclusion was correct.  The
   declaration-last-over-an-unmergeable-pair block at the end of this file is the receipt,
-  and `exposure_test/every-functional-family-mark-is-in-both-of-settles-rosters` states
-  it over the rosters themselves so a fourth spelling cannot repeat it."
+  and `exposure_test/every-functional-family-mark-is-in-both-of-settles-trigger-lists` states
+  it over the lists themselves so a fourth spelling cannot repeat it."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.test-util :as tu]))
@@ -194,21 +194,22 @@
 ;; (`special/equate-under-edge`).
 ;;
 ;; It failed for the generalized spelling alone.  The entry point's body asks
-;; `derive-functional-equalities`, which reads both spellings — but its pre-gate asked
-;; `props :functional` and nothing else, so a KB whose only mark was `(functionalInArg P
-;; n)` took the "declares nothing functional, free" exit and merged nothing, where
-;; `(functional P)` over the identical shape merged.  The same omission as vaelii#52 and
-;; vaelii#54, in the third of the family's three entry points: each entry point spelled the gate for
-;; itself, so joining the vocabulary to two of them left the third silently closed.
+;; `derive-functional-equalities`, which reads both spellings — but its presence check
+;; asked `props :functional` and nothing else, so a KB whose only mark was
+;; `(functionalInArg P n)` took the "declares nothing functional, free" exit and merged
+;; nothing, where `(functional P)` over the identical shape merged.  The same omission as
+;; vaelii#52 and vaelii#54, in the third of the family's three entry points: each entry
+;; point spelled the presence check for itself, so joining the vocabulary to two of them
+;; left the third silently closed.
 ;;
-;; The gate is now `tax/functional-family-declared?`, read by every entry point of the family,
-;; which is what makes this one test cover all three rather than one of them.
+;; The presence check is `tax/functional-family-declared?`, read by every entry point of
+;; the family, which is what makes this one test cover all three rather than one of them.
 ;; **Two tests and not one parameterized over the spelling**, which is the trap this
-;; pair walked into first: the gate under test is *global* (does the taxonomy hold any
-;; functional-family mark at all), so two arms sharing one KB cannot tell the spellings
-;; apart — the control arm's `(functional …)` leaves the gate open and the generalized
-;; arm then passes against the very bug it is meant to catch.  `:each` gives each
-;; `deftest` its own fresh KB, so the isolation has to be at that grain.
+;; pair walked into first: the presence check under test is *global* (does the taxonomy
+;; hold any functional-family mark at all), so two arms sharing one KB cannot tell the
+;; spellings apart — the control arm's `(functional …)` makes the presence check answer
+;; true and the generalized arm then passes against the very bug it is meant to catch.
+;; `:each` gives each `deftest` its own fresh KB, so the isolation has to be at that grain.
 (defn- merges-when-the-edge-arrives-last?
   "Assert `decl` on a super-predicate and two fillers on a sub-predicate, then the `genl`
   edge between them LAST.  True iff the fillers ended up merged.  Checks along the way
@@ -233,7 +234,7 @@
          "(functional P): the edge arriving last reaches the facts already stored"))
 
 (tu/deftest-kb a-genl-edge-arriving-last-merges-under-functional-in-arg
-  ;; the regression, in its own KB so the gate is genuinely closed to begin with
+  ;; the regression, in its own KB so the presence check answers false to begin with
   (check (merges-when-the-edge-arrives-last? kb #(list 'functionalInArg % 2))
          "(functionalInArg P 2): the same, or the generalization moved arity-2 behaviour"))
 
@@ -329,7 +330,7 @@
     (v/assert kb (list p 2) CxRight)
     (check (not (any-contradiction? kb))
            "no context sees both fillers, so the clash does not exist to be had")
-    (check (empty? (clash-contexts kb)) "and nothing is stamped with a vantage")))
+    (check (empty? (clash-contexts kb)) "and nothing is tagged with a vantage")))
 
 ;; vaelii#43 closed the gap.  The two facts arrive into a topology `contexts!` wires
 ;; before either one exists, so this is the *fact*-arrives-last shape rather than the
@@ -368,8 +369,9 @@
 ;; equality is derived: the two fillers are a `functionalInArg` nogood at CxBottom, and
 ;; two `:default` members tied at the weakest class are a represented dilemma, the shape
 ;; of `nixon-diamond-is-the-same-dilemma-every-time` (order_independence_test.clj).  The
-;; asserted `(not (equals ThingOne ThingTwo))` is a denial of a roster literal, held OUT.
-;; The row pins that the clash is not lost: both fillers believed, neither
+;; asserted `(not (equals ThingOne ThingTwo))` is a denial of a forced-monotonic literal, and no
+;; equality stands beside it, so it is believed.
+;; The row asserts that the clash is not lost: both fillers believed, neither
 ;; defeated, the pair reported exactly once, in both orders.
 (tu/deftest-kb an-asserted-difference-leaves-two-default-fillers-a-represented-dilemma
   ;; Row 3.  Two paths meet here: the functional constraint over two `:default` symbol
@@ -401,8 +403,8 @@
                   "no equality is derived from two :default fillers")
               (is (not (merged? kb ThingOne ThingTwo))
                   "so the two fillers stay apart")
-              (is (false? (v/in? kb neg))
-                  "the asserted difference is held OUT")
+              (is (true? (v/in? kb neg))
+                  "the asserted difference is believed: no equality stands beside it")
               (is (= [:default :default]
                      [(v/defeat-class kb one) (v/defeat-class kb two)])
                   "neither filler was defeated — the dilemma is represented, not decided")
@@ -451,7 +453,7 @@
 
 ;; ---- row 4: two bottoms, same verdict ------------------------------------
 
-;; vaelii#43 closed the gap, and this row is what pins the fix has no favorite
+;; vaelii#43 closed the gap, and this row asserts that the fix has no favorite
 ;; reader: `equate-under-context-edge`'s candidate walk and `derive-functional-
 ;; equalities`' own `context-down` sweep both reach every reader below a marked
 ;; predicate's stored facts, not the first one asked.
@@ -624,7 +626,7 @@
 ;; same order convicts.
 ;;
 ;; Both halves of the lane map on `special/functional-family-declaration` are therefore
-;; pinned here, and the control is not optional for the reason the merge rows give.
+;; asserted here, and the control is not optional for the reason the merge rows give.
 
 (tu/deftest-kb control-functional-declared-after-unmergeable-facts-is-reported
   ;; THE CONTROL for the two rows below.  Read this result first.
@@ -662,9 +664,9 @@
   ;; puts the pair under it.
   ;;
   ;; Green before #54 as well as after — `clash-marked-below` has read
-  ;; `tax/functional-in-arg-predicates` beside the prop rosters since the mark existed,
+  ;; `tax/functional-in-arg-predicates` beside the `:props` sets since the mark existed,
   ;; so `marks-above?` already answered for it and only the declaration's *own* functor
-  ;; was missing from the two rosters.  Pinned anyway: the fix widens what reaches
+  ;; was missing from the two trigger lists.  The row stays anyway: the fix widens what reaches
   ;; `marks-above?`, and this is the row that says the widening did not cost the
   ;; descension.
   (tu/with-terms [parentOf fatherOf Tom]
@@ -676,7 +678,7 @@
            "the mark descends to fatherOf when the edge lands, and the stored pair is decided")))
 
 (tu/deftest-kb a-malformed-generalized-declaration-triggers-no-sweep
-  ;; The trigger gate reads the position as well as the predicate.  A declaration whose
+  ;; The trigger check reads the position as well as the predicate.  A declaration whose
   ;; second argument is not an integer names no slot, and must not reach the sweep as
   ;; though it did — nor take the assert down on the way.
   (tu/with-terms [parentOf Tom Mary]

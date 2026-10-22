@@ -169,6 +169,7 @@
    [:taxonomy :network-filter-active?]   "a callback `tax/install-supporter-visibility!` sets"
    [:taxonomy :network-visible?]         "a callback `tax/install-supporter-visibility!` sets"
    [:taxonomy :supporter-reaches?]       "a callback `tax/install-supporter-visibility!` sets"
+   [:taxonomy :supporter-sentence]       "a callback `tax/install-supporter-visibility!` sets"
    [:taxonomy :index]                    "the index store the supporter families live in, which `tax/install-index!` sets"
    [:taxonomy :raw?]                     "whether `:index` is a raw taxonomy's own store, which `tax/install-index!` clears"})
 

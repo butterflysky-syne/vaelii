@@ -1,18 +1,18 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.type-contract-test
-  "The `:type` vocabulary, pinned as a roster.  Every refusal in the tree carries a
+  "The `:type` vocabulary, frozen as a set.  Every refusal in the tree carries a
   plain `:type` keyword, and callers discriminate on that one vocabulary — so a new
   or renamed `:type` is a contract change, and this test makes it a *visible* one:
   the scan below collects every literal on the refusal surface from the sources at
-  runtime, and the checked-in roster goes stale until someone updates it deliberately, changelog in
+  runtime, and the checked-in set goes stale until someone updates it deliberately, changelog in
   hand.
 
   Two more questions are asked of the same scan, because a keyword is not the whole of
   what a caller catches:
 
   - **what it carries.**  A caller that has branched on the keyword reads the `ex-data`
-    next, and what is in the map is decided one throw at a time.  `carried` pins, for
+    next, and what is in the map is decided one throw at a time.  `carried` freezes, for
     every `:type` raised in more than one place, the keys all of its throws agree on —
     so a new throw that drops one narrows what a `catch` can act on and fails here
     rather than in somebody's `catch` a release later.  Where the throws agree on
@@ -43,7 +43,7 @@
   in an `ex-info` or beside a `:message`/`:ok false`.
 
   A `:type` whose value is a **symbol** is the one shape a source scan cannot answer:
-  the keyword is behind a var, so the roster comparison would silently lose it. Rather
+  the keyword is behind a var, so the set comparison would silently lose it. Rather
   than read past it, the scan collects those separately and `symbol-valued-types` below
   names every one, so a new one fails until somebody says what it is."
   (:require [clojure.java.io :as io]
@@ -58,7 +58,7 @@
   Character literals (`\\(`) and string escapes are skipped, so a delimiter in
   either cannot unbalance the count.
 
-  Public because `refusal_roster_test` asks the same question of `test/` — which form
+  Public because `refusal_types_test` asks the same question of `test/` — which form
   encloses this keyword — and a second lexer beside this one would be a second set of
   rules to drift from it."
   [^String src snapshot-at]
@@ -269,7 +269,7 @@
 (defn refusal-types
   "The refusal-surface `:type` keywords in one source string.
 
-  Public because `refusal_roster_test` asks the same sources the same question, one step
+  Public because `refusal_types_test` asks the same sources the same question, one step
   further on: not *what* the vocabulary is but whether each word of it is tested and
   written down."
   [^String src]
@@ -298,7 +298,7 @@
   keyword can rely on being there.
 
   A keyword raised at one site is left out: one throw cannot disagree with itself, so
-  pinning its keys would copy the form rather than check it."
+  freezing its keys would copy the form rather than check it."
   [files]
   (let [by-type (->> files
                      (mapcat (comp refusal-sites slurp))
@@ -316,9 +316,9 @@
   mismatch}` — mapped to the `:type` each raises.  Their discriminants are literals at
   the *call* sites instead, which is where the scan reads them.
 
-  Pinned rather than discovered, and the count is checked: a third helper is a third
+  Written out rather than discovered, and the count is checked: a third helper is a third
   place a discriminant can be minted, and one this list does not name is one whose
-  values land in no vocabulary at all — which is the hole the whole roster below exists
+  values land in no vocabulary at all — which is the hole the whole set below exists
   to close, reopened one indirection down."
   {"refuse-table!" :bad-table-entry     ; kb
    "refuse"        :bad-table-entry})   ; predicates/check-facets
@@ -373,7 +373,7 @@
                      (map (fn [[_ helper arg]] [helper arg])))
            (re-seq helper-call src))]))
 
-(def ^:private roster
+(def ^:private known-types
   "Every `:type` on the refusal surface, by hand.  Going stale is the feature: a new
   or renamed keyword fails the comparison below until it is added here deliberately —
   with a changelog entry, since callers discriminate on it (CONTRIBUTING.md §3.8)."
@@ -381,7 +381,7 @@
     :arg-type :arg-variable :argument-family-ceiling :asymmetric :bad-algebra :bad-arg
     :bad-args :bad-batch :bad-cursor :bad-foreign-manifest :bad-handle :bad-host
     :bad-level :bad-pattern :bad-registrant :bad-reply
-    :bad-snapshot :bad-table-entry :base-is-overlay :body-too-large :budget-exhausted
+    :bad-snapshot :bad-table-entry :backup-failed :base-is-overlay :body-too-large :budget-exhausted
     :choice-head-not-positive
     :compaction-failed :cover :cross-origin :daemon-error :damaged-dictionary
     :damaged-frame :definitional-clash :derived-only :disallowed-class
@@ -395,12 +395,12 @@
     :naf-not-closed
     :naming :nippy-version-moved :nippy-version-unreadable
     :no-base :no-depth-bound :no-destination
-    :no-dump :no-foreign-reader :not-a-directory :not-assertible
+    :no-dump :no-foreign-reader :no-records-location :not-a-directory :not-assertible
     :not-checkable :not-edn :not-empty :not-encodable :not-indexable
-    :not-a-report :not-found :not-ground :not-in-process :not-range-restricted :not-stratified
+    :not-a-report :not-found :not-ground :not-in-process :not-pg-snapshot :not-range-restricted :not-sealed :not-stratified
     :not-watchable :not-well-formed :not-writable :over-ceiling :path-not-served :pattern-too-costly
     :quantifier-not-local :quoted-arg-type
-    :reset :shape :short-transfer :solver-failed :solver-unavailable
+    :reset :shape :short-transfer :shutdown-abort :solver-failed :solver-unavailable
     :stacked-batch
     :stacked-fork :stale-index-layout :stale-index-records :still-exporting :still-loading :still-stopping
     :still-writing :stopping
@@ -412,7 +412,8 @@
     :unminted-nat
     :unreadable :unreadable-store :unrecovered-kb :unrecovered-premise
     :unreleased :unsupported-compression :unsupported-context
-    :unsupported-format :unsupported-platform :unsupported-variant :unsupported-version})
+    :unsupported-format :unsupported-platform :unsupported-unattested
+    :unsupported-variant :unsupported-version})
 
 (def ^:private symbol-valued-types
   "Every `:type` in the tree whose value is a symbol rather than a keyword literal, by
@@ -420,13 +421,13 @@
 
   `cancelled` is `vaelii.browser.jobs`'s `::cancelled`, the namespaced keyword a cancelled
   `progress!` throws and the only thing that tells a cancelled job from a failed one. It
-  is deliberately not in `roster`: the roster is the *plain-keyword* refusal vocabulary a
+  is deliberately not in `known-types`: that set is the *plain-keyword* refusal vocabulary a
   caller discriminates on, and this one is read by the job registry beside it rather than
   by a caller of the API.
 
   `ty` is `serve`'s `(:type (ex-data e))` put back on the wire — a **pass-through** of
   whatever the caught refusal already carried, so it mints no vocabulary of its own and
-  every keyword it can hold is in `roster` by way of the throw it came from.  The same
+  every keyword it can hold is in `known-types` by way of the throw it came from.  The same
   name is used by the two throws that pass through a refusal decided elsewhere: `serve`'s
   `admit!`, which throws the `:type` an `admit` fn answered, and `vaelii.browser.web`'s
   `writing-job`, which throws `late-refusal-type`'s.  The browser's `admit` fn and
@@ -439,21 +440,21 @@
   more than one place, the keys present in the `ex-data` of every one of its throws.
 
   The `:type` is the contract and the message is prose, which leaves a caller who has
-  branched on the keyword with one question the roster above cannot answer: what is in
+  branched on the keyword with one question the set above cannot answer: what is in
   the map. That is answered site by site, so without this nothing notices when two throws
   of one keyword disagree — a twelfth `:unknown-backend` that names no `:axis`, or a
   `:disk-locked` that drops the `:holder`, compiles and passes every other check here.
 
   A keyword raised for several conditions carries a **discriminant** as well, and the
   convention is `:mismatch` — `:bad-table-entry` was first, `:unknown-option` and
-  `:unknown-backend` followed. What is pinned here is only that every throw carries the
-  key; the values are their own vocabulary and are pinned in `discriminants`, for the
-  reason this table exists one level up — a field left open is a roster with none of the
+  `:unknown-backend` followed. This table asserts only that every throw carries the
+  key; the values are their own vocabulary and are frozen in `discriminants`, for the
+  reason this table exists one level up — a field left open is a hand-kept list with none of the
   checking, and three validators had three spellings for a row with no arm before
   anything compared them.
 
   **Only the multi-site refusals are here**, and that is the whole of what this can
-  check: one throw cannot disagree with itself, so pinning a single-site refusal's keys
+  check: one throw cannot disagree with itself, so freezing a single-site refusal's keys
   would copy the form rather than check it. One of those carries a question for
   its row in troubleshooting's `:type` index, which is where a caller holding the keyword
   looks.
@@ -462,13 +463,7 @@
   here — several are two shapes of one condition and have nothing in common —
   but it is a hole in what a `catch` can act on, so each one is named in
   `carries-nothing` with the reason."
-  {:arg-constraint-kind     #{:message :predicate}
-   ;; the instance and subtype argument-type refusals, each raised by its singular arm
-   ;; (args-problem / genls-problem) and its covering twin (covering-args-problem /
-   ;; covering-genls-problem) — the same payload at both
-   :arg-genl                #{:message :sentence :arg :expected :position}
-   :arg-type                #{:message :sentence :arg :expected :position}
-   :bad-arg                 #{:arg :value}
+  {:bad-arg                 #{:arg :value}
    :bad-args                #{:op}
    :bad-cursor              #{:cursor :token}
    :bad-foreign-manifest    #{:url}
@@ -492,7 +487,7 @@
    ;; the conditional refusal, raised by interArg's arm (inter-args-problem) and by the
    ;; homogeneity arm (inter-args-homogeneity-problem) — the same payload at both
    :inter-arg-type          #{:message :sentence :arg :expected :position
-                              :trigger :trigger-type :trigger-position}
+                              :trigger :trigger-type :trigger-position :disjoint-with}
    :missing-adapter         #{:coordinate :records}
    :missing-resource        #{}
    :naf-not-closed          #{:antecedents :unbound}
@@ -507,6 +502,7 @@
    :not-found               #{:error :ok}
    :not-ground              #{:context}
    :not-indexable           #{:sentence}
+   :not-in-process          #{:key}
    :not-range-restricted    #{:antecedents :consequent :problems}
    :not-stratified          #{:context :cycle}
    :not-watchable           #{}
@@ -552,12 +548,12 @@
 
 (def ^:private discriminants
   "Every `:mismatch` value each `:type` is raised with, by hand — the discriminant
-  vocabulary, pinned the way `roster` pins the `:type` one and going stale for the same
+  vocabulary, frozen the way the `:type` vocabulary is frozen and going stale for the same
   reason.
 
-  **The hole this closes.** `carried` pins that a multi-site refusal carries `:mismatch`
+  **The hole this closes.** `carried` asserts that a multi-site refusal carries `:mismatch`
   and says outright that the values are left to the entry points: \"the values live with the
-  entry points that raise them.\" That is an open field, and an open field is a roster with
+  entry points that raise them.\" That is an open field, and an open field is a hand-kept list with
   none of the checking — the rule `predicates/check-facets` refuses a declaration for
   breaking, one level down, in this vocabulary's own discriminant. Left open, two
   validators mint two spellings of one condition and nothing compares them, which is how
@@ -566,18 +562,18 @@
 
   **What each list is for is not the same.** `:unknown-option` and `:unknown-backend`
   are caught by callers and branched on, and `docs/troubleshooting.md` enumerates both —
-  held to this roster by `a-doc-that-enumerates-discriminants-names-all-of-them`, since
-  a prose list is a roster too. `:bad-table-entry` is raised at namespace load and its
+  held to this table by `a-doc-that-enumerates-discriminants-names-all-of-them`, since
+  a prose list is a hand-kept list too. `:bad-table-entry` is raised at namespace load and its
   caller is the build: the value is read by whoever is looking at the failure, so the
-  vocabulary is pinned here and not spelled out in a table cell forty rows long."
+  vocabulary is frozen here and not spelled out in a table cell forty rows long."
   {:bad-table-entry
    #{:arbitrable :blank-exemption :blank-title :cached :checked :duplicate-name
-     :duplicate-reading :duplicate-title :enumeration :exempt-and-rostered
-     :family-lane :family-roster :illegal-pair :image-axis :implication :inert :no-arm
+     :duplicate-reading :duplicate-title :enumeration :exempt-and-listed
+     :family-lane :family-list :illegal-pair :image-axis :implication :inert :no-arm
      :no-names :partial-cache-triple :read-at :reading :recheck
      :reserved-name :stale-exemption :stops-short :storage
-     :unarmed-axis :unarmed-reading :undeclared-arm :unknown-axis :unnamed-pair
-     :unrostered-arm :unrostered-reader :vocabulary}
+     :unarmed-axis :unarmed-reading :undeclared-arm :unknown-axis :unlisted-arm
+     :unlisted-reader :unnamed-pair :vocabulary}
    :unknown-backend
    #{:illegal-pair :illegal-position :reserved-name :unknown-name}
    :unknown-option
@@ -591,7 +587,7 @@
   Most are two shapes of one condition and the reason says so — a wire reply beside the
   throw behind it, a classpath resource beside a file, a solver that ran beside one that
   never started. None of them is a keyword doing several jobs: those carry `:mismatch`
-  and are pinned in `carried` instead."
+  and are frozen in `carried` instead."
   {:bad-handle
    "one entry point names the `:handle` it could not read; the batch entry point names the `:entry` it
     came from and its `:index` in the batch, because a bad handle in a batch is useless
@@ -710,7 +706,7 @@
     renaming it is a breaking change for a caller that catches it."})
 
 (defn all-source-files
-  "Every `.clj` under `src/`, koinii included.  `refusal_roster_test` scans this wider
+  "Every `.clj` under `src/`, koinii included.  `refusal_types_test` scans this wider
   set: whether a refusal is tested and written down is a question about every refusal the
   tree can raise, and koinii's are raised at the same public entry points the engine's are."
   []
@@ -721,12 +717,12 @@
        sort))
 
 (defn source-files
-  "Every engine source file to scan for the `:type` roster — every `.clj` under `src/`
+  "Every engine source file to scan for the `:type` vocabulary — every `.clj` under `src/`
   **except the `koinii/` subtree**.  koinii is an application layered on the public API
   (`docs/koinii.md`), not the engine, and it namespaces its own refusals (`:koinii/…`) as
   a deliberate subsystem vocabulary rather than adding to this flat caller-visible one;
   those are koinii's contract, tracked in koinii's own tests, and folding them in would
-  churn this roster on koinii's active development.  The directory koinii lives in is that
+  churn this set on koinii's active development.  The directory koinii lives in is that
   boundary — the same line `spi_surface_test` draws — and extracting it to its own repo
   would only move it.
 
@@ -739,8 +735,8 @@
 
 (deftest a-symbol-valued-type-is-named-rather-than-read-past
   ;; The one shape a source scan cannot answer: the keyword sits behind a var, so the
-  ;; roster comparison below would drop it in silence — present in neither `found` nor
-  ;; `roster`, both differences empty, green forever while the vocabulary moved.
+  ;; set comparison below would drop it in silence — present in neither `found` nor
+  ;; `known-types`, both differences empty, green forever while the vocabulary moved.
   (let [files (source-files)
         found (transduce (map (comp symbol-valued slurp)) into #{} files)]
     (is (= symbol-valued-types found)
@@ -750,19 +746,19 @@
              ", gone: "
              (pr-str (sort (set/difference symbol-valued-types found)))))))
 
-(deftest the-type-vocabulary-is-the-roster
+(deftest the-type-vocabulary-is-the-hand-kept-set
   (let [files (source-files)
         found (transduce (map (comp refusal-types slurp)) into #{} files)]
     (is (seq files) "the scan found the sources")
     (is (< 50 (count found))
         "the scan collects the vocabulary — a near-empty read means the lexer or
         the rules broke, not that the tree stopped refusing things")
-    (testing "a :type the roster does not name is a new piece of caller-visible
+    (testing "a :type the set does not name is a new piece of caller-visible
               vocabulary — add it here deliberately, with its changelog entry"
-      (is (empty? (sort (set/difference found roster)))))
-    (testing "a roster entry the tree no longer spells is a rename or a removal —
+      (is (empty? (sort (set/difference found known-types)))))
+    (testing "a set entry the tree no longer spells is a rename or a removal —
               both are the same contract change, seen from the other side"
-      (is (empty? (sort (set/difference roster found)))))))
+      (is (empty? (sort (set/difference known-types found)))))))
 
 (deftest a-refusal-raised-twice-carries-the-same-thing-both-times
   (let [found (carried-by (source-files))]
@@ -770,7 +766,7 @@
         "the scan reads the throw sites — an empty read would make every check below
         pass on two empty maps")
     (testing "a keyword the tree now raises in more than one place is a new payload
-              contract — pin what its throws agree on"
+              contract — freeze what its throws agree on"
       (is (empty? (sort (set/difference (set (keys found)) (set (keys carried)))))))
     (testing "one it no longer raises twice has no agreement left to check"
       (is (empty? (sort (set/difference (set (keys carried)) (set (keys found)))))))
@@ -782,7 +778,7 @@
         (is (= keys* (get found ty))
             (str ty " carries " (pr-str (sort (get found ty)))
                  " at every throw, not " (pr-str (sort keys*))
-                 " — either put the key back at the throw that dropped it, or pin the"
+                 " — either put the key back at the throw that dropped it, or freeze the"
                  " narrower set here and say so in the changelog"))))))
 
 (deftest a-refusal-writes-its-ex-data-as-a-map-literal
@@ -828,24 +824,24 @@
     (testing "and an exception for one that is now namespaced is a stale entry"
       (is (empty? (sort (set/difference (set (keys unnamespaced-koinii-refusals)) bare)))))))
 
-(deftest the-discriminant-vocabulary-is-the-roster
-  ;; The same question `the-type-vocabulary-is-the-roster` asks of `:type`, asked one
-  ;; level in.  `carried` pins that a multi-site refusal carries `:mismatch` and leaves
+(deftest the-discriminant-vocabulary-is-the-hand-kept-table
+  ;; The same question `the-type-vocabulary-is-the-hand-kept-set` asks of `:type`, asked one
+  ;; level in.  `carried` asserts that a multi-site refusal carries `:mismatch` and leaves
   ;; the values to the entry points; this is what stops that from meaning nobody has the list.
   (let [results (map (comp discriminants-in slurp) (source-files))
         found   (apply merge-with into (map first results))
         symbolic (reduce + (map second results))
-        unpinned (reduce into #{} (map #(nth % 2) results))]
+        unlisted (reduce into #{} (map #(nth % 2) results))]
     (is (< 30 (count (:bad-table-entry found)))
         "the scan collects the discriminants — a near-empty read means the lexer or the
         helper pattern broke, not that the validators stopped saying which way")
-    (testing "a `:mismatch` value the roster does not name is a new word in a vocabulary
+    (testing "a `:mismatch` value the table does not name is a new word in a vocabulary
               a reader of the failure reads — add it here, and check first that it is not
               a second spelling of a condition another validator already names"
       (doseq [[ty vs] (sort-by key found)]
         (is (empty? (sort (set/difference vs (get discriminants ty #{}))))
             (str ty ": " (pr-str (sort (set/difference vs (get discriminants ty #{}))))))))
-    (testing "and a roster entry no throw raises is one that outlived its rule"
+    (testing "and a table entry no throw raises is one that outlived its rule"
       (doseq [[ty vs] (sort-by key discriminants)]
         (is (empty? (sort (set/difference vs (get found ty #{}))))
             (str ty ": " (pr-str (sort (set/difference vs (get found ty #{}))))))))
@@ -856,15 +852,15 @@
                (count discriminant-helpers) " helpers are named — a new one has to be"
                " added to `discriminant-helpers` with the `:type` it raises")))
     (testing "and a helper called with a discriminant that is neither a keyword nor a
-              pinned computation is a value nothing can enumerate"
-      (is (empty? unpinned)
+              listed computation is a value nothing can enumerate"
+      (is (empty? unlisted)
           (str "name these in `computed-discriminants` with the values they take: "
-               (pr-str (sort unpinned)))))))
+               (pr-str (sort unlisted)))))))
 
 (deftest a-doc-that-enumerates-discriminants-names-all-of-them
   ;; The half of the vocabulary a caller actually branches on is written out in
-  ;; `docs/troubleshooting.md`, and a prose list is a roster with none of the checking —
-  ;; the failure mode the roster above exists to retire, one file over.  A row that names
+  ;; `docs/troubleshooting.md`, and a prose list is a hand-kept list with none of the checking —
+  ;; the failure mode the table above exists to retire, one file over.  A row that names
   ;; two or more discriminants is claiming to be the list, and is held to it; a row that
   ;; says only "`:mismatch` says which" claims nothing and is left alone.
   (let [doc   (slurp "docs/troubleshooting.md")

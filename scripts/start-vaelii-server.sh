@@ -54,5 +54,6 @@ JVM_OPTS="${JVM_OPTS:-} $(start_jvm_opts)"
 export JVM_OPTS
 
 echo "vaelii daemon: port $port, opening $KB" >&2
-exec lein with-profile -user,-dev trampoline run -m vaelii.serve "$port" "$KB" "$@"
+PROFILES="$(start_profiles "$KB")"
+exec lein with-profile "-user,-dev${PROFILES:+,$PROFILES}" trampoline run -m vaelii.serve "$port" "$KB" "$@"
 }

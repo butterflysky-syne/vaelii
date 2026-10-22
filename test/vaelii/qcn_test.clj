@@ -71,7 +71,7 @@
 ;; ---- tightening ---------------------------------------------------------
 
 (deftest path-consistency-tightens-a-chain
-  (testing "A<B and B<C pins A?C to lt, which nothing asserted"
+  (testing "A<B and B<C narrows A?C to lt, which nothing asserted"
     (let [n  (net ['A 'B #{:lt}] ['B 'C #{:lt}])
           pc (qcn/path-consistent n '[A B C] point-algebra)]
       (is (not= :inconsistent pc))

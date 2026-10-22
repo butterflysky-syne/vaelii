@@ -8,7 +8,7 @@
   reads — `genls`, `props`, `inverse-of`, the argument declarations, the extent counts —
   and the risk in assembling them is not that one of them is wrong but that the
   *assembly* is: a predicate described as a type, a declaration reported from a context
-  the reader cannot see, a window shown without its size.  So the tests here are about
+  the reader cannot see, a truncated list shown without its size.  So the tests here are about
   the assembly.
 
   The one that matters most is the **scoping**: an `arg` declaration binds a predicate's
@@ -62,8 +62,7 @@
   ;; A `genl` edge between two relations makes each a node of the `genl` hierarchy.  The
   ;; stored arity decides the role, and the snake_case temporaries show the spelling
   ;; decides nothing.
-  (doseq [r '[orthogonal siblingDisjointException
-              predicateTypeByArity functionTypeByArity relationTypeByArity]]
+  (doseq [r '[orthogonal siblingDisjointException performedBy doneBy]]
     (is (= [:predicate 2] ((juxt :role :arity) (v/describe kb r))) (str r)))
   (is (contains? (:props (v/describe kb 'orthogonal)) :symmetric))
   (tu/with-terms [near_rel close_rel unary_kind]
@@ -100,7 +99,7 @@
 
 (tu/deftest-kb a-subsumption-is-answered-twice-as-the-closure-and-as-the-edge
   ;; `:genls` / `:specs` are the closures a membership check is against; `:genls-direct` /
-  ;; `:specs-direct` are its single `genl` steps, stated or roster-installed.  The closure restates one
+  ;; `:specs-direct` are its single `genl` steps, stated or installed by a cover declaration.  The closure restates one
   ;; fact as many — `thing` reaches 110,128 subtypes on the OpenCyc import — and it is
   ;; reflexive where the edge reading is not.
   (let [d (v/describe tu/*kb* 'dog '?ctx)]
@@ -112,7 +111,7 @@
       (is (not (contains? (set (:terms (:genls-direct d))) 'animal)))
       (is (not (contains? (set (:terms (:genls-direct d))) 'dog))
           "and the edge reading is not reflexive, where the closure is"))
-    (testing "a leaf has no subtype edges at all, rather than a window over none"
+    (testing "a leaf has no subtype edges at all, rather than a truncated list of none"
       (is (empty? (:terms (:specs-direct d))))
       (is (zero? (:total (:specs-direct d)))))))
 
@@ -143,7 +142,7 @@
              maximal reading — which walks no closure — is unaffected"
       ;; 43 partners spanning 290,000 subtypes took 1.5 s of union to produce a list
       ;; nobody can read: past `describe-sortable` the sum of the closure sizes is taken
-      ;; as the bound (free, every closure being a cached set) and only the window walked
+      ;; as the bound (free, every closure being a cached set) and only the first `limit` walked
       (with-redefs-fn {(ns-resolve 'vaelii.core 'describe-sortable) 100}
         #(let [d (v/describe kb left_type 'CxUniverse)]
            (is (= 50 (count (:terms (:disjoint d)))) "capped")
@@ -151,7 +150,7 @@
                "and the total is the bound it is — a sum of closures over-counts an overlap")
            (is (= [right_type] (:terms (:disjoint-maximal d))))
            (is (true? (:exact? (:disjoint-maximal d)))))))
-    (testing "past the sort budget a union that fits the window is still exact and sorted"
+    (testing "past the sort budget a union that fits the limit is still exact and sorted"
       (tu/with-terms [small_type other_type]
         (v/assert kb (list 'genl small_type 'thing) 'CxUniverse {:chain? false})
         (v/assert kb (list 'genl other_type 'thing) 'CxUniverse {:chain? false})
@@ -166,7 +165,7 @@
   ;; the answer is read off the declarations' own argument root rather than by trying
   ;; every predicate in the KB against it.
   ;; `dog` sits under five types between them declaring well over fifty positions, so the
-  ;; default window is a window: the limit is raised here to ask about the whole answer
+  ;; default limit truncates the list: the limit is raised here to ask about the whole answer
   ;; rather than about the first page of it.
   (let [line (:predicates-for-type (v/describe kb 'dog W {:limit 500}))
         rows (:rows line)
@@ -177,10 +176,10 @@
       (is (= #{1 2} (set (map :position (of 'parentOf))))))
     (testing "each row says which declared type let it in, and that type is one of dog's"
       (is (every? #(contains? up (:type %)) (of 'parentOf))))
-    (testing "the list is a window with its size beside it"
+    (testing "the list is truncated, with its size beside it"
       (is (contains? line :total))
       (is (true? (:exact? line))))
-    (testing "and the default window really is one on this term"
+    (testing "and the default limit truncates the list on this term"
       (let [d (:predicates-for-type (v/describe kb 'dog W))]
         (is (= 50 (count (:rows d))))
         (is (> (:total d) 50))))))
@@ -244,24 +243,24 @@
 
 ;; ---- the envelopes ------------------------------------------------------
 
-(tu/deftest-kb every-list-is-a-window-that-says-how-big-the-answer-is
+(tu/deftest-kb every-list-is-truncated-and-says-how-big-the-answer-is
   (let [d (v/describe kb 'thing W {:limit 3})]
-    (testing "the window is the limit, and the total is the whole answer"
+    (testing "the list stops at the limit, and the total is the whole answer"
       (is (<= (count (:terms (:specs d))) 3))
       (is (> (:total (:specs d)) 3)))
-    (testing "a windowed answer still says whether the count is exact and sorted"
+    (testing "a truncated answer still says whether the count is exact and sorted"
       (is (true? (:exact? (:specs d))))
       (is (true? (:sorted? (:specs d)))))))
 
-(tu/deftest-kb a-window-nothing-reads-is-refused-rather-than-dropped
-  ;; The silent failure a roster exists to stop: `{:limt 3}` would answer the default
+(tu/deftest-kb an-option-nothing-reads-is-refused-rather-than-dropped
+  ;; The silent failure a key set exists to stop: `{:limt 3}` would answer the default
   ;; fifty under a map that looks exactly like the one asked for.
   (is (= :unknown-option
          (try (v/describe kb 'dog W {:limt 3})
               (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
   (is (= v/describe-opt-keys #{:limit})))
 
-(tu/deftest-kb a-window-that-is-not-a-positive-integer-is-refused-rather-than-cast
+(tu/deftest-kb a-limit-that-is-not-a-positive-integer-is-refused-rather-than-cast
   ;; `{:limit "5"}` reached `take` and threw a bare ClassCastException — a 500 over the
   ;; daemon, where `find-terms`' `:limit` is a typed refusal — and `{:limit 0}` answered
   ;; every list empty under a `:total` that read like an answer.
@@ -270,7 +269,7 @@
                 (pr-str bad))]
       (is (= :unknown-option (:type (ex-data e))) (pr-str bad))
       (is (= :bad-value (:mismatch (ex-data e))))))
-  (testing "and nil is the default window"
+  (testing "and nil is the default limit"
     (is (= (:genls (v/describe kb 'dog W)) (:genls (v/describe kb 'dog W {:limit nil}))))))
 
 (tu/deftest-kb a-spelling-that-declares-no-role-answers-the-common-shape-and-no-more
@@ -283,7 +282,7 @@
 ;; ---- what the browser renders is what this answers ----------------------
 
 (tu/deftest-kb the-default-limit-is-the-one-the-term-page-lists-with
-  ;; The term page reads `describe`'s windows straight through and applies no cap of its
+  ;; The term page reads `describe`'s truncated lists straight through and applies no cap of its
   ;; own, so the two agreeing is not a coincidence to be preserved by hand: the page
   ;; shows exactly what this answered, `:total` and all.
   (is (= 50 v/default-describe-limit))

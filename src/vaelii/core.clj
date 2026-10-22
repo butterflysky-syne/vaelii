@@ -10,7 +10,7 @@
 
   Public API: `open-kb`, `assert`, `assert-rule`, `forward-chain`, `query`,
   `sentexes-matching`, `ask`, `prove`, `retract!`, `why`, `in?`, `isa?`.  This is a
-  signpost, not the roster — docs/api.md is that, and its \"Choosing a query
+  signpost, not the full list — docs/api.md is that, and its \"Choosing a query
   function\" table is what separates the five ways to answer a goal.
 
   This namespace is the engine's whole API; the engine itself lives in layered
@@ -38,6 +38,7 @@
             [vaelii.impl.decide :as decide]
             [vaelii.impl.decide.arity :as arity]
             [vaelii.impl.disk.backend :as disk]
+            [vaelii.impl.disk.durability :as dur]
             [vaelii.impl.except :as exc]
             [vaelii.impl.feed :as feed]
             [vaelii.impl.fluent :as fluent]
@@ -62,6 +63,7 @@
             [vaelii.impl.opts :as opts]
             [vaelii.impl.plan :as plan]
             [vaelii.impl.predall :as predall]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.provers :as provers]
             [vaelii.impl.qcn-kb :as qkb]
@@ -130,7 +132,7 @@
   | `:base` / `:overlay` | the two halves of an `:overlay` fork | — |
   | `:tms` | `:dense` or `:reference` truth-maintenance representation | `:dense` |
   | `:naming` | `:strict` / `:warn` / `:off` — what the public entry point does with a name | `:strict` |
-  | `:recover?` | `:auto` (or `true`) / `:background` / `:trust` / `:warn` / `false` — what a non-empty store gets | `:auto` |
+  | `:recover?` | `:trust` / `:auto` (or `true`) / `:background` / `:warn` / `false` — what a non-empty store gets | `:trust` |
   | `:oplog?` | `true` (or `:each`) / `:tick` / `false` — an operation log, and when its frames are fsynced | `false` |
 
   The seven legal backends and why the eighth is refused: docs/storage.md.  What
@@ -145,7 +147,7 @@
   **An option this fn does not read is refused** rather than ignored, and the space
   number is why: a misspelt `:space` is a key nothing looks at, so the KB would
   quietly open on the default space and two KBs meant for separate stores would share
-  one — each one's flush emptying the other.  `vaelii.impl.kb/opt-keys` is the roster.
+  one — each one's flush emptying the other.  `vaelii.impl.kb/opt-keys` is the key set.
 
   **The space number names the store, and it defaults.**  So `(open-kb {})` twice in one
   process is one set of records behind two KB values — the second recovers the first's
@@ -163,16 +165,23 @@
   **A non-empty store needs `recover`, and gets it.**  A fresh KB over stores that
   already hold sentexes has an empty TMS and taxonomy, so `sentexes-matching` answers
   nothing, `isa?` answers false, and the definitional checks pass vacuously — every
-  answer quietly wrong for one forgotten call.  `:recover? :auto` repairs that on
-  construction (`reindex` first when the index is derived and therefore opened empty),
-  which costs one pass over the stored records.  It is the default because the failure
-  it prevents is a *wrong answer* rather than an error: `false` and `[]` are legitimate
-  results, so no caller can tell them apart, and a warning is a log line a configured
-  level can drop.  `:warn` only logs; `false` is silent, for a caller managing recovery
-  itself.  `true` is an alias for `:auto`, since a caller takes a `?`-suffixed option for a
-  boolean; anything else is refused (`:type :unknown-option`), because the dispatch
-  cannot tell an unrecognized setting from `:warn` and would hand back the empty TMS
-  the caller asked to avoid.
+  answer quietly wrong for one forgotten call.  The default, `:recover? :trust`, repairs
+  that on construction (`reindex` first when the index is derived and therefore opened
+  empty): it installs a `:disk-snapshot` store's reasoning image when the image describes
+  the records, and recovers from them, one pass over the stored records, when it does not.
+  It recovers by default because the failure it prevents is a *wrong answer* rather than
+  an error: `false` and `[]` are legitimate results, so no caller can tell them apart, and
+  a warning is a log line a configured level can drop.
+
+  **An image an earlier build wrote is kept by default.**  `:trust` installs an image
+  written under other engine source, and settles move belief under this build only where
+  they reach.  `:auto` declines that image and recovers under this build, which at
+  millions of sentexes is an hour or more; it is the setting for a caller that needs
+  belief this build derived in full, as `lein cli upgrade` does.  `:warn` only logs;
+  `false` is silent, for a caller managing recovery itself.  `true` is an alias for
+  `:auto`, since a caller takes a `?`-suffixed option for a boolean; anything else is
+  refused (`:type :unknown-option`), because the dispatch cannot tell an unrecognized
+  setting from `:warn` and would hand back the empty TMS the caller asked to avoid.
 
   **And such a KB does not accept writes.**  What `:warn` and `false` leave is a state a
   read can survive — an empty answer is one you can ask again — and a write cannot: the
@@ -201,14 +210,14 @@
   `opts` names the fork's *own* storage, as an ordinary opts map (`:backend :memory` by
   default — an ephemeral hypothesis on a space nothing else uses, which `close!` drops;
   `{:backend :disk-log :dir …}` gives a durable one, which can be remounted over the same
-  base later and serves the merged view it was left in).  `:tms` selects the fork's truth-maintenance
+  base later and serves the merged contents it was left in).  `:tms` selects the fork's truth-maintenance
   representation and, unlike the entry-point policies below, does **not** inherit: an
   unnamed `:tms` takes the engine default (`:dense`), not the base's rep.  That is safe
   because the two are belief-identical (`jtms_dense_oracle_test`), so a fork holds the same
   beliefs whichever representation it rebuilds them in.
 
   **The fork's belief is rebuilt, not inherited.**  Belief is not storage — it is a
-  derived graph over the records — so the fork is `recover`ed over the merged view rather
+  derived graph over the records — so the fork is `recover`ed over the merged contents rather
   than layered over the base's network.  That is one pass over the merged records, which
   is what `recover` costs anywhere.
 
@@ -304,7 +313,7 @@
 
 ;; ---- the vocabulary: enumerate and search the terms themselves ----------
 ;; `find-sentexes` goes from a term to the sentexes mentioning it.  These go one step
-;; earlier: *which terms are there at all*.  They read the index's term roster — the set
+;; earlier: *which terms are there at all*.  They read the index's term-name set — the set
 ;; of names the inverted term index is keyed by, maintained beside its postings — so the
 ;; cost is the size of the **vocabulary**, never the size of the KB.
 
@@ -314,7 +323,7 @@
   name, so the answer is stable and reads the same in-process and over the wire (a
   sorted set would lose its order to EDN; a vector keeps it).
 
-  Read from the term roster, so it is O(terms), not O(sentexes) — and the sort is the
+  Read from the term-name set, so it is O(terms), not O(sentexes) — and the sort is the
   only superlinear part, which `find-terms` pays over its hits alone.  A *ground
   compound* subterm keys the term index too (`find-sentexes` takes one), but it is a
   sentence fragment rather than a name, so it is not part of the vocabulary.
@@ -343,7 +352,7 @@
   (reads/stored-count-at (:index kb) []))
 
 (defn- check-bound-opts!
-  "Refuse an opts key `fn-name` does not read (its roster is `opt-keys`), and a
+  "Refuse an opts key `fn-name` does not read (its key set is `opt-keys`), and a
   non-nil non-map `opts` — `check-assert-opts!`'s reasoning at the two consequence
   entry points.  Every key either of them reads is a bound on the run or on the answer, so
   the silent-default failure is a cap silently off: `{:max-result 5}` reads as no key
@@ -358,13 +367,13 @@
   "Refuse a cap that is not a positive integer, `where` naming the entry point and the spelling
   it arrived under (`\"find-terms :limit\"`, `\"qualitative-scenarios limit\"`).
 
-  The **value** refusal beside the roster check above, and the roster cannot make it: a
+  The **value** refusal beside the key check above, and the key set cannot make it: a
   key nothing reads is one failure, and a key that is read holding a value it cannot mean
   is the other.  Unchecked, a cap that is not a number fails two ways depending on the
   entry point: it reaches `take` — or, at `qualitative-scenarios`, the enumerator — and raises a
   bare cast error carrying no `:type`, which over the daemon is a 500 where every sibling
   refusal is a typed 400; or it is guarded by a `pos-int?` and read as **no cap at all**,
-  which is the silent default the roster beside it exists to refuse, answering uncapped
+  which is the silent default the key set beside it exists to refuse, answering uncapped
   with `:bounded?` false as though the whole answer had been asked for.  Every entry point taking
   a cap says it the same way, so the sentence lives here rather than once per entry point.
 
@@ -391,14 +400,14 @@
   single writer, and on a public browser bind by an unauthenticated `GET /find`.  A
   hundred times the per-candidate budget: a linear pattern over an imported ontology reads
   tens of millions of characters and passes; a pathological one over the same vocabulary
-  is refused before it has read the lot.  A plain `def` so a test can pin it low."
+  is refused before it has read the lot.  A plain `def` so a test can set it low."
   100000000)
 
 (defn- step-limited
   "A `CharSequence` over `s` that throws `:pattern-too-costly` once a match has read more
   than `budget` characters — the standard interruptible-regex guard.  `Matcher` reads a
   char per backtracking step, so a pathological pattern (`(a+)+$` and its kin) is refused
-  on the step that exceeds the budget rather than pinning a core.  That core matters:
+  on the step that exceeds the budget rather than occupying a core.  That core matters:
   `:find-terms` runs over the daemon's single-writer monitor, so an unbounded match there
   wedges every write behind it, and the browser's length cap does not reach that path and
   would not stop a six-character pattern anyway.
@@ -442,7 +451,7 @@
                  (let [p (str q)] (fn [^String s] (str/includes? s p)))
                  (let [p (str/lower-case (str q))]
                    (fn [^String s] (str/includes? (str/lower-case s) p))))
-    ;; every candidate is matched through a step-limited view, so a catastrophic pattern
+    ;; every candidate is matched through a step-limited wrapper, so a catastrophic pattern
     ;; is a `:pattern-too-costly` refusal rather than an unbounded spin (docs/web.md, and
     ;; the daemon runs this under its write monitor)
     :regex (let [^java.util.regex.Pattern re (if (instance? java.util.regex.Pattern q)
@@ -491,7 +500,7 @@
 
 (defn find-terms
   "The vocabulary terms whose name matches `q`, sorted by name.  This is the search a
-  term picker wants: it filters the **term roster**, so it costs the size of the
+  term picker wants: it filters the **term-name set**, so it costs the size of the
   vocabulary and never a scan of the KB.
 
   `opts`:
@@ -509,7 +518,7 @@
   `re-pattern` itself."
   ([kb q] (find-terms kb q nil))
   ([kb q opts]
-   ;; the roster first: a misspelt `:mtch` or `:case-sensitve?` silently ran the
+   ;; the key set first: a misspelt `:mtch` or `:case-sensitve?` silently ran the
    ;; default search, and a prefix answer where substring was asked for reads as
    ;; \"no such term\" — in the browser's own search box, over the wire
    (check-bound-opts! opts #{:match :case-sensitive? :limit} "find-terms")
@@ -550,7 +559,7 @@
 ;; consulted.  Two are one read outright — `count-in-context` and `count-with-functor`
 ;; each size a single posting — and `count-with-arg` is one read *per predicate holding
 ;; the term at that position*, since the argument postings are scoped by predicate: it
-;; reads the slot roster and sums a cardinality over it, which is one key in the
+;; reads the slot predicate set and sums a cardinality over it, which is one key in the
 ;; overwhelmingly common case and a handful otherwise.  That is the whole point of the
 ;; secondary roots, and it is why none of them touches the extent.  The price is that
 ;; they count what is **stored**, which includes a sentex the JTMS currently holds
@@ -642,6 +651,15 @@
   `(count (sentexes-matching kb (list pred ...) '?ctx))`.  The believed count is
   `(count (sentexes-with-functor kb pred {:believed? true}))` and is O(n)."
   [kb pred] (reads/stored-count-with-functor (:index kb) pred))
+
+(defn stored-first-args
+  "The terms **stored** at argument 1 of a fact with functor `pred`, as a set: the index's
+  own child set under `pred`, one read — no record fetched and no belief consulted, so a
+  defeated or unsupported fact's term is in it.  For a type, its members without its
+  extent: a type with a hundred thousand members answers in milliseconds, where
+  `sentexes-with-functor` fetches a hundred thousand records.  A caller that needs belief
+  checks the terms it keeps (`types-of`)."
+  [kb pred] (set (reads/as-stored-children (:index kb) [pred])))
 
 (defn sentexes-with-arg
   "Every **stored** fact sentex holding `term` at 1-based argument position `pos` —
@@ -751,15 +769,15 @@
   and pay a read only where the answer is true.
 
   The constant is an implementation of *term identity*, not a name anybody wrote, so
-  nothing should show one to a reader: this is the gate, and `term-expression` is what
-  to render instead."
+  nothing should show one to a reader: a display layer asks this predicate before it
+  renders a term, and `term-expression` is what to render instead."
   [term]
   (nat/reified-nat-symbol? term))
 
 (defn term-expression
   "The functional expression a reified term denotes — `(FruitFn AppleTree)` for the
   constant minted from it — or nil for an ordinary term, and for a reified one whose
-  `(termOfUnit K E)` map is not believed.
+  `(natFormula K E)` map is not believed.
 
   **One hop.**  An argument that is itself a reified term comes back as its constant,
   so a caller rendering each term individually (linking it, colouring it) recurses and
@@ -804,7 +822,7 @@
   "The types `t` is a subtype of by **one** `genl` edge in the closure — its direct
   parents, where `genls` is everything they reach.  Not reflexive.  An edge counts
   whatever installed it: a stated `(genl t super)`, or a `covering`, `separating` or
-  `partition` roster naming `t` as a part of `super`.  O(degree).  A set; `#{}` when
+  `partition` declaration naming `t` as a part of `super`.  O(degree).  A set; `#{}` when
   `t` is not a node in the type hierarchy.  With a `context`, only edges visible from it
   count.
 
@@ -826,7 +844,7 @@
   a supertype of one of these, so the set is `t`'s position in the subsumption order read
   from below.  The read is over every believed edge, whatever installed it: a stated
   `(genl dog animal)` beside `dog ⊂ mammal ⊂ animal` leaves `animal` out, and a parent
-  only an `intersection` or a cover roster gives is a member.  Two parents that subsume
+  only an `intersection` or a cover declaration gives is a member.  Two parents that subsume
   each other are both members.  Not reflexive.  One memoized closure read per direct
   parent.  A set; `#{}` when `t` is not a node in the type hierarchy.  With a `context`,
   only edges visible from it count.
@@ -843,6 +861,48 @@
   The short arity reads the KB-wide edge set, as `genls`' does."
   ([kb t] (tax/max-specs-global (reasoning/taxonomy kb) t))
   ([kb t context] (tax/max-specs (reasoning/taxonomy kb) t context)))
+
+(defn common-genls
+  "The supertypes **every** type in `types` has, a collection of types: the intersection
+  of their `genls`.  Reflexive, as `genls` is, so a member above all the others is in the
+  set and one type's common genls are its `genls`.  One memoized closure read per distinct
+  type.  A set; `#{}` for an empty `types`.  With a `context`, only edges visible from it
+  count.
+
+  The short arity reads the KB-wide edge set, as `genls`' does."
+  ([kb types] (tax/common-genls-global (reasoning/taxonomy kb) types))
+  ([kb types context] (tax/common-genls (reasoning/taxonomy kb) types context)))
+
+(defn common-specs
+  "The subtypes **every** type in `types` has: the intersection of their `specs`.
+  Reflexive, as `specs` is.  `common-genls`, the other direction.
+
+  The short arity reads the KB-wide edge set, as `genls`' does."
+  ([kb types] (tax/common-specs-global (reasoning/taxonomy kb) types))
+  ([kb types context] (tax/common-specs (reasoning/taxonomy kb) types context)))
+
+(defn min-common-genls
+  "The **minimal** common supertypes of `types`: the members of `common-genls` that are no
+  member of `types` and have no other such member strictly below them.  Every type
+  strictly above all of `types` is a supertype of one of these, so for `dog` and
+  `cat` the set is where a new type above both would sit.  Not reflexive: for `dog`
+  and `mammal` under `dog ⊂ mammal ⊂ animal` the set is `#{animal}`.  One distinct type
+  gives `min-genls` of it, exactly.  A set.  With a `context`, only edges visible from it
+  count.  `(minCommonGenl ?x t1 t2 …)` asks the same question as a query.
+
+  The short arity reads the KB-wide edge set, as `genls`' does."
+  ([kb types] (tax/min-common-genls-global (reasoning/taxonomy kb) types))
+  ([kb types context] (tax/min-common-genls (reasoning/taxonomy kb) types context)))
+
+(defn max-common-specs
+  "The **maximal** common subtypes of `types`: the members of `common-specs` that are no
+  member of `types` and have no other such member strictly above them.  One distinct type
+  gives `max-specs` of it, exactly.  `min-common-genls`, the other direction, and
+  `(maxCommonSpec ?x t1 t2 …)` as a query.
+
+  The short arity reads the KB-wide edge set, as `genls`' does."
+  ([kb types] (tax/max-common-specs-global (reasoning/taxonomy kb) types))
+  ([kb types context] (tax/max-common-specs (reasoning/taxonomy kb) types context)))
 
 (defn genl?
   "Is `sub` a (reflexive-transitive) subtype of `super`?  Types, not individuals —
@@ -876,6 +936,12 @@
   with an arity of one or none is a type.  No spelling is read.  docs/taxonomy.md."
   ([kb term] (relation? kb term '?ctx))
   ([kb term context] (kb/relation? kb term (when (scoped-read? context) context))))
+
+(defn relation-arity
+  "The exact number of places that binds `term`, its own or one inherited through `genl`,
+  or nil when no exact length binds it (a `variable_arity` relation, or none stored).
+  Read the same at every context.  docs/taxonomy.md, \"Arity\"."
+  [kb term] (kb/relation-arity kb term))
 
 (defn contexts
   "Every context currently in the genlCx hierarchy — the nodes of the closure."
@@ -921,10 +987,10 @@
   `:asymmetric`, `:reflexive`, `:functional`, `:irreflexive`, `:anti-symmetric`,
   `:anti-transitive`), the grants (`:decontextualized`, `:forced-decontextualized`,
   `:forced-monotonic`, `:abducible`, `:closed-extent`, `:modal`, `:target-following`),
-  the function kinds (`:reifiable`, `:unreifiable`, `:quoting`) and
+  the function kinds (`:reifiable`, `:unreifiable`) and
   the `:declares-*` kinds naming a predicate as the subject of an argument constraint.
-  Declared by the corresponding sentex, e.g. `(symmetric siblingOf)`.  A kind off that
-  roster answers false for every term rather than being refused.
+  Declared by the corresponding sentex, e.g. `(symmetric siblingOf)`.  A kind not in that
+  list answers false for every term rather than being refused.
 
   A predicate carries every relation kind and grant; the function kinds are a
   *function*'s, declared by `(reifiable_function F)` and read by the reify pass
@@ -937,19 +1003,19 @@
   With a `context`, the declaration must be visible from it — except `:symmetric` and
   `:commutative`, which sort a sentex's arguments and are read from every context, so a
   context answers whether it believes a statement, which a `defeat` or an `except` it
-  sees takes away.  The two roster kinds (`:forced-monotonic`,
-  `:forced-between-predicates`) answer the global roster, the engine's baseline, from
-  every context, and a declaration in any context from the contexts that see it
+  sees takes away.  The two forced-monotonic kinds (`:forced-monotonic`,
+  `:forced-between-predicates`) answer the baseline forced-monotonic set from every
+  context, and a declaration in any context from the contexts that see it
   (docs/nmtms.md).
 
   The 3-arity reads the KB-wide declarations, as `disjoint?`'s does."
   ([kb kind pred]
-   (if (decide/roster-kinds kind)
-     (decide/on-roster? (reasoning/taxonomy kb) kind pred)
+   (if (decide/forced-kinds kind)
+     (decide/forced-monotonic? (reasoning/taxonomy kb) kind pred)
      (tax/has-prop? (reasoning/taxonomy kb) kind pred)))
   ([kb kind pred context]
    (let [tax (reasoning/taxonomy kb)]
-     (if (decide/roster-kinds kind)
+     (if (decide/forced-kinds kind)
        (or (decide/global? tax kind pred) (tax/has-prop? tax kind pred context))
        (tax/has-prop? tax kind pred context)))))
 
@@ -960,8 +1026,8 @@
   including one a `defeat` or an `except` hides from every reader; `has-prop?` with a
   context reads one reader's."
   [kb kind]
-  (if (decide/roster-kinds kind)
-    (decide/roster (reasoning/taxonomy kb) kind)
+  (if (decide/forced-kinds kind)
+    (decide/forced-predicates (reasoning/taxonomy kb) kind)
     (tax/props (reasoning/taxonomy kb) kind)))
 
 (defn inverse-of
@@ -986,10 +1052,25 @@
   [kb m] (tax/metatype-members (reasoning/taxonomy kb) m))
 
 (defn separating-covers
-  "The believed `separating` and `partition` rosters, as a set of `[whole parts kind]`:
+  "The believed `separating` and `partition` declarations, as a set of `[whole parts kind]`:
   every two distinct `parts` are disjoint, and `disjoint?` reads them from this table.
   Like a metatype's clique, the pairs are consulted, never stored as `(disjoint a b)`."
   [kb] (tax/separating-covers (reasoning/taxonomy kb)))
+
+(defn covers-of
+  "The believed `covering`, `separating` and `partition` sentexes whose whole is `whole`,
+  in every context, as a set of `[kind parts]`: `kind` is `:covering`, `:separating` or
+  `:partition`, and `parts` is the declared part vector, deduplicated and sorted by printed
+  name.  A rule-concluded cover sentex counts as a stated one does; an `intersection`
+  declares no part list and adds nothing.  One believed argument-root read per functor at
+  position 1, so the cost follows `whole`'s own declarations."
+  [kb whole]
+  (into #{}
+        (for [f    '[covering separating partition]
+              h    (reads/believed-with-args kb f [[1 whole]])
+              :let [[w parts] (some-> (p/get-sentex (:records kb) h) :sentence tax/cover-parts)]
+              :when (= w whole)]
+          [(keyword f) (vec (nm/by-print-key parts))])))
 
 ;; ---- what the engine does with its own grammar --------------------------
 ;; A declaration's shape says nothing about whether anything reads it: `(maxCardinality
@@ -1021,7 +1102,8 @@
   `:unclassified` is the finding this exists to surface: a declaration that landed in the
   grammar without anybody deciding whether the engine reads it.  `:retired` is the mirror,
   a claim about a term the KB no longer declares.  `:contradicted` needs no judgement at
-  all — a term the special-predicate table gives an arm to and the roster calls inert.
+  all — a term the special-predicate table gives an arm to and the classification table
+  calls inert.
 
   Empty in all three on the shipped ontology, and a test holds it there."
   [kb] (vocab/audit kb))
@@ -1047,10 +1129,14 @@
     :taxonomy  {:names n :edged n :root term :rooted n :islands n}
     :declarations {:total n :stranded-count n :truncated? b
                    :stranded [{:handle :sentence :context :predicate :position
-                               :arity :via :message} …]}
+                               :arity :via :message} …]
+                   :typed-thing-count n
+                   :typed-thing [{:handle :sentence :context :facts} …]}
                ; argument constraints naming a position their predicate does not have.
                ; :message is the one the check itself wrote, so this map and `check`'s
-               ; answer say the same thing in the same words
+               ; answer say the same thing in the same words.  :typed-thing lists the
+               ; declarations typing a position `thing`, which mint nothing, each with
+               ; its predicate's stored extent
     :subsumption {:total n :subsumed-count n :truncated? b
                   :subsumed [{:subsumed h2 :by h1 :substitution σ :context C
                               :sentence :by-sentence} …]}
@@ -1064,8 +1150,8 @@
                ; naming the other's case, so the clash is already stated
 
   Data, not a printer: `quality-report` renders this same map, so nothing can print a
-  figure the data does not hold.  **Not a gate either** — a threshold on somebody's
-  ontology is not a build failure.
+  figure the data does not hold.  **This is not a required check either**: a threshold
+  on somebody's ontology is not a build failure.
 
   **`:declarations` is why this reader and not `violations`.**  `(arg parentOf 3 t)` is
   admitted while `parentOf` has no declared length — the highest position a declaration
@@ -1161,9 +1247,9 @@
   "Do `a` and `b` denote the same thing?  Distinct symbols denote distinct individuals
   until an equality sentex says otherwise.  Scoped by `context` like `representative`.
 
-  **Not the complement of a provable `(different a b)`.**  Both read false of an unpinned
+  **Not the complement of a provable `(different a b)`.**  Both read false of an unmerged
   `indeterminate_term` — a skolem constant, or a member of a kind declared indeterminate —
-  because the unique-name assumption is suspended for one and a merge has not pinned it
+  because the unique-name assumption is suspended for one and no merge has identified it
   either ([predall.md](../docs/predall.md)).  A caller wanting *provably different* asks
   `(different a b)` and reads that answer; `(not (same-class? …))` answers the weaker
   *not known to be the same thing*."
@@ -1207,7 +1293,7 @@
     `(arg pred ?n ?type)` store query on *every* fact, the dominant per-fact cost);
   - the `find-sentex-handle` dedup trie-walk — a distinct corpus creates one sentex per
     fact regardless, so the probe is guaranteed to miss;
-  - provenance stamping (`stamp-provenance!`) — belief never reads provenance, so a
+  - provenance recording (`record-provenance!`) — belief never reads provenance, so a
     bulk premise carries none.
 
   It stores, indexes and believes the same sentex for the same fact, with one exception:
@@ -1312,10 +1398,11 @@
               " unchecked — its docstring lists what that gives up.")}))))
 
 (defn- unrecovered-problems
-  "`writable-problem` as `check` reports problems, or nil — the reading half of the gate
-  below.  `check` answers \"would `assert` succeed, and if not why\", so a refusal the
-  entry point makes before any other is a problem the report has to carry, or a caller validating
-  a batch is told every line is fine and then refused on the first one.
+  "`writable-problem` as `check` reports problems, or nil — the reading half of the
+  unrecovered-KB check below.  `check` answers \"would `assert` succeed, and if not
+  why\", so a refusal the entry point makes before any other is a problem the report has
+  to carry, or a caller validating a batch is told every line is fine and then refused on
+  the first one.
 
   Nil under `*write-unrecovered?*`, since `assert` lands the write there and `check`
   answers about `assert` rather than about the KB — except for `:stale-belief`, which the
@@ -1326,7 +1413,7 @@
       [p])))
 
 (defn- check-writable!
-  "The write entry points' one gate: refuse an unrecovered KB by name, or — under
+  "The write entry points' one check: refuse an unrecovered KB by name, or — under
   `*write-unrecovered?*` — let the write through and say **once per KB** what it gave
   up.  Once, because the caller who bound the var has already read the list and a line
   per assert would bury the corpus load it was bound for.
@@ -1369,22 +1456,22 @@
 ;; affect order independence.
 
 (def ^:dynamic *creator*
-  "The creator stamped into a sentex's provenance on `assert` when opts carries no
+  "The creator `assert` records in a sentex's provenance when opts carries no
   `:creator`.  nil by default; bind it per session / import / user."
   nil)
 
 (def ^:dynamic *clock*
-  "A 0-arg fn returning the `:created` stamp `assert` records (epoch milliseconds by
-  default).  Bind it in tests to pin the value; belief never reads provenance, so a
+  "A 0-arg fn returning the `:created` time `assert` records (epoch milliseconds by
+  default).  Bind it in tests to fix the value; belief never reads provenance, so a
   wall-clock default does not touch order independence."
   (fn [] (System/currentTimeMillis)))
 
-(defn- stamp-provenance!
+(defn- record-provenance!
   "Record creation provenance for the handle(s) `assert` produced.  First-writer-wins
-  on `:creator` / `:created` — a re-asserted sentex keeps its original stamp — while
+  on `:creator` / `:created` — a re-asserted sentex keeps its original values — while
   an application's extra `:provenance` fields are merged in on any assert.  Called
   once per public `assert`, so derived and lifted sentexes (which never go through it)
-  are not stamped as asserted."
+  carry no creation provenance."
   [kb handle-or-vec opts]
   (when-not *bulk-load?*                                ; a bulk premise carries no provenance
     (let [rec     (:records kb)
@@ -1396,15 +1483,16 @@
         (let [cur (p/get-provenance rec h)]
           (cond
             ;; the store's own entry does not count: it may have written the row's
-            ;; spelling record (`integrate/spellings-key`) before this runs
-            (empty? (dissoc cur integrate/spellings-key))
+            ;; spelling record (`integrate/spellings-key`) before this runs, and an
+            ;; inert record's `:inert` mark (`assert-inert`) is no creation provenance
+            (empty? (dissoc cur integrate/spellings-key :inert))
             (p/put-provenance rec h (merge cur {:creator creator :created @now} extras))
             (seq extras) (p/put-provenance rec h (merge cur extras)))))))
   nil)
 
 (defn- after-the-write
   "Run `f`, the steps `assert` takes after its sentence is stored, chained and settled —
-  `stamp-provenance!`, `rehome-forced-extent!`, `nat-maint/reconcile-assert` — where a
+  `record-provenance!`, `rehome-forced-extent!`, `nat-maint/reconcile-assert` — where a
   store that stops (`:store-unusable`, `:compaction-failed`) is logged at `:error` and
   not thrown.  The write has landed by then and a reopen holds it, so a throw would
   report as failed a write that took effect.  The store refuses every call after the
@@ -1432,9 +1520,8 @@
 ;; `retract!` and `edit` are both forward-referenced and both defined far below, because
 ;; the write path and the query family are interleaved in this file: `finish-teardown!` and
 ;; `rollback-batch!` hand `retract!` to the orphan sweep as the teardown entry point to
-;; remove bookkeeping with, `rehome-forced-extent!` retracts the premise it has just
-;; re-asserted in CxUniverse, and `abduce` is handed `edit` to discard a scratch context
-;; with.
+;; remove bookkeeping with, `rehome-forced-extent!` moves premises into CxUniverse with
+;; `edit!`, and `abduce` is handed `edit` to discard a scratch context with.
 
 (declare retract! edit!)
 
@@ -1443,7 +1530,7 @@
 ;; can prepare an audit goal exactly as the read entry points here do without depending on
 ;; this namespace (docs/namespaces.md, "The layering").
 
-;; ---- the assert opts roster ---------------------------------------------
+;; ---- the assert opts key set --------------------------------------------
 
 (def assert-opt-keys
   "Every key `assert` / `assert-rule` reads.  Public for the same reason
@@ -1452,7 +1539,7 @@
 
   `:strength` is the assumption class, `:chain?` whether to forward-chain, `:direction`
   the programmatic spelling of a `set/*Rule` wrapper, `:creator` / `:provenance` the
-  stamp; the rest flow to `chain/chain-all`."
+  provenance it records; the rest flow to `chain/chain-all`."
   #{:strength :chain? :direction :creator :provenance
     :max-depth :max-derivations :on-progress :progress-every-ms})
 
@@ -1659,7 +1746,7 @@
   `assert-opt-keys` — waved through by `check-assert-opts!` — so this is where the key
   is read.  Accepted and read nowhere, `{:direction :backward}` would store `:both`
   and forward-chain, materializing exactly the cross product a backward-only rule
-  exists to avoid — the silent-default failure the roster's own docstring says the
+  exists to avoid — the silent-default failure the key set's own docstring says the
   guard is for.  The refusals themselves live in `direction-opt-problem`,
   which `check` reads too."
   [sentence opts]
@@ -1724,22 +1811,27 @@
   Premises only: a derived `(P …)` placed outside CxUniverse is placed by the rule that
   concluded it, and is re-placed when that derivation is re-run.  The extent is
   snapshotted before the first move, since each move writes to the posting being read.
-  `assert-fn` is `assert`, handed in because this runs inside it.
+
+  The moves are one `edit!` batch, so they share one settle.  The settle's drain reads
+  each moved `genlCx` edge as a move and seeds the facts the edge reaches
+  (`special/move-seeds`), and one settle seeds a fact those edges share once.
 
   The mark is read unscoped: the storage context does not vary by reader."
-  [kb sentence assert-fn]
+  [kb sentence]
   (let [s    (rules/inner-rule sentence)
         pred (when (and (seq? s) (= 'forced_decontextualized_predicate (first s))) (second s))]
     (when (and (symbol? pred)
                (tax/has-prop? (reasoning/taxonomy kb) :forced-decontextualized pred))
-      (doseq [sx (vec (kb/find-sentexes kb pred))
-              :let [h (:id sx)]
-              :when (and (= pred (nm/functor (:sentence sx)))
-                         (not= special/universal-context (:context sx))
-                         (jtms/premise? (reasoning/tms kb) h))]
-        (assert-fn kb (:sentence sx) special/universal-context
-                   {:strength (p/premise-strength (:records kb) h)})
-        (retract! kb h)))))
+      (let [tms   (reasoning/tms kb)
+            moved (filterv #(and (= pred (nm/functor (:sentence %)))
+                                 (not= special/universal-context (:context %))
+                                 (jtms/premise? tms (:id %)))
+                           (kb/find-sentexes kb pred))]
+        (when (seq moved)
+          (edit! kb {:add    (mapv #(vector (:sentence %) special/universal-context
+                                            {:strength (p/premise-strength (:records kb) (:id %))})
+                                   moved)
+                     :remove (mapv :id moved)}))))))
 
 (defn- teardown-refusal
   "The refusal a storage teardown of `handle` earns, as a value, or nil — one statement
@@ -1749,7 +1841,7 @@
   roll an assertion back at its handle and cannot un-delete a record, so the removals
   have to be known refusable-or-not before the first one runs.
 
-  A roster declaration whose predicate has no unforced semantics is refused whatever its
+  A forced-monotonic declaration whose predicate has no unforced semantics is refused whatever its
   node (`checks/forcing-retraction-problem`, docs/nmtms.md).  Otherwise nil for a handle
   with a TMS node — the dependency sweep can be computed, which is the whole question —
   and nil for a handle naming nothing stored, which `retract!` answers with zero counts.
@@ -1907,18 +1999,23 @@
 (defn- batch-baseline
   "The derived state a batch writes and `rollback-batch!` puts back — the violations
   ledger, the program and the refusal record — snapshotted before the batch runs, plus
-  `:filed`, the identity set the batch binds `viol/*batch-entries*` to."
+  `:filed`, the identity set the batch binds `viol/*batch-entries*` to, and the taxonomy
+  value and generations the refusal record's entries were decided under."
   [kb]
   {:violations @(reasoning/violations kb)
    :program    @(reasoning/program kb)
    :refused    @(reasoning/refused kb)
-   :filed      (viol/batch-entries)})
+   :filed      (viol/batch-entries)
+   :taxonomy   @(reasoning/taxonomy kb)
+   :gens       (special/taxonomy-generations kb)
+   :conviction (special/conviction-generations kb)})
 
 (defn- rollback-batch!
   "Put the KB back the way the batch found it, at the handles it wrote: restore the
   premises it suspended, retract what the audit says the batch created, re-mark at the
   recorded strength and spellings what was already a premise, settle with the sweep on,
-  and restore what `batch-baseline` snapshotted.  The handle counter stays moved.
+  and restore what `batch-baseline` snapshotted, the refusal entries under the generations
+  now (`special/advance-refusal-generations!`).  The handle counter stays moved.
   docs/preview.md.
 
   Takes that baseline plus `:audit` (the `entry/*premise-audit*` atom the batch ran under),
@@ -1928,7 +2025,7 @@
   put back at the audit's record: the adds run before the suspensions, so the audit holds
   the state the batch found, and the suspension the class an add raised.
   Runs with the change feed off (docs/feed.md, \"What does not arrive\")."
-  [kb {:keys [audit suspended violations program refused sink filed]}]
+  [kb {:keys [audit suspended violations program refused sink filed] :as baseline}]
   (let [tms     (reasoning/tms kb)
         records (:records kb)]
     ;; both bindings file the rollback's own entries into the batch's set, so the restore
@@ -1937,7 +2034,9 @@
               viol/*batch-entries* filed
               entry/*premise-audit* nil
               *defer-settle?* true
-              integrate/*removed-sink* (or sink integrate/*removed-sink*)]
+              integrate/*removed-sink* (or sink integrate/*removed-sink*)
+              ;; the undo of a write a shutdown stopped runs to its end
+              dur/*abortable?* false]
       (doseq [[h strength] suspended]
         (jtms/add-premise tms h strength)
         ;; the mirror of the exception re-check the suspension queued
@@ -1955,7 +2054,8 @@
     ;; handles the audit cannot take back
     (binding [feed/*enabled?* false
               viol/*batch-entries* filed
-              integrate/*removed-sink* (or sink integrate/*removed-sink*)]
+              integrate/*removed-sink* (or sink integrate/*removed-sink*)
+              dur/*abortable?* false]
       (settle-after-teardown! kb (settle/rechain-owed kb @(reasoning/recheck kb)) nil)
       ;; the whole-KB arm for a batch, the region arm for a single `assert`'s `:sink`
       ;; (`nat-maint/collect-orphans!`)
@@ -1966,7 +2066,8 @@
     (reset! (reasoning/program kb) program)
     ;; the refusal record: an entry the batch's content wrote names handles the rollback
     ;; took away (docs/preview.md, "What the rollback restores")
-    (reset! (reasoning/refused kb) refused)))
+    (reset! (reasoning/refused kb) refused)
+    (special/advance-refusal-generations! kb baseline)))
 
 (defn- undoing-refusal
   "Run `f`, the body of one `assert`, under a premise audit, and return what `f` returns;
@@ -1979,8 +2080,8 @@
   none, and under `*bulk-load?*` nothing is audited.  With a change-feed listener
   installed the call holds the feed (`feed/with-one-event`), since a mint settles before
   the sentence it serves is checked; after a rollback the held event is empty and not
-  delivered.  `write` is the assertion as `settle/reading-before` takes it."
-  [kb write f]
+  delivered."
+  [kb f]
   (if (or entry/*premise-audit* *bulk-load?*)
     (f)
     (let [audit    (atom {})
@@ -1994,8 +2095,9 @@
                                  integrate/*removed-sink*
                                  (or integrate/*removed-sink*
                                      (integrate/removal-sink (exc/placed-reads? kb)))
-                                 settle/*belief-before* (settle/reading-before kb [write])]
-                         (f))
+                                 observe/*write-record* (settle/write-record kb)]
+                         ;; the write a rollback takes back whole, so a shutdown may stop it
+                         (dur/as-unit f))
                        (catch Throwable t
                          (when (seq @audit)
                            (try
@@ -2119,11 +2221,10 @@
    ;; Reify ground reifiable NATs to their opaque constants *before* anything else —
    ;; before `expand-consequent`, WFF, and the constraint checks — so the compound
    ;; never reaches the index and the minted constant's materialized types are in
-   ;; place for the checks below (docs/nat.md).  Gated, so a KB with no
-   ;; reifiable_function is unaffected.
+   ;; place for the checks below (docs/nat.md).  The pass runs only when the KB declares
+   ;; a reifiable_function, so a KB with none is unaffected.
    (undoing-refusal
     kb
-    [:assert sentence context (:strength opts)]
     (fn []
       (let [;; A ground application `(CxTimeFn …)` in the context slot reifies to its `cx/`
             ;; constant here — the context-slot twin of the sentence reify below, since the
@@ -2149,8 +2250,8 @@
             exc-opts (cond-> opts exc-mono? (assoc :strength :monotonic))
             ;; a directly-asserted ground `(Quasiquote …)` reduces to its `(Quote E)` mention
             ;; form here, *before* the reify pass below turns `(Quote E)` into its constant —
-            ;; so it never reaches the index as a raw structural compound.  Gated — a no-op
-            ;; unless the KB declares quasiquotation.
+            ;; so it never reaches the index as a raw structural compound.  The reduction is
+            ;; a no-op unless the KB declares quasiquotation.
             sentence (quasiquote/maybe-reduce kb sentence)
             ;; a reifiable application's inputs are read here or nowhere: the pass below
             ;; replaces it with a constant that carries its result types, not its inputs
@@ -2174,7 +2275,7 @@
             (let [h  (sx/handle-id inner)
                   mh (entry/assert-exceptWhen-meta! kb h exc (:varmap (p/get-sentex (:records kb) h))
                                                     context exc-opts)]
-              (after-the-write mh #(stamp-provenance! kb mh opts))
+              (after-the-write mh #(record-provenance! kb mh opts))
               mh)
             ;; An inline-rule exceptWhen.  Run the whole-rule checks (naming,
             ;; range-restriction, stratification with the exception's negative edge,
@@ -2211,7 +2312,7 @@
                                    (:varmap (res/kb-sentex kb (rules/inner-rule form) context))
                                    context exc-opts))
                                 hs forms)]
-              (after-the-write meta-hs #(stamp-provenance! kb meta-hs opts))
+              (after-the-write meta-hs #(record-provenance! kb meta-hs opts))
               (if (= 1 (count meta-hs)) (first meta-hs) meta-hs)))
           ;; a rule with a head existential `(exists ?y C)` will skolemize when it
           ;; fires; declare its reifiable function *now*, before chaining, so a rule
@@ -2232,13 +2333,13 @@
             (after-the-write
              h
              (fn []
-               (stamp-provenance! kb h opts)
-               (rehome-forced-extent! kb sentence assert)
+               (record-provenance! kb h opts)
+               (rehome-forced-extent! kb sentence)
                ;; The collision merge a rename may have caused, the correspondence a value
                ;; or a declaration arriving last leaves to settle, the structural genlCx
                ;; edges the stored fact entails, and the merges those edges license —
-               ;; sequenced below core, behind one gate a KB that reifies nothing never
-               ;; passes (docs/nat.md, docs/context-nat.md).
+               ;; sequenced below core, behind one presence check that a KB reifying
+               ;; nothing never passes (docs/nat.md, docs/context-nat.md).
                (nat-maint/reconcile-assert kb sentence opts)))
             h)))))))
 
@@ -2247,7 +2348,12 @@
   content visible from `context`: a `:disjoint`, `:functional`, `:asymmetric`,
   `:anti-transitive` or `:cover` clash formed by the sentence, by a membership its
   argument declarations mint, or, for a `(forced_decontextualized_predicate P)`
-  declaration, by a `(P …)` premise it moves into CxUniverse (`rehome-forced-extent!`).
+  declaration, by a `(P …)` premise it moves into CxUniverse (`rehome-forced-extent!`);
+  an argument holding a type the taxonomy separates from its declared type (`:arg-type`,
+  `:arg-genl`, `:inter-arg-type`), under either argtype reading; an `arg` / `genlArg`
+  / `interArg` declaration a stored tuple breaks; a rule one of whose variables no term
+  can fill (`:arg-variable`); and an `arg` / `genlArg` / `quotedArg` declaration that
+  would convict a stored, believed rule so, which names the rule in `:clashes-with`.
   The refusal is `:definitional-clash`, carrying the clash
   kind in `:violation`, the members it clashes with in `:clashes-with`, and
   `:entailed-from` when a mint clashes, and the call stores nothing.  Every other
@@ -2269,7 +2375,7 @@
   ([kb antecedents consequent] (assert-rule kb antecedents consequent 'CxUniverse nil))
   ([kb antecedents consequent context] (assert-rule kb antecedents consequent context nil))
   ([kb antecedents consequent context opts]
-   ;; the unrecovered-KB gate first, before the range check, so this refuses like every
+   ;; the unrecovered-KB check first, before the range check, so this refuses like every
    ;; other write entry point: on a KB whose belief was never built `assert` answers
    ;; `:unrecovered-kb`, and the early range check would otherwise answer
    ;; `:not-range-restricted` where `checks/check-rule!` inside `assert` makes the same
@@ -2327,7 +2433,7 @@
   own check fns, so the two entry points refuse the same input for the same reason with the
   same `:type`.  Nil when all three hold.
 
-  The opts roster is checked here as well, so `check` answers for the *request* and not
+  The opts key set is checked here as well, so `check` answers for the *request* and not
   only for the sentence: an entry whose `:strength` is misspelt is admissible knowledge
   asserted at the wrong class, which is exactly what a batch critic exists to catch
   before it lands."
@@ -2437,8 +2543,6 @@
                            declared length does not have
     :arg-constraint-kind   a declaration of the wrong family for the predicate's
                            relation_kind
-    :arg-variable          two argument constraints on one rule variable that no
-                           term satisfies at once
     :disjoint              a type membership the taxonomy separates
     :functional            a second, irreconcilable value for a functional slot
     :asymmetric            the converse of a claim a declared-asymmetric relation made
@@ -2463,7 +2567,13 @@
   names the other stored members of its nogood is not a problem: `assert` stores the
   sentence, and `settle` places the nogood, which `conflicts` reports when every
   member is `:monotonic` (docs/nmtms.md, \"What a refusal may rest on\").  `check`
-  reports one of those types only for a clash that names no stored member.
+  reports one of those types only for a clash that names no stored member.  A fact's own
+  `:arg-type`, `:arg-genl`, `:inter-arg-type` or `:quoted-arg-type` conviction is not a
+  problem either: `assert` stores the fact and holds it inert (docs/argtypes.md, \"An
+  argument that fails its declared type is held inert\"), and `try-assert` refuses it.
+  Nor is a rule's own `:arg-variable` conviction, two argument constraints on one of its
+  variables that no term satisfies at once: `assert` stores the rule and holds it inert,
+  and `try-assert` refuses it.
 
   The stages run in `assert`'s order and stop at the first that finds anything, since
   each later one reads the KB assuming the earlier ones held.  A rule is checked the
@@ -2750,8 +2860,9 @@
   seeds no chaining from them (`special/*seed-moves?*`), as a settle per write would not."
   [kb in]
   (let [{:keys [bulk-load? seed-moves?]} (or in (batch-settle-inputs))]
-    (binding [special/*entail-moves?* (not bulk-load?)
-              special/*seed-moves?*   seed-moves?]
+    (binding [special/*entail-moves?*      (not bulk-load?)
+              special/*release-withheld?* (and special/*release-withheld?* (not bulk-load?))
+              special/*seed-moves?*        seed-moves?]
       (settle/settle kb))))
 
 (defmacro with-deferred-settle
@@ -2798,10 +2909,8 @@
   ;; enclosing `true` and skips its own settle — only the outermost one reconciles.
   `(let [kb#        ~kb
          outermost# (not *defer-settle?*)]
-     ;; the reading a report diffs against, taken before the batch's first write
-     (binding [settle/*batch-reading*      (if outermost#
-                                             (volatile! (settle/reading-before kb# nil))
-                                             settle/*batch-reading*)
+     ;; the write record a report reads, open before the batch's first write
+     (binding [observe/*write-record*      (settle/write-record kb#)
                ;; whether a write of the batch would have seeded chaining from its moves
                settle/*batch-seeds-moves* (if outermost#
                                             (volatile! false)
@@ -2825,8 +2934,10 @@
          ;; the closing settle is a write of its own: on a KB with an operation log it is
          ;; recorded as a `:settle` frame after the batch's writes (`vaelii.impl.oplog`)
          (when outermost#
-           (oplog/run-op kb# :settle :replay [] #'batch-settle-inputs
-                         (fn [in#] (#'closing-settle kb# in#))))
+           (dur/call-as-write
+            :settle
+            #(oplog/run-op kb# :settle :replay [] #'batch-settle-inputs
+                           (fn [in#] (#'closing-settle kb# in#)))))
          res#))))
 
 (defn assert-many
@@ -2893,18 +3004,26 @@
                                                               0.0)))))
          hs          (binding [*bulk-load?* true]
                        (with-deferred-settle kb
-                         ;; the counting arm only when somebody is listening: a load with
-                         ;; no callback pays nothing for the option it did not pass
-                         (if on-progress
-                           (let [n (volatile! 0)]
+                         (with-open [r (progress/start ::bulk-assert-facts
+                                                       "bulk load: assert the facts"
+                                                       (when (counted? facts) (count facts)))]
+                           ;; the counting arm only when somebody is listening: a load with
+                           ;; no callback pays nothing for the option it did not pass
+                           (if on-progress
+                             (let [n (volatile! 0)]
+                               (mapv (fn [f]
+                                       (let [h (assert kb f context opts)
+                                             i (vswap! n inc)]
+                                         (progress/tick! r)
+                                         (when (zero? (rem i 100000))
+                                           (event {:phase :loading :done i} i))
+                                         h))
+                                     facts))
                              (mapv (fn [f]
-                                     (let [h (assert kb f context opts)
-                                           i (vswap! n inc)]
-                                       (when (zero? (rem i 100000))
-                                         (event {:phase :loading :done i} i))
+                                     (let [h (assert kb f context opts)]
+                                       (progress/tick! r)
                                        h))
-                                   facts))
-                           (mapv #(assert kb % context opts) facts))))]
+                                   facts)))))]
      ;; after `with-deferred-settle` returns, so the closing reconciliation is inside
      ;; the rate rather than outside it
      (when on-progress (event {:phase :done :total (count hs)} (count hs)))
@@ -2930,22 +3049,44 @@
     (settle/settle kb)
     {:facts (:facts res) :recorded (count (:new res)) :violations (count (:violations res))}))
 
+(defn owed-releases
+  "How many departures and arrivals the settles of an open, a recover, an upgrade or a
+  bulk load left owed: the general argument-type mints a departed specific membership had
+  withheld are not drawn until `release-withheld!` runs, so the KB may miss them.  A close
+  and a reopen keep the count (docs/argtypes.md, \"Nothing records a withheld mint\")."
+  [kb]
+  (special/owed-releases kb))
+
+(defn release-withheld!
+  "Draw the mints the owed departures and arrivals (`owed-releases`) can have withheld,
+  chain from them and settle.  Returns `{:terms n :released n :ms n}`: the terms whose
+  mints were drawn again, the records drawn and the wall time.  Nothing runs it
+  implicitly; a second run draws nothing."
+  [kb]
+  (let [t0 (System/nanoTime)
+        r  (special/release-withheld! kb)]
+    (settle/settle kb)
+    (when (seq (:new r))
+      (settle/rechain-seeds kb (special/minted-seeds kb (:new r)))
+      (settle/settle kb))
+    {:terms (:terms r) :released (:released r) :ms (long (/ (- (System/nanoTime) t0) 1e6))}))
+
 (def ^:private forward-chain-opt-keys
   "Every key `forward-chain` hands the chaining fixpoint (`chain/chain-all`'s
-  destructure) — the roster `check-forward-chain-opts!` holds an opts map to."
+  destructure) — the key set `check-forward-chain-opts!` holds an opts map to."
   #{:max-depth :max-derivations :on-progress :progress-every-ms})
 
 (defn- check-forward-chain-opts!
   "Refuse an opts key `forward-chain` does not read, and a non-nil non-map `opts` —
-  `check-assert-opts!`'s reasoning at this entry point.  Every key here is a *bound* or the
-  window into one, so the silent-default failure is a run with no ceiling:
+  `check-assert-opts!`'s reasoning at this entry point.  Every key here sets a *bound* or
+  reports progress on one, so the silent-default failure is a run with no ceiling:
   `{:max-derivation n}` reads as no key at all and the chain runs unbounded, which on a
   KB with a productive rule set is precisely what the option was written to prevent."
   [opts]
   (opts/check! opts forward-chain-opt-keys "forward-chain"
                (str "An option nothing reads takes the default in silence,"
                     " which for a bound means running unbounded."))
-  ;; and the value domains beside the roster: a string `:max-depth` / `:max-derivations`
+  ;; and the value domains beside the key set: a string `:max-depth` / `:max-derivations`
   ;; reaches the fixpoint's arithmetic and throws bare, and a non-fn `:on-progress` a bare
   ;; cast on the first report — both refused here as `:unknown-option` instead
   ;; (`opts/bound-domains`)
@@ -2958,7 +3099,7 @@
   `opts`: `{:max-depth n :max-derivations n}` bound the run, and `:on-progress` is a
   callback the fixpoint calls about four times a second (`:progress-every-ms`) with
   `{:derived n :pending n}` —
-  the one window into a phase that otherwise says nothing for minutes.  It may throw to
+  the only progress report from a phase that otherwise says nothing for minutes.  It may throw to
   abort the run (a loader cancelling), in which case belief is left unsettled and the KB
   holds the conclusions the run had already placed.
 
@@ -3452,7 +3593,7 @@
   **A set to read, not one to build on**: `contains?`, `count`, `seq` and `sort` all
   answer it, and a caller wanting `conj` / `disj` / `clojure.set` converts with `(set …)`
   first — a store large enough for the shape to cost anything answers a compressed
-  roster rather than a `PersistentHashSet` (`vaelii.impl.roster`)."
+  handle set rather than a `PersistentHashSet` (`vaelii.impl.handle-set`)."
   [kb]
   (p/sentex-ids (:records kb)))
 
@@ -3499,10 +3640,12 @@
   ground reifiable NAT is resolved to its stored constant first (dedup, never mint), as
   `handle-of` and `sentexes-matching` resolve one, so the inert record keys on the atomic
   form every read reifies to rather than the compound none of them do; a NAT with no
-  stored constant is refused (`:unminted-nat`), since minting a `termOfUnit` is a belief-
+  stored constant is refused (`:unminted-nat`), since minting a `natFormula` is a belief-
   carrying side effect this entry point never has.  A **rule** is refused
   (`:not-indexable`) — a labeling labels atoms, and the reason is below.  `assert-inert`
-  is additive, so no `!`; drop it with `retract!` on the returned handle.
+  is additive, so no `!`; drop it with `retract!` on the returned handle.  A new record
+  carries `:inert true` in its provenance, which tells it apart from a record a failed
+  write left (`unsupported`).
 
   A KB whose derived state was never built refuses this exactly as it refuses `assert`
   (`:unrecovered-kb`).  Not premising is what makes an inert sentex harmless to belief;
@@ -3574,11 +3717,17 @@
       ;; filtered read reifies to — invisible to `sentexes-matching` and `ask`, and beside
       ;; the twin a later `assert` mints, so `count-with-functor` answered 2 for one
       ;; proposition.  A NAT with no stored constant is refused (`:unminted-nat`): minting
-      ;; asserts a `termOfUnit` premise, the belief-carrying side effect this entry point
+      ;; asserts a `natFormula` premise, the belief-carrying side effect this entry point
       ;; never has, and a labeling materializes atoms that already exist so it never lands
       ;; here (`nat/resolve-for-read`).
       (if-let [reified (nat/resolve-for-read kb sentence)]
-        (first (kb/find-or-create-sentex kb reified context))
+        (let [[h _ new?] (kb/find-or-create-sentex kb reified context)]
+          ;; the :inert mark tells a new inert record apart from a record a failed write
+          ;; left (`unsupported`); a sentence already stored keeps its own provenance
+          (when new?
+            (p/put-provenance (:records kb) h
+                              (assoc (p/get-provenance (:records kb) h) :inert true)))
+          h)
         (throw (ex-info (str "a reifiable NAT with no stored constant cannot be stored"
                              " inert: " (pr-str sentence) " names a term this KB has not"
                              " minted, and assert-inert never mints — assert the NAT-bearing"
@@ -3609,7 +3758,7 @@
 
 (defn provenance
   "The provenance map recorded for `handle` — `{:creator … :created … …}` — or nil if
-  none.  `assert` stamps `:creator` / `:created` when a sentex is first created;
+  none.  `assert` records `:creator` / `:created` when a sentex is first created;
   `add-provenance` layers on application fields.  Removed when the record is retracted.
   The store's own bookkeeping — the spellings a permuting mark folded into the row — is
   kept beside these fields and not returned."
@@ -3728,11 +3877,11 @@
   "Every key `search-tree` reads: the depth, the search ordering, and the two bounds only a
   debugger read takes — the node-expansion budget and the wall clock.
 
-  **Not `query`'s roster plus those two**, though the two entry points run the same search.  A
+  **Not `query`'s key set plus those two**, though the two entry points run the same search.  A
   debugger read is a fixed mode of it: `search-tree` runs under `:proof? true` and reaches
   the node engine's session directly, never the portfolio path, so `:proof?`, `:portfolio?`,
   `:auto?` and `:racers` are keys it overwrites or never looks at.  Admitting one would
-  re-create at this entry point the failure the roster closes at `query`'s — `{:proof? false}`
+  re-create at this entry point the failure the key set closes at `query`'s — `{:proof? false}`
   accepted and the proof returned anyway.  Public for `query-opt-keys`' reason."
   #{:max-depth :strategy :node-budget :max-ms})
 
@@ -3742,7 +3891,7 @@
 
   **`:strategy` is not on it.**  This entry point sets the ordering per row, which is the whole
   point of running several, so a caller's `:strategy` would be accepted and discarded —
-  the silent default the rosters exist to refuse.  Name the orderings with `:tacticians`
+  the silent default the key sets exist to refuse.  Name the orderings with `:tacticians`
   instead.  Public for `query-opt-keys`' reason."
   #{:max-depth :tacticians :node-budget :max-ms})
 
@@ -3753,6 +3902,13 @@
   the prover registry expands a rule, so there is no transformation depth to bound and a
   `:max-depth` here would be a bound accepted and never consulted.  Bounding *which*
   provers run is `ask-within`'s `:max-cost` (docs/anytime.md).  Public for
+  `query-opt-keys`' reason."
+  #{:max-ms})
+
+(def escalate-opt-keys
+  "Every key `escalate` reads — the wall clock, and nothing else.  It is checked between
+  levels and inside level 7's search, and a climb it stops before anything answered
+  says `:status :timeout` rather than that nothing answers (docs/levels.md).  Public for
   `query-opt-keys`' reason."
   #{:max-ms})
 
@@ -3767,7 +3923,7 @@
   #{:max-ms :max-depth})
 
 (defn- check-search-opts!
-  "The key roster and then the value domains one bounded read entry point owes.  The key check
+  "The key set and then the value domains one bounded read entry point owes.  The key check
   runs first because a misspelt key is not a bad value — it is a key that is not there;
   then `opts/check-values!` reads the one domain table every bounded entry point shares
   (`opts/bound-domains`), which for a search means `:max-ms` and `:max-depth`.  A bound
@@ -3836,9 +3992,9 @@
   the query-engine sweep sets so `prove` can run there, and a read with no depth of its
   own answers from the registry whichever engine `prove` is routed to.
 
-  `opt-keys` is the calling entry point's roster and `entry point` its name — `query-opt-keys`,
+  `opt-keys` is the calling entry point's key set and `entry point` its name — `query-opt-keys`,
   `search-tree-opt-keys`, `compare-tacticians-opt-keys`.  Each entry point passes what it
-  actually reads rather than a superset: a roster wider than the entry point is a key accepted
+  actually reads rather than a superset: a key set wider than the entry point is a key accepted
   and then overwritten, which is the silent default this check exists to refuse."
   [opts opt-keys entry-point]
   ;; A non-map `opts`, a key nothing reads and a non-positive `:max-depth` all read as
@@ -3853,7 +4009,7 @@
                     " facts-only as though no rule could reach the goal."))
   ;; the value domains, from the one table every bounded entry point shares
   ;; (`opts/bound-domains`): `:max-depth` here, and for `search-tree` /
-  ;; `compare-tacticians` the `:max-ms` and `:node-budget` their rosters add.  A depth
+  ;; `compare-tacticians` the `:max-ms` and `:node-budget` their key sets add.  A depth
   ;; that is not a non-negative integer reads as no depth at all, which is that same
   ;; facts-only answer taken at a setting nobody chose.
   (opts/check-values! opts entry-point)
@@ -3958,7 +4114,7 @@
 
   Ordering is a **cost** decision and never a semantic one: a conjunction is
   commutative, so every write order returns the same answer set.  The two literals
-  whose position is operational rather than logical are pinned — evaluables
+  whose position is operational rather than logical are fixed in place — evaluables
   (`evaluate` / `lessThan` / `greaterThan`) never outrun what binds them, and a
   rule's recursive literal stays last so right-recursion is preserved.  Solution
   *order* within the returned vector is not part of the contract.
@@ -3983,7 +4139,7 @@
   vector, which is three goals here and nothing the KB can hold.
 
   **`opts` is a bound, and without one there is none.**  `{:max-ms n :max-depth n}`
-  (`prove-opt-keys`) is the whole roster, and the two bound different things:
+  (`prove-opt-keys`) is the whole key set, and the two bound different things:
 
       (prove kb goal ctx {:max-depth 2})   ≤2 rule expansions — a complete answer
                                            for that depth, since the space under it
@@ -4198,7 +4354,7 @@
 
   Everything else in `opts` is the node engine's, defaulting from `*query-options*` —
   `:strategy` (`vaelii.impl.tactics`), `:portfolio?`, `:auto?`, `:racers` — and is
-  ignored where no depth sends the query there.  That is the whole roster
+  ignored where no depth sends the query there.  That is the whole key set
   (`query-opt-keys`); a key off it is refused (`:unknown-option`) rather than handed on,
   since the engine would ignore it and `{:max-deph 3}` would answer facts-only with
   nothing to say so.  A non-map `opts` and a `:max-depth` that is not a natural number
@@ -4249,7 +4405,8 @@
   [kb goal context d opts]
   (if (and d (pos? (long d)))
     (let [goals (goal-conjunction (quasiquote/prepare-goal-for-read kb goal context))
-          {:keys [answers truncated? time-to-first-answer-ms total-time-ms stats unenumerated]}
+          {:keys [answers truncated? time-to-first-answer-ms total-time-ms stats unenumerated
+                  unenumerated-in-guards]}
           (inference/search-report kb goals context (query-node-opts kb context d opts))]
       {:answers                 answers
        :count                   (count answers)
@@ -4258,17 +4415,19 @@
                                       :else              :complete)
        :truncated?              truncated?
        :unenumerated            unenumerated
+       :unenumerated-in-guards  unenumerated-in-guards
        :depth                   d
        :time-to-first-answer-ms time-to-first-answer-ms
        :total-time-ms           total-time-ms
        :stats                   stats})
-    (let [[[answers first-ns total-ns] unenumerated]
+    (let [[[answers first-ns total-ns] {:keys [unenumerated unenumerated-in-guards]}]
           (provers/with-unenumerated #(timed-realize (query-at kb goal context d opts nil)))]
       {:answers                 answers
        :count                   (count answers)
        :status                  (if (seq unenumerated) :incomplete :complete)
        :truncated?              false
        :unenumerated            unenumerated
+       :unenumerated-in-guards  unenumerated-in-guards
        :depth                   d
        :time-to-first-answer-ms (when first-ns (/ (double first-ns) 1e6))
        :total-time-ms           (/ (double total-ns) 1e6)})))
@@ -4289,6 +4448,8 @@
        :unenumerated            [P …]        transitive predicates whose closure a goal
                                              asked with both arguments open did not
                                              enumerate
+       :unenumerated-in-guards  [P …]        those recorded inside an `unknown` or
+                                             `exceptWhen` evaluation (docs/inference.md)
        :depth                   d | nil      the depth bound the read ran under
        :time-to-first-answer-ms t | nil      nil when there are no answers
        :total-time-ms           t
@@ -4315,7 +4476,7 @@
   `:stats` is the node engine's `tree-stats` — `:expanded` / `:nodes` / `:frontier` /
   `:dropped` / `:solutions` / `:max-depth` (the deepest rewrite taken) — present only where
   a depth sent the read to that engine.  `:depth`, `:opts` and the goal shape are `query`'s;
-  the roster (`query-opt-keys`) and the depth resolution are the same, so a `query` and a
+  the key set (`query-opt-keys`) and the depth resolution are the same, so a `query` and a
   `query-status` of the same call answer the same set.
 
   **A concrete context only.**  A report is one search over one context's frontier, so a
@@ -4351,7 +4512,7 @@
 
       {:solutions   [binding-map …]     `prove`'s, unprojected, under the hypotheses
        :hypotheses  [{:sentence :context :handle} …]   irredundant; empty = proved outright
-       :refused     [sentence …]        dead ends the gate would not assume, when none proved
+       :refused     [sentence …]        dead ends the abducibility check would not assume, when none proved
        :context     CxAbductionX
        :status      :complete | :capped}
 
@@ -4412,7 +4573,7 @@
         ;; spelling: `orthogonal` is symmetric, so the goal folds onto the stored order.
         declared? (boolean (seq (query kb (list 'orthogonal a b) context {:max-depth 0})))
         open?     (and (not a<b) (not b<a) (not sep))
-        ;; The shared-instance check is facts-only, pinned with `{:max-depth 0}` so it
+        ;; The shared-instance check is facts-only, forced with `{:max-depth 0}` so it
         ;; expands no rule under a caller's `*query-options*` depth: a node-engine search
         ;; of `(a ?x)` over the whole starter, once per taxonomy-open pair, hangs.  Of
         ;; several shared instances the content-least is reported, not the first the
@@ -4515,7 +4676,7 @@
   Returns
   `{:types n :pairs n :by-status {status count …} :pairs-data [{:a t :b t :status s :statuses ss} …]}`. `genl?` reads the global closure and `disjoint?` reads the closure
   visible from `context`, and the shared-instance query runs only for a pair the
-  taxonomy and disjoint declarations leave open — pinned facts-only (`{:max-depth 0}`),
+  taxonomy and disjoint declarations leave open — forced facts-only (`{:max-depth 0}`),
   so the N² sweep expands no rule.
   `context` is the vantage the swept type set, `disjoint?` and the `:orthogonal`
   witnesses are all read from (default `CxWell`, which sees every non-opt-in middle context — every
@@ -4543,24 +4704,28 @@
    (let [ts   (into [] (remove #(relation? kb % context)) (nm/by-print-key (types kb context)))
          n    (count ts)
          rd   (instance-reads kb context)
-         data (persistent!
-               (reduce
-                (fn [acc i]
-                  (reduce
-                   (fn [a j]
-                     (let [{ss :statuses w :witness t :via}
-                           (subsumption-reading kb (nth ts i) (nth ts j) context rd)]
-                       (conj! a (cond-> {:a        (nth ts i)
-                                         :b        (nth ts j)
-                                         :statuses ss
-                                         :status   (case (count ss)
-                                                     0 :unknown
-                                                     1 (first ss)
-                                                     :inconsistent)}
-                                  w (assoc :witness w)
-                                  t (assoc :via t)))))
-                   acc (range (inc i) n)))
-                (transient []) (range n)))]
+         data (with-open [r (progress/start ::disjointness-audit
+                                            "disjointness audit: read the type pairs"
+                                            (quot (* n (dec n)) 2))]
+                (persistent!
+                 (reduce
+                  (fn [acc i]
+                    (reduce
+                     (fn [a j]
+                       (let [{ss :statuses w :witness t :via}
+                             (subsumption-reading kb (nth ts i) (nth ts j) context rd)]
+                         (progress/tick! r)
+                         (conj! a (cond-> {:a        (nth ts i)
+                                           :b        (nth ts j)
+                                           :statuses ss
+                                           :status   (case (count ss)
+                                                       0 :unknown
+                                                       1 (first ss)
+                                                       :inconsistent)}
+                                    w (assoc :witness w)
+                                    t (assoc :via t)))))
+                     acc (range (inc i) n)))
+                  (transient []) (range n))))]
      {:types     n
       :pairs     (count data)
       :by-status (frequencies (map :status data))
@@ -4590,7 +4755,7 @@
   early on a small `:est-matches` whose `:est-prefix` then jumps is the cost model
   being wrong about a *join* rather than about a literal.
 
-  And the flags: an operational pin (`:deferred?` / `:recursive?`), being a cartesian
+  And the flags: an operational placement (`:deferred?` / `:recursive?`), being a cartesian
   factor held to the back (`:isolated?` — sharing no variable with the rest *and* able
   to multiply it; a literal matching at most once leads instead), and `:block`, the
   group of literals it moved with.  Literals sharing a variable are one block and run
@@ -4625,13 +4790,13 @@
   Bounded so a large KB cannot turn one read into an unbounded search: the depth bound, a
   node-expansion budget (`:node-budget`, default `inference/default-node-budget`), and an
   optional wall-clock `:max-ms` that reports `:timeout` rather than hanging.  With
-  `:max-depth` and `:strategy` those four are the whole roster (`search-tree-opt-keys`) —
+  `:max-depth` and `:strategy` those four are the whole key set (`search-tree-opt-keys`) —
   a debugger read is a fixed mode of `query`'s search, so `query`'s remaining keys are ones
-  this entry point overwrites or never reads; a key off the roster is refused (`:unknown-option`),
+  this entry point overwrites or never reads; a key outside it is refused (`:unknown-option`),
   as at `query`.
 
   Returns `{:goals :context :strategy :status :bounded? :answers :nodes :stats
-  :unenumerated}`; `:status` is `:complete`, `:bounded` or `:timeout`, and each answer
+  :unenumerated :unenumerated-in-guards}`; `:status` is `:complete`, `:bounded` or `:timeout`, and each answer
   carries the `:node` it came off.  `:unenumerated` is `query-status`'s: the transitive
   predicates whose closure a goal asked with both arguments open did not enumerate.
   Reads-only, like every query in this engine."
@@ -4648,7 +4813,9 @@
 (defn compare-tacticians
   "Run `goal` in `context` under several **tacticians** — the node engine's search
   orderings — each to completion, and return one row per tactician: the search it ran, its
-  wall-clock, and its answer set.  What the debugger tables side by side.
+  wall-clock, its `:status`, its `:unenumerated` and its answer set.  What the debugger
+  tables side by side.  A row reads `:incomplete` where it would read `:complete` when a
+  both-open goal over a transitive predicate went unenumerated (docs/anytime.md).
 
   Every tactician only reorders the frontier, so the answer sets **must be identical**;
   the point of running them side by side is that a caller can verify it rather than trust
@@ -4720,7 +4887,7 @@
 
   Bare, like every other adder on this surface: it asserts one marker sentex and
   `retract!` of that marker takes the grant back, so there is nothing here the KB cannot
-  undo (the `!` roster is in docs/api.md)."
+  undo (the `!` list is in docs/api.md)."
   ([kb pred] (register-modal-predicate kb pred sx/root-context))
   ([kb pred context] (assert kb (list 'modal_predicate pred) context) kb))
 
@@ -4730,7 +4897,7 @@
 ;; does not derive `(before A C)`.  That is the right default — an algebra's fixpoint is
 ;; not free, and most KBs use none of them — but the *provers* live in `vaelii.impl.*`,
 ;; and `vaelii.core` is the only namespace anything outside this repo may name.  So
-;; without a roster here, opting in means reaching past the boundary, and a subsystem
+;; without a named list here, opting in means reaching past the boundary, and a subsystem
 ;; nobody can ask for is one nobody has.
 ;;
 ;; Named by keyword and resolved at runtime, so requiring this namespace does not drag
@@ -4879,7 +5046,7 @@
      :nodes [A B C]   :consistent? true
      :constraints {[A B] #{:ntpp} [B A] #{:ntppi} …}}
 
-  A pair constrained to one relation is pinned; a pair with several is genuinely open;
+  A pair constrained to one relation is determined; a pair with several is genuinely open;
   an unrecorded pair is unknown (every base relation).  When the believed facts are
   unsatisfiable `:consistent?` is false, `:constraints` is the network **as stated**
   rather than a tightened one, and `:unsatisfiable` names the pairs no model satisfies
@@ -4899,7 +5066,7 @@
   (docs/qcn.md, \"A network can have a second reader\").
 
   **A variable context is not a reader here.**  It reads every context's facts into one
-  network, so two incomparable contexts compose in it and for nobody: a diagnostic view
+  network, so two incomparable contexts compose in it and for nobody: a diagnostic reading
   of everything stored, off which no goal is answered, and where `:consistent?` is a
   claim about the union rather than about anything a reader sees.  A goal with a
   variable context fans over the readers instead (docs/qcn.md)."
@@ -4925,12 +5092,12 @@
 (defn possible-relations
   "The base relations `calculus` still allows between `a` and `b`, given everything
   believed in `context` — the set `ask` checks a goal against, exposed directly.  A
-  singleton is a pinned arrangement; the full set is total ignorance; `#{}` means the
+  singleton is a determined arrangement; the full set is total ignorance; `#{}` means the
   network is unsatisfiable and no goal of that calculus is answered there.
 
   **A variable context is not a reader here.**  The set then comes off the union network
   — every context's facts in one — where two incomparable contexts compose for nobody,
-  so it is a diagnostic view of everything stored and not the set `ask` checks against;
+  so it is a diagnostic reading of everything stored and not the set `ask` checks against;
   a goal with a variable context fans over the readers instead (docs/qcn.md)."
   [kb calculus context a b]
   (check-context-read! context "possible-relations")
@@ -4947,7 +5114,7 @@
 
   **A variable context is not a reader here.**  The arrangement is then drawn from the
   union network — every context's facts in one — where two incomparable contexts compose
-  for nobody, so it is a diagnostic view of everything stored rather than a world any
+  for nobody, so it is a diagnostic reading of everything stored rather than a world any
   reader sees (docs/qcn.md)."
   [kb calculus context]
   (some-> (scenario/scenario (the-calculus calculus) kb context) scenario/relations))
@@ -4976,10 +5143,12 @@
 (defn ask-within
   "Anytime `ask`: answer `goal` in `context`, but bounded by `budget` — a map of any
   of `{:max-ms n :max-results n :max-cost <tier>}`.  Returns the partial-result
-  contract `{:results :status :count :elapsed-ms :resume}` (see
-  vaelii.impl.budget): `:results` are the solutions realized in *this* step,
-  `:status` is `:complete` / `:timeout` / `:capped`, and `:resume` (nil when
-  `:complete`) continues the same search under a fresh budget via `resume`.
+  contract `{:results :status :count :elapsed-ms :resume :unenumerated
+  :unenumerated-in-guards}` (see vaelii.impl.budget): `:results` are the solutions
+  realized in *this* step, `:status` is `:complete` / `:incomplete` / `:timeout` /
+  `:capped`, and `:resume` (nil when `:complete` or `:incomplete`) continues the same
+  search under a fresh budget via `resume`.  `:incomplete` is a run that ran dry after a
+  both-open goal over a transitive predicate named in `:unenumerated` (docs/anytime.md).
 
   `:max-ms` and `:max-results` bound how much of the (lazy) answer stream is
   realized; `:max-cost` is qualitative — it drops every prover whose `cost` tier is
@@ -5000,7 +5169,7 @@
    ;; `ask`'s entry point, since this is `ask` bounded: a goal it refuses cannot be one this
    ;; answers, or the budget would decide which spelling is legal
    (check-shape! (sentence-goal-problem goal))
-   ;; the budget against `ask`'s half of the roster: `:max-ms` / `:max-results` /
+   ;; the budget against `ask`'s half of the key set: `:max-ms` / `:max-results` /
    ;; `:max-cost`, and not `:max-depth` / `:max-term-growth`, which bound a rule expansion
    ;; `ask` does not do (`budget/ask-budget-keys`).  `collect` below re-checks against the
    ;; union, so a `resume` under either entry point still passes; this is the split the
@@ -5010,40 +5179,48 @@
    (let [[goal context] (checked-ist-goal kb goal context)
          goal    (quasiquote/prepare-goal-for-read kb goal context)
          ;; a variable context reads each handle at its own context, as `ask` does
-         answers #(if (sx/variable? context)
-                    (binding [exc/*unscoped-own* true]
-                      (exc/own-seq (provers/ask-capped kb goal context (:max-cost budget))))
-                    (provers/ask-capped kb goal context (:max-cost budget)))]
-     (budget/collect (answers) budget answers))))
+         ;; the stream is lazy, so the collector is bound per pull (`collecting-seq`), and
+         ;; one collector serves every step and the rebuilt stream a restart pulls
+         una     (provers/unenumerated-collector)
+         answers #(provers/collecting-seq
+                   una
+                   (fn []
+                     (if (sx/variable? context)
+                       (binding [exc/*unscoped-own* true]
+                         (exc/own-seq (provers/ask-capped kb goal context (:max-cost budget))))
+                       (provers/ask-capped kb goal context (:max-cost budget)))))]
+     (budget/reporting-unenumerated (budget/collect (answers) budget answers)
+                                    #(provers/unenumerated-report una)))))
 
 (defn- run-prove-step
   "One bounded step of the DFS prover, wrapped in the anytime contract.  The
   continuation captures the *remaining* goal stack, so `resume` picks the search up
   exactly where it stopped rather than restarting it.
 
-  The budget is rostered here as well as in `budget/collect`, because this is the one
+  The budget's keys are listed here as well as in `budget/collect`, because this is the one
   consumer that does not go through `collect` — the DFS arm reads its bounds directly,
-  and a `resume` hands each step a fresh budget of its own to hold to the roster.
+  and a `resume` hands each step a fresh budget of its own to hold to the key set.
 
   The bounds map is **`budget/prove-bounds`** and never one written here, for the reason
-  that fn exists: the roster and the translation are two halves of one claim, and a bound
-  rostered there but not built here passes `check-budget!` and is then dropped — a caller
+  that fn exists: the key set and the translation are two halves of one claim, and a bound
+  listed there but not built here passes `check-budget!` and is then dropped — a caller
   raising `:max-term-growth` told nothing, and answered under the shipped ceiling."
-  [kb context budget stack]
+  [kb context budget stack una]
   (budget/check-budget! budget)
   (let [rules-fn (fn [g] (provers/candidate-rules kb g context))
         bounds   (merge (budget/prove-bounds budget) (registry-leaf kb context))
         start    (System/nanoTime)
-        {:keys [solutions status stack]} (res/prove-from kb rules-fn context bounds stack [])]
+        {:keys [solutions status stack]} (binding [provers/*unenumerated* una]
+                                           (res/prove-from kb rules-fn context bounds stack []))]
     (budget/from-batch solutions status start
-                       (fn [b] (run-prove-step kb context b stack)))))
+                       (fn [b] (run-prove-step kb context b stack una)))))
 
 (defn prove-within
   "Anytime `prove`: run the depth-first backward chainer over `goal` (a sentence or a
   conjunction vector, as `prove`) in `context`, bounded by `budget` — a map of any of
   `{:max-ms n :max-results n :max-depth n :max-term-growth n}`.  Returns the same
-  partial-result contract as `ask-within`, and `resume` continues from the unfinished
-  goal stack.
+  partial-result contract as `ask-within`, `:incomplete` and `:unenumerated` included,
+  and `resume` continues from the unfinished goal stack (docs/anytime.md).
 
   `:max-depth` bounds *transformation* depth — the number of rule expansions the
   search may stack — so a runaway or merely deep proof yields a `:timeout` /
@@ -5061,7 +5238,7 @@
   ([kb goal budget] (prove-within kb goal '?ctx budget))
   ([kb goal context budget]
    (check-shape! (conjunction-goal-problem goal))
-   ;; the budget against `prove`'s half of the roster — `:max-ms` / `:max-results` /
+   ;; the budget against `prove`'s half of the key set — `:max-ms` / `:max-results` /
    ;; `:max-depth` / `:max-term-growth`, and not `:max-cost`, an `ask` concept `prove`
    ;; ignores (`budget/prove-budget-keys`).  **Before `inference-engine?` reads
    ;; `:max-depth`**: the node-engine selector takes `(long max-depth)`, so a string depth
@@ -5072,21 +5249,29 @@
          goals (goal-conjunction (quasiquote/prepare-goal-for-read kb goal context))]
      (if (inference-engine? (:max-depth budget))
        ;; the node engine's continuation is the session itself — the frontier behind
-       ;; it is a value the session holds — and the bounds are checked per node
-       ;; expansion rather than per yielded solution (`inference/search-within`), so
-       ;; a wide unproductive stretch cannot run past the deadline
-       (inference/search-within (inference/session kb goals context
-                                                   (merge (query-options (:max-depth budget))
-                                                          (registry-leaf kb context)))
-                                budget)
-       (run-prove-step kb context budget
-                       (res/initial-prove-stack kb goals context
-                                                (:est-override (registry-leaf kb context))))))))
+       ;; it is a value the session holds, and so is its collector — and the bounds are
+       ;; checked per node expansion rather than per yielded solution
+       ;; (`inference/search-within`), so a wide unproductive stretch cannot run past
+       ;; the deadline
+       (let [sess (inference/session kb goals context
+                                     (merge (query-options (:max-depth budget))
+                                            (registry-leaf kb context)))]
+         (budget/reporting-unenumerated (inference/search-within sess budget)
+                                        #(inference/unenumerated sess)))
+       ;; the DFS's continuation is the goal stack, so the collector rides the closure
+       (let [una (provers/unenumerated-collector)]
+         (budget/reporting-unenumerated
+          (run-prove-step kb context budget
+                          (res/initial-prove-stack kb goals context
+                                                   (:est-override (registry-leaf kb context)))
+                          una)
+          #(provers/unenumerated-report una)))))))
 
 (defn resume
   "Continue a `:timeout` / `:capped` partial result from `ask-within` / `prove-within`
-  under a fresh `budget`, returning the next partial result.  A `:complete` result
-  has no continuation and is returned unchanged, so
+  under a fresh `budget`, returning the next partial result, whose `:unenumerated` holds
+  every step's.  A `:complete` or `:incomplete` result has no continuation and is
+  returned unchanged (docs/anytime.md), so
 
     (loop [r (ask-within kb goal ctx budget)]
       (consume (:results r))
@@ -5127,23 +5312,34 @@
   "The cheapest level that answers `goal` — climb the stack from `floor` and stop at
   the first level with results.  Returns {:level :name :results :tried}; `:results`
   is that level's lazy seq, so the climb costs one result per level tried.  Nothing
-  answers → :level nil.
+  answers → :level nil.  `:unenumerated` is present when the stopping level's probe
+  answered a both-open goal over a transitive predicate from its extent (docs/levels.md).
 
   `floor` defaults to 2, the first level that answers a *goal* rather than a
   question about storage: level 1 ignores the goal's arguments and level 0 ignores
-  belief, so either can report a hit it cannot verify.  Pass 0 to include them."
+  belief, so either can report a hit it cannot verify.  Pass 0 to include them.
+
+  `opts` is `escalate-opt-keys`: `{:max-ms n}`, a deadline on the climb.  A climb it
+  stops before any level answered comes back `{:level nil :status :timeout}`, which is
+  not a nothing-answers result.  Beside `opts`, a nil `floor` is the default floor."
   ([kb goal] (escalate kb goal '?ctx))
   ([kb goal context]
    (let [[goal context] (checked-ist-goal kb goal context)]
      (lvl/escalate kb goal context)))                ; `levels/query-floor` owns the default
   ([kb goal context floor]
    (let [[goal context] (checked-ist-goal kb goal context)]
-     (lvl/escalate kb goal context floor))))
+     (lvl/escalate kb goal context floor)))
+  ([kb goal context floor opts]
+   (check-search-opts! opts escalate-opt-keys "escalate")
+   (let [[goal context] (checked-ist-goal kb goal context)]
+     (lvl/escalate kb goal context (if (nil? floor) lvl/query-floor floor) opts))))
 
 (defn explain-levels
   "What every level yields for `goal`: a seq of {:level :name :count}.  The level at
   which the count first rises is the machinery the answer depends on.  A diagnostic —
-  it counts, so unlike `lookup` it realizes every level fully.
+  it counts, so unlike `lookup` it realizes every level fully.  A row carries
+  `:unenumerated` when its count lacks the closure pairs of a both-open goal over a
+  transitive predicate (docs/levels.md).
 
   This explains the *retrieval stack*, not belief: it says which machinery reaches a
   sentence, not why the KB holds it.  For that, see `why` / `why-not`, which walk the
@@ -5156,6 +5352,23 @@
 (defn levels
   "The stack as data: {:level :name :below :adds} per level."
   [] lvl/level-table)
+
+(defn- clash-grounds?
+  "Does `opts` ask a clash report for its `:grounds`?  Yes unless `{:grounds? false}`.
+  An opts key the reports do not read is refused, as at the extent readers."
+  [opts fn-name]
+  (opts/check! opts #{:grounds?} fn-name
+               "An option nothing reads takes the default in silence, which here means the grounds are read.")
+  (opts/check-values! opts fn-name)
+  (not (false? (:grounds? opts))))
+
+(defn- contradictions-read
+  "The unranked dilemmas `contradictions` reports for `context`: KB-wide for a nil or
+  variable one."
+  [kb context]
+  (if (or (nil? context) (sx/variable? context))
+    (clashes/contradictions-of kb)
+    (clashes/contradictions-at kb context)))
 
 (defn conflicts
   "The contradictions the last settle could not satisfy — the reported 'solve result'.
@@ -5177,9 +5390,15 @@
 
   **The list is ordered by content** — each entry by its sides' sentences and contexts,
   the same rule that orders the sides within one entry — so `(first (conflicts kb))` is
-  an answer about the knowledge and not about which pair was typed first."
-  [kb]
-  (clashes/with-grounds kb (clashes/ranked (clashes/conflicts-of kb))))
+  an answer about the knowledge and not about which pair was typed first.
+
+  **`{:grounds? false}` leaves `:grounds` off**, as it does for `contradictions`."
+  ;; each arity reads the clashes itself rather than calling another through the var, so
+  ;; a caller that rebinds `conflicts` to count its scans counts one per call
+  ([kb] (clashes/with-grounds kb (clashes/ranked (clashes/conflicts-of kb))))
+  ([kb opts]
+   (let [rs (clashes/ranked (clashes/conflicts-of kb))]
+     (if (clash-grounds? opts "conflicts") (clashes/with-grounds kb rs) rs))))
 
 (defn contradictions
   "The coexisting pairs the last settle left standing — **represented dilemmas**, not
@@ -5251,16 +5470,23 @@
   **`:vantages` names what each placement context decided**, `{context handle}`, and is
   present only on an entry whose placements defeat different members.  A reader below two
   of those contexts believes every member; a reader below one of them reads that
-  context's verdict."
+  context's verdict.
+
+  **`{:grounds? false}` leaves `:grounds` off every entry.**  The grounds are read now, a
+  taxonomy walk per definitional clash, and over a corpus with tens of thousands of
+  clashes that walk is most of the read.  A caller that lists the
+  clashes rather than arguing them asks without it."
+  ;; as in `conflicts`, no arity calls another through the var
   ([kb] (clashes/with-grounds kb (clashes/ranked (clashes/contradictions-of kb))))
   ([kb context]
-   (if (or (nil? context) (sx/variable? context))
-     (contradictions kb)
-     (clashes/with-grounds kb (clashes/ranked (clashes/contradictions-at kb context))))))
+   (clashes/with-grounds kb (clashes/ranked (contradictions-read kb context))))
+  ([kb context opts]
+   (let [rs (clashes/ranked (contradictions-read kb context))]
+     (if (clash-grounds? opts "contradictions") (clashes/with-grounds kb rs) rs))))
 
 ;; Classifying a dilemma is an opt-in solve producing *persistent* inert contexts:
 ;; `(do/label CxDilemma Into)` then `(do/classify Into)` (docs/solving.md).  Do not
-;; stamp a classification axis onto the TMS at settle instead: that makes the KB
+;; attach a classification axis to the TMS at settle instead: that makes the KB
 ;; compute a global forced/supportable/excluded map over every contested node, eagerly
 ;; and unpersisted, for a question most callers never ask.  Representing dilemmas is
 ;; separate and unconditional — that is `contradictions`, above.
@@ -5362,7 +5588,7 @@
 (defn cache-profile
   "The cache tuning in force, process-wide: `{:scale <multiplier> :overrides {cache-id
   limit}}`.  Every count-bounded cache holds its shipped default limit multiplied by
-  `:scale`, unless `:overrides` pins it to an absolute number.  `set-cache-scale` and
+  `:scale`, unless `:overrides` sets it to an absolute number.  `set-cache-scale` and
   `set-cache-limit` change it; `caches` shows the effective limit each cache enforces."
   []
   (caches-impl/profile))
@@ -5384,26 +5610,26 @@
   (caches-impl/set-scale x))
 
 (defn set-cache-limit
-  "Pin cache `id`'s bound to `n` regardless of the scale, or clear the pin when `n` is nil,
-  and return the profile.  `id` is a `:cache` keyword from `caches`, `n` a positive whole
-  number.  An override is absolute — the scale does not move it — for a caller who has
+  "Override cache `id`'s bound with `n` regardless of the scale, or clear the override when
+  `n` is nil, and return the profile.  `id` is a `:cache` keyword from `caches`, `n` a
+  positive whole number.  An override is absolute — the scale does not move it — for a caller who has
   measured one cache and wants a bound the global scale would not give it.  Refused by name
   when `id` is not a keyword, or `n` is neither nil nor a positive whole number
   (`:type :unknown-option`).
 
   An `id` that names **no currently-registered cache** is *warned*, not refused, and the
-  pin is recorded anyway.  A refusal would be wrong here: the register fills lazily (a
+  override is recorded anyway.  A refusal would be wrong here: the register fills lazily (a
   cache registers when its namespace loads, and a qualitative calculus may not be loaded
   yet), so a bound set for a cache before its namespace loads is a legitimate request the
   cache picks up on registration.  The warning is what a typo — the far likelier reading —
-  surfaces under, since a pin for an id nothing ever registers sits inert in the overrides
-  forever otherwise.
+  surfaces under, since an override for an id nothing ever registers sits inert in the
+  overrides forever otherwise.
 
-  A pin for a **registered cache no pin moves** is refused (`:unknown-option`): a nil-bound
-  cache, which has no count to pin, and the symbol pool and the scoped-closure budget,
-  whose bounds are dynamic vars outside the profile (docs/caches.md).  The register knows
-  those caches, so no load order makes the pin apply later, and recording it would report a
-  bound nothing enforces.  Clearing one with nil is accepted and changes nothing."
+  An override for a **registered cache no override moves** is refused (`:unknown-option`): a
+  nil-bound cache, which has no count to override, and the symbol pool and the
+  scoped-closure budget, whose bounds are dynamic vars outside the profile (docs/caches.md).
+  The register knows those caches, so no load order makes the override apply later, and
+  recording it would report a bound nothing enforces.  Clearing one with nil is accepted and changes nothing."
   [id n]
   (when-not (keyword? id)
     (throw (ex-info (str "cache id must be a keyword from `caches`, not " (pr-str id))
@@ -5411,19 +5637,19 @@
   (when-not (or (nil? n) (and (integer? n) (pos? n)))
     (throw (ex-info (str "cache limit must be a positive whole number or nil, not " (pr-str n))
                     {:type :unknown-option :mismatch :bad-value :limit n})))
-  (when-let [why (and (some? n) (caches-impl/pin-problem id))]
-    (throw (ex-info (str "cache " (pr-str id) " takes no pin — its bound is " why
-                         ", so a pin would be recorded and enforced nowhere.  A pin moves"
-                         " the caches whose bound `set-cache-scale` scales (docs/caches.md)")
+  (when-let [why (and (some? n) (caches-impl/override-problem id))]
+    (throw (ex-info (str "cache " (pr-str id) " takes no override — its bound is " why
+                         ", so an override would be recorded and enforced nowhere."
+                         "  An override moves the caches whose bound `set-cache-scale` scales (docs/caches.md)")
                     {:type :unknown-option :mismatch :bad-value :cache id :limit n})))
-  ;; a pin (not a clear) for an id no cache has registered: recorded, since a not-yet-loaded
-  ;; cache picks it up, but warned since a typo is the likelier reading and would otherwise
+  ;; an override (not a clear) for an id no cache has registered: recorded, since a
+  ;; not-yet-loaded cache picks it up, but warned since a typo is the likelier reading and would otherwise
   ;; sit inert forever
   (when (and (some? n) (not (caches-impl/registered? id)))
     (trove/log! {:level :warn :id ::cache-limit-unknown-id
-                 :msg (str "set-cache-limit pins " (pr-str id) ", which names no cache"
+                 :msg (str "set-cache-limit overrides " (pr-str id) ", which names no cache"
                            " registered in this process yet — a typo, unless its namespace"
-                           " has not loaded; the pin is recorded and applies if it does")
+                           " has not loaded; the override is recorded and applies if it does")
                  :data {:cache id :limit n}}))
   (caches-impl/set-limit id n))
 
@@ -5433,8 +5659,8 @@
   caches, under the low mark it grows them back.  Returns nil.
 
   `:kbs` is a thunk answering the live KBs whose per-KB caches the trim reaches.  The
-  engine holds no roster of open KBs, so a process serving several supplies its own
-  roster here.  Idempotent: a second call replaces the thunk and attaches no second
+  engine holds no list of open KBs, so a process serving several supplies its own
+  list here.  Idempotent: a second call replaces the thunk and attaches no second
   listener.  Nothing attaches the guard at engine load, so a library embedding carries no
   listener it did not ask for.  `!` because it attaches to the process's collectors.
   [docs/caches.md](docs/caches.md)"
@@ -5451,7 +5677,7 @@
   refusal names the switch under `:switch`, and under `:property`, the older key, which
   holds the same name for an environment variable as for a system property.
 
-  The roster is `vaelii.impl.config/switches`, and
+  The switch table is `vaelii.impl.config/switches`, and
   [docs/operations.md](docs/operations.md) tabulates it, so a caller outside the engine
   reads `VAELII_DEV` or `VAELII_PROFILER_PORT` with the engine's parse instead of
   re-parsing the environment."
@@ -5478,7 +5704,7 @@
 
   ## The kinds
 
-  The three tables below are the whole roster, and `violation_roster_test` holds them to
+  The three tables below are the full list of kinds, and `violation_kinds_test` holds them to
   the code: it scans the sources for every kind the engine can file, and fails on a kind
   with no row here, on a row here naming a kind nothing files, and on a `:detail` column
   that is not the keys the entry builds.  A detail cell naming no key belongs to a kind
@@ -5495,15 +5721,15 @@
   | `:arg-type` / `:arg-genl` | an argument fails a declared constraint — `arg`'s type, or `genlArg`'s subtype floor | `:arg` `:expected` `:position` `:message` |
   | `:inter-arg-type` | an `interArg` conditional constraint, or an `interArgs` / `interArgAndRest` homogeneity constraint, whose trigger argument holds and whose target argument does not | `:arg` `:expected` `:position` `:trigger` `:trigger-type` `:trigger-position` `:message` |
   | `:arg-position` | a *declaration* constrains an argument the predicate's declared length does not have | `:predicate` `:position` `:arity` `:via` `:message` |
-  | `:arg-constraint-kind` | a declaration disagrees with the predicate's `relation_kind` — `genlArg` on an instance relation, `arg` on a type relation | `:predicate` `:message` |
+  | `:arg-constraint-kind` | a declaration disagrees with the predicate's `relation_kind` — `genlArg` on an instance relation | `:predicate` `:message` |
   | `:disjoint` | an application whose result type is disjoint from a type its argument position demands, before its constant is minted, so no second sentex stands for the pair | the check's problem map |
   | `:not-stratified` | a derived `genl` / `genlCx` edge would put a cycle through negation in the rule set, or a minted generator would feed one | `:cycle` `:message` |
   | `:not-well-formed` | a minted sentence a special predicate's own structure check refuses | `:problems` `:message` |
   | `:naming` | a minted sentence breaking a naming invariant — the spellings in docs/naming.md | `:message` |
   | `:no-placement` | the join completed and no context sees the rule, every antecedent fact, and the `genl` edges the match climbed | `:rule-context` `:fact-contexts` `:subsumed` `:would-place` `:message` |
-  | `:mint-refused` | a conclusion naming a reifiable application with no constant yet, whose mint the assert path refused — a result type, or the correspondence projection, the KB cannot admit of the new constant | `:refusal` `:message` |
+  | `:mint-refused` | a conclusion naming a reifiable application with no constant yet, whose mint the assert path refused — a sentence the mint writes about the new constant that `assert` refuses | `:refusal` `:message` |
   | `:post-join-ambiguous` | a post-join antecedent — an aggregate, or a computed literal reading one — answered **two ways**, so a firing taking either would conclude a different fact per arrival order.  Filed once per distinct disagreement, since the literal is re-solved on every firing attempt | `:literal` `:solutions` `:message` |
-  | `:not-range-restricted` / `:not-indexable` / `:disjunction-too-wide` / `:not-assertible` / `:exception-not-closed` / `:naf-not-closed` / `:quantifier-not-local` / `:arg-variable` | a rule a **generator** minted that the rule checks refuse — the list both storage entry points read, so a mint owes what an author's rule owes.  `:disjunction-too-wide` is the one a *written* rule rarely reaches: an `or` the assert entry point admits is expanded away, so what is left for a mint to file is a stamped rule over the alternative cap (docs/canonicalization.md) | the refusal's own keys, and `:message` |
+  | `:not-range-restricted` / `:not-indexable` / `:disjunction-too-wide` / `:not-assertible` / `:exception-not-closed` / `:naf-not-closed` / `:quantifier-not-local` | a rule a **generator** minted that the rule checks refuse — the list both storage entry points read, so a mint owes what an author's rule owes.  `:disjunction-too-wide` is the one a *written* rule rarely reaches: an `or` the assert entry point admits is expanded away, so what is left for a mint to file is a generated rule over the alternative cap (docs/canonicalization.md) | the refusal's own keys, and `:message` |
 
   An **arbitrable** clash is not dropped: a rule's conclusion, an argument-type mint, a
   decontextualization lift's copy and an equality merge's twin are stored, and the
@@ -5514,7 +5740,9 @@
   | entry | means | detail |
   |---|---|---|
   | `:non-confluent` | two schematic equations disagree about a shared term; the normal form stays deterministic, so nothing is dropped | `:with` `:message` |
-  | `:forced-conclusion` | a stored firing concluding a literal on the forced-monotonic roster, or its denial, from a rule that is not all roster antecedents with no `unknown`, `exceptWhen` or `set/defaultRule`: the firing is held void at some reader, so it supports nothing there, and `:off-roster` names the rule's antecedent predicates off the roster (docs/nmtms.md).  Read off the stored firings at each call, not filed: the entry stands while the firing is stored and convicted, `:sentence` is the conclusion's stored spelling, and the entry carries no `:run` | `:off-roster` `:message` |
+  | `:inert-argument` | a stored fact whose argument fails a declared argument type as `assert` reads it — a value under `arg`, a symbol under the constraint-only reading, a `quotedArg` kind — held in the `:out` forced set, so it is never believed (docs/argtypes.md).  Read off the held facts at each call, not filed: the entry stands while the fact is stored and convicted, and carries no `:run` | the check's problem map |
+  | `:inert-rule` | a stored rule, asserted or minted, one of whose variables two argument constraints hold to separated types, so no term fills it: `:detail` is the `:arg-variable` conviction.  The rule is held in the `:out` forced set, so it is never believed and fires nothing (docs/argtypes.md).  Read off the held rules at each call, as `:inert-argument` is | `:variable` `:expected` `:message` |
+  | `:forced-conclusion` | a stored firing concluding a forced-monotonic literal, or its denial, from a rule whose antecedents are not all forced-monotonic or that has an `unknown`, `exceptWhen` or `set/defaultRule`: the firing is held void at some reader, so it supports nothing there, and `:not-forced-monotonic` names the rule's antecedent predicates that are not forced-monotonic (docs/nmtms.md).  Read off the stored firings at each call, not filed: the entry stands while the firing is stored and convicted, `:sentence` is the conclusion's stored spelling, and the entry carries no `:run` | `:not-forced-monotonic` `:message` |
   | `:aggregate` | an aggregate prover cannot reduce an extent — values that are not numbers of one dimension, or bounds only partially ordered.  Filed once per distinct error, since a count is recomputed rather than cached | `:message` `:values` |
   | `:qualitative-inconsistency` | the qualitative network visible from a context is unsatisfiable, so no goal of that calculus is answered there | `:calculus` `:message` `:nodes` `:pairs` `:sources` |
   | `:metric-temporal-mixed-dimensions` | the `temporalDistance` facts visible from a context span more than one dimension, so it gets no metric network at all | `:message` `:dimensions` `:units` |
@@ -5554,9 +5782,14 @@
   the ingredient of an entry does not withdraw it.  `clear-violations!` empties it.
   The `:forced-conclusion` entries follow the ledger's, in content order, and are read
   off the stored firings (`checks/forced-conclusion-entries`): neither the cap nor
-  `clear-violations!` removes one."
+  `clear-violations!` removes one.  The `:inert-argument` and `:inert-rule` entries follow
+  those, in content order, read off the held facts and rules
+  (`checks/held-argument-entries`), and neither the cap nor `clear-violations!` removes
+  one either."
   [kb]
-  (into @(reasoning/violations kb) (checks/forced-conclusion-entries kb)))
+  (-> @(reasoning/violations kb)
+      (into (checks/forced-conclusion-entries kb))
+      (into (checks/held-argument-entries kb))))
 
 (defn clear-violations!
   "Empty the accumulated dropped-conclusion ledger.  `!` because it destroys the
@@ -5610,7 +5843,7 @@
   placeholder an author asserted is determinate and a skolemised witness is not, which is
   what makes this the antagonist of `predAllExists` ([predall.md](../docs/predall.md)).
 
-  **Computed on demand and not filed.**  The declaration stamps no rule and fires nothing
+  **Computed on demand and not filed.**  The declaration generates no rule and fires nothing
   on assert, so a KB carrying one is audited when a caller asks and never otherwise.  Cost
   is the contract derivation once per call (two declaration reads per constraining
   predicate, plus one membership read), then one read per member of `indep` plus one read
@@ -5676,7 +5909,7 @@
   `{:status :audited :candidate-count n}` when no pass finds anything, `:status :gap` with
   the non-empty categories among `:definition-inconsistencies`,
   `:all-specified-violations`, `:genl-arg-widening`, `:not-under-thing`, `:implicit-genl`,
-  `:orthogonal-over-separation`, `:rule-macro`, `:undeclared-arity`,
+  `:implicit-arity-class`, `:orthogonal-over-separation`, `:rule-macro`, `:undeclared-arity`,
   `:twin-genls`, `:derivable-stated-edge`,
   `:disjoint-could-be-partition` and `:missing-arg`, or `:status :truncated` with its
   `:reason` and the findings kept when a bound runs out.  `options` takes `:max-work`,
@@ -5778,12 +6011,15 @@
 
 (defn- following-metas-naming
   "The handles of still-stored target-following meta-sentexes that name handle `h` — the
-  metas a teardown of `h` must sweep.  Found through the handle term's own index key
-  (`find-sentexes` on `(sentexHandle h)`), then filtered to the marked predicates."
+  metas a teardown of `h` must sweep, read by `reads/as-stored-naming-handle`.
+  `find-sentexes` narrows a compound on its atoms, and the only atom here is
+  `sentexHandle`, so it would fetch every sentex naming any handle."
   [kb h]
   (into []
-        (comp (filter #(target-following-meta? kb %)) (map :id))
-        (kb/find-sentexes kb (sx/sentex-handle h))))
+        (comp (keep #(p/get-sentex (:records kb) %))
+              (filter #(target-following-meta? kb %))
+              (map :id))
+        (reads/as-stored-naming-handle (:index kb) h)))
 
 (defn- retract-following-metas!
   "The cascade that keeps a **target-following meta-sentex** from outliving the sentex it
@@ -5795,7 +6031,7 @@
   to it.
 
   A no-op unless the KB declares a `target_following_predicate`: the sink is bound only
-  then (or when a reifiable function needs it), and an empty roster short-circuits.  The
+  then (or when a reifiable function needs it), and an empty `:target-following` set short-circuits.  The
   engine's own meta-sentexes (`except` / `exceptWhen`) do not carry the mark, so their
   orphan-on-retraction behavior (`meta_sentex_test`) is untouched."
   [kb sink]
@@ -5818,14 +6054,17 @@
   (`integrate/*removed-sink*`): the dependency sweep's removals, the settle's, and the
   cascades' own.
 
-  Gated on the things that read one — a reified constant (`nat/any-reified-constants?`,
-  the orphan sweep), a `target_following_predicate` (the meta cascade) and a placed read.
-  With none of them the sweeps are no-ops, and recording a cascade for nothing to read is
-  pure retention, so the gate answers nil and the choke point collects nothing."
+  Built only when something reads one: a reified constant (`nat/any-reified-constants?`,
+  the orphan sweep), a `target_following_predicate` (the meta cascade), a placed read and
+  a refusal waiting on an argument conviction (`special/argument-refusals?`, the settle's
+  release of it).  With none of them the sweeps are no-ops, and recording a cascade for
+  nothing to read is pure retention, so the presence check answers nil and the choke
+  point collects nothing."
   [kb]
   (integrate/removal-sink (or (nat/any-reified-constants? kb)
                               (seq (props kb :target-following))
-                              (exc/placed-reads? kb))))
+                              (exc/placed-reads? kb)
+                              (special/argument-refusals? kb))))
 
 (defn- finish-teardown!
   "The three sweeps a teardown owes once its settle has run, in the order both write entry points
@@ -5834,16 +6073,16 @@
   * the **meta cascade** — a `target_following_predicate` sentex must not outlive the
     sentex it names, and what left the store is what `sink` recorded;
   * the **orphan sweep** — a reified constant no live use references any more, whose
-    `termOfUnit` map would otherwise dangle a raw `nat/` symbol;
+    `natFormula` map would otherwise dangle a raw `nat/` symbol;
   * the **structural-genlCx revival** — a teardown can put a `contextArgSubrelation`
     declaration or a stored R-evidence fact back IN (retracting a monotonic defeater
     above it), and the producer runs on assert only, so an edge never built while the
     declaration was OUT would stay absent with nothing to revive.  Rebuilt against the
-    settled belief (docs/context-nat.md), and gated internally on the KB declaring one.
+    settled belief (docs/context-nat.md), and run only when the KB declares one.
 
   The last two run only beside a `sink`: `teardown-sink` answers nil only when
-  `nat/any-reified-constants?` is false, which gates both, so a KB with no reified
-  constant reads that gate once per teardown and not three times.
+  `nat/any-reified-constants?` is false, and both run only when it is true, so a KB with
+  no reified constant reads that presence check once per teardown and not three times.
 
   One fn because `retract!` and `edit!` must not drift: a batch that swept a meta the
   single retraction did not — or the reverse — would leave the same knowledge in two
@@ -5896,7 +6135,7 @@
     ;; recorded as they happen — the dependency sweep's, the settle's, and the sweeps' own
     (let [sink (teardown-sink kb)]
       (binding [integrate/*removed-sink* sink
-                settle/*belief-before*   (settle/reading-before kb [[:retract (the-handle handle "retract!")]])]
+                observe/*write-record*   (settle/write-record kb)]
         (let [handle (the-handle handle "retract!")
               _      (when-let [problem (checks/forcing-retraction-problem kb handle "retract!")]
                        (throw (ex-info (:message problem) (dissoc problem :message))))
@@ -5906,13 +6145,76 @@
           (finish-teardown! kb sink)
           (dissoc result :datum? :seeds :rederive))))))
 
-(defn- batch-writes
-  "`batch`'s adds and its removes naming a handle, as the writes `settle/reading-before`
-  takes."
-  [{:keys [add remove]}]
-  (into (mapv (fn [[s c o]] [:assert s c (:strength o)]) add)
-        (keep #(cond (int? %) [:retract %] (sx/sentex-handle? %) [:retract (sx/handle-id %)]))
-        remove))
+;; ---- the records no premise and no justification supports ----------------------
+;; docs/storage.md, "A record no premise and no justification supports".
+
+(defn unsupported
+  "The stored records the last `recover` found with no premise mark, no justification and
+  no `:inert` mark, as `{:n n :handles [h …]}`, ascending, re-checked against the KB now:
+  a handle since premise-marked, concluded, marked `:inert` or retracted is left out.  The
+  re-check reads the network and no store.  Such a record stays OUT.  The count can
+  include an `assert-inert` record written before `assert-inert` marked its records;
+  `mark-inert!` marks one.  `remove-unsupported!` deletes them."
+  [kb]
+  (let [tms (reasoning/tms kb)
+        hs  (filterv #(jtms/unsupported? tms %) (:unsupported @(:unrecovered kb)))]
+    {:n (count hs) :handles hs}))
+
+(defn- attested-unsupported
+  "The unsupported handles `opts` names for `op`: those among `:handles`, else the
+  reported ones in `:contexts`, else every reported one under `:force? true`.  With none
+  of the three, refused (`:unsupported-unattested`)."
+  [kb op allowed {:keys [handles contexts force?] :as opts}]
+  (opts/check! opts allowed op
+               (str "An option nothing reads leaves the call unattested, which " op
+                    " refuses."))
+  (let [unsupported? #(recovery/unsupported-handle? kb %)]
+    (cond
+      (some? handles)  (into [] (comp (filter unsupported?) (distinct))
+                             (sort (map #(the-handle % op) handles)))
+      (some? contexts) (let [cs (set contexts)]
+                         (filterv #(contains? cs (:context (p/get-sentex (:records kb) %)))
+                                  (:handles (unsupported kb))))
+      (true? force?)   (:handles (unsupported kb))
+      :else
+      (let [msg (str op " deletes or marks stored records, so it takes the caller's"
+                     " evidence: {:handles hs} naming the records a failed write left, or"
+                     " {:force? true} to act on every record (unsupported kb) reports")]
+        (throw (ex-info msg {:type :unsupported-unattested :operation op
+                             :options (vec (sort allowed))}))))))
+
+(defn remove-unsupported!
+  "Delete the unsupported records `opts` names (`unsupported`), with their postings, each
+  through `retract!`, and return `{:unsupported-removed n :handles [h …]}`.
+
+  `{:handles hs}` removes the unsupported records among `hs`: the handles the caller's own
+  record of its writes marks failed.  A handle that is not an unsupported record is left
+  as it is.  `{:force? true}` removes every record `unsupported` reports, which includes
+  an unmarked `assert-inert` record written before `assert-inert` marked its records.
+  With neither, refused (`:unsupported-unattested`): opening a KB never deletes a record,
+  and this call deletes only what its caller attests.  docs/storage.md."
+  [kb opts]
+  (check-writable! kb "remove-unsupported!")
+  (let [hs (attested-unsupported kb "remove-unsupported!" #{:handles :force?} opts)]
+    (run! #(retract! kb %) hs)
+    (swap! (:unrecovered kb) update :unsupported #(into [] (remove (set hs)) %))
+    {:unsupported-removed (count hs) :handles hs}))
+
+(defn mark-inert!
+  "Write `:inert true` into the provenance of the unsupported records `opts` names, and
+  return `{:marked n :handles [h …]}`.  `{:handles hs}` marks the unsupported records
+  among `hs`, `{:contexts cs}` those `unsupported` reports in a context of `cs`.  With
+  neither, refused (`:unsupported-unattested`).  For an `assert-inert` record written
+  before `assert-inert` marked its records: a marked record is no longer counted by
+  `unsupported`.  docs/storage.md."
+  [kb opts]
+  (check-writable! kb "mark-inert!")
+  (let [hs  (attested-unsupported kb "mark-inert!" #{:handles :contexts} opts)
+        rec (:records kb)]
+    (doseq [h hs]
+      (p/put-provenance rec h (assoc (p/get-provenance rec h) :inert true)))
+    (swap! (:unrecovered kb) update :unsupported #(into [] (remove (set hs)) %))
+    {:marked (count hs) :handles hs}))
 
 (defn edit!
   "Apply a batch of assertions and retractions in **one settle**.
@@ -5934,7 +6236,7 @@
   before it have landed.  So the batch is rolled back at the handles it wrote: every add
   retracted (which collects what it derived, by the ordinary dependency-directed sweep),
   every premise mark undone, every strength it raised put back, the diagnostic ledgers
-  and the refusal record restored.  Belief and the handle roster are then exactly what
+  and the refusal record restored.  Belief and the handle set are then exactly what
   they were before the call.  **The handle counter is the one thing that moves** —
   handles are minted in assertion order and never reissued — which is what a `preview`
   already leaves behind, and nothing reads a handle as a fact about the KB.
@@ -6001,16 +6303,17 @@
     (feed/with-one-event kb
       ;; and one removal record for the batch, for `retract!`'s reason: the orphan sweep
       ;; asks about the constants this batch stopped referencing, and nothing else — and
-      ;; is gated the same way, so a KB that reifies nothing records nothing.
+      ;; runs only under the same presence check, so a KB that reifies nothing records
+      ;; nothing.
       ;;
       ;; Read **before** the adds, and a batch may declare the KB's first reifiable
-      ;; function among them: the gate is then false here and true at the sweep, which
-      ;; leaves a nil sink and sends it down the whole-KB arm.  That is the stricter
+      ;; function among them: the presence check is then false here and true at the
+      ;; sweep, which leaves a nil sink and sends it down the whole-KB arm.  That is the stricter
       ;; question and the right one — a batch that has just made reification possible has
       ;; no region-scoped claim to make — and it costs the batch that does it one sweep.
       (let [sink (teardown-sink kb)]
         (binding [integrate/*removed-sink* sink
-                  settle/*belief-before*   (settle/reading-before kb (batch-writes batch))]
+                  observe/*write-record*   (settle/write-record kb)]
           (let [audit    (atom {})
                 baseline (batch-baseline kb)
                 ;; where the batch is, for the refusal to name once it has been undone
@@ -6024,25 +6327,31 @@
                   (binding [entry/*premise-audit* audit
                             viol/*batch-entries*  (:filed baseline)
                             *defer-settle?* true]
-                    (let [added (into [] (map-indexed
-                                          (fn [i entry]
-                                            (vreset! at [:add i entry])
-                                            (let [[sentence context opts] entry]
-                                              (assert kb sentence context (or opts {})))))
-                                      add)]
-                      (doseq [[i h] (map-indexed vector remove)]
-                        (vreset! at [:remove i h])
-                        (when-some [h (the-handle h "edit")]
-                          (when-let [problem (teardown-refusal kb h "edit!")]
-                            (throw (ex-info (:message problem) (dissoc problem :message))))))
-                      added))
+                    ;; a shutdown may stop this phase, which the catch takes back whole;
+                    ;; a bulk load audits nothing, so its adds are no unit
+                    ((if *bulk-load?* #(%) dur/as-unit)
+                     (fn []
+                       (let [added (into [] (map-indexed
+                                             (fn [i entry]
+                                               (vreset! at [:add i entry])
+                                               (let [[sentence context opts] entry]
+                                                 (assert kb sentence context (or opts {})))))
+                                         add)]
+                         (doseq [[i h] (map-indexed vector remove)]
+                           (vreset! at [:remove i h])
+                           (when-some [h (the-handle h "edit")]
+                             (when-let [problem (teardown-refusal kb h "edit!")]
+                               (throw (ex-info (:message problem) (dissoc problem :message))))))
+                         added))))
                   (catch Throwable t
                     (rollback-batch! kb (assoc baseline :audit audit :suspended nil))
                     (throw (rolled-back t @at))))
                 ;; **The committed phase.**  Nothing here refuses: the removals were
                 ;; cleared above, and what a settle or a teardown sweep raises past this
                 ;; point is a fault rather than a refusal — there is no undo for a swept
-                ;; record, so the batch does not pretend to one.
+                ;; record, so the batch does not pretend to one.  A shutdown's stop request
+                ;; is off here (`dur/as-unit` covers the phase above only), so a shutdown
+                ;; waits for this phase.
                 removed
                 (binding [*defer-settle?* true]
                   (reduce (fn [acc h]
@@ -6066,7 +6375,8 @@
   hides (docs/nmtms.md, \"A read with no reader\")?  Visibility `except`s are not applied.
 
   When this answers true but a contextual read cannot see the sentex, call
-  `belief-status` to inspect the exception and assertion-context inheritance gates."
+  `belief-status` to inspect the exception condition and the assertion-context
+  inheritance condition."
   [kb handle]
   (exc/believed-own? kb (the-handle handle "in?")))
 
@@ -6077,7 +6387,7 @@
 
   This is contextual belief force only.  It deliberately does not require `context`
   to inherit the sentex's assertion context; `belief-status` reports that final
-  visibility gate separately.  nil and unknown handles answer false; a non-handle is
+  visibility condition separately.  nil and unknown handles answer false; a non-handle is
   refused with `:bad-handle`, exactly as `in?`."
   [kb handle context]
   (let [h (the-handle handle "believed?")]
@@ -6102,7 +6412,7 @@
         raw-in? (boolean (jtms/in? (reasoning/tms kb) h))
         {:keys [exceptions excepted?]} (exc/exception-status kb h context)
         ;; A directly excepted handle is already answered by the forest above, and a
-        ;; scoped defeat reads the scoped roster alone.  Resting only on a withdrawn
+        ;; scoped defeat reads the scoped supporter entries alone.  Resting only on a withdrawn
         ;; handle is possible for a non-premise only — a premise keeps its label in the
         ;; region fixpoint — so only that case asks the full per-reader withdrawal, which
         ;; walks every except the reader sees.
@@ -6250,10 +6560,29 @@
     (in-content-order kb (keep #(justification kb %) (jtms/dependents (reasoning/tms kb) h)))
     ()))
 
+(defn justification-verdicts
+  "The verdict `context` reads on each justification of `handle`, as `{justification-id
+  reason}`: `:supports` where every handle it rests on is believed there, else
+  `:antecedent-out`, unless the network blocks it (`:blocked`, its rule's `exceptWhen`
+  holds) or holds it void (`:void`), `context`'s forced-monotonic reading holds it void
+  (`:void`), a guard defeat in force at `context` covers it (`:guard`, docs/naf.md), or
+  it is a `nogood` justification of a placement `context` exempts (`:exempt`).
+
+  Belief here is `why`'s reading, with the excepts not applied: a handle IN and named by
+  no defeat in force at `context` is believed there exactly when it is a premise or one
+  of its justifications reads `:supports`.  `why` puts the verdict at each node's context
+  on its `:support` entries, and `why-not` on its `:support`.
+  Empty for a nil handle; a non-handle is refused (`:bad-handle`)."
+  [kb handle context]
+  (if-some [h (the-handle handle "justification-verdicts")]
+    (exc/justification-verdicts kb h context)
+    {}))
+
 (defn blocked-justifications
-  "The ids of the justifications the network currently holds **blocked**: their rule's
-  `exceptWhen` exception holds, so the JTMS has ruled them invalid and they confer
-  nothing — even with every antecedent IN (docs/exceptions.md).
+  "The ids of the justifications the network currently holds **blocked**: a block their
+  rule carries holds (a closed extent, a withdrawn `different`), so the JTMS has ruled
+  them invalid and they confer nothing — even with every antecedent IN
+  (docs/exceptions.md).
 
   A *different* condition from an antecedent being OUT, and the one no per-handle read
   reports.  A blocked justification's antecedents can all be believed, so a reader
@@ -6277,15 +6606,15 @@
 ;;
 ;; **Every list is bounded and says so.**  On an imported ontology `thing` has 110,128
 ;; subtypes and one collection is disjoint from 79,638 types, so a reader that renders
-;; what it is handed has to be handed a window *and* the size of what the window is on.
+;; what it is handed has to be handed a truncated list *and* the size of the whole answer.
 ;; Two envelopes carry that: `{:terms :total :exact? :sorted?}` for a list of terms and
 ;; `{:rows :total :exact? :sorted?}` for a list of maps.  `:total` is the size of the
 ;; whole answer, `:exact?` says whether that size is a count or a bound, and `:sorted?`
-;; says whether the window is in name order or in the closure's own — fifty
+;; says whether the truncated list is in name order or in the closure's own — fifty
 ;; alphabetically-first being a different claim from fifty of them.
 
 (def describe-opt-keys
-  "Every key `describe` reads, and the roster a key off it is refused against
+  "Every key `describe` reads, and the key set a key off it is refused against
   (`:unknown-option`): `:limit`, how many entries one of its bounded lists carries and
   how many supertypes its predicates-for-type walk probes."
   #{:limit})
@@ -6299,7 +6628,7 @@
 (def ^:private describe-sortable
   "How many terms a bounded list realizes in order to **sort** them.  Name order is worth
   reading and adds no work at the size a hand-written schema has; ordering 110,000
-  subtypes to show fifty of them is not, so past this the window is the closure's own
+  subtypes to show fifty of them is not, so past this the list is in the closure's own
   order and the answer says `:sorted? false` rather than implying an order it does not
   have."
   1000)
@@ -6307,12 +6636,13 @@
 (def ^:private describe-scan
   "How many sentexes the per-predicate mention count walks off the inverted term index
   before it stops and reports `:exact? false`.  The count *is* the read — there is no
-  O(1) form of it — so the bound is a window whose edge the result reports."
+  O(1) form of it — so the bound is a scan limit, and the result reports whether the walk
+  reached it."
   4000)
 
 (defn- bounded-terms
   "A term set as one of `describe`'s bounded lists.  The total is exact — the closure
-  holds the set, so counting it is free — and only the sort and the window are bounded."
+  holds the set, so counting it is free — and only the sort and the list length are bounded."
   [ts limit]
   (let [total  (count ts)
         sorted (<= total describe-sortable)]
@@ -6322,7 +6652,7 @@
      :sorted? sorted}))
 
 (defn- bounded-rows
-  "A row list as the other bounded shape: content-ordered by `keyfn`, windowed at
+  "A row list as the other bounded shape: content-ordered by `keyfn`, truncated at
   `limit`, `:exact?` saying whether `:total` counted everything or stopped at a scan."
   [rows keyfn limit exact?]
   (let [ordered (nm/sort-by-content-key keyfn rows)]
@@ -6441,12 +6771,12 @@
          :total   (count all)
          :exact?  true
          :sorted? true})
-      ;; one past the window, in partner-name order: enough to know whether there is
+      ;; one past the limit, in partner-name order: enough to know whether there is
       ;; more, and O(limit) rather than O(union) because the closures are in memory
-      (let [win (into [] (comp walk (take (inc limit))) partners)]
-        (if (<= (count win) limit)
-          {:terms (nm/by-print-key win) :total (count win) :exact? true :sorted? true}
-          {:terms   (into [] (take limit) win)
+      (let [head (into [] (comp walk (take (inc limit))) partners)]
+        (if (<= (count head) limit)
+          {:terms (nm/by-print-key head) :total (count head) :exact? true :sorted? true}
+          {:terms   (into [] (take limit) head)
            :total   bound
            :exact?  false
            :sorted? false})))))
@@ -6477,8 +6807,8 @@
   "The predicates `x` appears under, with how many stored sentexes each — read off the
   inverted term index, which is the only index that answers \"where is this term used\"
   without knowing the position first.  There is no O(1) form of the per-predicate count,
-  so the read is windowed at `describe-scan` and says `:exact? false` where the window
-  bit.  A negation counts under the predicate it negates, never under `not`."
+  so the read stops at `describe-scan` sentexes and says `:exact? false` where that limit
+  cut the walk.  A negation counts under the predicate it negates, never under `not`."
   [kb x context limit]
   (let [seen (into [] (take (inc describe-scan)) (find-sentexes kb x))
         cut? (> (count seen) describe-scan)
@@ -6543,15 +6873,15 @@
   the whole KB: an `arg` declaration, a `modal_predicate` grant and a `comment` are each a
   policy of the context that states them, so `describe` at `CxWell` and at `CxUniverse` are
   two different — and both correct — answers.  The taxonomy closures are scoped the same
-  way.  `?ctx`, the default, reads every context, which is the whole-KB view the browser
+  way.  `?ctx`, the default, reads every context, which is the unscoped reading the browser
   shows.
 
-  **Every list is a window with its size beside it.**  A term list reads
+  **Every list is truncated, with its size beside it.**  A term list reads
   `{:terms :total :exact? :sorted?}` and a row list `{:rows :total :exact? :sorted?}`:
   `:total` is the size of the whole answer, `:exact?` is false where that size is a bound
-  rather than a count, and `:sorted?` is false where the window is in the closure's own
+  rather than a count, and `:sorted?` is false where the list is in the closure's own
   order because sorting it was not worth the walk.  `:limit` (`default-describe-limit`) is
-  how many entries a window holds, and `describe-opt-keys` is the roster.
+  how many entries a returned list holds, and `describe-opt-keys` is the key set.
 
   `:extent-count` and `:instance-count` are **stored** counts (`count-with-functor`'s
   contract): O(1), and so possibly ahead of what `sentexes-matching` answers.  The
@@ -6560,15 +6890,15 @@
 
   `props` and `has-prop?` answer the metadata `:props` leaves out (`:reifiable` /
   `:unreifiable` classify a function, `:forced-decontextualized` a stronger form of one of
-  the grants, `:forced-monotonic` the roster whose literals are never a loser).  docs/api.md, docs/troubleshooting.md."
+  the grants, `:forced-monotonic` the set whose literals are never a loser).  docs/api.md, docs/troubleshooting.md."
   ([kb term] (describe kb term '?ctx {}))
   ([kb term context] (describe kb term context {}))
   ([kb term context opts]
    (opts/check! opts describe-opt-keys "describe"
-                (str "A window this entry point does not read is a window the caller asked for,"
+                (str "A limit this entry point does not read is a limit the caller asked for,"
                      " did not get, and is told nothing about."))
    ;; the value refusal every cap owes (`check-limit!`): a string reached `take` and
-   ;; threw a bare cast error — over the daemon a 500 — and a zero or negative window
+   ;; threw a bare cast error — over the daemon a 500 — and a zero or negative limit
    ;; answered every list empty under a `:total` that looked like an answer
    (when-some [n (:limit opts)]
      (check-limit! n "describe :limit"))
@@ -6685,7 +7015,7 @@
   "The proof tree under `handle`, built over an **explicit** work stack so the JVM
   stack stays O(1) in the tree's depth.  Recursing it would overflow on a chain down
   a long transitive closure — which repeats no handle, so the cycle guard never fires
-  and only the KB bounds the depth (`why-bounds-its-depth` pins the case).
+  and only the KB bounds the depth (`why-bounds-its-depth` tests the case).
 
   Two-phase.  An `:open` frame computes one node; an internal one allocates a child
   frame per antecedent — a fresh integer id apiece — and pushes a `:close` frame
@@ -6696,6 +7026,7 @@
   [kb handle0 max-depth]
   (let [results (java.util.HashMap.)               ; frame id → node map
         work    (java.util.ArrayDeque.)
+        reader  (exc/verdict-reader kb)
         n       (volatile! 0)
         fresh   #(vswap! n inc)
         root    (fresh)]
@@ -6706,7 +7037,8 @@
           :open
           (let [[_ id handle seen depth] frame
                 sx   (sentex kb handle)
-                base {:handle handle :sentence (readable-sentence sx) :context (:context sx)}]
+                base {:handle handle :sentence (readable-sentence sx) :context (:context sx)}
+                read (delay (reader handle (:context sx)))]
             (cond
               (nil? sx)                          (.put results id (assoc base :stored? false))
               (>= (long depth) (long max-depth)) (.put results id (assoc base :truncated? true))
@@ -6719,7 +7051,7 @@
               ;; answers for the same handle (`res/believed-at?`): a sentex IN in the
               ;; network and withdrawn where it is stored has no proof tree to show,
               ;; and a tree citing it would say the KB believes what it disbelieves
-              (not (res/believed-at? kb handle (:context sx)))
+              (not (:believed? @read))
               (.put results id (assoc base :believed? false))
 
               (premise? kb handle)
@@ -6730,6 +7062,7 @@
               :else
               (let [seen'  (conj seen handle)
                     depth' (inc (long depth))
+                    vs     (:verdicts @read)
                     justs  (mapv (fn [j]
                                    (let [inf   (:informant j)
                                          rule? (integer? inf)
@@ -6739,6 +7072,7 @@
                                      {:justification (:id j)
                                       :informant     inf
                                       :strength      (:strength j :monotonic)
+                                      :verdict       (get vs (:id j))
                                       :rule?         rule?
                                       :rule          (when rule? (readable-sentence (sentex kb inf)))
                                       :children      (mapv (fn [ante] [(fresh) ante]) antes)}))
@@ -6756,6 +7090,7 @@
                                 (cond-> {:justification (:justification j)
                                          :informant     (:informant j)
                                          :strength      (:strength j)
+                                         :verdict       (:verdict j)
                                          :because       (mapv (fn [[cid _]] (.get results cid))
                                                               (:children j))}
                                   (:rule? j) (assoc :rule (:rule j))))
@@ -6769,12 +7104,17 @@
     {:handle h :sentence S :context C :believed? true :defeat-class :default
      :premise? false
      :support [{:justification jid :informant <rule handle or symbol>
-                :rule <the rule's sentence> :strength :monotonic
+                :rule <the rule's sentence> :strength :monotonic :verdict :supports
                 :because [ <the same map, recursively, per antecedent> ]}]}
 
   Recursion terminates at **premises**, which are marked `:premise? true` (with the
   assumption `:strength` they were asserted at) and carry no `:support` — a premise
   rests on nothing, so there is nothing below it.
+
+  Each `:support` entry's `:verdict` is the reason the node's context reads on that
+  justification (`justification-verdicts`): `:supports` for one that carries the node
+  there, and a believed node can list one a guard defeat covers (`:guard`) or one its
+  rule's exception blocks (`:blocked`) beside it.
 
   Rule sentences are `originalize`d, so variables read as the author wrote them
   (`?x`, not the canonical `?var0`).  The rule handle is lifted out of the
@@ -6818,36 +7158,68 @@
                       :context (:context o)
                       :defeat-class (defeat-class kb (:id o))}))))
 
-(defn- denied-literal
-  "`why-not`'s `:denies` for the inert denial `sx`, whose `why-not` map so far is `base`:
-  the literal `S` it denies, the handle of `S` in its context or nil, whether that context
-  believes `S`, and how `S` is on the roster (`decide/literal-roster`), with the
-  declarations the context sees in content order."
-  [kb sx base]
-  (let [tax (reasoning/taxonomy kb)
-        c   (:context sx)
-        s   (second (sx/sentence-of sx))
-        h   (kb/find-sentex-handle kb s c)
-        r   (decide/literal-roster tax s)]
-    {:sentence  (second (:sentence base))
-     :handle    h
-     :believed? (boolean (and h (res/believed-at? kb h c)))
-     :roster    (when r
-                  (assoc r :declarations
-                         (into [] (comp (filter (fn [[_ dc]] (tax/sees? tax c dc))) (map key))
-                               (sort-by (comp nm/print-key val) (:declarations r)))))}))
+(defn- excepted-argument
+  "The argument for `sentence` in `context` that some excepted rule built and then
+  discarded, or nil.
+
+  This is the backward reading of a blocked firing: take the rules that could conclude
+  the goal's predicate, keep the ones carrying an `exceptWhen`, unify the goal with the
+  consequent to seed the bindings, complete them by joining the antecedents against
+  believed facts, and report the first completion whose exception holds.
+
+  The exception is checked in the **query's** context, which is where the caller is
+  asking from and where a conclusion would have been placed.  The ground exception is
+  returned as a bare sentence when the rule states one conjunct and as a vector when it
+  states several, matching how it was written.
+
+  The completion reported is the **content-least** — the rule's sentence, then the
+  ground exception, then what the join matched — never the first the rule index
+  happened to yield: two excepted rules concluding one goal would otherwise make the
+  whole answer a function of which was asserted first.
+
+  The key is **structural** (`nm/compare-form` through `nm/min-by-content-key`), not a
+  printed one: a caller with an ambient `*print-length*` would elide two long rule
+  sentences to one prefix, collapse the key, and drop the choice back onto the rule
+  index's enumeration — which is handle order, the dependence this ordering exists to
+  remove.  Its third component is what `:via` names, as sentences: two completions of
+  one rule can ground the same exception through different facts, and `:via` is part of
+  the answer, so the tie is broken on what those facts *say* rather than on which
+  join reached the reporting site first."
+  [kb sentence context]
+  (->> (for [rh   (rules/direct-concluders (:index kb) (nm/functor sentence))
+             :let [rsx (p/get-sentex (:records kb) rh)]
+             :when (and rsx (rules/rule? rsx) (reads/watched-rule? (:index kb) rh) (in? kb rh))
+             :let  [rule (chain/rule-fields-of kb rh rsx)
+                    b0   (res/unify (:consequent rule) sentence)]
+             :when b0
+             {:keys [bindings handles]} (chain/solve-rule kb (:antecedents rule) b0)
+             except (provers/rule-exceptions kb rh context)
+             :when (chain/exception-holds? kb except bindings context)]
+         (let [ground (mapv #(sx/canon (res/substitute % bindings)) except)]
+           [[(sx/sentence-of rsx) ground
+             (mapv #(:sentence (p/get-sentex (:records kb) %)) handles)]
+            {:rule rh
+             :exception (if (= 1 (count ground)) (first ground) ground)
+             :via (vec handles)}]))
+       (nm/min-by-content-key first)
+       second))
 
 (defn- why-not-handle
   "`why-not` of a stored handle — the original arity, factored out so the sentence
   arity can delegate to it."
   [kb handle]
-  (let [sx   (sentex kb handle)
-        base {:handle handle :sentence (readable-sentence sx) :context (:context sx)}]
+  (let [sx       (sentex kb handle)
+        base     {:handle handle :sentence (readable-sentence sx) :context (:context sx)}
+        excepted (delay (excepted-argument kb (:sentence base) (:context sx)))]
     (cond
       (nil? sx)         (assoc base :believed? false :reason :not-stored)
       ;; belief as the sentex's own context reads it: IN, and not withdrawn there by a
       ;; scoped defeat (`res/believed-at?`)
       (res/believed-at? kb handle (:context sx)) (assoc base :believed? true)
+      ;; a firing a `:default` blocker excepts is stored with a guard defeat
+      ;; (docs/exceptions.md), and excepted is the more specific answer than the rest
+      (some? @excepted)
+      (merge (assoc base :believed? false :reason :excepted) @excepted)
       ;; Checked before `:defeated` and before `:unsupported`, because it is the more
       ;; specific answer and neither of the others is true of it: a superseded
       ;; spelling lost no argument and kept all of its support — it was *restated*
@@ -6890,83 +7262,39 @@
                                       :context (:context o) :vantage (:context (sentex kb d))
                                       :defeat d}))
                                  (exc/defeats-hiding kb handle (:context sx))))
-      ;; held OUT by the labeller, or read inert at its own context: a denial of a
-      ;; roster literal, or a tuple whose length breaks its functor's (docs/nmtms.md)
-      (or (jtms/forced? (reasoning/tms kb) :out handle)
-          (exc/roster-inert-at? kb handle (:context sx)))
-      (let [b (clashes/inert-binding kb sx)]
+      ;; held OUT by the labeller: a tuple whose length breaks its functor's, or a fact
+      ;; whose argument fails its declared type (docs/nmtms.md)
+      (jtms/forced? (reasoning/tms kb) :out handle)
+      (let [b (clashes/inert-binding kb sx)
+            v (checks/held-conviction kb sx)]
         (cond-> (assoc base :believed? false :reason :inert)
-          b                                  (assoc :binding b)
-          (sx/negation? (:sentence base))    (assoc :denies (denied-literal kb sx base))))
+          b (assoc :binding b)
+          v (assoc :conviction v)))
       :else
-      (let [rvoid   (set (exc/roster-void-at kb handle (:context sx)))
-            void?   #(or (jtms/forced? (reasoning/tms kb) :void (:id %)) (contains? rvoid (:id %)))
+      (let [vs      (exc/justification-verdicts kb handle (:context sx))
+            void?   #(= :void (get vs (:id %)))
             js      (supporting-justifications kb handle)
             support (vec (for [j (remove void? js)]
                            {:justification (:id j)
                             :informant (:informant j)
+                            :verdict   (get vs (:id j))
                             :missing   (vec (remove #(in? kb %) (jtms/rests-on j)))}))]
         (if-let [void (seq (filter void? js))]
-          ;; a firing the roster convicts (the `:void` forced set): the rule, and the
-          ;; antecedent predicates a declaration puts on the roster
+          ;; a firing the forced-monotonic set convicts (the `:void` forced set): the rule,
+          ;; and the antecedent predicates a declaration would make forced-monotonic
           (assoc base :believed? false :reason :forced-conclusion :support support
                  :convicted (mapv (fn [j]
                                     (let [r (sentex kb (:informant j))]
                                       {:justification (:id j) :informant (:informant j)
                                        :rule          (readable-sentence r)
-                                       :off-roster    (if (contains? rvoid (:id j))
-                                                        (checks/off-roster-antecedents
-                                                         kb r (exc/roster-reading kb (:context sx)))
-                                                        (checks/off-roster-antecedents kb r))}))
+                                       :not-forced-monotonic
+                                       (if (jtms/forced? (reasoning/tms kb) :void (:id j))
+                                         (checks/unforced-antecedents kb r)
+                                         (checks/unforced-antecedents
+                                          kb r (exc/forced-reading kb (:context sx))))}))
                                   void))
           (assoc base :believed? false :reason :unsupported
                  :premise? (premise? kb handle) :support support))))))
-
-(defn- excepted-argument
-  "The argument for `sentence` in `context` that some excepted rule built and then
-  discarded, or nil.
-
-  This is the backward reading of a blocked firing: take the rules that could conclude
-  the goal's predicate, keep the ones carrying an `exceptWhen`, unify the goal with the
-  consequent to seed the bindings, complete them by joining the antecedents against
-  believed facts, and report the first completion whose exception holds.
-
-  The exception is checked in the **query's** context, which is where the caller is
-  asking from and where a conclusion would have been placed.  The ground exception is
-  returned as a bare sentence when the rule states one conjunct and as a vector when it
-  states several, matching how it was written.
-
-  The completion reported is the **content-least** — the rule's sentence, then the
-  ground exception, then what the join matched — never the first the rule index
-  happened to yield: two excepted rules concluding one goal would otherwise make the
-  whole answer a function of which was asserted first.
-
-  The key is **structural** (`nm/compare-form` through `nm/min-by-content-key`), not a
-  printed one: a caller with an ambient `*print-length*` would elide two long rule
-  sentences to one prefix, collapse the key, and drop the choice back onto the rule
-  index's enumeration — which is handle order, the dependence this ordering exists to
-  remove.  Its third component is what `:via` names, as sentences: two completions of
-  one rule can ground the same exception through different facts, and `:via` is part of
-  the answer, so the tie is broken on what those facts *say* rather than on which
-  join reached the reporting site first."
-  [kb sentence context]
-  (->> (for [rh   (rules/direct-concluders (:index kb) (nm/functor sentence))
-             :let [rsx (p/get-sentex (:records kb) rh)]
-             :when (and rsx (rules/rule? rsx) (reads/watched-rule? (:index kb) rh) (in? kb rh))
-             :let  [rule (chain/rule-view-of kb rh rsx)
-                    b0   (res/unify (:consequent rule) sentence)]
-             :when b0
-             {:keys [bindings handles]} (chain/solve-rule kb (:antecedents rule) b0)
-             except (provers/rule-exceptions kb rh context)
-             :when (chain/exception-holds? kb except bindings context)]
-         (let [ground (mapv #(sx/canon (res/substitute % bindings)) except)]
-           [[(sx/sentence-of rsx) ground
-             (mapv #(:sentence (p/get-sentex (:records kb) %)) handles)]
-            {:rule rh
-             :exception (if (= 1 (count ground)) (first ground) ground)
-             :via (vec handles)}]))
-       (nm/min-by-content-key first)
-       second))
 
 ;; ---- why-not's near misses: the rules that nearly concluded it ------------
 ;; `:not-stored` is the emptiest answer `why-not` has: nothing is stored, so there is no
@@ -6983,7 +7311,7 @@
 (def why-not-opt-keys
   "Every key `why-not`'s sentence arity reads.  `:nearest n` asks for the n rules that came
   closest and is the switch that runs a search at all; `:max-depth` and `:max-ms` are that
-  search's bounds.  A key off the roster is refused (`:unknown-option`) — a misspelt
+  search's bounds.  A key off the key set is refused (`:unknown-option`) — a misspelt
   `:nearset` would answer the ordinary `why-not` and read exactly like a goal no rule
   concludes."
   #{:nearest :max-depth :max-ms})
@@ -7072,7 +7400,7 @@
                        :when (integer? rh)
                        :let  [rsx (sentex kb rh)]
                        :when (and rsx (rules/rule? rsx))
-                       :let  [rule (chain/rule-view-of kb rh rsx)
+                       :let  [rule (chain/rule-fields-of kb rh rsx)
                               b0   (res/unify (:consequent rule) gl)]
                        :when b0
                        :let  [vm (:varmap rsx)
@@ -7145,10 +7473,10 @@
   | `:superseded` | an equality merge restated it under its class representative; it lost no argument and retracting the equality gives it straight back | `:superseded-by` `:rewrites` |
   | `:defeated` | the target of a placed `defeat` in force at its own context, whose handles `:defeats` names and whose nogoods convict through the declarations `:grounds` names, as a clash report's do | `:contradicted-by` `:defeats` `:grounds` |
   | `:withdrawn` | IN in the network, and not believed at its own context because every justification rests on a handle a placed `defeat` in force there hides; each `:withdrawn-by` entry names that handle, its context, the `:defeat` and the defeat's context under `:vantage` (docs/nmtms.md) | `:withdrawn-by` |
-  | `:inert` | a denial of a literal on the forced-monotonic roster as its own context reads it, or a tuple whose length breaks its functor's, stored and held OUT (docs/nmtms.md). `:binding` names the length the tuple breaks, `{:length n}` or `{:min m}`, the predicate `:via` binds it and the binding handles under `:grounds` (docs/taxonomy.md, \"Arity\"). `:denies` names the literal a denial denies: its `:sentence`, its `:handle` in the same context or nil, whether that context believes it under `:believed?`, and under `:roster` the `:predicate` putting it on the roster, the roster `:kind`, whether the engine's own roster holds it under `:global?`, and the `:declarations` the context sees | `:binding` for a tuple, `:denies` for a denial |
-  | `:forced-conclusion` | not a premise, and a supporting justification is a firing held void, at its own context, for concluding a roster literal from antecedents off the roster (docs/nmtms.md). Each `:convicted` entry names the `:rule` and the antecedent predicates `:off-roster` that a `forced_monotonic_predicate` declaration puts on the roster; `:support` lists the other justifications as `:unsupported` does | `:convicted` `:support` |
-  | `:unsupported` | not a premise, and every supporting justification has an antecedent that is OUT | `:support` with `:missing` |
-  | `:excepted` | *(sentence arity only)* a rule applied and its `exceptWhen` query held, so it concluded nothing | `:rule` `:exception` `:via` |
+  | `:inert` | a tuple whose length breaks its functor's, or a fact whose argument fails its declared argument type, stored and held OUT (docs/nmtms.md). `:conviction` is the argument check's problem map, the one `try-assert` throws as `:definitional-clash` (docs/argtypes.md). `:binding` names the length the tuple breaks, `{:length n}` or `{:min m}`, the predicate `:via` binds it and the binding handles under `:grounds` (docs/taxonomy.md, \"Arity\") | `:binding` for a tuple, `:conviction` for an argument |
+  | `:forced-conclusion` | not a premise, and a supporting justification is a firing held void, at its own context, for concluding a forced-monotonic literal from antecedents that are not forced-monotonic (docs/nmtms.md). Each `:convicted` entry names the `:rule` and, under `:not-forced-monotonic`, the antecedent predicates a `forced_monotonic_predicate` declaration would make forced-monotonic; `:support` lists the other justifications as `:unsupported` does | `:convicted` `:support` |
+  | `:unsupported` | not a premise, and no supporting justification reads `:supports` at its own context: each entry's `:verdict` is `justification-verdicts`' reason, and `:missing` lists the handles it rests on that are OUT in the network | `:support` with `:verdict` and `:missing` |
+  | `:excepted` | a rule applied and its `exceptWhen` query held: through `:monotonic` facts it concluded nothing, and through a `:default` blocker its conclusion is stored with a guard defeat (docs/exceptions.md) | `:rule` `:exception` `:via` |
   | `:closed-extent` | *(sentence arity only)* nothing stored or derived says so, **and** `(closed_extent_predicate P)` is visible here, or a `(closedExtentForArg P n v)` whose position `n` the sentence fills with `v` — so the KB is not silent about it, it says the extent is complete and this is not in it | — |
 
   A believed handle yields `{:believed? true}` and no `:reason`.  An empty `:support`
@@ -7161,11 +7489,13 @@
   a defeat of the handle (`exc/defeat-member-sets`), including a nogood that does not
   convict at that context.
 
+  A stored-but-disbelieved handle is checked for an exception first: excepted is the
+  more specific answer than the rest.
+
   **The sentence arity** `(why-not kb sentence context)` exists because `exceptWhen`
-  produces an answer no handle can carry: a blocked conclusion is never stored, so
-  there is nothing to pass to the handle arity.  A stored sentence delegates to that
-  arity, except that a stored-but-disbelieved one is checked for an exception first —
-  excepted is the more specific answer than unsupported.  A sentence `context` stores
+  produces an answer no handle can carry: a conclusion blocked through `:monotonic` facts
+  is never stored, so there is nothing to pass to the handle arity.  A stored sentence
+  delegates to that arity.  A sentence `context` stores
   nothing for is looked for in the contexts `context` inherits from, most specific first
   (`inherited-sentex-handle`), since `ask?` and `believed?` answer from those too.  Neither
   stored, inherited nor excepted is `:not-stored`.  It takes an `(ist Ctx S)` sentence, asking after S in Ctx and
@@ -7184,7 +7514,7 @@
   The bounds are `:max-depth` (`default-nearest-depth`) and `:max-ms`
   (`default-nearest-ms`), both overridable, and `:nearest-search` reports which of them
   bit — `:status` is `search-tree`'s `:complete` / `:bounded` / `:timeout`, or `:refused`
-  where the search would not start.  `why-not-opt-keys` is the roster.
+  where the search would not start.  `why-not-opt-keys` is the key set.
 
   **The frontier is the node engine's, whatever `*query-engine*` is bound to.**  The DFS
   prover holds its unfinished proofs on the JVM stack and unwinds them as it goes, so it
@@ -7201,7 +7531,7 @@
    (let [[sentence context] (checked-ist-goal kb sentence context)
          ;; the stored spelling of a ground reifiable NAT is its constant (`handle-of`)
          h (kb/find-sentex-handle kb (nat/maybe-reify-for-read kb sentence context) context)]
-     (if (and h (in? kb h))
+     (if h
        (why-not-handle kb h)
        (if-let [exc (excepted-argument kb sentence context)]
          (merge {:handle h :sentence sentence :context context :believed? false
@@ -7220,8 +7550,8 @@
    (opts/check! opts why-not-opt-keys "why-not"
                 (str "A misspelt :nearest reads as no request at all, and the ordinary"
                      " :not-stored answer is exactly what a goal no rule concludes gives."))
-   ;; the value refusal beside the roster check: `{:nearest "3"}` read as no request
-   ;; answers the ordinary `:not-stored`, which is the silence the roster exists to
+   ;; the value refusal beside the key check: `{:nearest "3"}` read as no request
+   ;; answers the ordinary `:not-stored`, which is the silence the key set exists to
    ;; refuse.  `0` stays legal and asks for nothing; nil is the absent key.
    (when-some [n (:nearest opts)]
      (when-not (nat-int? n)
@@ -7298,7 +7628,9 @@
      :refused          [ …`check-edit` shape… ]
      :violations       [ …`violations` shape… ]
      :contradictions   [ …`contradictions` shape… ]
-     :bounded?         bool}
+     :bounded?         bool
+     :owed-releases    n
+     :release-path     :deferred | :swept}
 
   with each half in content order, `:handle` nil for content the batch created,
   `:reason` as `why-not`'s, and the standing dilemmas subtracted from `:contradictions`.
@@ -7306,16 +7638,22 @@
 
   `opts` takes `:max-depth` and `:max-derivations` (chaining) and `:max-results` (a
   positive integer capping each half); `:bounded?` is true when one of them cut the
-  answer.  An unknown key and a cap that is not a positive integer are refused
+  answer.  `:release-withheld?` true runs the withheld-mint release sweep in the preview's
+  settle (`:release-path :swept`); by default the settle keeps the releases owed
+  (`special/*release-withheld?*`), `:owed-releases` counts them, the diff omits the mints
+  and the contradictions they would draw, and the rollback discards the debt.  An unknown
+  key and a cap that is not a positive integer are refused
   (`:unknown-option`), and so is an unrecovered KB (`:unrecovered-kb`), as `edit!`
   refuses it.  The handle counter and the `chain-stats` / `settle-stats` counters stay
-  moved.  Holds the single writer for its duration.  docs/preview.md."
+  moved.  Holds the single writer for its duration.  Under `oplog/replay!` it runs the
+  writes and the rollback alone, reads neither belief nor the dilemmas, and returns nil.
+  docs/preview.md."
   ([kb batch] (preview kb batch nil))
   ([kb batch opts]
    ;; a batch `edit` refuses outright is refused here too
    (check-writable! kb "preview")
    (check-edit-batch! batch)
-   (check-bound-opts! opts #{:max-depth :max-derivations :max-results} "preview")
+   (check-bound-opts! opts #{:max-depth :max-derivations :max-results :release-withheld?} "preview")
    (when-some [n (:max-results opts)] (check-limit! n "preview :max-results"))
    (let [tms        (reasoning/tms kb)
          refused    (check-edit kb batch)
@@ -7330,7 +7668,14 @@
          truncated? (atom false)
          chain-opts (select-keys opts [:max-depth :max-derivations])
          limit      (:max-results opts)
+         sweep?     (boolean (:release-withheld? opts))
+         ;; a replayed preview reproduces the handles it allocated; its answer went to the
+         ;; caller that logged it
+         report?    (not oplog/*replaying?*)
+         ;; the owed releases and the first-settle mark, which the rollback restores
+         queues     (select-keys @(reasoning/mint-queues kb) [:owed :defer-next])
          result     (atom nil)]
+     (when sweep? (swap! (reasoning/mint-queues kb) dissoc :defer-next))
      (try
        ;; the feed is off for the batch here and for the rollback in `rollback-batch!`
        (with-bindings {#'feed/*enabled?* false
@@ -7338,9 +7683,10 @@
                        ;; the suspensions, and the rollback's re-marks, flip labels no
                        ;; settle made
                        #'settle/*relabelled-before?* true
-                       #'settle/*touched-sink* touched
-                       #'settle/*belief-before* (settle/belief-before kb (batch-writes batch))
-                       #'viol/*batch-entries* filed}
+                       #'settle/*touched-sink* (when report? touched)
+                       #'observe/*write-record* (when report? (java.util.IdentityHashMap.))
+                       #'viol/*batch-entries* filed
+                       #'special/*release-withheld?* sweep?}
          (binding [entry/*premise-audit* audit
                    *defer-settle?* true]
            (doseq [[i entry] (map-indexed vector (:add batch))
@@ -7367,39 +7713,45 @@
          (settle-after-teardown! kb (settle/rechain-owed kb @(reasoning/recheck kb)) nil)
          ;; built now: content the batch created does not survive the rollback, and
          ;; `why-not`'s answer for a datum the batch put OUT holds only while it is in force
-         (let [region  (sort @touched)
-               in-now  #(when-let [sx (p/get-sentex (:records kb) %)]
-                          (res/believed-at? kb % (:context sx)))]
-           (reset! result
-                   {:believed-added   (mapv #(preview-added-entry kb %) (filter in-now region))
-                    :believed-removed (mapv #(preview-removed-entry kb %)
-                                            (clojure.core/remove in-now region))
-                    :refused          (into refused @thrown)
-                    :violations       (viol/filed-by-batch kb filed)
-                    ;; the standing dilemmas are subtracted after the rollback
-                    :contradictions   (clashes/opened kb (-> @touched
-                                                             (into (keys @audit))
-                                                             (into (map first) @suspended)))
-                    :bounded?         @truncated?})))
+         (when report?
+           (let [region  (sort @touched)
+                 in-now  #(when-let [sx (p/get-sentex (:records kb) %)]
+                            (res/believed-at? kb % (:context sx)))]
+             (reset! result
+                     {:believed-added   (mapv #(preview-added-entry kb %) (filter in-now region))
+                      :believed-removed (mapv #(preview-removed-entry kb %)
+                                              (clojure.core/remove in-now region))
+                      :refused          (into refused @thrown)
+                      :violations       (viol/filed-by-batch kb filed)
+                      ;; the standing dilemmas are subtracted after the rollback
+                      :contradictions   (clashes/opened kb (-> @touched
+                                                               (into (keys @audit))
+                                                               (into (map first) @suspended)))
+                      :bounded?         @truncated?
+                      :owed-releases    (- (special/owed-releases kb) (count (:owed queues)))
+                      :release-path     (if sweep? :swept :deferred)}))))
        (finally
-         (binding [settle/*relabelled-before?* true]
-           (rollback-batch! kb (assoc baseline :audit audit :suspended @suspended)))))
+         (binding [settle/*relabelled-before?* true
+                   special/*release-withheld?* false]
+           (rollback-batch! kb (assoc baseline :audit audit :suspended @suspended)))
+         (swap! (reasoning/mint-queues kb) #(merge (dissoc % :owed :defer-next) queues))))
      ;; belief before, read on the restored KB (docs/preview.md, "Cost")
-     (let [believed-before? #(res/believed-at? kb (:handle %) (:context %))
-           ;; content order before the cap, so the cap picks by content; the key is built
-           ;; once per entry (`nm/sort-by-content-key`)
-           cap (fn [xs] (cond->> (nm/sort-by-content-key diff-order compare xs)
-                          (pos-int? limit) (take limit)))
-           added   (into [] (clojure.core/remove believed-before?) (:believed-added @result))
-           removed (into [] (filter believed-before?) (:believed-removed @result))]
-       (assoc @result
-              :contradictions   (clashes/standing-removed kb (:contradictions @result))
-              :believed-added   (preview-forget-dead-handles kb (cap added))
-              :believed-removed (preview-forget-dead-handles kb (cap removed))
-              :bounded?         (boolean (or (:bounded? @result)
-                                             (and (pos-int? limit)
-                                                  (or (> (count added) limit)
-                                                      (> (count removed) limit))))))))))
+     (when report?
+       (let [believed-before? #(res/believed-at? kb (:handle %) (:context %))
+             ;; content order before the cap, so the cap picks by content; the key is built
+             ;; once per entry (`nm/sort-by-content-key`)
+             cap (fn [xs] (cond->> (nm/sort-by-content-key diff-order compare xs)
+                            (pos-int? limit) (take limit)))
+             added   (into [] (clojure.core/remove believed-before?) (:believed-added @result))
+             removed (into [] (filter believed-before?) (:believed-removed @result))]
+         (assoc @result
+                :contradictions   (clashes/standing-removed kb (:contradictions @result))
+                :believed-added   (preview-forget-dead-handles kb (cap added))
+                :believed-removed (preview-forget-dead-handles kb (cap removed))
+                :bounded?         (boolean (or (:bounded? @result)
+                                               (and (pos-int? limit)
+                                                    (or (> (count added) limit)
+                                                        (> (count removed) limit)))))))))))
 
 (defn- moved-handles
   "Which handles of a relabelled `region` gained belief and which lost it, as
@@ -7894,7 +8246,7 @@
   ;; empty and a read that retired it there would release it for the whole load
   (kb/note-hazards! kb {:no-belief false :no-index false})
   ;; the stores moved without going past either per-sentex choke point, so the clock a
-  ;; resident derived structure stamps itself with has to be bumped by hand here
+  ;; resident derived structure is keyed by has to be bumped by hand here
   (observe/note-change)
   ;; the clock covers the resident *values*, which are rebuilt on the next read
   (some-> (reasoning/qcn kb) (reset! {}))
@@ -8028,7 +8380,7 @@
   *today* wants: everything `true` stores is stored — justifications, premise marks,
   provenance, the index — and only the recover is left for later, as its own job over the
   finished store.  For a dump in a **foreign** dialect it is the only mode that keeps them
-  at all: the records-only path carries no strength onto a foreign record and rosters no
+  at all: the records-only path carries no strength onto a foreign record and marks no
   premise, so a later `recover` over that store believes nothing.
 
   `:on-progress` is called every `:report-every` frames (default 500000) with
@@ -8082,9 +8434,10 @@
   `dir` holds no store: `:disk-snapshot` for a mapped index image, `:disk-log` for a
   write-ahead-logged index, `:disk-columnar` for records with no index file, `:sqlite` for
   the SQLite adapter's file, and `:pg-disk-log` or `:pg-snapshot` for a local index or its
-  images whose records are on a server (the open then needs `:pg`).  An open under the wrong backend throws nothing and
-  returns an empty KB, so a caller opening a directory it did not write reads the backend
-  here rather than naming one."
+  images whose records are on a server (the open reads that server off the directory's
+  records identity when no `:pg` is given).  An open under the wrong backend throws
+  nothing and returns an empty KB, so a caller opening a directory it did not write reads
+  the backend here rather than naming one."
   [dir]
   (disk/store-backend dir))
 
@@ -8466,10 +8819,10 @@
   callers who want rules to fire MUST pass `{:max-depth N}` explicitly — a silent
   default depth would turn a derivable fact into a false `:unknown`.
 
-  `opts` is `query`'s roster (`query-opt-keys`) and a key off it is refused
+  `opts` is `query`'s key set (`query-opt-keys`) and a key off it is refused
   (`:unknown-option`), checked **here** rather than downstream: the branch below reaches
   `query` only when `:max-depth` is present, so a misspelt depth that never reached the
-  roster would take the `ask` arm and answer the very false `:unknown` the paragraph
+  key check would take the `ask` arm and answer the very false `:unknown` the paragraph
   above says must not happen.
 
   When both sides are provable the verdict is `:contradiction` unless the argumentation
@@ -8518,7 +8871,7 @@
 ;; from `write-ops` is a write the log does not record.
 
 (defn- op-inputs
-  "What a frame records beyond an operation's arguments: the clock `:created` is stamped
+  "What a frame records beyond an operation's arguments: the clock `:created` is read
   from, the creator, and the dynamic bindings that change what a write stores.  An
   `abduce` also records the token its scratch context is named by."
   [op]
@@ -8550,98 +8903,128 @@
       (thunk))))
 
 (defn- logged
-  "Write entry point `g`, routed through the operation log as `op` of `class`.  A KB with
-  no log calls `g` directly."
+  "Write entry point `g`, routed through the operation log as `op` of `class` and counted
+  as a write in flight (`dur/call-as-write`), which a shutdown waits for.  A KB with no log
+  retires its directory's seal (`seal/retire-unlogged!`) and calls `g` directly.  A write a shutdown stopped (`:shutdown-abort`) marks the log
+  unusable: its frame describes a write that did not complete as logged."
   [op class g]
   (fn [kb & args]
-    (if (nil? (:oplog kb))
-      (apply g kb args)
-      (oplog/run-op kb op class (vec args) #(op-inputs op)
-                    (fn [inputs] (with-op-inputs inputs #(apply g kb args)))))))
+    (dur/call-as-write
+     op
+     (fn []
+       (if (nil? (:oplog kb))
+         (do (seal/retire-unlogged! kb)
+             (apply g kb args))
+         (try
+           (oplog/run-op kb op class (vec args) #(op-inputs op)
+                         (fn [inputs] (with-op-inputs inputs #(apply g kb args))))
+           (catch clojure.lang.ExceptionInfo e
+             (when (and (= :shutdown-abort (:type (ex-data e))) (not oplog/*in-op?*))
+               (oplog/mark-unusable! (:oplog kb) [:shutdown-abort op]))
+             (throw e))))))))
 
 (def ^:private write-ops
-  "Every public write entry point, as `var -> [op class]`.  The classes are
+  "Every public write entry point, as `name -> [op class]`.  The classes are
   `vaelii.impl.oplog`'s: `:replay` is recorded, `:seal` and `:config` mark the log
-  unusable."
-  {#'assert                   [:assert :replay]
-   #'try-assert               [:try-assert :replay]
-   #'assert-rule              [:assert-rule :replay]
-   #'assert-many              [:assert-many :replay]
-   #'bulk-assert-facts!       [:bulk-assert-facts :replay]
-   #'assert-inert             [:assert-inert :replay]
-   #'add-provenance           [:add-provenance :replay]
-   #'forward-chain            [:forward-chain :replay]
-   #'record-arg-types         [:record-arg-types :replay]
-   #'register-modal-predicate [:register-modal-predicate :replay]
-   #'retract!                 [:retract :replay]
-   #'edit!                    [:edit :replay]
-   #'edit-with-consequences!  [:edit-with-consequences :replay]
-   #'preview                  [:preview :replay]
-   #'abduce                   [:abduce :replay]
-   #'abduce-discard!          [:abduce-discard :replay]
-   #'clear-violations!        [:clear-violations :replay]
-   #'import!                  [:import :seal]
-   #'clear!                   [:clear :seal]
-   #'recover                  [:recover :seal]
-   #'reindex                  [:reindex :seal]
-   #'load-text!               [:load-text :seal]
-   #'set-solver               [:set-solver :config]
-   #'add-prover               [:add-prover :config]
-   #'add-evaluatable          [:add-evaluatable :config]
-   #'add-reasoner             [:add-reasoner :config]})
+  unusable.
 
-(doseq [[v [op class]] write-ops]
-  (alter-var-root v (fn [g] (logged op class g))))
+  Keywords, not vars, for `read-ops`' reason: the source identity walks every symbol of a
+  top-level form that defines no var, so a var here would put every write entry point
+  into the digest, and an edit to `import!` would discard every reasoning image.  The
+  writes that derive belief in a session are roots of the digest by name
+  (`vaelii.impl.source-identity/roots`, every `:replay` op here).  A `:seal` write's
+  whole effect is the records it leaves, which the image's records fingerprint covers."
+  {:assert                   [:assert :replay]
+   :try-assert               [:try-assert :replay]
+   :assert-rule              [:assert-rule :replay]
+   :assert-many              [:assert-many :replay]
+   :bulk-assert-facts!       [:bulk-assert-facts :replay]
+   :assert-inert             [:assert-inert :replay]
+   :add-provenance           [:add-provenance :replay]
+   :forward-chain            [:forward-chain :replay]
+   :record-arg-types         [:record-arg-types :replay]
+   :release-withheld!        [:release-withheld :replay]
+   :register-modal-predicate [:register-modal-predicate :replay]
+   :retract!                 [:retract :replay]
+   :remove-unsupported!      [:remove-unsupported :replay]
+   :mark-inert!              [:mark-inert :replay]
+   :edit!                    [:edit :replay]
+   :edit-with-consequences!  [:edit-with-consequences :replay]
+   :preview                  [:preview :replay]
+   :abduce                   [:abduce :replay]
+   :abduce-discard!          [:abduce-discard :replay]
+   :clear-violations!        [:clear-violations :replay]
+   :import!                  [:import :seal]
+   :clear!                   [:clear :seal]
+   :recover                  [:recover :seal]
+   :reindex                  [:reindex :seal]
+   :load-text!               [:load-text :seal]
+   :set-solver               [:set-solver :config]
+   :add-prover               [:add-prover :config]
+   :add-evaluatable          [:add-evaluatable :config]
+   :add-reasoner             [:add-reasoner :config]})
 
-;; What `oplog/replay!` runs a frame through: each operation's entry point, plus the closing
-;; settle of a `with-deferred-settle` batch, which is recorded without an entry point of its
-;; own.
-(oplog/install-dispatch!
- (assoc (into {} (map (fn [[v [op _]]] [op v])) write-ops)
-        :settle (fn [kb]
-                  (oplog/run-op kb :settle :replay [] (constantly nil)
-                                (fn [in] (closing-settle kb in))))))
+(defn- op-var
+  "The var of `vaelii.core` a `write-ops` or `read-ops` key names."
+  [k]
+  (ns-resolve 'vaelii.core (symbol (name k))))
+
+(doseq [[k [op class]] write-ops]
+  (alter-var-root (op-var k) (fn [g] (logged op class g))))
+
+#_{:clj-kondo/ignore [:unused-private-var]}
+(def ^:private replay-dispatch
+  "Operation name -> the function `oplog/replay!` runs a frame of it through, read by
+  `wiring/replay-op`: each operation's entry point, plus the closing settle of a
+  `with-deferred-settle` batch, which is recorded without an entry point of its own.  A
+  frame naming `:stamp-inert` runs through `mark-inert!`: an `ops.log` a development build
+  wrote holds `:mark-inert` under that keyword."
+  (assoc (into {} (map (fn [[k [op _]]] [op (op-var k)])) write-ops)
+         :stamp-inert #'mark-inert!
+         :settle (fn [kb]
+                   (oplog/run-op kb :settle :replay [] (constantly nil)
+                                 (fn [in] (closing-settle kb in))))))
 
 ;; ---- reads during a background rebuild's install ----------------------------
 ;; A KB opened with `:recover? :background` answers from an earlier build's reasoning image
 ;; while belief is rebuilt beside it, and the install then replaces the KB's `Reasoning` value
 ;; with one `vreset!` (`vaelii.impl.recovery`).  Every read entry point in `read-ops` runs
-;; against `kb/read-view`, which, while the install is pending, is a copy of the KB holding
+;; against `kb/read-copy`, which, while the install is pending, is a copy of the KB holding
 ;; the belief the read began with.  A public read therefore reads the image's belief or the
 ;; rebuilt belief whole, even when the install lands while it runs, and a lazy sequence it
 ;; returns reads the same belief when it is realized.  A KB with no install pending is passed
 ;; through unchanged after one atom read.
 
-(defmacro ^:private viewed-fn
-  "A fn calling `g` with its own arguments, the first replaced by `kb/read-view` of it.  Up
+(defmacro ^:private read-copy-fn
+  "A fn calling `g` with its own arguments, the first replaced by `kb/read-copy` of it.  Up
   to five arguments after the KB, `g` is called directly; beyond that, through `apply`."
   [g]
   (let [kb    (gensym "kb")
         fixed (for [n (range 6) :let [args (vec (repeatedly n #(gensym "a")))]]
-                `([~kb ~@args] (~g (kb/read-view ~kb) ~@args)))
+                `([~kb ~@args] (~g (kb/read-copy ~kb) ~@args)))
         five  (vec (repeatedly 5 #(gensym "a")))
         more  (gensym "more")]
     `(fn ~@fixed
-       ([~kb ~@five & ~more] (apply ~g (kb/read-view ~kb) ~@five ~more)))))
+       ([~kb ~@five & ~more] (apply ~g (kb/read-copy ~kb) ~@five ~more)))))
 
-(defn- viewed
-  "Read entry point `g`, run against `kb/read-view` of its KB."
+(defn- on-read-copy
+  "Read entry point `g`, run against `kb/read-copy` of its KB."
   [g]
-  (viewed-fn g))
+  (read-copy-fn g))
 
 (def ^:private read-ops
   "The names of every public read entry point whose first argument is a KB and that reads
   its belief, its derived state or its stores.  `background_rebuild_test` fails on a public
-  fn taking a KB first that is in none of this set, `write-ops` and the test's roster of
+  fn taking a KB first that is in none of this set, `write-ops` and the test's list of
   the rest.
 
   Keywords, not vars.  The source identity (`vaelii.impl.source-identity`) walks every
   symbol of a top-level form that defines no var, so a var here would put every read
-  into the digest a reasoning image is stamped with, and an edit to `why` would discard every
-  image.  A read that recover does call is reached through that call's own symbol."
+  into the digest a reasoning image is written with, and an edit to `why` would discard
+  every image.  A read that recover does call is reached through that call's own symbol."
   #{:all-functional-at-instant-violations :all-specified-violations :argue :ask
     :ask-within :ask? :belief-status :believed :believed? :blocked-justifications
-    :canonical-sentex :chain-report :chain-stats :check :check-edit
+    :canonical-sentex :chain-report :chain-stats :check :check-edit :common-genls :common-specs
     :compare-tacticians :conflicts :context-down :context-up :contexts :contexts-of
     :contradictions :count-in-context :count-with-arg :count-with-functor
     :defeat-class :dependent-justifications :deprecated? :describe
@@ -8649,21 +9032,24 @@
     :explain-levels :export! :export-text! :exposed-clashes :find-sentexes
     :find-sentexes-all :find-terms :functional-at-instant-violations :genl? :genls
     :handle-of :handles :has-prop? :in? :inverse-of :isa? :ist :justification
-    :kb-integrity :kb-quality :last-program :lookup :max-context-children :max-specs
-    :metatype-members :min-context-parents :min-genls :separating-covers
+    :justification-verdicts
+    :kb-integrity :kb-quality :last-program :lookup :max-common-specs :max-context-children
+    :max-specs :metatype-members :min-common-genls :min-context-parents :min-genls
+    :owed-releases :covers-of :separating-covers
     :possible-relations
     :premise? :props :provable? :prove :prove-within :provenance
     :qualitative-network :qualitative-scenario :qualitative-scenarios :query
-    :query-plan :query-status :query? :relation? :representative :same-class?
+    :query-plan :query-status :query? :relation? :relation-arity :representative :same-class?
     :search-tree
     :sees? :sentex :sentex-count :sentexes-in-context :sentexes-matching
     :sentexes-with-arg :sentexes-with-functor :settle-stats :specified-violations
+    :stored-first-args
     :specs :store-state :subsumption-status :subsumption-statuses
     :supporting-justifications :term-count :term-expression :terms :types :types-of
-    :violations :vocabulary-audit :why :why-not})
+    :unsupported :violations :vocabulary-audit :why :why-not})
 
 (doseq [op read-ops]
-  (alter-var-root (ns-resolve 'vaelii.core (symbol (name op))) viewed))
+  (alter-var-root (op-var op) on-read-copy))
 
 (defn -main
   "`lein run` — open a KB on the configured stores, say which ones answered, and

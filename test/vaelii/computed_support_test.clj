@@ -12,7 +12,7 @@
   outlives its reasons: retract the conversion factor and the KB goes on believing the
   whale is heavy.
 
-  What is pinned here, phrased as the questions a reader would ask:
+  This namespace asserts the following, phrased as the questions a reader would ask:
 
     * how long between two events, when nobody stated the gap — and does the answer stop
       being believed when a leg of the chain is withdrawn?
@@ -192,7 +192,7 @@
     (testing "retracting the Allen relation"
       (v/retract! kb (v/handle-of kb (list 'before A D) C))
       (is (not (contains? (believed kb shared) (list shared A D '(QuantityFn 0 Second))))))
-    (testing "retracting a gap the window read"
+    (testing "retracting a gap the overlap window read"
       (v/retract! kb (v/handle-of kb (list 'temporalDistance As Bs '(QuantityFn 105 Minute)) C))
       (is (not (contains? (believed kb shared) (list shared A B '(QuantityFn 900 Second))))))))
 

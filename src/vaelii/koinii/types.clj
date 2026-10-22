@@ -16,7 +16,7 @@
   in how a subscription is delivered."
   (-assert [medium sentence context opts]
     "Assert `sentence` in `context` with `opts` (carrying `:creator`), returning the
-    handle.  The daemon stamps `:creator` from the opts — the cooperative identity
+    handle.  The daemon records `:creator` from the opts — the cooperative identity
     annotation crossing the wire (`identity`), since `*creator*` is a var in the daemon's
     process, not the client's.")
   (-sentex [medium handle] "The stored sentex `handle` names, as a map (`:sentence` …).")

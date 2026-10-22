@@ -26,7 +26,7 @@
   (`genls`, `context-up`, …) are specced too, since a wrong-arity call to one of
   them is exactly the kind of mistake instrumentation should surface early.
 
-  **Eighteen publics that take an option map are outside it**, and instrumenting says
+  **Twenty publics that take an option map are outside it**, and instrumenting says
   nothing about their arguments: the batch writes (`assert-many`,
   `bulk-assert-facts!`), the fork and the two consequence readers over it (`fork`,
   `preview`, `edit-with-consequences!`), the store transfers (`import!`, `export!`,
@@ -34,8 +34,9 @@
   the two search-back reads (`search-tree`, `compare-tacticians`) and the truncation
   report (`query-status`), the evaluatable-prover
   registration (`add-evaluatable`), the four-valued epistemic-status read (`argue`), and
-  `check`, `abduce`, `kb-quality`, `clear-caches`.
-  A roster test in
+  the two clash reports, whose one option leaves their grounds off (`conflicts`,
+  `contradictions`), and `check`, `abduce`, `kb-quality`, `clear-caches`.
+  A test in
   `vaelii.spec-test` holds that list against `vaelii.core`'s own arglists, so the
   gap is a set somebody has to edit rather than a claim that goes stale in silence:
   a public that grows an option map, or arrives with one, fails that test until it
@@ -65,7 +66,7 @@
 ;; Everywhere a caller *passes* a handle, nil is a legal argument with a graceful
 ;; answer — `handle-of` answers nil for a sentence the KB does not hold, and the
 ;; handle-taking fns answer that nil rather than refuse it (`in?` false, `why`
-;; `{:stored? false}`, `retract!` zero counts; `vaelii.handle-test` pins the
+;; `{:stored? false}`, `retract!` zero counts; `vaelii.handle-test` asserts the
 ;; contract).  So the arg specs below take `::handle-arg`, while `::handle` /
 ;; `::id` stay the real thing for returns and record fields.
 (s/def ::handle-arg (s/nilable ::handle))
@@ -74,9 +75,9 @@
 (s/def ::solver some?)                     ; a vaelii.impl.types.solve/Solver
 
 ;; ---- the assert option map ----------------------------------------------
-;; The **roster** is `vaelii.core/assert-opt-keys`, which refuses a key `assert` does
+;; The **accepted key set** is `vaelii.core/assert-opt-keys`, which refuses a key `assert` does
 ;; not read; these specs say what a key it does read may hold.  `s/keys` is open, so an
-;; unknown key is the roster's to reject and not restated here — but the two must name
+;; unknown key is the key set's to reject and not restated here — but the two must name
 ;; the same keys, or an option one of them has never heard of passes both.
 
 (s/def ::strength strength/assertable)
@@ -113,11 +114,11 @@
 
 ;; **Generated**, not written: the kinds are the `:prop` storage targets the declarations
 ;; name, so a kind the engine records and this set omits — a legal `has-prop?` call that
-;; instrumentation refuses — is now unrepresentable rather than tested for.  What the
-;; thirty-one values *are* is pinned by `special-table-test/frozen-table`, which states
-;; each functor's kind in a table written out that nothing derives.
+;; instrumentation refuses — is unrepresentable rather than tested for.
+;; `special-table-test/frozen-table` asserts the thirty-one values, stating each
+;; functor's kind in a table written out that nothing derives.
 ;;
-;; `:reifiable` / `:unreifiable` / `:quoting` are a *function*'s kind
+;; `:reifiable` / `:unreifiable` are a *function*'s kind
 ;; rather than a predicate's, which `::term` admits either way; the four `:declares-*` say
 ;; that a predicate is the **subject** of an argument constraint rather than that it
 ;; carries a property, which is what lets the descension ask whose declarations bind a
@@ -178,6 +179,24 @@
 (s/fdef vaelii.core/retract!
   :args (s/cat :kb ::kb :handle ::handle-arg))
 
+;; the evidence `remove-unsupported!` and `mark-inert!` take (docs/storage.md)
+(s/def ::handles (s/coll-of ::handle))
+(s/def ::contexts (s/coll-of ::context))
+(s/def ::force? boolean?)
+(s/def ::n nat-int?)
+(s/def ::remove-unsupported-opts (s/keys :opt-un [::handles ::force?]))
+(s/def ::mark-inert-opts (s/keys :opt-un [::handles ::contexts]))
+
+(s/fdef vaelii.core/unsupported
+  :args (s/cat :kb ::kb)
+  :ret  (s/keys :req-un [::n ::handles]))
+
+(s/fdef vaelii.core/remove-unsupported!
+  :args (s/cat :kb ::kb :opts ::remove-unsupported-opts))
+
+(s/fdef vaelii.core/mark-inert!
+  :args (s/cat :kb ::kb :opts ::mark-inert-opts))
+
 (s/fdef vaelii.core/add-provenance
   :args (s/cat :kb ::kb :handle ::handle-arg :m map?))
 
@@ -203,7 +222,7 @@
   :args (s/cat :kb ::kb :goal ::goal :context (s/? ::context) :opts (s/? (s/nilable map?)))
   :ret  boolean?)
 
-;; The four backward-search entry points take a trailing bound, checked against their own roster
+;; The four backward-search entry points take a trailing bound, checked against their own key set
 ;; at the entry point (`core/prove-opt-keys`, `core/ask-opt-keys`) — so the spec says `map?` and
 ;; leaves which keys are real to the check that carries the message.
 (s/fdef vaelii.core/prove
@@ -361,7 +380,7 @@
 (s/fdef vaelii.core/provenance   :args (s/cat :kb ::kb :handle ::handle-arg) :ret (s/nilable map?))
 
 ;; `why` reads one option, `:max-depth`.  `s/keys` is open, so an unknown key is the
-;; fn's own roster to reject (`:unknown-option`), as with the assert opts above; the
+;; fn's own key set to reject (`:unknown-option`), as with the assert opts above; the
 ;; spec says what the key it does read may hold.
 (s/def ::why-opts (s/keys :opt-un [::max-depth]))
 
@@ -371,7 +390,7 @@
 
 ;; `why-not`'s sentence arity reads three: how many near misses to report, and the two
 ;; bounds on the search that finds them.  `s/keys` is open here for `why`'s reason — the
-;; unknown key is the fn's own roster to refuse — and what the spec says is that a count
+;; unknown key is the fn's own key set to refuse — and what the spec says is that a count
 ;; is a count and a millisecond bound is not a string.  `::max-ms` and `::max-depth` are
 ;; the specs the budget map above registered: one keyword names one spec in the registry,
 ;; so re-`s/def`ing either here would silently retune the budget too.
@@ -410,7 +429,7 @@
 (s/fdef vaelii.core/reindex :args (s/cat :kb ::kb))
 (s/fdef vaelii.core/clear!  :args (s/cat :kb ::kb))
 
-;; ---- the roster ---------------------------------------------------------
+;; ---- the spec'd public fns ---------------------------------------------
 
 (def public-syms
   "The fully-qualified symbols the `s/fdef`s above cover — pass to
@@ -418,7 +437,7 @@
   shape-carrying surface: everything that takes a handle, context, level, strength
   or direction, the option and budget maps those carry, plus the taxonomy and
   equality reads.  The eighteen opts-taking publics it does **not** reach are named in
-  this namespace's docstring and pinned by `vaelii.spec-test`."
+  this namespace's docstring and asserted by `vaelii.spec-test`."
   '[vaelii.core/open-kb
     vaelii.core/assert
     vaelii.core/try-assert
@@ -427,6 +446,9 @@
     vaelii.core/ist
     vaelii.core/forward-chain
     vaelii.core/retract!
+    vaelii.core/unsupported
+    vaelii.core/remove-unsupported!
+    vaelii.core/mark-inert!
     vaelii.core/add-provenance
     vaelii.core/add-prover
     vaelii.core/set-solver

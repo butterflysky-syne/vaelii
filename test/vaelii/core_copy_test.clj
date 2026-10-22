@@ -14,7 +14,7 @@
   So this compares the two KBs on everything a test can read off one — the stored
   sentences with their contexts, truth and strength, what is believed, the taxonomy
   closures, and the justification graph.  Content, never handles: a handle is minted in
-  assertion order and `import!` preserves the dump's, so comparing them would pin
+  assertion order and `import!` preserves the dump's, so comparing them would assert
   something no caller may depend on (README, \"Order independence\").
 
   ## On failure
@@ -85,7 +85,7 @@
 
 (deftest a-dump-is-built-under-the-root-reading-whatever-its-first-caller-binds
   ;; A dump is built once per JVM by whichever fixture asks first, and a namespace may
-  ;; pin the other argument-type reading around its fixture (`inter_args_test` pins the
+  ;; force the other argument-type reading around its fixture (`inter_args_test` forces the
   ;; constraint-only one).  The dump is still the KB `build` makes under the root
   ;; reading, or every later restore inherits the first caller's binding.
   (let [space  (fn [k] (assoc tu/core-build-space :space [::dump-reading k]))
@@ -102,3 +102,26 @@
       (finally
         (tu/clear-kb! direct)
         (tu/clear-kb! dumped)))))
+
+(deftest a-dump-built-under-an-altered-root-is-not-restored-once-the-root-is-back
+  ;; `web_jobs_test` alters the root reading around its namespace, and a dump its fixture
+  ;; builds first is built under that root.  A restore under the other root reads a dump
+  ;; of its own, or the namespaces after it start from a KB missing the mints their
+  ;; settles then write, and `neutral`'s teardown reports them as leaked.
+  (let [space   (fn [k] (assoc tu/core-build-space :space [::root-reading k]))
+        build   (fn [kb]
+                  (v/assert kb '(genl rr_kind thing) 'CxUniverse)
+                  (v/assert kb '(arg rrHolds 1 rr_kind) 'CxUniverse)
+                  (v/assert kb '(rrHolds RrOne RrTwo) 'CxUniverse))
+        direct  (doto (v/open-kb (space :direct)) (tu/clear-kb!) (build))
+        altered (doto (v/open-kb (space :altered)) (tu/clear-kb!))
+        dumped  (doto (v/open-kb (space :dumped)) (tu/clear-kb!))
+        root    (.getRawRoot #'checks/*assertive-arg-types?*)]
+    (try
+      (alter-var-root #'checks/*assertive-arg-types?* not)
+      (try (tu/load-dumped! altered ::root-reading build)
+           (finally (alter-var-root #'checks/*assertive-arg-types?* (constantly root))))
+      (tu/load-dumped! dumped ::root-reading build)
+      (is (= (content direct) (content dumped)))
+      (finally
+        (run! tu/clear-kb! [direct altered dumped])))))

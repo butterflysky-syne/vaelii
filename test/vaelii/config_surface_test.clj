@@ -1,16 +1,16 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.config-surface-test
-  "The configuration surface, pinned: every `VAELII_*` environment variable and every
+  "The configuration surface, frozen: every `VAELII_*` environment variable and every
   `vaelii.*` JVM system property the build reads, collected from the sources at runtime
   and frozen against `test/golden/config-surface.edn`.
 
-  **Why a golden and not a roster.** `kb/opt-keys` and its eleven neighbours are public
+  **Why a golden and not a hand-kept list.** `kb/opt-keys` and its eleven neighbours are public
   *because* a caller should be able to ask \"is this a real option?\", and a caller that
   can ask does not have to find out from a wrong answer.  Nothing outside a map carries
   that promise: a misspelt environment variable is unset, a renamed one is unset, and
-  the process runs on the default reporting nothing.  So the names are pinned here
-  instead, and the pin is what makes a rename a failing test rather than a support
+  the process runs on the default reporting nothing.  So the names are frozen here
+  instead, and the golden is what makes a rename a failing test rather than a support
   ticket — deployment scripts, systemd units and `docs/operations.md` reference them by
   name.
 
@@ -26,8 +26,8 @@
 
   ## What the scan reads
 
-  Five forms over `src/`, `test/`, `bench/`, `project.clj` and `scripts/*.sh`, all
-  normalized to the name as it is spelled where it is set:
+  Five forms over `src/`, `test/`, `bench/`, `project.clj`, `project-env.clj` and
+  `scripts/*.sh`, all normalized to the name as it is spelled where it is set:
 
   - `(System/getenv \"VAELII_…\")` — a literal environment variable.
   - `(System/getProperty \"vaelii.…\")` — a literal system property.
@@ -101,7 +101,7 @@
 
 (defn- clj-sources []
   (->> (concat (mapcat (comp file-seq io/file) ["src" "test" "bench"])
-               [(io/file "project.clj")])
+               [(io/file "project.clj") (io/file "project-env.clj")])
        (filter #(.isFile ^File %))
        (filter #(str/ends-with? (.getPath ^File %) ".clj"))
        (remove #(= self-file (str/replace (.getPath ^File %) \\ \/)))))
@@ -169,7 +169,7 @@
   (let [{:keys [env-vars properties]} (edn/read-string (slurp golden-file))]
     {:env-vars (set env-vars) :properties (set properties)}))
 
-;; ---- the pin, both ways -------------------------------------------------
+;; ---- the frozen surface, both ways --------------------------------------
 
 (deftest the-configuration-surface-is-frozen
   (let [current (current-surface)
@@ -234,7 +234,7 @@
           (str "the scan missed " form))))
   (testing "and the tree's own one is on the surface"
     (is (contains? (set (keys (surface-sites))) "vaelii.index.snapshot")
-        "the refused switch is a name the build reads, so it is pinned like any other"))
+        "the refused switch is a name the build reads, so it is frozen like any other"))
   (testing "which neither shallower depth reaches"
     ;; The assertion that keeps the fourth regex from being redundant with the third:
     ;; over `src/`, no literal read and no `prop-*` helper names this switch.  If one
@@ -248,14 +248,14 @@
                " — if that is deliberate it has a domain, and this test is describing a"
                " reader that no longer exists")))))
 
-;; ---- and the roster the engine reads it through -------------------------
+;; ---- and the switch table the engine reads it through -------------------
 
-(deftest the-roster-names-only-switches-the-build-reads
-  ;; `config/switches` is the other half of this pin.  The golden says which names the
-  ;; tree reads; the roster says which ones `check!` walks — and the roster is what makes
+(deftest the-switch-table-names-only-switches-the-build-reads
+  ;; `config/switches` is the other half of this check.  The golden says which names the
+  ;; tree reads; the switch table says which ones `check!` walks — and the table is what makes
   ;; a reader without a `check!` line a load failure (`check-switches!`).  Neither can see
   ;; the other: `check-switches!` runs at namespace load and cannot read files, and the
-  ;; scan reads `(prop-bool "…")` forms rather than the roster's plain strings.  So a row
+  ;; scan reads `(prop-bool "…")` forms rather than the table's plain strings.  So a row
   ;; naming a switch that no reader reads — a typo in a `:names` vector, or a name kept
   ;; after its reader stopped reading it — passes load and every open, and `check!` calls
   ;; a reader that checks something else.  This is the assertion that catches it.
@@ -267,7 +267,7 @@
              " fix the spelling, or drop the name with the reader that stopped reading"
              " it."))))
 
-(deftest every-switch-config-reads-is-on-the-roster
+(deftest every-switch-config-reads-is-on-the-switch-table
   ;; The converse, over this namespace alone.  `check-switches!` proves every *reader* has
   ;; a row; nothing there proves the row's names are all of what the reader reads, because
   ;; a var carries no record of the strings inside it.  Scanning `config.clj` does: every
@@ -283,7 +283,7 @@
 
 ;; ---- and the table that describes it ------------------------------------
 
-(def ^:private unpinned
+(def ^:private script-only-switches
   "Switches `docs/operations.md` documents that this scan cannot reach, each with the
   reason.  Every one is shell-only and unprefixed, which is exactly what puts it out
   of range: `${VAELII_…}` is name-shaped enough for one regex, `${GATE_JOBS}` is not,
@@ -291,7 +291,7 @@
   these is caught by review rather than by this test."
   {"GATE_JOBS"         "scripts/gate.sh, the test stage's shard count"
    "PERF_TOLERANCE"    "scripts/gate.sh, passed through to `lein perf --tolerance`"
-   "GATE_MAX_CONCURRENT" "scripts/lib/slots.sh, how many gate test stages run at once"
+   "GATE_MAX_CONCURRENT" "scripts/lib/slots.sh, how many `lein gate` test stages run at once"
    "GATE_NO_WAIT"      "scripts/lib/slots.sh, exit 75 rather than wait for a gate slot"
    "PERF_NO_WAIT"      "scripts/lib/slots.sh, exit 75 rather than wait for the perf lock"
    "TEST_BACKENDS_OUT" "scripts/test-backends.sh, its log directory"
@@ -308,12 +308,12 @@
    "MATRIX_SLOTS_EVERY" "scripts/test-matrix.sh, seconds between re-reads of its slot count"
    "ALLOW_WORKTREE_RUN" "scripts/lib/slots.sh, lets a matrix, sweep or perf run in a worktree"})
 
-(deftest an-unpinned-switch-is-read-by-the-script-it-names
+(deftest a-script-only-switch-is-read-by-the-script-it-names
   ;; The hatch is a hand-kept list that the ghost-row check reads as *real* — `real` is
   ;; the scanned names plus these keys — so adding an entry is all it takes to document a
   ;; switch nothing reads.  Each reason already names the file that reads the switch, which makes
   ;; the claim checkable without a regex for every `${CAPS}` in every script.
-  (doseq [[nm why] (sort-by key unpinned)]
+  (doseq [[nm why] (sort-by key script-only-switches)]
     (let [path (second (re-find #"(scripts/[\w./-]+?)[,\s]" why))]
       (is (some? path)
           (str nm ": its reason names no file, so nothing here can check it"))
@@ -379,7 +379,7 @@
 (deftest every-switch-the-doc-documents-is-one-the-code-reads
   ;; The reverse, and the one a doc-only edit introduces: a row for a name nothing reads
   ;; is the same lie as a name with no row, and it is the more convincing of the two.
-  (let [real  (into (set (keys (surface-sites))) (keys unpinned))
+  (let [real  (into (set (keys (surface-sites))) (keys script-only-switches))
         ghost (set/difference (set (keys (documented))) real)]
     (is (empty? ghost)
         (str "rows in " doc-file " for switches nothing reads: " (sort ghost)
@@ -443,13 +443,13 @@
         (str nm ": the floor " cite " is not rounded — round it down to a multiple of 10"
              " so an edit above it has somewhere to go"))))
 
-;; ---- and the validator that holds the roster to it ----------------------
+;; ---- and the validator that holds the switch table to it ----------------
 
-(deftest the-roster-validator-refuses-a-half-wired-roster
+(deftest the-switch-table-validator-refuses-a-half-wired-table
   ;; What a load-time validator does not otherwise prove.  `check-switches!` runs once,
   ;; over one table, in a namespace that loads — so every branch it has ever taken is the
   ;; one that throws nothing, and a `remove` written the wrong way round reads exactly
-  ;; like a roster with nothing wrong.  These drive it over tables that ARE wrong, which
+  ;; like a table with nothing wrong.  These drive it over tables that ARE wrong, which
   ;; is the only way to learn that it would say so.
   (let [check   @#'config/check-switches!
         refusal (fn [switches exempt publics]
@@ -461,19 +461,19 @@
       (is (= config/switches
              (check config/switches @#'config/not-a-switch-reader
                     (set (keys (ns-publics 'vaelii.impl.config)))))))
-    (testing "a public var that is neither on the roster nor excused"
+    (testing "a public var that is neither on the switch table nor excused"
       ;; the rule the table exists for, and the one the old `:arglists` scan could not
       ;; state: `some-var` here stands for a switch read at the root of a `def`, which
       ;; carries no arglists and so was invisible to the scan while being exactly the
       ;; read `check!` would never make
       (let [data (refusal [] {} '#{some-var})]
         (is (= :bad-table-entry (:type data)))
-        (is (= :unrostered-reader (:mismatch data)))
+        (is (= :unlisted-reader (:mismatch data)))
         (is (= 'some-var (:reader data)))))
     (testing "an exemption for something that is no longer public here"
       (is (= :stale-exemption (:mismatch (refusal [] '{gone "why"} #{})))))
-    (testing "a var both rostered and excused, which is one of the two wrong about it"
-      (is (= :exempt-and-rostered
+    (testing "a var both listed and excused, which is one of the two wrong about it"
+      (is (= :exempt-and-listed
              (:mismatch (refusal [(row #'clojure.core/inc)] '{inc "why"} '#{inc})))))
     (testing "an exemption with no reason, which is a suppression spelled longer"
       (is (= :blank-exemption (:mismatch (refusal [] '{inc ""} '#{inc}))))

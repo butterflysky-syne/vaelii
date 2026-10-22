@@ -11,7 +11,7 @@
   per backend — a hash lookup, a binary search over an `int[]`, a `RoaringBitmap` test, an
   interned-key route, a three-way merge across the overlay protocol — because that is the
   point of having it: `exception-rule?` is taken once per candidate rule per new datum, so
-  answering it by materializing the roster makes forward chaining a product of two
+  answering it by materializing the watched-rule set makes forward chaining a product of two
   KB-sized quantities.  The property below is the whole specification, over a spread of
   keys, members and families:
 
@@ -63,13 +63,13 @@
                 [:rule-antecedent :handles '[p0 C0]]
                 [:rule-consequent :handles '[p2 C0]]
                 [:exception-index 'flies]
-                [:exception-index :rules]        ; the roster the gate probes
+                [:exception-index :rules]        ; the watched-rule set `exception-rule?` probes
                 [:trie :handles '[p0 A0]]
                 [:predicate-extent :handles '[never-written C0]]])))
 
 (def ^:private label-keys
   (vec (concat (for [p '[p0 p1]] [:trie :children [p]])
-               [[:term-roster] [:trie :children '[never]]])))
+               [[:term-names] [:trie :children '[never]]])))
 
 (def ^:private handle-probes (vec (concat (range 0 24) [199 400 999])))
 (def ^:private label-probes  (vec (concat '[s0 s7 s39 never] [17 1970 8888])))
@@ -178,7 +178,7 @@
     [:context-root roundtrip]  #{60 61}          ; a member removed and then put back
     [:context-root shareda]    #{1 20 40 60}     ; two keys that actually overlap, so an
     [:context-root sharedb]    #{20 40 99}       ;   intersection over them is not vacuous
-    [:exception-index :rules]  #{70 71}          ; the roster, edited across the protocol
+    [:exception-index :rules]  #{70 71}          ; the watched-rule set, edited across the protocol
     [:trie :children [p0]]     #{tok0 tok1}})    ; a non-handle family
 
 (def ^:private fork-keys
@@ -284,7 +284,7 @@
 (deftest a-fork-inherits-its-bases-answers-without-merging-them
   ;; The fast-path claim itself, stated behaviourally: on a key the fork has never touched
   ;; the merged answer is the base's own, member for member and count for count — including
-  ;; the roster, which is what `exception-rule?` probes through the protocol.
+  ;; the watched-rule set, which is what `exception-rule?` probes through the protocol.
   (let [raw  (doto (dense/dense-kv-backend {:space [::member-inherit]}) (p/kv-clear!))
         _    (doseq [i (range 400)] (p/kv-add-to-set raw [:context-root 'wide] i))
         _    (doseq [i (range 5)]   (p/kv-add-to-set raw [:exception-index :rules] i))

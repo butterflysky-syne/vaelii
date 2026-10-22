@@ -13,7 +13,7 @@
   So this compares the two KBs on everything a test can read off one — the stored
   sentences with their contexts, truth and strength, what is believed, the taxonomy
   closures, and the justification graph.  Content, never handles: a handle is minted in
-  assertion order and `import!` preserves the dump's, so comparing them would pin
+  assertion order and `import!` preserves the dump's, so comparing them would assert
   something no caller may depend on (README, \"Order independence\").
 
   ## On failure

@@ -60,7 +60,7 @@
       (is (seq (v/sentexes-matching kb (list flies robin) 'CxUniverse))))
     (testing "Tweety, learned to be a penguin AFTER the default fired, does not fly"
       ;; Known-true, so the bare rule concludes at :monotonic and out-ranks the
-      ;; :default flight conclusion.  What this pins is that the *withdrawal* happens
+      ;; :default flight conclusion.  This asserts that the *withdrawal* happens
       ;; even though the default fired first — belief is recomputed, not accumulated.
       (v/assert kb (list penguin tweety) 'CxUniverse {:strength :monotonic})
       (is (empty? (v/sentexes-matching kb (list flies tweety) 'CxUniverse)))
@@ -89,7 +89,7 @@
 ;; ---- the dilemma the engine declines to decide --------------------------
 
 (tu/deftest-kb nixon-diamond-is-reported-as-a-dilemma-not-decided
-  ;; `except_test` pins that both sides coexist; this pins the report
+  ;; `except_test` asserts that both sides coexist; this asserts the report
   (let [quaker (tu/tmp-pred) pacifist (tu/tmp-pred) republican (tu/tmp-pred)
         nixon (tu/tmp-ind)]
     (v/assert kb (default-rule [(list quaker '?x)]     (list pacifist '?x))       'CxUniverse)

@@ -3,9 +3,10 @@
 (ns vaelii.negative-subsumption-test
   "Subsumption under a negation, which runs the other way.  `(genl dog animal)` puts a
   stored `(dog Muffet)` under the pattern `(animal ?x)`; the same edge puts a stored
-  `(not (animal Muffet))` under the pattern `(not (dog ?x))`, because `dog ⊑ animal`
-  entails `¬animal ⊑ ¬dog`.  The two directions are exclusive, and the wrong one is
-  what these pin hardest: `(not (dog Muffet))` says nothing about `(not (animal ?x))`.
+  `(not (animal Muffet))` under the pattern `(not (dog ?x))`, because a `:monotonic`
+  `dog ⊑ animal` entails `¬animal ⊑ ¬dog`; a `:default` one does not.  The two directions
+  are exclusive, and the wrong one is what these assert hardest: `(not (dog Muffet))` says
+  nothing about `(not (animal ?x))`.
 
   Every site the positive fan runs at has a negative twin here — `res/match1` (the
   forward trigger), `res/match-pattern` (retrieval), `res/subsuming-unify` and the
@@ -168,6 +169,85 @@
     (testing "not being a dog is not not being an animal"
       (is (empty? (v/sentexes-matching kb (list notAnAnimal A) 'CxUniverse))))))
 
+;; ---- a :default edge does not contrapose ---------------------------------
+
+(defn- orders [xs]
+  (if (next xs)
+    (for [x xs, more (orders (remove #{x} xs))] (cons x more))
+    [xs]))
+
+(tu/deftest-kb a-denial-answers-a-negated-subtype-goal-through-a-monotonic-edge-only-in-every-order
+  ;; the two KBs of #188: a stored `(not (pb Zz))`, and a backward rule concluding it
+  (doseq [strength [:default :monotonic]
+          derived? [false true]
+          order    (orders (if derived? [:edge :rule :fact] [:edge :deny]))]
+    (tu/with-terms [pa_t pb_t pc_t Zz]
+      (let [x      (symbol "?x")
+            mono?  (= :monotonic strength)
+            writes {:edge #(v/assert kb (list 'genl pa_t pb_t) 'CxUniverse {:strength strength})
+                    :deny #(v/assert kb (negate (list pb_t Zz)) 'CxUniverse {:strength :monotonic})
+                    :rule #(v/assert-rule kb [(list pc_t x)] (negate (list pb_t x)) 'CxUniverse
+                                          {:direction :backward})
+                    :fact #(v/assert kb (list pc_t Zz) 'CxUniverse {:strength :monotonic})}]
+        (doseq [w order] ((writes w)))
+        (testing [strength order]
+          (if derived?
+            (is (= (if mono? :false :unknown)
+                   (:verdict (v/argue kb (list pa_t Zz) 'CxUniverse {:max-depth 5}))))
+            (do (is (= mono? (v/query? kb (negate (list pa_t Zz)) 'CxUniverse)))
+                (is (= (if mono? :false :unknown) (:verdict (v/argue kb (list pa_t Zz) 'CxUniverse)))))))))))
+
+(tu/deftest-kb a-negated-antecedent-fires-through-a-monotonic-edge-only
+  (doseq [strength [:default :monotonic]]
+    (tu/with-terms [pa_t pb_t notPa A]
+      (let [x (symbol "?x")]
+        (v/assert kb (list 'genl pa_t pb_t) 'CxUniverse {:strength strength})
+        (v/assert-rule kb [(negate (list pa_t x))] (list notPa x) 'CxUniverse {:direction :forward})
+        (v/assert kb (negate (list pb_t A)) 'CxUniverse {:strength :monotonic})
+        (is (= (= :monotonic strength)
+               (boolean (seq (v/sentexes-matching kb (list notPa A) 'CxUniverse))))
+            (str strength))))))
+
+(tu/deftest-kb a-monotonic-supporter-arriving-last-fires-the-negated-antecedent-where-it-is-seen
+  ;; the edge is installed throughout, so only its class moves: the second supporter's
+  ;; arrival and retraction reach the firing as an edge arriving and leaving does, and a
+  ;; rule in CxUniverse places its conclusion in CxSide, the context holding the edge at
+  ;; :monotonic, not in CxUniverse, which holds it at :default
+  (doseq [rule-cx [:side :universe]]
+    (tu/with-terms [pa_t pb_t notPa A CxSide]
+      (let [x    (symbol "?x")
+            seen (fn [cx] (v/ask? kb (list notPa A) cx))]
+        (v/assert kb (list 'genlCx CxSide 'CxUniverse) 'CxUniverse)
+        (v/assert kb (list 'genl pa_t pb_t) 'CxUniverse {:strength :default})
+        (v/assert-rule kb [(negate (list pa_t x))] (list notPa x)
+                       (if (= :side rule-cx) CxSide 'CxUniverse) {:direction :forward})
+        (v/assert kb (negate (list pb_t A)) 'CxUniverse {:strength :monotonic})
+        (testing rule-cx
+          (is (not (seen CxSide)) "the default supporter licenses nothing")
+          (let [mono (v/assert kb (list 'genl pa_t pb_t) CxSide {:strength :monotonic})]
+            (is (= [true false] [(seen CxSide) (seen 'CxUniverse)])
+                "the monotonic supporter licenses the firing where it is seen")
+            (v/retract! kb mono)
+            (is (not (seen CxSide)) "and the firing leaves with it, though the default supporter stays")))))))
+
+(tu/deftest-kb a-negated-exception-blocks-through-a-monotonic-edge-where-it-is-seen
+  ;; the exception (not (pa ?x)) holds of A through pa ⊑ pb in CxSide, which holds the
+  ;; edge at :monotonic, and not in CxUniverse, which holds it at :default: the guard
+  ;; defeat is placed in CxSide.  With the CxUniverse edge at :monotonic it blocks in both.
+  (doseq [[universe-edge seen] [[:default [true false]] [:monotonic [false false]]]]
+    (tu/with-terms [pa_t pb_t r_t s_t A CxSide]
+      (let [x (symbol "?x")]
+        (v/assert kb (list 'genlCx CxSide 'CxUniverse) 'CxUniverse)
+        (v/assert kb (list 'genl pa_t pb_t) 'CxUniverse {:strength universe-edge})
+        (v/assert kb (list 'genl pa_t pb_t) CxSide {:strength :monotonic})
+        (v/assert kb (list 'exceptWhen (negate (list pa_t x))
+                           (list 'set/defaultRule
+                                 (list 'set/forwardRule (rules/rule-sentence [(list r_t x)] (list s_t x)))))
+                  'CxUniverse)
+        (v/assert kb (list r_t A) 'CxUniverse {:strength :monotonic})
+        (v/assert kb (negate (list pb_t A)) 'CxUniverse {:strength :monotonic})
+        (is (= seen (mapv #(v/ask? kb (list s_t A) %) ['CxUniverse CxSide])) (str universe-edge))))))
+
 (tu/deftest-kb subsuming-unify-honors-consequent-genl-under-a-negation
   (tu/with-terms [fatherOf parentOf loves A B]
     (v/assert kb (list 'genl fatherOf parentOf) 'CxUniverse {:strength :monotonic})
@@ -212,7 +292,7 @@
 
 ;; ---- which rules an arriving negation reaches ----------------------------
 
-(tu/deftest-kb trigger-keys-fan-the-negated-specs-off-the-rule-roster
+(tu/deftest-kb trigger-keys-fan-the-negated-specs-off-the-rule-key-set
   (tu/with-terms [dog_t animal_t other_t grounded A]
     (v/assert kb (list 'genl dog_t animal_t) 'CxUniverse {:strength :monotonic})
     (let [tax' (reasoning/taxonomy kb)]
@@ -241,7 +321,7 @@
   (tu/with-terms [dog_t animal_t Muffet CxA CxB]
     (v/assert kb (list 'genlCx CxA 'CxUniverse) 'CxUniverse)
     (v/assert kb (list 'genlCx CxB 'CxUniverse) 'CxUniverse)
-    (v/assert kb (list 'genl dog_t animal_t) CxA)
+    (v/assert kb (list 'genl dog_t animal_t) CxA {:strength :monotonic})
     (v/assert kb (negate (list animal_t Muffet)) 'CxUniverse)
     (doseq [hierarchical? [true false]]
       (binding [res/*hierarchical-retrieval* hierarchical?]

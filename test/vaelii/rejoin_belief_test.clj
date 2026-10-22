@@ -2,7 +2,7 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.rejoin-belief-test
   "A rule the KB does not believe does not fire — on the **re-join** paths too, not only
-  the trigger path `generator_test`'s `a-disbelieved-rule-does-not-fire` pins.
+  the trigger path `generator_test`'s `a-disbelieved-rule-does-not-fire` asserts.
 
   A qualitative fact or a moved preserved predicate re-joins its rules in full rather
   than at a trigger position (`chain/rejoin-qualitative`, `chain/rejoin-in-full`),
@@ -17,14 +17,14 @@
   **The oracle is the trigger path.**  `res/rule-believed?` is what `fire-rules-for`
   already asks before the trigger match fires, and in the exact scenario below the
   trigger path refuses the rule and files nothing (checked by hand while writing this:
-  the same mint reached by a plain antecedent reports zero).  These pin that the two
+  the same mint reached by a plain antecedent reports zero).  These assert that the two
   re-join paths refuse it identically, rather than the shortest join deciding whether a
   report is filed.
 
   The rule is minted by a generator and then **defeated** (not retracted): a defeated
-  default's mint stays stored and indexed while it is OUT, which is the window the
-  re-join reaches into; a *retracted* fill forgets the mint outright and never tests the
-  gate.  The observable is a dropped-conclusion report (`v/violations`): the conclusion
+  default's mint stays stored and indexed while it is OUT, and the re-join reads it as a
+  candidate for as long as it stays OUT; a *retracted* fill forgets the mint outright and
+  never reaches the belief check.  The observable is a dropped-conclusion report (`v/violations`): the conclusion
   is given a declared arity it does not have, so a firing files an `:arity` entry."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
@@ -35,13 +35,13 @@
 (use-fixtures :once (tu/loaded tu/load-starter!))
 (use-fixtures :each (tu/neutral))
 
-(defn- stamped-rule
+(defn- generated-rule
   "The one minted rule — a *derived* stored rule, not a premise, not a generator — in
   `ctx`, or nil.  Excluding premises is what keeps this off the marker `defaultRule` the
   generator fires on: that rule concludes a *fact*, so `generator-sentex?` is false of it,
   and it is an asserted premise that sorts ahead of the mint.  Grabbing it instead reads a
   believed premise after the defeat and mistakes it for a still-believed mint — the trap
-  `mint_belief_test` exists to pin apart."
+  `mint_belief_test` exists to tell apart."
   [kb ctx]
   (->> (v/sentexes-in-context kb ctx)
        (filter :antecedent)
@@ -75,7 +75,7 @@
                        (list 'set/forwardRule (list 'implies (list 'and (list trig '?p)) (list pmark '?p))))
               CxRB)
     (v/assert kb (list trig pbigger) CxRB)
-    (is (some? (stamped-rule kb CxRB)) "the rule was stamped")
+    (is (some? (generated-rule kb CxRB)) "the rule was generated")
     (testing "the mint's support is defeated, then a genl edge moves the preserved predicate"
       (v/assert kb (list 'not (list pmark pbigger)) CxRB {:strength :monotonic})
       ;; `(pbigger pom cat)` becomes entailed by preservation down the new edge — a tuple
@@ -100,8 +100,8 @@
       (try
         (v/assert kb (list 'genlCx CxRBQ 'CxWell) 'CxUniverse {:strength :monotonic})
         (v/assert kb (list 'arity qseen 2) CxRBQ)
-        ;; a generator that stamps out `(implies (partOfRegion ?x ?y) (qseen ?x))` — an
-        ;; antecedent on a DERIVED spatial relation nothing stores, so the stamped rule
+        ;; a generator that generates `(implies (partOfRegion ?x ?y) (qseen ?x))` — an
+        ;; antecedent on a DERIVED spatial relation nothing stores, so the generated rule
         ;; only ever fires through the qualitative re-join over the pairs that moved.
         (v/assert kb (list 'implies (list qmark '?rel)
                            (list 'implies (list '?rel '?x '?y) (list qseen '?x)))
@@ -110,7 +110,7 @@
                            (list 'set/forwardRule (list 'implies (list 'and (list trig '?p)) (list qmark '?p))))
                   CxRBQ)
         (v/assert kb (list trig 'partOfRegion) CxRBQ)
-        (is (some? (stamped-rule kb CxRBQ)) "the rule was stamped")
+        (is (some? (generated-rule kb CxRBQ)) "the rule was generated")
         (testing "the mint's support is defeated, then containment moves the calculus"
           (v/assert kb (list 'not (list qmark 'partOfRegion)) CxRBQ {:strength :monotonic})
           ;; entails `(partOfRegion ra rc)` and moves the calculus — the arriving `ntpp`

@@ -4,7 +4,9 @@
   "`preview`: what a batch would do to the KB, without leaving it done.  A test that
   stores or derives compares `content` before and after (docs/preview.md, \"Tests\")."
   (:require [clojure.test :refer [is testing use-fixtures]]
+            [clojure.walk :as walk]
             [vaelii.core :as v]
+            [vaelii.impl.checks :as checks]
             [vaelii.impl.clashes :as clashes]
             [vaelii.impl.integrate :as integrate]
             [vaelii.impl.jtms :as jtms]
@@ -12,6 +14,7 @@
             [vaelii.impl.reads :as reads]
             [vaelii.impl.rules :as vr]
             [vaelii.impl.settle :as settle]
+            [vaelii.impl.special :as special]
             [vaelii.impl.types.reasoning :as reasoning]
             [vaelii.impl.violations :as viol]
             [vaelii.test-util :as tu]))
@@ -135,7 +138,7 @@
 (tu/deftest-kb a-batch-whose-mark-a-reader-decides-reports-the-removal
   ;; A late `irreflexive` mark takes the `:default` self tuple OUT at its own context with
   ;; no label moving: the settle places the nogood's `defeat` (docs/nmtms.md, "The nogood
-  ;; families"), and the settle's window names the tuple.
+  ;; families"), and the settle's touched set names the tuple.
   (tu/with-terms [near Dora CxStory]
     (let [h      (v/assert kb (list near Dora Dora) CxStory)
           before (content kb)
@@ -183,7 +186,7 @@
       (is (= before (content kb)))
       (v/edit! kb {:remove [h]}))))
 
-(tu/deftest-kb a-suspended-edge-leaves-the-closures-for-the-window
+(tu/deftest-kb a-suspended-edge-leaves-the-closures-during-the-preview
   (tu/with-terms [puppy dog CxLow]
     (let [edge   (v/assert kb (list 'genl puppy dog) 'CxUniverse)
           cxe    (v/assert kb (list 'genlCx CxLow 'CxUniverse) 'CxUniverse)
@@ -195,7 +198,7 @@
       ;; read in each pass, where the passes' re-chains read the closures too
       (with-redefs-fn {#'settle/drain-recheck! (fn [k] (swap! seen conj (read)) (orig k))}
         #(v/preview kb {:remove [edge cxe]}))
-      (testing "inside the window the closures answer without the OUT edges"
+      (testing "during the preview's settle the closures answer without the OUT edges"
         (is (= [false false false false] (first @seen))))
       (testing "and through them again once the rollback puts them back"
         (is (= [true true true true] (last @seen) (read))))
@@ -232,22 +235,24 @@
           r      (v/preview kb {:remove [ph]})]
       (testing "removing the blocker would derive the conclusion again"
         (is (contains? (set (sentences (:believed-added r))) (list flies Opus))))
-      (testing "the revived line has no handle — a re-derivation mints a fresh one"
-        (is (nil? (:handle (first (filter #(= (list flies Opus) (:sentence %))
-                                          (:believed-added r)))))))
-      (testing "and the rollback collects it: the exception blocks again"
+      (testing "the revived line is the stored conclusion, whose guard defeat the removal withdraws"
+        (is (= (v/handle-of kb (list flies Opus) CxStory)
+               (:handle (first (filter #(= (list flies Opus) (:sentence %))
+                                       (:believed-added r)))))))
+      (testing "and the rollback restores it: the exception blocks again"
         (is (empty? (v/sentexes-matching kb (list flies Opus) CxStory)))
         (is (= before (content kb)))))))
 
 ;; ---- 5. the derivation path's own refusals -------------------------------
 
 (tu/deftest-kb a-conclusion-the-derivation-path-would-drop-is-reported-as-a-violation
-  ;; pinned to the constraint reading: the entailment reading mints instead of
+  ;; forced to the constraint reading: the entailment reading mints instead of
   ;; dropping an arg conviction (docs/argtypes.md)
   (tu/without-entailing
    (tu/with-terms [person rock parentOf looksLike Boulder Muffet CxStory]
      (v/assert kb (list 'genl person 'thing) CxStory)
      (v/assert kb (list 'genl rock 'thing) CxStory)
+     (v/assert kb (list 'disjoint person rock) CxStory)
      (v/assert kb (list 'arg parentOf 1 person) CxStory)
      (v/assert kb (list rock Boulder) CxStory)
      (v/assert kb (vr/rule-sentence [(list looksLike '?x)] (list parentOf '?x Muffet)) CxStory {:direction :forward})
@@ -270,6 +275,7 @@
    (tu/with-terms [person rock parentOf looksLike Boulder Muffet CxStory]
      (v/assert kb (list 'genl person 'thing) CxStory)
      (v/assert kb (list 'genl rock 'thing) CxStory)
+     (v/assert kb (list 'disjoint person rock) CxStory)
      (v/assert kb (list 'arg parentOf 1 person) CxStory)
      (v/assert kb (list rock Boulder) CxStory)
      (v/assert kb (vr/rule-sentence [(list looksLike '?x)] (list parentOf '?x Muffet)) CxStory {:direction :forward})
@@ -283,7 +289,7 @@
                                   ;; reader's own thread does not
                                   ;; the first call is after the preview's baseline
                                   (when (compare-and-set! filed? false true)
-                                    (doto (Thread. #(viol/report-unstamped kb entry)) .start .join))
+                                    (doto (Thread. #(viol/report-without-run kb entry)) .start .join))
                                   (apply orig args))]
                     (v/preview kb {:add [[(list looksLike Boulder) CxStory]]}))]
        (is @filed? "the reader filed while the preview ran")
@@ -443,7 +449,7 @@
   (let [before (content kb)
         r      (v/preview kb {})]
     (is (= {:believed-added [] :believed-removed [] :refused [] :violations []
-            :contradictions [] :bounded? false}
+            :contradictions [] :bounded? false :owed-releases 0 :release-path :deferred}
            r))
     (is (= before (content kb)))))
 
@@ -475,20 +481,29 @@
   (into {} (comp (filter #(v/in? kb %)) (map (fn [h] [h (v/readable-sentence (v/sentex kb h))])))
         (jtms/in-datums (reasoning/tms kb))))
 
+(defn- diff-key
+  "A sentence as the oracle compares it: a placed nogood's by its functor (`placed?`), and
+  any other with each `(sentexHandle n)` term read as `sentexHandle`, since the handles a
+  preview allocates are freed by its rollback."
+  [x]
+  (if (placed? x)
+    (first x)
+    (walk/postwalk #(if (v/handle-id %) 'sentexHandle %) x)))
+
 (defn- edit-diff
   "The belief diff a real `edit` of `batch` produces, as `{:added #{S} :removed #{S}}`."
   [kb batch]
   (let [before (believed-sentences kb)]
     (v/edit! kb batch)
     (let [after (believed-sentences kb)
-          s     #(set (map (fn [x] (if (placed? x) (first x) x)) (vals %)))]
+          s     #(set (map diff-key (vals %)))]
       {:added   (s (apply dissoc after (keys before)))
        :removed (s (apply dissoc before (keys after)))})))
 
 (defn- preview-diff
   "The sentences `r` adds and removes, each placed nogood's by its functor (`placed?`)."
   [r]
-  (let [s #(set (map (fn [x] (if (placed? x) (first x) x)) (sentences %)))]
+  (let [s #(set (map diff-key (sentences %)))]
     {:added (s (:believed-added r)) :removed (s (:believed-removed r))}))
 
 (tu/deftest-kb a-preview-predicts-the-edit-when-the-batch-derives
@@ -528,6 +543,42 @@
           batch {:remove [ph]}]
       (is (= (preview-diff (v/preview kb batch)) (edit-diff kb batch))))))
 
+(tu/deftest-kb a-preview-predicts-the-edit-when-the-batch-excepts-a-default-blocker
+  ;; the blocker is `:default`, so the firing is stored with a guard defeat; the except
+  ;; is read in CxStory, or in CxLow below it
+  (doseq [low? [false true]]
+    (tu/with-terms [bird penguin flies Opus CxStory CxLow]
+      (v/assert kb (except-rule (list penguin '?b) [(list bird '?b)] (list flies '?b)) CxStory)
+      (v/assert kb (list bird Opus) CxStory {:strength :monotonic})
+      (v/assert kb (list 'genlCx CxLow CxStory) 'CxUniverse {:strength :monotonic})
+      (let [ph    (v/assert kb (list penguin Opus) CxStory)
+            batch {:add [[(list 'except (list 'sentexHandle ph)) (if low? CxLow CxStory)]]}]
+        (is (= (preview-diff (v/preview kb batch)) (edit-diff kb batch)) (str "low? " low?))))))
+
+(tu/deftest-kb a-preview-predicts-the-edit-when-one-of-two-guards-of-a-defeat-leaves
+  ;; one rule in CxTop and one in CxMid each carry an `exceptWhen` in their own context,
+  ;; and the `:default` blocker in CxLow below both stores one guard defeat of
+  ;; `(glides B)` with a guard justification per firing; removing the CxTop exception
+  ;; leaves the defeat IN and releases the CxTop firing
+  (tu/with-terms [fish mammal glides B CxTop CxMid CxLow]
+    (let [m    {:strength :monotonic}
+          rule (list 'set/forwardRule (list 'implies (list fish '?x) (list glides '?x)))
+          e    (list 'exceptWhen (list mammal '?x) rule)]
+      (v/assert kb (list 'genlCx CxMid CxTop) 'CxUniverse m)
+      (v/assert kb (list 'genlCx CxLow CxMid) 'CxUniverse m)
+      (v/assert kb rule CxTop m)
+      (v/assert kb rule CxMid)
+      (v/assert kb (list fish B) CxLow)
+      (v/assert kb (list mammal B) CxLow)
+      (let [top   (v/assert kb e CxTop)
+            _     (v/assert kb e CxMid)
+            g     (v/handle-of kb (list glides B) CxLow)
+            batch {:remove [top]}]
+        (is (= #{:guard} (set (vals (v/justification-verdicts kb g CxLow)))))
+        (is (= {:added #{(list glides B)} :removed #{(list 'exceptWhen (list mammal '?var0) 'sentexHandle)}}
+               (update (preview-diff (v/preview kb batch)) :removed #(into #{} (remove symbol?) %))))
+        (is (= (preview-diff (v/preview kb batch)) (edit-diff kb batch)))))))
+
 ;; ---- 12. the clash that withdraws nothing --------------------------------
 
 (tu/deftest-kb a-batch-that-opens-a-dilemma-reports-it-rather-than-a-withdrawal
@@ -553,8 +604,11 @@
       (is (empty? (:contradictions r))
           "an unrelated line is not answerable for a clash that was already there"))))
 
-(tu/deftest-kb a-preview-reads-no-placed-nogood-its-window-does-not-touch
-  ;; the standing dilemmas sit in contexts the line's context does not see
+(tu/deftest-kb a-preview-reads-no-placed-nogood-outside-its-touched-set
+  ;; the standing dilemmas sit in contexts the line's context does not see; an empty
+  ;; batch writes nothing, so its touched set holds nothing.  A `comment` and a `seeAlso` have
+  ;; a `predicates/entry` that no inference reads (`predicates/belief-free`), so their
+  ;; touched set is their own handle, as the domain fact's is
   (tu/with-terms [flies dog Rex CxSide]
     (let [n     8
           birds (repeatedly n #(tu/tmp-ind "Bird"))]
@@ -562,25 +616,57 @@
         (v/assert kb (list flies b) c)
         (v/assert kb (list 'not (list flies b)) c))
       (is (= n (count (v/contradictions kb))))
-      (let [read (atom 0)
-            real @#'clashes/reports-over
-            r    (with-redefs [clashes/reports-over (fn [kb hs]
-                                                      (swap! read + (count hs))
-                                                      (real kb hs))]
-                   (v/preview kb {:add [[(list dog Rex) CxSide]]}))]
-        (is (empty? (:contradictions r)))
-        (is (zero? @read))))))
+      (doseq [batch [{:add [[(list dog Rex) CxSide]]} {} {:add [] :remove []}
+                     {:add [[(list 'comment Rex "a dog") CxSide]]}
+                     {:add [[(list 'seeAlso dog flies) CxSide]]}]]
+        (let [read   (atom 0)
+              touched (atom 0)
+              real   @#'clashes/reports-over
+              opened clashes/opened
+              r      (with-redefs [clashes/reports-over (fn [kb hs]
+                                                          (swap! read + (count hs))
+                                                          (real kb hs))
+                                   clashes/opened       (fn [kb w]
+                                                          (reset! touched (count w))
+                                                          (opened kb w))]
+                       (v/preview kb batch))]
+          (is (empty? (:contradictions r)) (pr-str batch))
+          (is (zero? @read) (pr-str batch))
+          (is (<= @touched (count (:add batch))) (pr-str batch)))))))
+
+(tu/deftest-kb a-preview-reads-each-placement-once-however-many-nogoods-share-a-member
+  ;; n pair nogoods share the member `(ant Rex)`, which sorts first in each, and the
+  ;; touched set holds all n: the reads are linear in n, where re-reading the shared member's
+  ;; postings once per nogood reads n² handles
+  (tu/with-terms [ant Rex CxStory]
+    (let [n     24
+          m     {:strength :monotonic}
+          _     (v/assert kb (list ant Rex) CxStory m)
+          _     (doseq [_ (range n) :let [t (tu/tmp-type "cat")]]
+                  (v/assert kb (list 'disjoint ant t) CxStory m)
+                  (v/assert kb (list t Rex) CxStory))
+          cs    (reads/as-stored-with-functor (:index kb) 'contradicts)
+          read  (atom 0)
+          count! (fn [f] (fn [& args] (let [r (apply f args)] (swap! read + (count r)) r)))
+          o     (with-redefs [reads/as-stored-with-term (count! reads/as-stored-with-term)
+                              reads/as-stored-at-path   (count! reads/as-stored-at-path)]
+                  (clashes/opened kb cs))]
+      (is (= n (count cs)))
+      (is (= n (count (:sentences o))))
+      (is (< @read (* 4 n)) (str @read " handles read")))))
 
 (defn- oracle-op
   "One line of a random batch or of the stream between batches, over the routes a
   reader's dilemmas read: a negation pair, two memberships of separated types and the
   separation itself, a self tuple under a mark and a predicate edge bringing a
-  predicate under it, an inherited claim and the denials it convicts, and a fact no
-  nogood reads.  `t` holds the terms; each line is `[sentence context opts]`."
-  [^java.util.Random rng {:keys [ctxs inds] :as t}]
+  predicate under it, an inherited claim and the denials it convicts, a fact no
+  nogood reads, a rule whose `exceptWhen` a `:default` membership blocks, and an except
+  of that blocker.  `t` holds the terms and `:blocker`, the handle of a stored blocker
+  of a term or nil; each line is `[sentence context opts]`."
+  [^java.util.Random rng {:keys [ctxs inds blocker] :as t}]
   (let [pick #(nth % (.nextInt rng (count %)))
         x    (pick inds)
-        k    (.nextInt rng 11)
+        k    (.nextInt rng 13)
         ;; the declarations monotonic, the rest a default three times in four
         opts (if (or (contains? #{4 6 8} k) (zero? (.nextInt rng 4))) {:strength :monotonic} {})]
     [(case k
@@ -594,9 +680,54 @@
        7 (list (:sub t) x x)
        8 (list (:carries t) (:hauler t) x)
        9 (list 'not (list (:carries t) (:cart t) x))
-       10 (list (:ledger t) x x))
+       10 (list (:ledger t) x x)
+       11 (list 'exceptWhen (list (:mammal t) '?x)
+                (list 'set/forwardRule (list 'implies (list (:fish t) '?x) (list (:glides t) '?x))))
+       12 (if-let [h (blocker x)]
+            (list 'except (list 'sentexHandle h))
+            (list (:mammal t) x)))
      (pick ctxs)
-     opts]))
+     (if (= 12 k) {} opts)]))
+
+(defn- with-oracle-stream
+  "Build the lattice the random stream writes into, then call `(step! rng t)` up to
+  `steps` times, with `seed`'s generator and the terms `oracle-op` reads, and answer the
+  first non-nil answer.  `step!` asserts a line of its own and reads a batch."
+  [kb seed steps step!]
+  (tu/with-terms [flies fish mammal glides self sub carries hauler cart ledger
+                  CxTop CxA CxB CxAB CxSide A B C]
+    (let [rng  (java.util.Random. (long seed))
+          ctxs [CxTop CxA CxB CxAB CxSide]
+          t    {:flies flies :fish fish :mammal mammal :glides glides :self self :sub sub
+                :carries carries :hauler hauler :cart cart :ledger ledger
+                ;; `CxSide` sees none of the others
+                :ctxs ctxs :inds [A B C]
+                :blocker (fn [x] (some #(v/handle-of kb (list mammal x) %) ctxs))}
+          m    {:strength :monotonic}]
+      (doseq [[sub sup] [[CxA CxTop] [CxB CxTop] [CxAB CxA] [CxAB CxB]]]
+        (v/assert kb (list 'genlCx sub sup) CxTop m))
+      (doseq [s [(list 'irreflexive self) (list 'binary_predicate carries)
+                 (list 'transitiveInArgInverse carries 1 'genl) (list 'genl hauler 'animal)
+                 (list 'genl cart hauler)]]
+        (v/assert kb s CxTop m))
+      (some (fn [_] (step! rng t)) (range steps)))))
+
+(defn- stream-line!
+  "Assert one random line, answering `[handle sentence context]`, or nil when it is
+  refused."
+  [kb rng t]
+  (let [[s c opts] (oracle-op rng t)
+        h          (try (v/assert kb s c opts) (catch clojure.lang.ExceptionInfo _ nil))]
+    (when (integer? h) [h s c])))
+
+(defn- random-batch
+  "A batch of up to two random lines, and half the time the removal of a stored handle of
+  `stored`."
+  [^java.util.Random rng t stored]
+  {:add    (vec (repeatedly (.nextInt rng 3) #(oracle-op rng t)))
+   :remove (if (and (seq stored) (zero? (.nextInt rng 2)))
+             [(nth stored (.nextInt rng (count stored)))]
+             [])})
 
 (defn- opened-both
   "`preview`'s answer for `batch`, and the `:contradictions` the same preview answers
@@ -608,9 +739,9 @@
         full     (atom nil)
         answer   (atom nil)
         r        (with-redefs [clashes/opened
-                               (fn [kb window]
+                               (fn [kb touched]
                                  (reset! full (opened kb (reads/as-stored-with-functor (:index kb) 'contradicts)))
-                                 (opened kb window))
+                                 (opened kb touched))
                                clashes/standing-removed
                                (fn [kb o]
                                  (reset! answer (removed kb @full))
@@ -622,34 +753,40 @@
   "The first `[step batch]` of `seed`'s stream whose preview answers `:contradictions`
   other than the full read's, or moves the KB's own, over `steps` steps, or nil."
   [kb seed steps]
-  (tu/with-terms [flies fish mammal self sub carries hauler cart ledger
-                  CxTop CxA CxB CxAB CxSide A B C]
-    (let [rng (java.util.Random. (long seed))
-          t   {:flies flies :fish fish :mammal mammal :self self :sub sub :carries carries
-               :hauler hauler :cart cart :ledger ledger
-               ;; `CxSide` sees none of the others
-               :ctxs [CxTop CxA CxB CxAB CxSide] :inds [A B C]}
-          m   {:strength :monotonic}]
-      (doseq [[sub sup] [[CxA CxTop] [CxB CxTop] [CxAB CxA] [CxAB CxB]]]
-        (v/assert kb (list 'genlCx sub sup) CxTop m))
-      (doseq [s [(list 'irreflexive self) (list 'binary_predicate carries)
-                 (list 'transitiveInArgInverse carries 1 'genl) (list 'genl hauler 'animal)
-                 (list 'genl cart hauler)]]
-        (v/assert kb s CxTop m))
-      (loop [step 0, stored []]
-        (when (< step steps)
-          (let [[s c opts] (oracle-op rng t)
-                h          (try (v/assert kb s c opts) (catch clojure.lang.ExceptionInfo _ nil))
-                stored     (cond-> stored (integer? h) (conj h))]
-            (let [batch  {:add    (vec (repeatedly (.nextInt rng 3) #(oracle-op rng t)))
-                          :remove (if (and (seq stored) (zero? (.nextInt rng 2)))
-                                    [(nth stored (.nextInt rng (count stored)))]
-                                    [])}
-                  before (v/contradictions kb)
-                  [r full] (opened-both kb batch)]
-              (if (and (= full (:contradictions r)) (= before (v/contradictions kb)))
-                (recur (inc step) stored)
-                [step batch]))))))))
+  (let [stored (volatile! []) step (volatile! -1)]
+    (with-oracle-stream
+      kb seed steps
+      (fn [rng t]
+        (vswap! step inc)
+        (when-let [[h] (stream-line! kb rng t)] (vswap! stored conj h))
+        (let [batch    (random-batch rng t @stored)
+              before   (v/contradictions kb)
+              [r full] (opened-both kb batch)]
+          (when-not (and (= full (:contradictions r)) (= before (v/contradictions kb)))
+            [@step batch]))))))
+
+(defn- edit-mismatch
+  "The first `[step batch preview edit]` of `seed`'s stream whose preview's belief diff is
+  not the diff the edit makes, over `steps` steps, or nil.  Each step asserts a line, then
+  previews and applies a batch; a refusal is compared by its `:type`.  A removal names a
+  line the stream asserted by its content, since an edit frees the handles it removes.
+  The placed nogoods are left out of both diffs: the edit re-places one at a fresh handle,
+  and `oracle-mismatch` compares the dilemmas they open."
+  [kb seed steps]
+  (let [stored  (volatile! []) step (volatile! -1)
+        unplaced (fn [d] (if (map? d) (update-vals d #(into #{} (remove symbol?) %)) d))
+        refused (fn [f] (try (unplaced (f))
+                             (catch clojure.lang.ExceptionInfo e [:refused (:type (ex-data e))])))]
+    (with-oracle-stream
+      kb seed steps
+      (fn [rng t]
+        (vswap! step inc)
+        (when-let [[_ s c] (stream-line! kb rng t)]
+          (when-not (= 'disjoint (first s)) (vswap! stored conj [s c])))
+        (let [batch (random-batch rng t (into [] (keep (fn [[s c]] (v/handle-of kb s c))) @stored))
+              p     (refused #(preview-diff (v/preview kb batch)))
+              e     (refused #(edit-diff kb batch))]
+          (when-not (= p e) [@step batch p e]))))))
 
 (tu/deftest-kb a-preview-opens-the-dilemmas-the-full-read-opens-over-a-random-stream
   ;; one seed of the `^:slow` sweep, so `:default` runs the harness
@@ -658,6 +795,14 @@
 (tu/deftest-kb ^:slow a-preview-opens-the-dilemmas-the-full-read-opens-over-random-streams
   (doseq [seed (range 1 9)]
     (is (nil? (oracle-mismatch kb seed 40)) (str "seed " seed))))
+
+(tu/deftest-kb a-preview-predicts-the-edit-over-a-random-stream
+  ;; one seed of the `^:slow` sweep, so `:default` runs the harness
+  (is (nil? (edit-mismatch kb 0 25))))
+
+(tu/deftest-kb ^:slow a-preview-predicts-the-edit-over-random-streams
+  (doseq [seed (range 1 9)]
+    (is (nil? (edit-mismatch kb seed 40)) (str "seed " seed))))
 
 ;; ---- 13. equality: the second way a belief stops being one ---------------
 
@@ -694,13 +839,81 @@
         (is (= [[:add 1 :not-well-formed]] (mapv (juxt :in :index :type) (:refused r)))))
       (is (= before (content kb))))))
 
-;; ---- the opts roster ------------------------------------------------------
+;; ---- 15. the withheld-mint releases ----------------------------------------
+
+(defn- withholding!
+  "`(dog Fred)` withholds the mint `(animal Fred)` that `(parentOf Fred Mary)` entails
+  under `(arg parentOf 1 animal)`; `more` is stored first.  Returns `(dog Fred)`'s handle."
+  [kb animal dog parentOf Fred Mary more]
+  (doseq [s (concat more [(list 'genl animal 'thing) (list 'genl dog animal)
+                          (list 'arg parentOf 1 animal) (list dog Fred) (list parentOf Fred Mary)])]
+    (v/assert kb s 'CxUniverse))
+  (v/handle-of kb (list dog Fred) 'CxUniverse))
+
+(defn- stored-in? [kb s] (some->> (v/handle-of kb s 'CxUniverse) (v/in? kb)))
+
+(tu/deftest-kb a-preview-keeps-a-withheld-mint-owed-and-the-rollback-discards-the-debt
+  (binding [checks/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
+    (tu/with-terms [animal dog parentOf Fred Mary]
+      (let [h      (withholding! kb animal dog parentOf Fred Mary [])
+            before (content kb)
+            r      (v/preview kb {:remove [h]})
+            swept  (v/preview kb {:remove [h]} {:release-withheld? true})
+            mint   (list animal Fred)]
+        (is (= [1 :deferred false] [(:owed-releases r) (:release-path r)
+                                    (boolean (some #{mint} (sentences (:believed-added r))))]))
+        (is (= [0 :swept true] [(:owed-releases swept) (:release-path swept)
+                                (boolean (some #{mint} (sentences (:believed-added swept))))]))
+        (is (= [before 0] [(content kb) (v/owed-releases kb)]))
+        (v/edit! kb {:remove [h]})
+        (is (stored-in? kb mint) "the apply draws the mint")))))
+
+(tu/deftest-kb a-deferred-preview-omits-the-clash-a-released-mint-enters
+  ;; `(dog Fred)` and `(plant Fred)` stand as a dilemma, and `(animal Fred)` is withheld;
+  ;; removing `(dog Fred)` releases the mint into a clash with `(plant Fred)`
+  (binding [checks/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
+    (tu/with-terms [animal plant dog parentOf Fred Mary]
+      (let [h     (withholding! kb animal dog parentOf Fred Mary
+                                [(list 'genl plant 'thing) (list 'disjoint animal plant)
+                                 (list plant Fred)])
+            sides #(set (map :sentence (:sides %)))
+            clash #{(list animal Fred) (list plant Fred)}
+            r     (v/preview kb {:remove [h]})
+            swept (v/preview kb {:remove [h]} {:release-withheld? true})]
+        (is (= [1 []] [(:owed-releases r) (mapv sides (:contradictions r))]))
+        (is (= [clash] (mapv sides (:contradictions swept))))
+        (v/edit! kb {:remove [h]})
+        (is (some #{clash} (map sides (v/contradictions kb))) "the apply enters the clash")))))
+
+;; ---- 16. the refusal record's generations ----------------------------------
+
+;; `(arg wq 1 orphan)` waits on a type bound to two arguments.  The previewed edge moves
+;; the `genl` generation twice, and the next write is a fact no generation reads.
+(tu/deftest-kb a-rolled-back-preview-leaves-the-next-write-no-mint-refusal-to-re-ask
+  (binding [checks/*assertive-arg-types?* true]
+    (tu/with-terms [wq orphan qtype ptype Wa Wb Zed Yan]
+      (doseq [s [(list 'binary_predicate orphan) (list 'arg wq 1 orphan) (list wq Wa Wb)
+                 (list 'genl ptype 'thing)]]
+        (v/assert kb s 'CxUniverse))
+      (let [stale  #(count (special/mint-refusals kb (special/mint-generations kb)))
+            asks   (fn [batch]
+                     (let [n (atom 0) f special/release-mint!]
+                       (with-redefs [special/release-mint! (fn [& a] (swap! n inc) (apply f a))]
+                         (v/edit! kb batch))
+                       @n))
+            alone  (asks {:add [[(list ptype Zed) 'CxUniverse]]})
+            before (content kb)]
+        (v/preview kb {:add [[(list 'genl qtype 'thing) 'CxUniverse]]})
+        (is (= [1 0 before] [(count (special/mint-refusals kb)) (stale) (content kb)]))
+        (is (= [0 0] [alone (asks {:add [[(list ptype Yan) 'CxUniverse]]})]))))))
+
+;; ---- the accepted option keys ---------------------------------------------
 
 (tu/deftest-kb a-consequence-entry-point-option-nothing-reads-is-refused
   ;; every key is a bound, so a misspelt one read as absent is a cap silently off
   (tu/with-terms [dog Muffet CxCap]
     (let [batch {:add [[(list dog Muffet) CxCap]]}]
-      (testing "preview refuses the singular typo, naming its roster"
+      (testing "preview refuses the singular typo, naming its key set"
         (let [e (is (thrown? clojure.lang.ExceptionInfo
                              (v/preview kb batch {:max-result 5})))]
           (is (= :unknown-option (:type (ex-data e))))
@@ -726,10 +939,10 @@
         (doseq [entry-point [#(v/preview kb batch :max-results)
                              #(v/edit-with-consequences! kb batch :max-results)]]
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be a map" (entry-point)))))
-      (testing "the rostered keys still run"
+      (testing "the accepted keys still run"
         (is (map? (v/preview kb batch {:max-depth 2 :max-derivations 10
                                        :max-results 1})))
         (let [r (v/edit-with-consequences! kb batch {:max-results 1})]
           (is (contains? r :believed-added))
-          ;; put the KB back — the roster test's write is not its subject
+          ;; put the KB back — the key-set test's write is not its subject
           (doseq [h (:added r)] (v/retract! kb h)))))))

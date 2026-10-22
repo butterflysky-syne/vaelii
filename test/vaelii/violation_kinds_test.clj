@@ -1,11 +1,11 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
-(ns vaelii.violation-roster-test
-  "The ledger's **kinds**, pinned as a roster: every `:violation` keyword the engine can
+(ns vaelii.violation-kinds-test
+  "The violation **kinds**, held to a fixed table: every `:violation` keyword the engine can
   file, collected from the sources at runtime and matched against the tables in
   `vaelii.core/violations`' docstring, in both directions and down to the `:detail` keys.
 
-  **Why the docstring is the pin and not a golden file.**  A kind is not a name somebody
+  **Why the docstring is the reference and not a golden file.**  A kind is not a name somebody
   typed into a deployment script; it is what a consumer branches on, and the branch is
   written against the published table.  A kind reaches the ledger by somebody writing a
   map literal in `settle.clj`, which costs one line and updates nothing — so a kind with
@@ -22,7 +22,7 @@
     an expression: a check's `:type` relabelled into an entry, or a kind handed to a
     shared entry builder several callers file through.  The scan reads the site and
     cannot read the keyword, so `computed-sites` names the kinds each such site can
-    produce; the roster of sites itself is scanned, so a new one is a failing test rather
+    produce; the set of sites itself is scanned, so a new one is a failing test rather
     than a silent widening.
 
   Blanking the strings is what separates this scan from `config_surface_test`'s plain
@@ -32,7 +32,7 @@
   filing site and the reverse direction stops catching anything.
 
   `src/vaelii/core.clj` is the one source file the scan skips: it files no entry, and the
-  kinds it names are the table this test treats as the roster.
+  kinds it names are the table this test treats as the reference.
 
   ## On failure
 
@@ -42,13 +42,13 @@
   - **A row naming a kind nothing files.**  Either the keyword is misspelt, or the
     reporting path it described is gone and the row went with it.
   - **A row whose `:detail` keys are not the ones the written-out entry builds.**  The row went
-    stale under an edit to the entry, which is the failure a roster of names alone cannot
+    stale under an edit to the entry, which is the failure a list of names alone cannot
     see."
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            ;; for the `:type` roster the hand-listed kinds are checked against — a
+            ;; for the `:type` vocabulary the hand-listed kinds are checked against — a
             ;; keyword reaching the ledger through a relabel was thrown by something first
             [vaelii.type-contract-test])
   (:import [java.io File]))
@@ -105,7 +105,7 @@
   #"\{:violation\s+([(a-zA-Z][^\s]*)")
 
 (defn- slash-path
-  "`f`'s path with `/` separators, which is how the rosters here cite a file on every OS."
+  "`f`'s path with `/` separators, which is how the tables here cite a file on every OS."
   ^String [^File f]
   (str/replace (.getPath f) \\ \/))
 
@@ -174,7 +174,7 @@
 (defn entry-keys
   "The keys the entry written out at `offset` in `path` puts on a reader's map, beyond the
   shape every entry shares (`:violation` `:sentence` `:context` `:rule`, and the `:run`
-  the ledger stamps): its `:detail` keys, plus any it carries at the top level.
+  the ledger tags each with): its `:detail` keys, plus any it carries at the top level.
 
   Read as **data**, not matched: an entry's detail is a `cond->` as often as a map — a
   key that rides a condition is still a key a consumer can find, so the conditional arms
@@ -207,8 +207,8 @@
   a shared builder that takes the kind as an argument, so its callers hold the keywords
   and the site holds none.  Listing them is a claim this test takes on trust — but which
   sites exist is not: the scanned set of computed sites is checked against these keys, so
-  a sixth one is a failing test, and its kinds have to be named here before the roster
-  means anything again."
+  a sixth one is a failing test, and its kinds have to be named here before the tables
+  cover that site."
   {"checks/constraint-admission"
    {:kinds #{:arg-type :inter-arg-type :arg-genl :arg-position :arg-constraint-kind
              :disjoint}
@@ -228,13 +228,13 @@
    {:kinds #{:arg-type :inter-arg-type :arg-genl :arg-position :arg-constraint-kind
              :disjoint :functional :asymmetric :anti-transitive}
     :why   (str "the same relabel over every `constraint-problem` kind, arbitrable ones "
-                "included — the gate on what abduction assumes and on a computed `genlCx` "
+                "included — the check on what abduction assumes and on a computed `genlCx` "
                 "edge, neither of which files its answer")}
 
    "checks/rule-violation"
    {:kinds #{:naming :not-well-formed :not-stratified :not-range-restricted :not-indexable
              :not-assertible :exception-not-closed :naf-not-closed :quantifier-not-local
-             :arg-variable :disjunction-too-wide}
+             :disjunction-too-wide}
     :why   (str "carries out whatever `:type` `check-rule!` threw, defaulting to "
                 "`:not-well-formed` — so its kinds are the rule checks' refusal "
                 "vocabulary, minted across `checks`, `rules`, `sentex` and `naming`")}})
@@ -248,15 +248,19 @@
   rather than describe it, and it carries the sentence saying which."
   (into {}
         (for [k [:functional :asymmetric :anti-transitive]]
-          [k (str "only `checks/constraint-violation` relabels it, and that value gates "
+          [k (str "only `checks/constraint-violation` relabels it, and that value decides "
                   "abduction and a computed `genlCx` edge without reaching the ledger; "
                   "every stored path admits the clash and each reader decides it")])))
 
 (def ^:private detail-not-scannable
   "Kinds whose `:detail` keys no reader of the written-out entry can see, each with why.  The
   name checks as usual; only the key-for-key comparison stands aside."
-  {:aggregate (str "the entry is `(merge {…} detail)` and `detail` is the caller's map, "
-                   "so the keys belong to the numeric error rather than to the site")})
+  {:aggregate      (str "the entry is `(merge {…} detail)` and `detail` is the caller's map, "
+                        "so the keys belong to the numeric error rather than to the site")
+   :inert-argument (str "`:detail` is the argument check's problem map "
+                        "(`checks/argument-conviction`), whose keys vary with the declaration")
+   :inert-rule     (str "`:detail` is the rule's `:arg-variable` conviction "
+                        "(`checks/rule-conviction`), built by `variable-clash-problem`")})
 
 ;; ---- and the table that describes them ----------------------------------
 
@@ -279,7 +283,7 @@
         (subvec cells 1)))))
 
 (defn documented
-  "`{kind #{detail-key}}` off the roster tables.
+  "`{kind #{detail-key}}` off the kind tables.
 
   One row may name several kinds — the two unconditional argument constraints share a
   shape and a sentence — and each takes the row's keys.  One kind may take several rows,
@@ -296,7 +300,7 @@
                                     [(keyword kind) ks])))))
                 (docstring-lines))))
 
-;; ---- the pin, both ways -------------------------------------------------
+;; ---- the docstring check, both ways --------------------------------------
 
 (defn- filed-kinds
   "Every kind the tree can file: the written-out ones, plus what each computed site relabels."
@@ -328,7 +332,7 @@
              (sort ghost) ". Either the keyword is misspelt, or the reporting path that"
              " filed it is gone and the row went with it."))))
 
-(deftest the-roster-of-computed-filing-sites-is-the-one-the-scan-finds
+(deftest the-computed-filing-sites-are-the-ones-the-scan-finds
   ;; What keeps the escape hatch from becoming the hole. `computed-sites` is a hand-kept
   ;; claim about kinds, and a hand-kept claim rots — so the *sites* are scanned, both
   ;; ways: a new relabelling site fails here until somebody says what it can file, and a
@@ -339,7 +343,7 @@
         (str "filing sites whose kind is computed and which `computed-sites` does not"
              " name: " (sort (set/difference found declared))
              ". The scan reads the site and cannot read the keyword, so name the kinds it"
-             " can file — otherwise the roster silently stops covering them."))
+             " can file — otherwise the tables stop covering them."))
     (is (empty? (set/difference declared found))
         (str "`computed-sites` names sites that file nothing: "
              (sort (set/difference declared found))
@@ -350,21 +354,21 @@
   ;; The trusted half of `computed-sites` cannot be read off its own site — the kind is a
   ;; `:type` relabelled at run time — but it is not therefore uncheckable. Every one of
   ;; those keywords reaches the ledger *because something threw it*, so each has to be on
-  ;; the refusal surface `type_contract_test` pins. That catches the two ways the hand
+  ;; the refusal surface `type_contract_test` asserts. That catches the two ways the hand
   ;; list rots without a `:kinds-at`: a kind spelled wrong, and one the tree stopped
   ;; minting. It cannot catch a kind the tree mints and this table omits, which is what
   ;; the `:why` lines are for.
-  (let [surface @(resolve 'vaelii.type-contract-test/roster)
+  (let [surface @(resolve 'vaelii.type-contract-test/known-types)
         listed  (into #{} (mapcat :kinds) (vals computed-sites))
         strays  (set/difference listed surface
                                 ;; the truncation kinds are this namespace's own
                                 ;; vocabulary — filed, never thrown, so no `ex-info`
-                                ;; carries them and the `:type` roster rightly omits them
+                                ;; carries them and the `:type` vocabulary rightly omits them
                                 (into #{} (filter #(str/ends-with? (name %) "-truncated"))
                                       listed))]
     ;; the guard this whole test would otherwise be missing: a `set/difference` against an
-    ;; empty set is empty, so a roster that failed to resolve would pass forever
-    (is (< 50 (count surface)) "the `:type` roster resolved and is the vocabulary")
+    ;; empty set is empty, so a vocabulary that failed to resolve would pass forever
+    (is (< 50 (count surface)) "the `:type` vocabulary resolved and is non-trivial")
     (is (seq listed) "and `computed-sites` names kinds at all")
     (is (empty? strays)
         (str "`computed-sites` names kinds no refusal in the tree carries: " (sort strays)
@@ -381,8 +385,8 @@
     (let [passed (kinds-at rx)]
       (is (= kinds passed)
           (str site ": `computed-sites` claims " (sort kinds) " and its callers pass "
-               (sort passed) ". A kind a caller passes and the roster does not name is one"
-               " the table stops covering; a kind the roster names and nobody passes is a"
+               (sort passed) ". A kind a caller passes and the entry does not name is one"
+               " the table stops covering; a kind the entry names and nobody passes is a"
                " reporting path that is gone.")))))
 
 (deftest every-documented-detail-shape-is-the-one-the-entry-builds

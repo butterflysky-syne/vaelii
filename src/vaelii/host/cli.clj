@@ -21,7 +21,8 @@
   recovered on open, so a fact asserted in one invocation is there in the next.  A `--dir`
   whose parent does not exist is refused (`open-kb-from`) rather than created.
   `upgrade` opens a store, brings its reasoning image and index image up to this build, and
-  closes it (`upgrade!`); `--verify` recovers anyway and compares the two images.
+  closes it (`upgrade!`); `--verify` recovers anyway and compares the two images, and
+  `--trust` keeps an image written under other engine source.
   With no `--dir` the KB is
   in-memory and lives only for the process — useful for `repl` or a single compound
   session, pointless across one-shot commands.  `--starter` loads the shipped schema
@@ -67,7 +68,7 @@
 
 (def ^:private bare-flags
   "Every flag spelling the driver binds to `true`, taking no value."
-  #{"--help" "--memory" "--starter" "--verify"})
+  #{"--help" "--memory" "--starter" "--verify" "--trust"})
 
 (defn parse-opts
   "Split raw args into `[positionals opts]`.  `--k v` becomes `{:k v}`, a bare flag
@@ -76,8 +77,8 @@
   A value-taking flag with no value is refused (`:unknown-option`) rather than bound
   nil: `assert … --strength` with nothing after it would otherwise store at `:default`
   — the exact class the flag was written to escape — and `--dir` at the end of a line
-  would open the in-memory KB, gone at process exit.  A flag the roster does not
-  name is refused the same way."
+  would open the in-memory KB, gone at process exit.  A flag the accepted-flag list does
+  not name is refused the same way."
   [args]
   (loop [as args, pos [], opts {}]
     (if (empty? as)
@@ -237,7 +238,7 @@
    "export"      #{:variant :compression :format}
    "describe"    #{:context}
    "why-not"     #{:nearest}
-   "upgrade"     #{:verify}})
+   "upgrade"     #{:verify :trust}})
 
 (defn- flag-names [ks] (str/join ", " (map #(str "--" (name %)) (sort ks))))
 
@@ -366,6 +367,8 @@
          "  --nearest <n>         why-not: run a bounded search and name the n rules that\n"
          "                        came closest, with the antecedent each is missing\n"
          "  --verify              upgrade: recover anyway, and report whether belief changed\n"
+         "  --trust               upgrade: keep an image written under other engine source,\n"
+         "                        and rebuild only images the records moved behind\n"
          "  (repl takes all six — its options are fixed at start and each line reuses them)\n")))
 
 (defn- in-content-order
@@ -403,7 +406,7 @@
         ;; no default to supply here either.
         depth    (when-let [d (:depth opts)] {:max-depth (count-option "--depth" d)})
         ;; `--context C` names the vantage a read takes; absent, `?ctx` reads every
-        ;; context, which is the whole-KB view and what a shell line usually means
+        ;; context, which is the unscoped reading and what a shell line usually means
         ctx      (if-let [c (:context opts)] (symbol (str c)) '?ctx)
         nearest  (when-let [n (:nearest opts)] {:nearest (count-option "--nearest" n)})]
     (case cmd
@@ -514,7 +517,7 @@
                              " create the parent first (mkdir -p " (.getPath parent) ").")
                         {:type :unknown-source :path (str dir) :missing (.getPath parent)})))))
   (let [kb (if dir
-             (v/open-kb {:backend (or (v/store-backend dir) :disk-log) :dir dir :recover? :auto})
+             (v/open-kb {:backend (or (v/store-backend dir) :disk-log) :dir dir})
              (v/open-kb {}))]
     (when starter (starter/load-into kb))
     kb))
@@ -529,7 +532,7 @@
 
     {:dir :backend
      :reasoning :current | :rebuilt | :written | :no-image
-     :image  {:format :network :written-at :source}   ; the stamp now on disk, :source cut to 12
+     :image  {:format :network :written-at :source}   ; the manifest now on disk, :source cut to 12
      :index  :current | :rewritten | :no-image
      :verify …}                                       ; with :verify only
 
@@ -538,7 +541,7 @@
   `:no-image` is a backend that keeps none (`:disk-log`, `:disk-columnar`).  The records
   are read and never rewritten.
 
-  One option changes what happens to an image written under other engine source:
+  Two options change what happens to an image written under other engine source:
 
   - `:verify` moves the image to `reasoning.prev/` before the open, so the open recovers from
     the records and writes a new image.  Then it compares the two
@@ -546,15 +549,24 @@
     `{:against source :labels :network :state}`, or one keyword when the two cannot be
     compared: `:no-previous-image`, `:no-image`, `:layout-changed` or `:records-moved`.
     When the open writes no image, the old one is moved back.
+  - `:trust` opens with `:recover? :trust`, as the browser does: the image is installed and
+    kept, `:current`, and belief is recovered only when the records moved behind the
+    images.  It refuses `:verify` (`:unknown-option`), which asks for the recover.
 
   A directory holding no store is refused (`:unknown-source`) rather than creating an empty
   one there.  `!` because the image it replaces cannot be read back."
   ([dir] (upgrade! dir {}))
-  ([dir {:keys [verify]}]
+  ([dir {:keys [verify trust]}]
    (let [backend   (or (v/store-backend dir)
                        (throw (ex-info (str "no store at " dir " — upgrade opens an existing"
                                             " store and creates none")
                                        {:type :unknown-source :path (str dir)})))
+         _         (when (and verify trust)
+                     (throw (ex-info (str "upgrade was given --verify and --trust — --verify"
+                                          " recovers belief under this build and --trust"
+                                          " keeps the image's; pass one")
+                                     {:type :unknown-option :mismatch :conflict
+                                      :flags ["--verify" "--trust"]})))
          bdir      (File. (str dir) ^String ri/dir-name)
          prev      (File. (str dir) (str ri/dir-name ".prev"))
          manifest  (File. bdir "manifest.edn")
@@ -568,29 +580,29 @@
        ;; a `reasoning.prev/` left by an interrupted --verify holds an image this build declined
        (ri/delete-image! prev)
        (ri/move-image! bdir prev))
-     (v/close! (v/open-kb {:backend backend :dir (str dir) :recover? :auto}))
+     (v/close! (v/open-kb {:backend backend :dir (str dir) :recover? (if trust :trust :auto)}))
      (let [i1       (mtime index)
-           stamp    (ri/read-manifest bdir)
+           fresh    (ri/read-manifest bdir)
            verified (when verify
                       (let [r (cond
                                 (nil? old)   :no-previous-image
-                                (nil? stamp) :no-image
+                                (nil? fresh) :no-image
                                 (not= (select-keys old [:format :network])
-                                      (select-keys stamp [:format :network])) :layout-changed
-                                (not= (:records old) (:records stamp))    :records-moved
+                                      (select-keys fresh [:format :network])) :layout-changed
+                                (not= (:records old) (:records fresh))    :records-moved
                                 :else (assoc (ri/compare-images prev bdir)
                                              :against (short (:source old))))]
-                        (if stamp (ri/delete-image! prev) (ri/move-image! prev bdir))
+                        (if fresh (ri/delete-image! prev) (ri/move-image! prev bdir))
                         r))]
        (cond-> {:dir     (str dir)
                 :backend backend
-                :reasoning (cond (nil? stamp)    :no-image
+                :reasoning (cond (nil? fresh)    :no-image
                                  (not had?)      :written
-                                 (= old stamp)   :current
+                                 (= old fresh)   :current
                                  :else           :rebuilt)
-                :image   (some-> stamp
+                :image   (some-> fresh
                                  (select-keys [:format :network :written-at])
-                                 (assoc :source (short (:source stamp))))
+                                 (assoc :source (short (:source fresh))))
                 :index   (cond (nil? i1) :no-image (= i0 i1) :current :else :rewritten)}
          verify (assoc :verify verified))))))
 
@@ -604,8 +616,7 @@
   The refusal is not the only thing that must stay out of the data: the engine's own
   `log!` calls go through Trove's console backend, which prints to `*out*`
   (docs/operations.md, \"Logging\") — and `*out*` here is a script's `lein cli match … >
-  answers.edn`.  Unset, the dial installs nothing and Trove's own backend prints at
-  `:info`, so an ordinary `export` (`::exported`) or a starter load (two
+  answers.edn`.  At `:info`, an ordinary `export` (`::exported`) or a starter load (two
   `::dropped-conclusion` warnings) lands three lines inside the answer with no variable
   set at all.  A wrapper rather than a level: silencing the engine to keep stdout
   parseable would trade one loss for another, and the daemon and the browser want the
@@ -679,9 +690,9 @@
     ;; the recover an upgrade pays is the longest open a store has, and the one whose
     ;; closure cache grows with the corpus: the memory guard lowers the cache profile's
     ;; pressure as the heap fills, and the closure cache evicts to the lowered bound on its
-    ;; next store, so no KB roster is needed for the guard to reach it
+    ;; next store, so no list of KBs is needed for the guard to reach it
     :else (do (v/install-memory-guard! {:kbs (constantly nil)})
-              (upgrade! (:dir opts) (select-keys opts [:verify])))))
+              (upgrade! (:dir opts) (select-keys opts [:verify :trust])))))
 
 (def ^:private without-a-kb
   "The commands `run` answers without opening the run's KB, each with the fn that answers
@@ -702,7 +713,7 @@
 
   **Every refusal is one line on stderr and exit 1** (`refusal-line`), naming its
   `:type`: a refused flag, operand or `--dir`, and whatever the engine refused.  An
-  unknown command word is exit 2, with the roster and the `help` pointer after the
+  unknown command word is exit 2, with the command list and the `help` pointer after the
   line.
 
   **Everything that needs no KB is answered before one is opened**, since opening a
@@ -750,8 +761,9 @@
   [& argv]
   ;; `alter-var-root` rather than a `binding`: the durable store's compaction and fsync
   ;; lines come off the durability scheduler's own thread, which no thread-local binding
-  ;; here reaches.  Installed before anything opens a KB, and over whatever
-  ;; `VAELII_LOG_LEVEL` already installed at load.
+  ;; here reaches.  Installed before anything opens a KB, over the engine's console
+  ;; backend at `:info` or the level `VAELII_LOG_LEVEL` installed at load.
+  (when-not (v/log-level) (v/set-log-level :info))
   (alter-var-root #'trove/*log-fn* on-stderr)
   (let [status (run argv)]
     (when-not (zero? status)

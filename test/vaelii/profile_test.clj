@@ -94,7 +94,7 @@
   ;; portfolio racer, a job.  A tally applied to the cleared instrument must be dropped:
   ;; recreated instead, it is a fragment with no `:t0`, which leaves `profiling?` true
   ;; for the life of the process (so every later read pays a CAS the switch promised it
-  ;; would not) and `snapshot` reading `(long nil)` off the missing stamp.
+  ;; would not) and `snapshot` reading `(long nil)` off the missing `:t0`.
   (dotimes [_ 10]
     (prof/start)
     (let [running (promise)
@@ -143,11 +143,11 @@
         (let [snap (collected #(doall (res/raw-match kb (list p a '?y) ctx)))]
           (is (contains? (shapes-of snap p) ["bf" :arg-roots]))))
 
-      (testing "an open negative with something pinned reads the roots"
+      (testing "an open negative with something bound reads the roots"
         (let [snap (collected #(doall (res/raw-match kb (list 'not (list q '?x b)) ctx)))]
           (is (contains? (paths-of snap q) :negative-roots))))
 
-      (testing "an open negative with nothing pinned fans the :false node"
+      (testing "an open negative with nothing bound fans the :false node"
         (let [snap (collected #(doall (res/raw-match kb (list 'not (list '?p '?x '?y)) ctx)))]
           (is (contains? (paths-of snap :open) :negative-fan))))
 
@@ -281,7 +281,7 @@
       (let [ix (:index kb)]
         (is (= {:predicate-extent 1} (:reads (collected #(p/count-with-functor ix p)))))
         (is (= {:context-root 1} (:reads (collected #(reads/stored-count-in-context ix ctx)))))
-        (is (= {:term-roster 1}  (:reads (collected #(reads/stored-term-count-global ix)))))
+        (is (= {:term-names 1}   (:reads (collected #(reads/stored-term-count-global ix)))))
         (is (= {:trie-counts 1}  (:reads (collected #(reads/stored-count-children ix [p])))))
         (is (= {:rule-index 1}   (:reads (collected #(reads/as-stored-rules-by-consequent-global ix p)))))
         (is (= {:term-index 1}   (:reads (collected #(reads/as-stored-with-term ix a)))))
@@ -320,7 +320,7 @@
       ;; One reading per lookup, and one assertion on it per backend, so every
       ;; configuration runs the same number of assertions: the columnar trie walks
       ;; natively and counts no node probes, so its reading is the absence of a fan
-      ;; (docs/profile.md) — a contract this pins rather than a gap it stands aside from.
+      ;; (docs/profile.md) — a contract this asserts rather than a gap it stands aside from.
       (let [ground  (collected #(p/lookup (:index kb)
                                           (sx/path (sx/sentex (list p (first inds) shared) ctx))))
             leading (collected #(p/lookup (:index kb)

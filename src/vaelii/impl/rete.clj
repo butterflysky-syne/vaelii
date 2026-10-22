@@ -41,7 +41,7 @@
   **identical set** `res/match-pattern` returns — same belief filter, same
   polarity check, same symmetric mirror, same sub-predicate fan-out, same `?ctx`
   binding — differing only in the candidate source (a RAM bucket, a superset of the trie hits,
-  filtered by the identical `unify`).  `rete_oracle_test` pins that equality directly
+  filtered by the identical `unify`).  `rete_oracle_test` asserts that equality directly
   (per pattern) and end to end (the derived sentex + justification sets over randomized
   assert/retract sequences must match the reference `chain`).
 
@@ -74,7 +74,7 @@
 ;; ---- the per-KB alpha registry ------------------------------------------
 ;; Keyed by KB **object identity** (two KBs over one space can be `=` — their record
 ;; stores wrap the same shared state — but must not share an alpha), and holding each KB
-;; **weakly**, so the registry never pins a KB against collection.  A KB its owner has
+;; **weakly**, so the registry never keeps a KB from being collected.  A KB its owner has
 ;; dropped is reclaimed by GC and its entry purged (`purge!`), and one released through
 ;; `core/close!` is dropped at once (`forget-kb!`): a process that opens KBs in a loop
 ;; keeps one alpha per *live* tracked KB, not one per KB it ever opened.  Neither built-in
@@ -235,13 +235,13 @@
   the alpha memories.  A **superset** of `res/match-one`'s trie hits — the same set
   after the identical `unify` filter below — chosen selectively: the smallest bucket
   among the pattern's ground argument positions, or the whole functor extent when the
-  pattern pins no argument.  A ground position whose bucket is empty means zero
+  pattern binds no argument.  A ground position whose bucket is empty means zero
   matches, which the min naturally returns."
   [by-functor pat]
   (let [pbody (sx/body pat)                       ; positive atomic body of the pattern
         f     (nm/functor pbody)]
     (cond
-      ;; a variable (or absent) functor pins nothing — every fact is a candidate, as
+      ;; a variable (or absent) functor binds nothing — every fact is a candidate, as
       ;; the trie's wildcard root fan-out is; rare (a variable-predicate antecedent)
       (or (nil? f) (sx/variable? f))
       (mapcat (comp vals :all) (vals by-functor))
@@ -280,7 +280,7 @@
   "The RAM twin of `res/match-pattern`: the functor fans out over its sub-predicate
   (genl spec) closure at **every arity** — a unary type literal over its subtypes, an
   n-ary literal over its predicate-genl specs — and a functor with a singleton closure
-  is one raw match, which is the common case.  A variable or absent functor pins
+  is one raw match, which is the common case.  A variable or absent functor binds
   nothing and fans not at all, as the reference's does.  A **negation** fans its body's
   functor over the genl closure instead, the direction a `genl` edge carries through a
   negation, and rebuilds the `not` around each member."

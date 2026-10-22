@@ -47,14 +47,14 @@ inverted term index like any other fact.
 | Fact | Meaning |
 |------|---------|
 | `(reifiable_function F)` / `(unreifiable_function F)` | F's kind — a **predicate-metadata mark** (`vaelii.impl.taxonomy` `:reifiable` / `:unreifiable` prop), belief-following like `transitive`/`symmetric` |
-| `(termOfUnit K E)` | the constant↔expression map: constant `K` denotes NAT expression `E`. The reverse (`K → E`) index; `E → K` is the inverted term index |
+| `(natFormula K E)` | the constant↔expression map: constant `K` denotes NAT expression `E`. The reverse (`K → E`) index; `E → K` is the inverted term index |
 | `(rewriteOf T E)` (compound `E`) | NAT `E` reifies to the existing real term `T` instead of a fresh constant |
 | `(result F T)` / `(genlResult F T)` | F's output types — materialized on mint as `(T K)` / `(genl K T)` |
-| `(resultArg F n)` | F's output is an instance of the type the application's argument `n` names — derived over each `termOfUnit` fact as `(a_n K)` ([argtypes.md](argtypes.md#a-type-another-argument-names-argarg)) |
+| `(resultArg F n)` | F's output is an instance of the type the application's argument `n` names — derived over each `natFormula` fact as `(a_n K)` ([argtypes.md](argtypes.md#a-type-another-argument-names-argarg)) |
 | `(functionCorrespondingPredicate F P N)` | F and P state one relationship: `(F a…) = V` exactly when P holds of `a…` with `V` at argument `N` |
 
-`termOfUnit` and `rewriteOf` are **quoting predicates** (`nat/nat-quoting-predicates
-= #{termOfUnit rewriteOf}`): their expression argument is a verbatim NAT payload that
+`natFormula` and `rewriteOf` are **quoting predicates** (`nat/nat-quoting-predicates
+= #{natFormula rewriteOf}`): their expression argument is a verbatim NAT payload that
 must not itself be reified or type-checked as a term.
 
 `(rewriteOf T E)` overloads the equality/deprecation `rewriteOf`, discriminated by
@@ -87,15 +87,15 @@ declared result type is *stored*, not whether it holds — a reifiable applicati
 `result` materialized on its constant, an unreifiable one is typed from the declaration at
 check time, and the two say the same thing about the same function.
 
-## The reifiable gate
+## The reifiable-function presence check
 
-A function's kind is metadata cached in the taxonomy, so the per-sentence gate —
+A function's kind is metadata cached in the taxonomy, so the per-sentence presence check —
 "does the KB declare any function that reifies?" — is a free **in-memory set read**
 (`nat/any-reifiable-functions?` ⇒ `seq` of the `:reifiable` props), belief-following and
 needing no mtime cache. A KB that declares none pays one set read per assert / query for
 the argument reify. The maintenance a minted constant owes (the orphan sweep, the
 collision merge, the structural `genlCx` producer) reads `nat/any-reified-constants?`,
-which adds one O(1) `termOfUnit` functor count when the set is empty, since a context
+which adds one O(1) `natFormula` functor count when the set is empty, since a context
 slot mints a `cx/` constant with no declaration ([context-nat.md](context-nat.md)).
 
 ## Write path
@@ -128,7 +128,7 @@ compound through its function's declared result — see [Typing an application t
 never minted](#typing-an-application-that-is-never-minted) below, which is what makes
 one declaration bind both classes of function.
 
-`mint-nat!` allocates the opaque `K`, asserts `(termOfUnit K E)`, materializes the
+`mint-nat!` allocates the opaque `K`, asserts `(natFormula K E)`, materializes the
 result types (`(T K)` per `result`, `(genl K T)` per `genlResult`), and returns
 `K`, all at `:monotonic` strength — a reified NAT's identity and result types are structural,
 not defeasible. `assert` stores synchronously, so a second occurrence of `E` in the
@@ -141,7 +141,7 @@ one-letter scheme tag — `nat/a<17 base62>` for an object NAT, `cx/a…` for a 
 (`nat-scheme-tag`). So the same expression reifies to the **same** constant in any
 process and after any rebuild, and the skolem digest ([skolem.md](skolem.md)) names its
 witnesses the same way and for the same order-independence reason. This pays off in two
-places: two dumps that minted the same NAT hold the same `(termOfUnit K E)` fact and merge
+places: two dumps that minted the same NAT hold the same `(natFormula K E)` fact and merge
 by deduplication, and a re-mint after an orphan sweep resolves to the constant it had
 before — where a gensym would have minted a second name for one expression and left the
 collision for `merge-colliding-nats!` to reconcile. base62 rather than a shorter
@@ -159,7 +159,7 @@ fired conclusion with its constant before it stores anything (`reify-conclusion`
 concluding `(grownIn (FruitFn ?t) ?o)`, fired on `(bears AppleTree Orchard)`, stores
 `(grownIn K Orchard)`. `K` is the constant an asserted `(tagged (FruitFn AppleTree))`
 stores too, so a join between the two sentences meets, and a goal spelled with the compound
-finds the derived fact. A generator's stamped rule goes through the same pass, so a ground
+finds the derived fact. A generator's generated rule goes through the same pass, so a ground
 application in its antecedent is spelled with the constant the facts it matches are stored
 under.
 
@@ -173,7 +173,7 @@ under.
   was never stored. An admitted conclusion is minted by `mint-nat!`, and the placement
   then runs its checks again over the reified sentence; that second pass draws the
   argument-type entailments on the constant.
-- The mint writes what `assert`'s mint writes: the `termOfUnit` map, the materialized
+- The mint writes what `assert`'s mint writes: the `natFormula` map, the materialized
   result types and the correspondence projection, as premises in CxUniverse at
   `:monotonic`. The constant's name is the expression's content, and its bookkeeping is
   the same whichever path named the application first.
@@ -181,9 +181,11 @@ under.
   ([nmtms.md](nmtms.md#definitional-constraints-on-the-derivation-path)), so a refused
   mint drops the conclusion and is recorded in `core/violations` as `:mint-refused`, with
   the refusal's own type under `:refusal`. A firing has no batch to roll back, so the
-  bookkeeping the mint wrote before the refusal stays stored: a correspondence projection
-  its predicate's `arg` declaration refuses leaves the `termOfUnit` map and the result
-  types, and no removal names that constant for the region sweep to collect. The mint
+  bookkeeping the mint wrote before the refusal stays stored, and no removal names that
+  constant for the region sweep to collect. A correspondence projection whose argument
+  fails its predicate's `arg` declaration is not a refusal: the mint stores it and holds
+  it inert ([argtypes.md](argtypes.md#an-argument-that-fails-its-declared-type-is-held-inert)),
+  and the conclusion stands. The mint
   runs under `*defer-settle?*`, as a skolem witness's mint does ([skolem.md](skolem.md)):
   the fixpoint settles once when it finishes.
 
@@ -222,13 +224,13 @@ So the argument checks read the *function's* declaration instead. `(arg P n T)` 
 so `nat/result-types` takes the application rather than its function: `(resultArg PickFn
 1)` types `(PickFn dog)` a `dog` and `(PickFn cat)` a `cat`. A minted constant takes the
 same type as a derived `(dog K)`, which the argument entailment draws over its
-`termOfUnit` fact in every arrival order
+`natFormula` fact in every arrival order
 ([argtypes.md](argtypes.md#a-type-another-argument-names-argarg)).
 
 **A term a prover hands back is minted no more than one somebody typed, and is no
 orphan.** `(startOf (YearFn 2000) ?i)` binds `?i` to `(InstantFn 2000 1 1 0 0 0)`, an
 unreifiable NAT the calendar clock computed from the year's fields
-([time.md](time.md)) — and computing it writes nothing: no `termOfUnit` row, no
+([time.md](time.md)) — and computing it writes nothing: no `natFormula` row, no
 materialized result type, no handle, so there is no orphan question to ask about it and no
 retraction that could take it back. It is a value in a binding map and lives exactly as
 long as the answer does. Asserting a sentence that *contains* one is an ordinary assert,
@@ -281,11 +283,19 @@ checked against the function's own argument declarations, for a reifiable functi
 the mint replaces the application with its constant
 ([argtypes.md](argtypes.md#relation-wide-declarations-and-the-runtime-boundary)).
 
-A **quoting predicate's** argument is left alone: `(termOfUnit K (FruitFn AppleTree))`
+A **quoting predicate's** argument is left alone: `(natFormula K (FruitFn AppleTree))`
 and a compound-argument `(rewriteOf T E)` carry the expression as a verbatim payload
 rather than as a term used in that position, so typing it by what the function yields
 would type a quotation by its referent. That is also where the reading would otherwise
-cost a mint something — `mint-nat!` writes one `termOfUnit` per constant.
+cost a mint something — `mint-nat!` writes one `natFormula` per constant.
+
+A **quoting function's** argument is a mention as well. `Quote` and `Quasiquote` are the
+quoting functions, fixed by the engine (`sx/quoting-functors`) rather than declared, so
+no KB can add one or take one away. The reify pass does not reify a NAT nested in their
+argument: `(Quote (FruitFn Apple))` mints against the literal `(FruitFn Apple)`, not
+against that NAT's own constant, and a read resolves against the same literal. The
+argument is held opaque to an identity merge in the congruence walk too
+([equality.md](equality.md)).
 
 `disjoint-problem` is the check that still skips a compound. Its `:opposing-handle` is
 the conflicting *membership's* handle — what `settle` weighs the pair by — and a result
@@ -314,7 +324,7 @@ a sentence carrying the `no-match` sentinel. `handle-of` reads the constant `ist
 so a lookup of the compound finds the stored sentex. `assert-inert` stores the resolved
 sentence, so an inert record keys on the constant every read reifies to instead of a
 compound no read finds, and refuses a NAT this KB never minted (`:unminted-nat`) — it
-never mints, since a `termOfUnit` is a belief-carrying write this entry point does not do.
+never mints, since a `natFormula` is a belief-carrying write this entry point does not do.
 `canonical-sentex` resolves before it canonicalizes, so its content identity agrees with
 `handle-of`; a NAT with no minted constant has no canonical stored form yet, and the
 compound stands.
@@ -358,7 +368,7 @@ declaration — and each of the three landing last has an arm:
 | Last to arrive | What happens |
 |---|---|
 | the application | reifies to the believed value; nothing is minted |
-| the fact | `(rewriteOf V K)` retires the placeholder, and the equality migration folds every use of `K` — its `termOfUnit` map included — onto `V` |
+| the fact | `(rewriteOf V K)` retires the placeholder, and the equality migration folds every use of `K` — its `natFormula` map included — onto `V` |
 | the declaration | each constant already minted for `F` is equated with its value, or projected when it has none |
 
 `rewriteOf` rather than `equals` because the two sides are not interchangeable: `V` is
@@ -405,12 +415,13 @@ expression with **bold parens** and the opening one linking to the constant's ow
 
 **Rename** is an equality assert. `(rewriteOf MalusTree AppleTree)` retires
 `AppleTree`; the equality **migration** ([equality.md](equality.md)) restates every
-sentex naming it, including `(termOfUnit K (FruitFn AppleTree))`, whose rewritten twin
-is `(termOfUnit K (FruitFn MalusTree))`. `K` stays **stable** — it is not the term
+sentex naming it, including `(natFormula K (FruitFn AppleTree))`, whose rewritten twin
+is `(natFormula K (FruitFn MalusTree))`. `K` stays **stable** — it is not the term
 renamed — so nested NATs referencing `K` need no cascade. A rename can collapse two
-NATs onto one expression; `merge-colliding-nats!` (run after an equality assert,
-gated) restores the 1:1 invariant by merging each colliding group's constants into its
-lexicographically-smallest survivor via a further equality, which migrates their uses.
+NATs onto one expression; `merge-colliding-nats!` (run after an equality assert, behind
+the reifiable-function presence check) restores the 1:1 invariant by merging each
+colliding group's constants into its lexicographically-smallest survivor via a further
+equality, which migrates their uses.
 The retired spelling stays a usable *question*: a goal naming the old term
 goal-rewrites to the new expression and still resolves to `K`.
 
@@ -426,9 +437,10 @@ other side of the map). That is what keeps the orphan sweep coherent: `orphan?` 
 orphanhood against the expression `bookkeeping-handles` then computes the retraction set
 from, so no verdict about one expression retracts records belonging to another.
 
-**Remove** is retraction. When the last stored use of a reified NAT goes, its `termOfUnit` map
+**Remove** is retraction. When the last stored use of a reified NAT goes, its `natFormula` map
 and materialized types would dangle a raw `nat/` symbol — so `remove-orphaned-nats!`
-(run after `retract!` and `edit!`, gated, suppressed while already removing orphans)
+(run after `retract!` and `edit!` behind the reified-constant presence check, suppressed
+while already removing orphans)
 collects every constant whose only remaining **stored** sentexes are its own bookkeeping.
 Stored, not believed: a use sitting OUT revives when the defeat above it lifts, and an
 inert use (a labeling's choice head) has no TMS node at all — either would dangle if a
@@ -438,15 +450,15 @@ beside the first. A
 the constant *is*, and counting it as a use would make every placeholder immortal.
 
 **Bookkeeping is decided by authorship, not by shape.** `K`'s own sentexes are its
-`termOfUnit` map plus exactly what `mint-nat!` wrote about it, and `nat/minted-for`
+`natFormula` map plus exactly what `mint-nat!` wrote about it, and `nat/minted-for`
 re-derives that set the way the mint derived it: `(T K)` for each believed `(result F
 T)`, `(genl K T)` for each `(genlResult F T)`, `F` being the function of the expression
 `K` maps to, and the correspondence projection. A membership an argument declaration on
-`termOfUnit` or a `resultArg` of `F` derives off the map alone is `K`'s own as well
+`natFormula` or a `resultArg` of `F` derives off the map alone is `K`'s own as well
 (`nat/derived-from-map?`), and leaves when the map does. Everything else naming `K` is somebody's
 assertion whatever its arity — `(prime K)` is a claim about `K` exactly as `(noted Author
 K)` is, and a sweep reading arity alone would retract the claim along with the constant.
-The set is computed behind a **delay**, and the `termOfUnit` clause is what makes that
+The set is computed behind a **delay**, and the `natFormula` clause is what makes that
 pay: a constant a teardown collects has its map and nothing else left, so the common
 answer is reached without reading the declarations at all. The one constant this keeps
 alive that a shape test would have collected is one whose `result` declaration was
@@ -455,7 +467,7 @@ supports and nobody has withdrawn, and holding `K` for it is the direction to er
 
 **The answer is realized before the caller acts on it**, and the delay is what makes
 that a rule rather than a detail. `bookkeeping-handles` is read *for* a retraction and
-decides membership by re-reading `K`'s `termOfUnit`, so an answer still being computed
+decides membership by re-reading `K`'s `natFormula`, so an answer still being computed
 while the caller retracts through it reads a KB the caller has already taken that map
 out of — and everything past that point answers "not bookkeeping" and stays stored,
 which is the dangling `nat/` symbol the sweep exists to prevent. Which sentex the term
@@ -471,12 +483,12 @@ materialized types are all sentexes naming it ([indexing.md](indexing.md)). What
 retraction costs is the size of what it removed, and a KB that has minted a hundred
 thousand NATs the retraction is not about adds nothing to it.
 
-**A `cx/` context constant is collected at the same gate**, by the same rule with one more
+**A `cx/` context constant is collected by the same sweep**, by the same rule with one more
 source of liveness: a context is somewhere sentexes *are* as well as something sentences
 name, so the last fact leaving its slot orphans it as surely as the last sentence dropping
 its name. `orphans-named-by` reads a removed sentex's **context** beside its sentence for
 that, and `orphan?` asks a context's extent — one O(1) `count-in-context` — before the term
-index. Its whole bookkeeping is the `termOfUnit`, the mint writing no result types for a
+index. Its whole bookkeeping is the `natFormula`, the mint writing no result types for a
 place; what the structural producer **computed** off that map is not a reference to it, and
 holding an ordered pair up on its own edges is the failure that reading would cause.
 [context-nat.md](context-nat.md) has the definition, the trigger and the cost.
@@ -486,7 +498,7 @@ choke point fills while a teardown runs, because they arrive from three places: 
 dependency-directed sweep; the settle that follows it, where an exception that starts
 holding blocks a justification and what it solely supported is deleted
 ([exceptions.md](exceptions.md)); and the orphan sweep's own retractions. The third is
-how **the region grows with the fixpoint** — removing an orphan removes the `termOfUnit`
+how **the region grows with the fixpoint** — removing an orphan removes the `natFormula`
 sentex holding its expression, so a reified NAT nested in that expression is a candidate
 on the next round. A cascade is therefore found by the rule that found the first orphan,
 and the loop ends on the round that removes nothing.
@@ -574,8 +586,8 @@ comes first (`nat/reconcile-nats!`).
   the read-path reify at the query entries, and one call into
   `vaelii.impl.nat-maintenance` per maintenance site.
 - `vaelii.impl.chain` — `reify-conclusion`, the derivation-path reify `place-conclusion`
-  runs on a fired conclusion, with the checks asked before the mint. It gates on
-  `nat/names-reifiable-nat?`, a walk that rebuilds nothing. Also `reconcile-reified!`, the
+  runs on a fired conclusion, with the checks asked before the mint. It runs only when
+  `nat/names-reifiable-nat?` holds, a walk that rebuilds nothing. Also `reconcile-reified!`, the
   settle's re-spelling when a reifiable mark moves.
 - `vaelii.impl.integrate` — `*removed-sink*`, the removal choke point's record of what a
   teardown took away, which is the region the orphan sweep runs over.
@@ -598,7 +610,7 @@ comes first (`nat/reconcile-nats!`).
   carries the compound, and a goal naming the constant does not unify with the
   application in the rule's head (Derivation path, above).
 - **A NAT's identity follows the merges `CxUniverse` holds, in every context.** The
-  dedup probe reads `(termOfUnit K E)` in `CxUniverse` under that context's equality
+  dedup probe reads `(natFormula K E)` in `CxUniverse` under that context's equality
   partition. With `(sameAs Apple Pomme)` in `CxUniverse`, a reader that does not see
   `CxUniverse` resolves `(FruitFn Pomme)` to the constant minted for `(FruitFn Apple)`,
   while the same merge stated in the reader's own context leaves `(FruitFn Pomme)`
@@ -609,5 +621,5 @@ comes first (`nat/reconcile-nats!`).
   retired stand where a KB that never declared the function holds the application.
 
 The **measure-evaluating quantity prover** — measure comparison over a `dimensionOf` /
-`conversionFactor` table — reads the structural measures this gate preserves. It lives
+`conversionFactor` table — reads the structural measures an unreified application keeps. It lives
 in [quantity.md](quantity.md).

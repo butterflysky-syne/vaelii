@@ -12,7 +12,7 @@
 # is packed from its own column.
 #
 # THE RUN-ID FORM rewrites both committed files from a finished run's job logs.
-# The runner stamps every line, so the gap between one `lein test <namespace>`
+# The runner prefixes every line with a timestamp, so the gap between one `lein test <namespace>`
 # line and the next is what that namespace cost on CI's hardware.
 #
 # THE --from FORM is what the workflow runs after every green leg: DIR holds one
@@ -130,8 +130,8 @@ fi
 command -v gh >/dev/null 2>&1 || { echo "ci-weights: gh not found on PATH" >&2; exit 127; }
 
 # One `gh` call resolves the job ids; the logs come one job at a time because a
-# run's combined log is a zip this would have to unpack.  The gate jobs `memory`
-# and `disk` log no `lein test` line and are skipped.
+# run's combined log is a zip this would have to unpack.  The required-check jobs
+# `memory` and `disk` log no `lein test` line and are skipped.
 jobs=$(gh api "repos/$REPO/actions/runs/$RUN/jobs" --paginate \
          --jq '.jobs[] | select(.name | test("^(memory|disk)-shard-[0-9]+$")) | "\(.id) \(.name)"') || exit 1
 if [[ -z "$jobs" ]]; then
@@ -148,7 +148,7 @@ done <<< "$jobs"
 
 # A namespace's cost is the gap from its own `lein test` line to the next one, and
 # the last namespace of a shard is closed by that shard's `Ran N tests` line. The
-# runner stamps every line, so the field before the message is the clock; a run
+# runner prefixes every line with a timestamp, so the field before the message is the clock; a run
 # crossing midnight adds the day back rather than recording a negative gap.
 timings() {
   awk -F'\t' '
@@ -156,8 +156,8 @@ timings() {
       sub(/^[^\t]*\t[^\t]*\t/, "", line)   # the job and step columns gh prefixes
       sub(/^[^0-9]+/, "", line)               # a byte-order mark on the first line
       if (line !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T/) next
-      stamp = substr(line, 12, 15); msg = substr(line, index(line, "Z ") + 2)
-      split(stamp, c, ":"); t = c[1] * 3600 + c[2] * 60 + c[3]
+      clock = substr(line, 12, 15); msg = substr(line, index(line, "Z ") + 2)
+      split(clock, c, ":"); t = c[1] * 3600 + c[2] * 60 + c[3]
       if (msg ~ /^lein test vaelii/) { ns = substr(msg, 11) }
       else if (msg ~ /^Ran [0-9]+ tests/) { ns = "" }
       else next

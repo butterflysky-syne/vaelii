@@ -12,7 +12,7 @@
   edge is already there and a rule arrives last; this namespace covers the other
   order, where both rules are stored and the **edge** arrives last.
 
-  Three things to pin, and they are the same three the rule path pins:
+  Three things to test, and they are the same three the rule path tests:
 
   * the edge that closes a cycle is **refused**, and leaves nothing behind — neither
     a sentex nor a taxonomy closure that learned it;
@@ -68,6 +68,13 @@
     (with-redefs [wff/genl-negation-cycle (fn [& args] (swap! n inc) (apply orig args))]
       (f))
     @n))
+
+(defn- concluded!
+  "Store a rule concluding `t` from a fresh type nothing concludes.  An edge under `t`
+  then adds graph edges into that rule, so its check walks."
+  [kb t ctx]
+  (v/assert kb (vr/rule-sentence [(list (tu/tmp-type "src") '?x)] (list t '?x)) ctx
+            {:direction :forward}))
 
 (defn- cycle-shaped-rules!
   "The two rules of the cycle, with the `genl` edge that closes it **not** asserted:
@@ -168,6 +175,7 @@
       (tu/with-terms [exc otherBase other sub super]
         (v/assert kb (except-rule (list exc '?x) [(list otherBase '?x)] (list other '?x))
                   CxFast)
+        (concluded! kb sub CxFast)
         (is (pos? (walks #(v/assert kb (list 'genl sub super) CxFast))))
         (testing "an edge whose upper end is already above its lower end moves no closure"
           (tu/with-terms [top]
@@ -201,9 +209,11 @@
       (doseq [t spokes]
         (v/assert kb (vr/rule-sentence [(list hub '?x)] (list t '?x)) CxDense
                   {:direction :forward}))
-      ;; the edge's walk starts at the seven rules reading `hub`
+      ;; the edge's walk starts at the seven rules reading `hub`, and no walk reaches the
+      ;; rule concluding `sub`, which reads a type nothing concludes
+      (concluded! kb sub CxDense)
       (let [n (node-builds #(v/assert kb (list 'genl sub hub) CxDense))]
-        (testing "the edge is accepted: nothing concludes a spec of the fresh subtype"
+        (testing "the edge is accepted: no negative edge reaches the rule concluding `sub`"
           (is (tax/genl?-global (reasoning/taxonomy kb) sub hub)))
         (testing "seven stored rules, seven nodes, against 42 edges into them"
           (is (= 7 n)))))))
@@ -226,10 +236,33 @@
         (v/assert kb (vr/rule-sentence [(list top '?x)] (list (tu/tmp-type "out") '?x)) CxWide
                   {:direction :forward}))
       (dotimes [_ 2] (except!))
-      (let [at-two (node-builds #(v/assert kb (list 'genl (tu/tmp-type "sub") top) CxWide))]
+      (let [edge   #(let [sub (tu/tmp-type "sub")]
+                      (concluded! kb sub CxWide)
+                      (node-builds (fn [] (v/assert kb (list 'genl sub top) CxWide))))
+            at-two (edge)]
         (dotimes [_ 4] (except!))
-        (let [at-six (node-builds #(v/assert kb (list 'genl (tu/tmp-type "sub") top) CxWide))]
-          (is (= 4 at-two at-six)))))))
+        (is (= 4 at-two (edge)))))))
+
+(tu/deftest-kb a-genl-edge-check-builds-no-rule-when-no-rule-concludes-below-its-lower-end
+  ;; Rules read `top` and conclude predicates nothing reads, and one excepted rule keeps
+  ;; the check past its first fast path.  No rule concludes the edge's fresh lower end, so
+  ;; the edge adds no graph edge, and the check builds no node with 2 readers above it
+  ;; and with 8.
+  (tu/with-terms [top CxUnconcluded]
+    (v/assert kb (except-rule (list (tu/tmp-type "exc") '?x) [(list (tu/tmp-type "base") '?x)]
+                              (list (tu/tmp-type "seen") '?x))
+              CxUnconcluded)
+    (let [readers! (fn [n]
+                     (dotimes [_ n]
+                       (v/assert kb (vr/rule-sentence [(list top '?x)]
+                                                      (list (tu/tmp-type "out") '?x))
+                                 CxUnconcluded {:direction :forward})))
+          edge     #(node-builds
+                     (fn [] (v/assert kb (list 'genl (tu/tmp-type "sub") top) CxUnconcluded)))]
+      (readers! 2)
+      (let [at-two (edge)]
+        (readers! 6)
+        (is (= [0 0] [at-two (edge)]))))))
 
 (defn- rule-index-reads
   "Run `f`, returning how many reads of the rule index's antecedent, consequent and
@@ -390,7 +423,7 @@
 ;; The stratification probe asks its question of a detached copy of the taxonomy, and
 ;; the read memo is a **side atom** inside that value — so a copy that kept the
 ;; reference would let the probe write closures computed over the refused edge into
-;; the live memo, stamped one gen ahead of the live relation.  Those entries answer
+;; the live memo, read under a gen one ahead of the live relation.  Those entries answer
 ;; real reads the moment the live gen catches up.  The sequence below arranges exactly
 ;; that catch-up: a retraction bumps the gen without an intervening closure read (an
 ;; assert's own checks would recompute-and-clear on the way in; a retraction runs no

@@ -593,7 +593,7 @@
     (doseq [[how os] [[:deny orders] [:except (filter before orders)]]]
       (is (= {[false false] (count os)} (frequencies (map #(edge-belief-trial % how) os)))
           (name how)))
-    ;; a superseded spelling is not believed, so only the answer after the lift is pinned
+    ;; a superseded spelling is not believed, so only the answer after the lift is asserted
     (is (= {false (count orders)}
            (frequencies (map #(second (edge-belief-trial % :rewrite)) orders)))
         "rewrite")))

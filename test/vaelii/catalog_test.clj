@@ -107,10 +107,17 @@
           (.mkdirs (io/file derived "records"))
           (spit (io/file derived "records" "format.edn") (pr-str {:format-version 1}))
           (is (= :store (cat/classify derived))))
-        (testing "and the marker is the record writer's own stamp rather than the
+        (testing "and the marker is the record writer's own format file rather than the
                   directory's name, so an empty records/ is still nothing"
           (.mkdirs (io/file bare "records"))
           (is (nil? (cat/classify bare))))
+        (testing "a KB whose records are on a server keeps no records/ here, and its
+                  index's records identity is the marker"
+          (let [served (io/file root "records-on-a-server")]
+            (.mkdirs (io/file served "index"))
+            (spit (io/file served "index" "records.edn")
+                  (pr-str {:records ["localhost" 5432 "vaelii" "kb_one"]}))
+            (is (= :store (cat/classify served)))))
         (testing "an unreadable meta.edn makes a directory no KB rather than an error"
           (spit (io/file plain "meta.edn") "{not edn")
           (is (nil? (cat/classify plain)))))
@@ -200,11 +207,11 @@
         (is (= key (cat/active)))
         (is (some? (cat/active-kb)))))))
 
-(deftest a-view-is-safe-to-render-and-send
+(deftest a-public-entry-is-safe-to-render-and-send
   (cat/load-source "core")
   (wait-for)
   (let [e (first (cat/entries))]
-    (testing "the KB itself stays out of the view, and the thread and the cancel flag are
+    (testing "the KB itself stays out of the public entry, and the thread and the cancel flag are
               not the entry's to hold in the first place — they belong to its job"
       (is (not (contains? e :kb)))
       (is (not (contains? e :future)))
@@ -435,7 +442,7 @@
         ;; passed the dead ratio, which a freshly loaded KB has (0.59 on `core`, against
         ;; a 0.50 threshold).  So a compaction runs on its own thread while this test is
         ;; merely holding the KB open, and those two files exist only between its start
-        ;; and its finish.  A `before` snapshot that lands inside that window records
+        ;; and its finish.  A `before` snapshot that lands inside that race window records
         ;; scratch that the compaction then deletes, and the diff reads it as an unload
         ;; having destroyed a file — which is how this failed on one backend and no
         ;; other, the backend deciding only how long the preceding namespaces took and
@@ -542,11 +549,11 @@
 
 (defn- held-writer
   "Submit a job that claims `kb` as its writer, as a chaining run does, and hold it inside
-  `monitor` until `gate` is delivered.  Returns the job id once the job holds the monitor."
-  [kb monitor gate]
+  `monitor` until `latch` is delivered.  Returns the job id once the job holds the monitor."
+  [kb monitor latch]
   (let [held (promise)
         id   (jobs/submit {:label "Chain mine" :kind :chain :writes kb}
-                          (fn [_] (locking monitor (deliver held true) (deref gate 60000 nil))))]
+                          (fn [_] (locking monitor (deliver held true) (deref latch 60000 nil))))]
     (deref held 10000 nil)
     id))
 
@@ -558,8 +565,8 @@
     (v/assert kb '(genl tmp_still_writing_type thing) 'CxUniverse)
     (cat/register! "mine" "My KB" kb {:where {:backend :memory}})
     (let [monitor (Object.)
-          gate    (promise)
-          id      (held-writer kb monitor gate)]
+          latch   (promise)
+          id      (held-writer kb monitor latch)]
       (try
         (testing "with the write monitor as `:run-in`, the refusal answers while the job
                   still holds the monitor"
@@ -574,7 +581,7 @@
                                 (cat/unload! "mine")))
           (is (some? (cat/entry "mine")))
           (is (pos? (v/sentex-count kb))))
-        (finally (deliver gate true)))
+        (finally (deliver latch true)))
       (jobs/wait id 10000)
       (testing "once the job has settled the unload takes"
         (is (true? (cat/unload! "mine")))
@@ -844,10 +851,10 @@
         ;; `:run-in` is the wrapper the walk runs inside, so holding it here holds the
         ;; export at exactly the point an in-flight reader sits: the job is running and
         ;; the KB is spoken for.
-        (let [gate   (promise)
+        (let [latch  (promise)
               before (v/sentex-count kb)]
           (cat/export-entry! "mine" (.getPath dump)
-                             {:compression :none :run-in (fn [work] @gate (work))})
+                             {:compression :none :run-in (fn [work] @latch (work))})
           (is (true? (cat/exporting-kb? kb)))
           (testing "the unload gives way — the walk fetches record by record with no
                     snapshot, so a release landing mid-walk would leave it a dump of a KB
@@ -857,7 +864,7 @@
           (testing "and nothing was taken: the entry is whole and the KB is still live"
             (is (some? (cat/entry "mine")))
             (is (= before (v/sentex-count kb))))
-          (deliver gate true)
+          (deliver latch true)
           (is (wait-for-export)))
         (testing "once the walk is done the unload takes, as it always did"
           (is (true? (cat/unload! "mine")))
@@ -882,7 +889,7 @@
         (cat/register! "mine" "My KB" kb {:where {:backend :memory}})
         (let [before  (v/sentex-count kb)
               arrived (java.util.concurrent.CountDownLatch. 2)
-              gate    (promise)
+              latch   (promise)
               rendez  (fn [r]
                         (.countDown arrived)
                         (.await arrived 300 java.util.concurrent.TimeUnit/MILLISECONDS)
@@ -896,19 +903,19 @@
                                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
                   export (future (try (cat/export-entry! "mine" (.getPath dump)
                                                          {:compression :none
-                                                          :run-in (fn [work] @gate (work))})
+                                                          :run-in (fn [work] @latch (work))})
                                       :started
                                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
                   [u x]  [@unload @export]]
               (is (or (and (true? u) (= :unknown-entry x))
                       (and (= :still-exporting u) (= :started x)))
                   (str "exactly one takes the KB — unload " (pr-str u) ", export " (pr-str x)))
-              (deliver gate true)
+              (deliver latch true)
               (is (wait-for-export))
               ;; Which side reaches the monitor first is a scheduling race, and both
               ;; outcomes are legal — so each arm states the three things ITS winner is
               ;; owed, rather than one arm asserting and the other standing aside.  The
-              ;; assertion count is a gate, so a loaded box resolving the race the other
+              ;; assertion count is a check, so a loaded box resolving the race the other
               ;; way would read as a run that skipped something rather than as the other
               ;; legal outcome.
               (if (= :started x)
@@ -965,13 +972,13 @@
         (v/assert kb '(genl tmp_twice_type thing) 'CxUniverse)
         (cat/register! "mine" "My KB" kb {:where {:backend :memory}})
         (let [arrived (java.util.concurrent.CountDownLatch. 2)
-              gate    (promise)
+              latch   (promise)
               asked   cat/exporting?
               start   (fn [dir]
                         (future
                           (try (cat/export-entry! "mine" (.getPath (io/file root dir))
                                                   {:compression :none
-                                                   :run-in (fn [work] @gate (work))})
+                                                   :run-in (fn [work] @latch (work))})
                                :started
                                (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))]
           (with-redefs [cat/exporting? (fn []
@@ -982,7 +989,7 @@
             (is (= #{:started :export-busy} (set (map deref [(start "a") (start "b")])))))
           (is (= 1 (count (filter #(= :export (:kind %)) (jobs/running))))
               "one walk is running, not two")
-          (deliver gate true)
+          (deliver latch true)
           (is (wait-for-export)))
         (cat/unload! "mine"))
       (finally
@@ -1043,16 +1050,16 @@
       (testing "and a KB a job holds the writer of — the walk fetches record by record
                 with no snapshot to take instead, so it gives way rather than dumping
                 around the writer"
-        (let [gate (promise)
-              job  (jobs/submit {:label "a chaining run" :kind :chain :writes kb}
-                                (fn [_progress!] @gate nil))]
+        (let [latch (promise)
+              job   (jobs/submit {:label "a chaining run" :kind :chain :writes kb}
+                                 (fn [_progress!] @latch nil))]
           (try
             (is (true? (cat/write-blocked? kb)))
             (let [e (is (thrown? clojure.lang.ExceptionInfo
                                  (cat/export-entry! "mine" nowhere {})))]
               (is (= :still-loading (:type (ex-data e)))))
             (finally
-              (deliver gate true)
+              (deliver latch true)
               (jobs/wait job 30000)))))
       (is (false? (cat/write-blocked? kb)) "the writer let go, so the refusal was its doing")
       (is (nil? (jobs/latest :export)) "and none of the three started a walk"))
@@ -1094,6 +1101,43 @@
         (is (nil? (cat/sync-loaded!))))
       (finally (tu/clear-kb! kb)))))
 
+(deftest a-loaded-store-is-synced-only-when-asked
+  ;; A sync is an edit and a settle over the whole KB.  On a large store a settle stopped
+  ;; part-way leaves the records it wrote in the store and both images stale, so the next
+  ;; open rebuilds the index and recovers belief from scratch.
+  (let [kb      (doto (v/open-kb {:backend :memory :space (beside-the-block ::sync-asked)
+                                  :recover? false})
+                  (tu/clear-kb!)
+                  (tu/load-starter!))
+        retired #(some? (v/handle-of kb retired-note 'CxUniverse))]
+    (try
+      (v/assert kb retired-note 'CxUniverse)
+      (cat/register! "mine" "My KB" kb {:source {:kind :store}})
+      (testing "a load that did not ask leaves it as it was"
+        (is (nil? (#'cat/sync-shipped "mine" {:kind :store} {:recover? true} (fn [_]))))
+        (is (retired)))
+      (testing "a shipped file edit passes it by"
+        (is (nil? (cat/sync-loaded!)))
+        (is (retired)))
+      (testing "a load that asked for it follows the files"
+        (swap! @#'cat/state assoc-in [:entries "mine" :params] {:sync? true})
+        (let [job (cat/sync-loaded!)]
+          (is (some? job))
+          (jobs/wait job 120000))
+        (is (= {:added 0 :removed 1 :refused []} (:sync (cat/entry "mine"))))
+        (is (not (retired))))
+      (testing "sync-entry! brings it current on purpose, whatever its load asked"
+        (swap! @#'cat/state assoc-in [:entries "mine" :params] {})
+        (v/assert kb retired-note 'CxUniverse)
+        (jobs/wait (cat/sync-entry! "mine") 120000)
+        (is (= {:added 0 :removed 1 :refused []} (:sync (cat/entry "mine"))))
+        (is (not (retired))))
+      (is (= :unknown-source (:type (ex-data (try (cat/sync-entry! "nobody")
+                                                  (catch clojure.lang.ExceptionInfo e e))))))
+      (finally
+        (cat/unload! "mine")
+        (tu/clear-kb! kb)))))
+
 (deftest a-loaded-dump-has-its-shipped-contexts-brought-to-this-engine
   ;; a starter KB whose CxUniverse holds a premise this engine does not ship, exported the
   ;; way an older build's KB would arrive: the load syncs it while the entry is running
@@ -1104,7 +1148,7 @@
     (try
       (v/assert kb retired-note 'CxUniverse)
       (v/export! kb dir {})
-      (let [key (cat/load-dir dir {:belief? :rebuild})]
+      (let [key (cat/load-dir dir {:belief? :rebuild :sync? true})]
         ;; 15 min: the load imports a starter-sized dump and rebuilds its belief, and the
         ;; sync loads the starter again into a scratch KB (`sync/premises`)
         (is (wait-for 900000))
@@ -1117,3 +1161,20 @@
       (finally
         (tu/clear-kb! kb)
         (doseq [f (reverse (file-seq (io/file dir)))] (io/delete-file f true))))))
+
+(deftest a-store-open-files-what-the-engine-logs-as-its-progress
+  ;; a store's open takes no `:on-progress`; the lines it logs are the card's only account
+  ;; of an hour-long recover or image install
+  (let [notes  (atom [])
+        passed (atom [])
+        lf     (#'cat/noting-log-fn #(swap! notes conj %)
+                                    (fn [_ _ level _ payload] (swap! passed conj [level (:msg (force payload))])))]
+    (lf "ns" nil :info ::step (delay {:msg "recover: step 3/9"}))
+    (lf "ns" nil :debug ::detail {:msg "too fine to show"})
+    (lf "ns" nil :warn ::no-msg {:data {:n 1}})
+    (is (= [{:phase :open :note "recover: step 3/9"}] @notes))
+    (testing "and every call still reaches the backend that was installed"
+      (is (= [[:info "recover: step 3/9"] [:debug "too fine to show"] [:warn nil]] @passed))))
+  (testing "a progress report that throws — a cancel — never unwinds the log site"
+    (let [lf (#'cat/noting-log-fn (fn [_] (throw (ex-info "stop" {}))) nil)]
+      (is (nil? (lf "ns" nil :info ::step {:msg "x"}))))))

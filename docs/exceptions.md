@@ -34,19 +34,20 @@ An exception belongs on the rule it excepts:
 
 `exceptWhen` **blocks**. When the exception holds for a binding, the rule does not
 conclude for that binding — there is no conclusion to defeat and nothing to
-arbitrate. Under forward chaining the conclusion is never created when the exception
-holds through `:monotonic` facts alone. When every fact it holds through can be hidden by
-a placed defeat (a `:default` blocker), the conclusion is stored with a guard defeat
-resting on the blocker, and a reader that does not believe the blocker believes the
-conclusion (design ruling 25, [naf.md](naf.md#evaluated-in-the-placement-context-not-the-join)).
+arbitrate. Under forward chaining the conclusion is stored with a guard defeat resting
+on the facts the exception holds through, whether those facts are `:default` or
+`:monotonic`, and a reader that does not believe them believes the conclusion (design
+rulings 25 and 30, [naf.md](naf.md#evaluated-in-the-placement-context-not-the-join)). An
+exception that holds through no stored fact (a prover answer, such as an `argIsa` or a
+symmetric reading) places the defeat on the exception's own handle.
 Under backward chaining the argument is constructed and then reported as excepted, so
 `why-not` can say *"rule R applies via `(bird Opus)`, but its exception
 `(flightless_bird Opus)` holds"* instead of recomputing a contradiction it never
 recorded.
 
 `why-not` therefore needs an arity that takes a **sentence and a context**, not
-just a handle. A refused conclusion is never created, so it has no handle to ask
-about — the question is only askable of a proposition. It answers `{:reason
+just a handle: the backward chainer stores nothing, so the conclusion it discards has no
+handle to ask about. It answers `{:reason
 :excepted :rule <handle> :exception <ground sentence> :via <antecedent handles>}`,
 which is the argument the backward chainer built before discarding it.
 
@@ -62,7 +63,7 @@ defeasibility and its antecedents' classes, because a later fact can block it
 
 An `(unknown S)` **antecedent** is the same mechanism inlined per-literal — the rule
 does not conclude for a binding under which `S` is derivable — and it reuses
-everything below (the level-6 evaluation, the re-check index, block / sweep / revive,
+everything below (the level-6 evaluation, the re-check index, the guard defeat,
 the stratification graph), including the conjunction: `S` may be an `(and …)`, read
 block-if-all-hold by this same evaluator, which joins the conjuncts so a quantified one
 takes a single witness for all of them ([naf.md](naf.md)). What differs is that each `unknown`
@@ -223,7 +224,7 @@ one.
 
 Two consequences follow:
 
-- The **`:rules` roster is written unconditionally**, even for an exception that
+- The **`:rules` set is written unconditionally**, even for an exception that
   mentions no indexable predicate. The taxonomy trigger enumerates that set, and a
   rule missing from it would be invisible to `genl` edge changes.
 - **Retraction recomputes the predicates from the stored sentex** rather than
@@ -254,8 +255,8 @@ firings are filtered before a single query is paid for:
   no shape however ground it is — `(unknown (qskip PX7))` is unreadable to the filter —
   so unpeeled it answers "cannot tell" every time and keeps the rule's whole history.
   That is where the shape is commonest, too: `(unknown S)` holds exactly while `S` is
-  absent, which is the state a firing is *refused* in, so such a rule accumulates its
-  history in the refusal record rather than as justifications. Both populations are
+  absent, which is the state a firing is placed and defeated in, so such a rule
+  accumulates its history as justifications with guard defeats. Both populations are
   filtered the same way and both peel.
 - A triggering fact can only answer a ground exception literal when their argument
   lists agree **and** the fact's predicate lies in the closure that literal's polarity
@@ -311,7 +312,7 @@ argument agreement is at its most misleading: `(transitiveInArgInverse bigger n 
 stored `(bigger dog cat)` answer `(bigger poodle siamese)`, so the trigger and the
 conjunct agree on **no argument at all** while naming the same predicate — which reads
 to the filter exactly like an unrelated fact. Which predicates those are is a property
-of the content, so the question asked is `inherit/declared-about?`, the same O(1) gate
+of the content, so the question asked is `inherit/declared-about?`, the same O(1) presence check
 `TransitiveInArgProver` takes before its own read, and it is asked once per pass rather
 than once per firing: substituting a firing's bindings never moves a functor, and one
 arm of the answer is an index read that the filter's whole claim — that deciding it
@@ -385,8 +386,9 @@ same rules (`inherit/rejoin-rules`) is linear in the claims beside it.
 ### Re-chaining what was released, not what was touched
 
 The settle loop has a second cost of the same shape one layer down. When a pass blocks
-a justification, the conclusion is swept, and a *released* exception then has to be
-re-derived — which is forward chaining, not relabelling. Seeding `chain` with a rule
+a justification on a condition its rule carries (a closed extent, an aggregate, a
+withdrawn `different`; `chain/rule-firing-blocked?`), the conclusion is swept, and a
+*released* block then has to be re-derived — which is forward chaining, not relabelling. Seeding `chain` with a rule
 handle joins that rule over the **whole fact extent**, so handing it every rule the
 pass touched costs one firing, and one level-6 query, per fact the rule has ever
 matched: quadratic again, and independently of the re-check above.
@@ -397,7 +399,7 @@ has nothing to revive; its conclusion is what the sweep is about to collect. Thr
 things are re-chained: those released rules, the rules queued with `:all` or a
 withdrawal marker (no sentence to say whether the move blocked or released), and whatever
 the sweep itself queued —
-deleting a fact can release some other rule's exception at derive time, where no block
+deleting a fact can release some other rule's block at derive time, where no block
 ever existed to lift. The queue is read right after the sweep, so a rule the pass's own
 re-chains queue is left to the next pass, which re-decides its firings against the queued
 sentences; `lein perf`'s `released-refusal-beside-guarded-firings` bounds a retraction
@@ -409,8 +411,7 @@ block ever suppressed — and a **nested** NAF joins it there, since an arriving
 remove the witness its inner query found ([naf.md](naf.md)). An exception an arrival
 can move both ways joins them too — an aggregate, or a literal under an odd number of
 `unknown`s beside one under an even number, as in "a child not vaccinated": one arrival
-imposes the block, which is swept rather than refused, and a later one lifts it with no
-refusal to record it (`rules/exception-arrival-releasable?`). A released **refusal** — the next section — is a firing that never
+imposes the block and a later one lifts it with no refusal to record it (`rules/exception-arrival-releasable?`). A released **refusal** — the next section — is a firing that never
 held a justification for the blocked set to have said anything about. And a **revived**
 datum is one whose firing was never attempted, because the join ran while it was OUT and
 the matcher is belief filtered; that one is not an exception mechanism at all, and it is
@@ -423,9 +424,11 @@ belief-following ([taxonomy.md](taxonomy.md)).
 
 ### A refused firing is remembered as bindings
 
-`place-conseq` does not place a firing whose block condition already holds. That is the
-right call for the placement — the conclusion would be swept on the same pass — but such
-a firing otherwise leaves **no trace at all**: no justification, no node, nothing in
+`place-conseq` does not place a firing a closed-extent negative antecedent or a
+separation already rules out. Such a block has no defeat form: a closed extent blocks on
+an absence, and the absence of a visible grant is not a sentex a defeat can rest on. That
+is the right call for the placement — the conclusion would be swept on the same pass — but
+such a firing otherwise leaves **no trace at all**: no justification, no node, nothing in
 `jtms/blocked`. A pivot on the blocked set is therefore blind to it, and the conclusion
 stays suppressed after the condition releases, while the same knowledge in the other
 order concludes. Belief would depend on whether the block arrived before or after the
@@ -442,51 +445,58 @@ by **re-evaluating the record**: one query per recorded refusal, in place of a j
 the fact extent.
 
 **Three of the five reasons are recorded**, and the other two are covered
-elsewhere rather than forgotten:
+elsewhere rather than forgotten. An `exceptWhen` exception or an `(unknown S)` antecedent
+that holds is not among them: its firing is placed with a guard defeat, and the JTMS
+withdraws the defeat when the blocker goes OUT.
 
 | reason | recorded | why |
 |---|---|---|
-| the rule's exception holds | yes | re-askable from the bindings alone |
-| an `(unknown S)` antecedent — or a closed-extent negative one — blocks | yes | likewise, and the same evaluator |
+| a closed-extent negative antecedent blocks | yes | re-askable from the bindings alone |
+| a `disjoint` antecedent the placement context does not read separated | yes | likewise, and the same evaluator |
 | a post-join literal had no answer | no | an aggregate is a *value* that moved, and a queued aggregate rule is re-joined whatever the blocked set did (`settle/rejoin-on-arrival-rules`) |
 | the settle blocks a placed firing, and the sweep deletes it | yes, by `chain/record-swept-firing!` | the conclusion is gone from the store, so the record is what a trigger lifting the block re-derives it from, as for a firing refused at its placement |
 | a visibility `except` hides an antecedent | no | an `except` arriving or leaving, or a `genlCx` edge moving which contexts see it, re-joins from its target's consequence closure and the antecedents of the justifications resting on it (`special/drain-except-moves!`), and the refusal is re-derived there. An entry would be one nothing reads |
 
 The record holds three more kinds of entry, none of them a refusal by an exception. Each
-is kept because the thing that refused it was an **absence** that later content can fill:
+is kept because later content can lift what refused it:
 
 | entry | kept under | refused because | re-asked when |
 |---|---|---|---|
-| `:constraint` | the rule | `place-fact-conclusion` dropped the conclusion on an `arg` / `genlArg` / `interArg` / `interArgs` / `interArgAndRest` / `quotedArg` conviction: the argument's types had no path to the declared one | a `genl` or `genlCx` generation moved since the entry was decided, or a settle relabelled a sentex naming the convicted term |
+| `:constraint` | the rule | `place-fact-conclusion` dropped the conclusion on an `arg` / `genlArg` / `interArg` / `interArgs` / `interArgAndRest` / `quotedArg` conviction: the argument holds a type the taxonomy separates from the declared one, or for `quotedArg` its kind has no path to it | a `genl` or `genlCx` generation or a separation (`tax/separation-inputs`) moved since the entry was decided, or a settle relabelled or removed a sentex naming the convicted term (`integrate/*removed-sink*`) |
 | `:lift` | the source fact | a `decontextualized_predicate` copy from a context that does not see CxUniverse failed the same argument check there | the same two |
-| `:mint` | the declaration | the declared type did not yet reach `thing` (`checks/mintable-type?`), so the declaration minted nothing over its facts | a `genl` or `genlCx` generation moved |
+| `:mint` | the declaration | an arity statement bound the declared type to a length other than one (`checks/mintable-type?`), so the declaration minted nothing over its facts; `:waits` names the types | the arity family moved the length of a type under `:waits` (`special/owe-mints-on-lengths!`), or the rebuild epoch moved |
 
-The generations an entry is stamped with carry the taxonomy's rebuild epoch
-(`special/taxonomy-generations`). A `recover` restarts each generation at 0 and replays
+The generations an entry is decided under (`:read-under`) carry the taxonomy's rebuild epoch
+(`special/taxonomy-generations`; `special/conviction-generations` adds the separations for
+a `:constraint` or `:lift` entry). A `recover` restarts each generation at 0 and replays
 the stored edges, so a generation can return to a number it held under another hierarchy.
-The recover moves the epoch, so a stamp taken before the recover never compares equal
+The recover moves the epoch, so generations read before the recover never compare equal
 after it.
 
 `settle` re-asks them each pass (`released-constraint-refusals`, `released-lifts`,
-`released-mints`): a conclusion now admissible is placed from the entry, a copy lifted, a
+`released-mints`). The record keeps the generations every `:mint` entry was last settled
+under (`special/mints-settled!`), and the last `:mint` entry to leave takes them with it. A
+pass under those generations reads no `:mint` entry, so a write beside n waiting
+declarations does not grow with n (perf check `write-after-rolled-back-preview`). A re-ask
+releases what the moved generations admit: a conclusion now admissible is placed from the entry, a copy lifted, a
 declaration's whole sweep run again (`special/entail-existing`), and what each creates goes
-on the agenda. A `:constraint` or `:lift` entry re-asked and still convicted is stamped with
-the current generations and with the term the conviction names **now**
+on the agenda. A `:constraint` or `:lift` entry re-asked and still convicted is
+re-recorded under the current generations and with the term the conviction names **now**
 (`checks/conviction-watch`). An application can be convicted on more than one argument,
-and the conviction names the first; once that argument is typed it names the next, so an
-entry that kept its first term would never be re-asked when the last one is typed, and the
-order the arguments were typed in would decide whether the conclusion is placed. Placed, a
-`:constraint` or `:lift` entry withdraws the ledger entry its drop
-filed (`violations/withdraw!`), since the order that brought the type first filed none.
-A mint withheld because the KB says it more specifically is the opposite case, a
-derivation withheld for something the KB has, and it has no entry: the settle re-derives
-it when that something leaves (docs/argtypes.md).
+and the conviction names the first; once that argument is lifted it names the next, so an
+entry that kept its first term would never be re-asked when the last one is lifted, and
+the order the arguments were lifted in would decide whether the conclusion is placed.
+Placed, a `:constraint` or `:lift` entry withdraws the ledger entry its drop filed
+(`violations/withdraw!`), since the order that brought the type first filed none. A mint
+withheld because the KB says it more specifically is the opposite case, a derivation
+withheld for something the KB has, and it has no entry: the settle re-derives it when that
+something leaves (docs/argtypes.md).
 
-A pass finds the three kinds through the record's **kind roster**: its `:kinds` key names,
+A pass finds the three kinds through the record's **kind index**: its `:kinds` key names,
 per kind, the handles holding at least one entry of that kind, and every writer of such an
 entry keeps it (`special/note-kind`, `drop-kinds`, `forget-kinds`). The pass reads only
 those handles' sets (`special/kind-entries`), so the rules' own refusals, up to 4096 per
-rule, are read only when a trigger queues their rule. The roster sits in the record's own
+rule, are read only when a trigger queues their rule. The kind index sits in the record's own
 map, so the batch rollback's snapshot, the reasoning image and a wipe carry it with the
 entries. `lein perf`'s `assert-beside-naf-refusals` bounds an unrelated assert beside
 32,000 `unknown` refusals.
@@ -494,22 +504,18 @@ entries. `lein perf`'s `assert-beside-naf-refusals` bounds an unrelated assert b
 `recover` rebuilds the `:mint` and `:lift` entries (`special/rebuild-pending!`); the
 `:constraint` ones are not rebuilt, since that would mean re-firing every forward rule
 over the store, so a KB restarted with a standing constraint drop re-derives it only when
-its rule next fires. The `:mint` rebuild walks `thing`'s subtypes once
-(`checks/mintable-types`) and answers each declaration with a set lookup. A walk up from
-a type with no path to `thing` reads the type's whole ancestor set, and `lein perf`'s
-`declaration-rebuild` bounds the rebuild per declaration over a hierarchy that grows with
-the declarations.
+its rule next fires. The `:mint` rebuild asks each declaration's types their own arity
+bindings, one read per type and no `genl` walk; `lein perf`'s `declaration-rebuild` bounds
+the rebuild per declaration over a hierarchy that grows with the declarations.
 
-A settle pass answers its `:mint` entries the same way: it compares each entry's stamp
-with the current generations before it sorts anything, and when some entry is stale it
-walks `thing`'s subtypes once, before the first release. A `genlArg` declaration released
-in that pass mints a `genl` edge the walk does not hold. When the edge's upper end is
-mintable and its lower end is not, the lower end and its subtypes join the walk's answer,
-and the entries the pass already restamped waiting on one of those types are released in
-the same pass. A chain of `genlArg` declarations, each waiting on the type the one before
-it mints, is therefore released in one pass in either handle order. `lein perf`'s
-`mint-release-after-genl-move` bounds the settle after a `genl` edge per waiting
-declaration.
+A settle pass compares the generation each `:mint` entry was decided under
+(`special/mint-generations`, the rebuild epoch) with the current one before it sorts
+anything. The arity family's refresh (`arity/drain!`) clears the generation of each entry
+whose `:waits` holds a relation whose length it moved, so the pass re-asks those entries
+alone; the refresh reads every `:mint` entry to find them. A `genl` or `genlCx` edge moves
+no entry: a type's mintability reads no closure.
+`lein perf`'s `mint-release-after-genl-move` bounds the settle after a `genl` edge per
+waiting declaration.
 
 Both unrecorded reasons are covered by a **re-join** rather than by nothing, and that is
 what makes the record an efficiency structure rather than a completeness one. The same
@@ -540,7 +546,7 @@ that last one is what stops a refusal resurrecting a firing whose support left; 
 checked whenever the record is walked, which is also when dead entries are dropped.
 
 The record is also what the **chaining funnel** reads. `core/chain-report` walks every
-forward rule (enumerated `O(rules)` off the antecedent roster, never the fact extent) and
+forward rule (enumerated `O(rules)` off the antecedent index, never the fact extent) and
 for each reports what it placed — `jtms/dependents` on the rule handle is its firings —
 against what this record says it refused and why, re-deciding each entry through
 `refusal-state` so a reason shown is one that still holds. A rule that placed nothing and
@@ -567,7 +573,7 @@ bound future chaining against.
 
 **The record is capped at `chain/max-refusals-per-rule` = 4096 entries per rule**, and
 the cap is real rather than defensive. Blocking is bounded by what a rule *derived*;
-this is bounded by what it did **not**, and a rule excepted on a common condition can
+this is bounded by what it did **not**, and a rule refused on a common condition can
 refuse far more than it places. On either side of the line:
 
 - **under the cap**, a queued rule's refusals are re-evaluated individually and a
@@ -584,7 +590,7 @@ clear.
 
 #### How big it gets
 
-Measured on a join shape — `(pseen ?x ?y) ← (pb1 ?x ?z) (pb2 ?z ?y)` excepted on a
+Measured on a join shape — `(pseen ?x ?y) ← (pb1 ?x ?z) (pb2 ?z ?y)` refused on a
 condition that holds for every binding, so all n² firings are refused — the record holds
 **one entry per refused firing** and retains **roughly 750 bytes** apiece, flat across
 sizes:
@@ -600,44 +606,6 @@ That is the growth the cap is for: the entry count follows the *join*, not the s
 one rule can outgrow the KB it is reasoning over. 4096 entries is about 3 MB per rule,
 which is where the record stops being cheaper than the re-join it replaces.
 
-#### What it costs
-
-The workload is a taxonomy load under an excepted predicate: 800 firings of one excepted
-rule, then 50 `genl` edges whose supertype is at or below the exception's own predicate,
-so the rule is queued on every edge. Both halves matter and they pull in opposite
-directions, so both are here. The times are one run's wall clock on one box, rounded —
-what they are for is the ratio between the rows, which is the structure of the argument:
-
-| 800 firings, then 50 edges | building the firings | the 50 edges | total |
-|---|---|---|---|
-| the rule fires, nothing blocks | ~0.3 s | ~2.4 s | **~2.7 s** |
-| every firing refused, no record | ~0.3 s | ~0.02 s | **~0.3 s** |
-| every firing refused, recorded | ~1.0 s | ~1.4 s | **~2.4 s** |
-| every firing refused, coarse re-join | ~10 s | ~1.6 s | **~12 s** |
-
-Read the second row first: it is cheap because it does **nothing**, which is the defect.
-The first row is the price of a correct answer, and the engine pays it either way — a
-rule whose firings *are* placed pays edges × firings through `exception-candidates` over
-`jtms/dependents`. So the derive-time case is not a second asymptotic; it is the one the
-placed case already has, paid in the cheaper of the two shapes.
-
-Against that, the record costs **less than the engine already pays for the placed case**
-(~2.4 s against ~2.7 s: a refusal carries its bindings inline where a justification is a
-record fetch away), and **roughly 5× less than the coarse re-join** it replaces. The
-re-join's damage is concentrated where a record cannot be: in the *build*, where every
-arriving fact forces a productive pass and joins the rule over everything asserted so far.
-
-The record is not free either, and the third row says where it is paid: building those
-800 refused firings roughly triples, because a fact on the exception's own predicate now
-narrows against the record as well as against the placed firings. That is
-`exception-candidates`'s own shape — memory-only work per firing per trigger, no
-query — and it is what a firing costs once it is remembered.
-
-The edge half is linear in the firing count, on both sides of the fix: on the same
-workload it reads roughly 0.1 / 0.34 / 1.4 s at 50 / 200 / 800 firings recorded, against
-roughly 0.2 / 0.6 / 2.4 s for the same firings placed — whose 800-firing figure is the
-edge column of the table above.
-
 ### Taxonomy changes are keyed on what the closure moved
 
 An exception like `(flightless_bird ?b)` can flip because someone asserted
@@ -648,7 +616,7 @@ an answer differently.
 
 - A **`genl`** edge `[sub super]` moves reachability only along paths through it, so the
   spec closure of an exception predicate `pe` changes iff `pe` is `super` or above it:
-  `genls(super)` is the roster, plus the two functors a `genl` edge can flip without
+  `genls(super)` is the set of predicates queued on, plus the two functors a `genl` edge can flip without
   either endpoint appearing near the registered predicate — `genl` itself, whose conjunct
   the transitivity prover answers from the very closure that moved, and `disjoint`, which
   is closed under `genl` on both sides. Both are answered *across arguments*, so neither
@@ -696,7 +664,7 @@ an answer differently.
   firing that rule ever made. That is the price of narrowing on placement rather than
   queueing wholesale, and a `genlCx` edge is the only thing that pays it.
 
-Both are gated on the `[:exception-index :rules]` roster being non-empty, so a KB using
+Both run only while the `[:exception-index :rules]` set is non-empty, so a KB using
 no `exceptWhen` pays one set read per edge and stops — which matters, because that guard
 is what keeps a deep taxonomy load from going quadratic on the up-closure alone.
 
@@ -732,7 +700,7 @@ exception is about another, so the sentence could not narrow the right firings a
 - **A declaration, where no fact moved at all.** The extent of every predicate is
   exactly what it was, and what changed is what may be concluded from it:
   `(symmetric sibOf)` makes a stored `(sibOf Ann Bob)` answer `(sibOf Bob Ann)`,
-  `(transitive partOf)` closes a chain, `(inverse childOf parentOf)` answers a goal from
+  `(transitive tangiblePartOf)` closes a chain, `(inverse childOf parentOf)` answers a goal from
   the partner predicate's facts, `(transitiveInArg P n R)` opens the inheritance over
   claims already stored, and `(asymmetric P)` is what gives a converse the standing to
   close one again. The sentence's functor is the declaration's, never the exception's,
@@ -742,7 +710,7 @@ exception is about another, so the sentence could not narrow the right firings a
   second posting through `recheck-preserving-along`, because it is also the **licence**
   `inherit/usable-relation?` reads at use: withdrawing it withdraws the inheritance for
   a `P` the sentence never names. `functional`, `arity` and the decontextualization
-  marks are not in the roster — they are read by the definitional checks and by
+  marks get no such posting — they are read by the definitional checks and by
   placement, and answer no goal.
 - **An equality, which moves no extent and answers no goal.** A merge is not a fact
   arriving or leaving, and it reaches an exception twice over. It **retires a
@@ -787,9 +755,9 @@ exception is about another, so the sentence could not narrow the right firings a
   defeat queues them as the target's arrival does (`special/recheck-on-sentence`).
 
 All five are free for a KB not using the feature: the declarations are read off the
-predicate extents behind an O(1) cardinality gate, the declaration roster is a map lookup on
-the functor, and the whole path sits behind the `[:exception-index :rules]` roster being
-non-empty — which is what a KB that merges but carries no re-check condition pays, once
+predicate extents only after an O(1) cardinality check, the declaring `:props` set is a map
+lookup on the functor, and the whole path runs only while the `[:exception-index :rules]`
+set is non-empty — which is what a KB that merges but carries no re-check condition pays, once
 per merge, and the fifth tests the registered calculi against the arriving predicate's
 supertypes. All five are read **globally** rather than per context, deliberately: a
 declaration this context cannot see still qualifies a rule in one that can, and a
@@ -921,7 +889,7 @@ P --concluded-by--> rule R   R concludes P                       (positive)
 
 A cycle crossing **at least one** negative edge is refused. A purely positive cycle
 is ordinary recursion, which the engine supports and bounds by depth, and is
-deliberately left alone — `stratification_test` pins both directions, because a
+deliberately left alone — `stratification_test` asserts both directions, because a
 check that rejected recursion would be worse than no check at all.
 
 **Predicate dependence is not literal.** An antecedent `(animal ?x)` is satisfied by
@@ -1016,9 +984,17 @@ So the walk runs on `genl` assert as well, once per edge, from the edge
   removing an edge only removes graph edges; a retraction can never close a cycle.
 - Only an addition that moves the closure needs checking. When `b` is already in `a`'s
   unscoped `genl` closure, the edge adds no graph edge, and the check stops at that one
-  reachability test before any roster read. A re-derived argument-type mint that a stored
+  reachability test before any rule-key read. A re-derived argument-type mint that a stored
   edge subsumes is this case (`lein perf`'s `edge-stratification-subsumed`: 16x the
   excepted rules reading `b`, under 2x).
+- Only an addition with a rule concluding a spec of `a` needs checking. Every graph edge
+  the edge adds ends at such a rule, so with none, and no rule concluding `(?p …)`, the
+  edge adds no graph edge. The check reads the consequent index under each term of `a`'s
+  unscoped spec closure, which the edge does not move, and stops before it reads a rule
+  above `b`. A spec closure holding more terms than the store holds rules skips this test
+  and walks. An edge between two types of a generated vocabulary, which no rule
+  concludes, is this case (`lein perf`'s `edge-stratification-unconcluded`: 16x the rules
+  reading `b`, under 2x).
 
 `stratification_edge_test` compares the walk with the probe's whole graph, built along
 the edges over the spec closures, on the reference generator's random worlds: the same
@@ -1036,7 +1012,7 @@ closure that learned the edge.
 **Fast path, again:** no stored rule carries a negative edge
 (`checks/negative-edge-rules`), so the graph has none and nothing is walked. An
 ordinary `genl` assert pays two set reads and stops — which is every `genl` assert in
-the bundled starter. `stratification_edge_test` pins that by *counting* the walks
+the bundled starter. `stratification_edge_test` asserts that by *counting* the walks
 rather than timing them.
 
 A `genlCx` edge is not walked. The dependency graph is over **predicates**, and its
@@ -1186,8 +1162,10 @@ concludes nothing. Two `exceptWhen`s written together conjoin into one meta-sent
   `settle` runs it over the newly-blocked justifications' conclusions.
 - **Revival.** `retract!` captures the released rules before settling and re-chains
   them, so the re-derivation is visible by the time it returns.
-- **`why-not`** carries a `(kb sentence context)` arity and the `:excepted` reason, which
-  is the only route to a blocked conclusion: it is never stored, so there is no handle.
+- **`why-not`** carries a `(kb sentence context)` arity and the `:excepted` reason. The
+  sentence arity is the only route to a conclusion blocked through `:monotonic` facts,
+  which is never stored. A conclusion stored with a guard defeat answers `:excepted`
+  through the handle arity too (`except_test`).
 - **Stratification.** `wff/negation-cycle` walks the rule dependency graph on every
   rule assert and refuses one that closes a cycle through negation, before anything
   is stored. Per the measurement below it is a *correctness* guard, not an
@@ -1275,7 +1253,7 @@ one reintroduced puts the curve back:
 The lesson is the ordinary one about attributing a measurement: the structure of the curve
 says "quadratic in the firing count" and the first plausible mechanism fits it, but the
 call sites tell a different story, and only one of the two candidates is on the
-benchmark's path. `except_recheck_test` pins both, by count rather than by clock.
+benchmark's path. `except_recheck_test` asserts both, by count rather than by clock.
 
 ## Two mechanisms this makes unnecessary, and why neither belongs here
 

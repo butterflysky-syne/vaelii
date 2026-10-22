@@ -6,7 +6,7 @@
   cannot drift.
 
   A chunked stream is a run of `[int32 length][compressed chunk]`, each chunk an
-  independent compression window over back-to-back nippy frames.  Constant memory on both
+  independent compressed stream over back-to-back nippy frames.  Constant memory on both
   sides: the writer holds one chunk and never the corpus, and the reader thaws a chunk on
   demand and drops it.  A *frame* is whatever the caller freezes — a record's field map, an
   index `[key value]` pair, a JTMS `[handle label]` pair — this namespace neither reads a
@@ -25,8 +25,8 @@
   names live here too, beside the framing they name (`meta-file` and its six siblings
   below).
 
-  The legacy single-window reader (`read-window-seq`) is kept for a v4/v5 foreign dump that
-  wrote one compression window over the whole file; the engine's own dumps have been chunked
+  The legacy single-stream reader (`read-single-stream-seq`) is kept for a v4/v5 foreign dump that
+  wrote one compressed stream over the whole file; the engine's own dumps have been chunked
   since v6."
   (:require [clojure.java.io :as io]
             [taoensso.nippy :as nippy]
@@ -42,7 +42,7 @@
 ;;; One home for the stream names the export writer and the import reader share, so the
 ;;; two halves of the round trip cannot drift: a rename on the write side alone would
 ;;; produce a dump the reader reports as *missing* rather than misnamed, and the
-;;; discovery moment would be a restore.  `round_trip_test` pins the literal spellings:
+;;; discovery moment would be a restore.  `round_trip_test` asserts the literal spellings:
 ;;; the layout is a frozen wire contract, so a change here is a format version.
 
 (def meta-file
@@ -72,7 +72,7 @@
 (def ^:private xz-dict-bytes
   "The LZMA2 dictionary an `:xz` chunk is compressed against.
 
-  A chunk is its own compression window, so the dictionary can never fill past the chunk
+  A chunk is its own compressed stream, so the dictionary can never fill past the chunk
   — and `LZMA2Options`'s default is a preset-6 8 MiB one, against a default 10,000-frame
   chunk that measures about 1 MB.  Sizing it to the chunk adds no work and saves the
   difference: over a 34k-sentex dump's sentex stream the compressed bytes are **identical**
@@ -80,7 +80,7 @@
   working set falls from 93 MB to 12 MB.  This is that with headroom: a **2 MiB**
   dictionary, whose encoder allocates about 24 MB (`vaelii.impl.io.export` quotes that
   figure, so the two move together).  A caller
-  who raises `:chunk-size` past it loses only the matches a window wider than this would
+  who raises `:chunk-size` past it loses only the matches a dictionary larger than this would
   have found."
   (* 2 1024 1024))
 
@@ -345,8 +345,8 @@
                   (do (.close in) nil))))]
     (framed in step)))
 
-(defn read-window-seq
-  "Lazy seq of frames from a legacy v4/v5 stream file — one compression window over
+(defn read-single-stream-seq
+  "Lazy seq of frames from a legacy v4/v5 stream file — one compressed stream over
   back-to-back frames, read serially.  The stream closes as `read-chunked-seq`'s does."
   [file compression]
   (let [^DataInputStream in (DataInputStream.

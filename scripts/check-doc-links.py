@@ -21,7 +21,7 @@ dangles). Test sources (test/**) are skipped: they may carry deliberate
 dead-link fixtures.
 
 vaelii is a self-contained repo, so every relative link must resolve inside
-it. --public-view is a release gate: it additionally flags any link whose target
+it. --public-docs is a release check: it additionally flags any link whose target
 escapes the repo root — a leak out of the standalone release into a sibling
 checkout that a public reader would not have.
 """
@@ -31,7 +31,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def is_public_doc(path):
-    """User-facing doc set the --public-view gate applies to."""
+    """User-facing doc set the --public-docs check applies to."""
     rel = os.path.relpath(path, ROOT)
     return rel in SCAFFOLDING or rel.startswith("docs" + os.sep)
 
@@ -126,14 +126,14 @@ def source_files():
                 yield os.path.join(dirpath, n)
 
 
-public_view = "--public-view" in sys.argv[1:]
+public_docs = "--public-docs" in sys.argv[1:]
 
 missing, escaping, dead_anchors = [], [], []
 for path in md_files():
     with open(path) as fh:
         lines = fh.readlines()
     rel = os.path.relpath(path, ROOT)
-    public = public_view and is_public_doc(path)
+    public = public_docs and is_public_doc(path)
     in_fence = False
     for i, line in enumerate(lines, 1):
         if FENCE.match(line):
@@ -196,14 +196,14 @@ if src_missing:
         print("  " + x)
     fail = True
 
-if public_view:
+if public_docs:
     if escaping:
-        print(f"PUBLIC-VIEW VIOLATIONS ({len(escaping)} link(s) escape the repo):")
+        print(f"PUBLIC-DOCS VIOLATIONS ({len(escaping)} link(s) escape the repo):")
         for x in escaping:
             print("  " + x)
         fail = True
     else:
-        print("public-view: no doc links escape the repo.")
+        print("public-docs: no doc links escape the repo.")
 
 if fail:
     sys.exit(1)

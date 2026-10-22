@@ -87,7 +87,7 @@
 (tu/deftest-kb a-command-word-the-table-does-not-know-is-refused-with-the-table
   ;; The refusal is for a typo at the shell.  Dispatched as nothing it would exit 0
   ;; having run no command — `asserr '(dog Muffet)' CxCli` looks like a stored fact to
-  ;; whoever typed it — so the word comes back named, with the roster of the ones that
+  ;; whoever typed it — so the word comes back named, with the list of the ones that
   ;; do exist for a shell to print.
   (let [e (is (thrown? clojure.lang.ExceptionInfo (cli/dispatch kb "frobnicate" [] {})))
         d (ex-data e)]
@@ -327,13 +327,13 @@
             (is (= :disk-snapshot (:backend r)))
             (is (= :current (:reasoning r)))
             (is (= before (slurp manifest)))))
-        (testing "an image stamped with other engine source is declined, rebuilt and restamped"
+        (testing "an image written under other engine source is declined, rebuilt and rewritten"
           (spit manifest (pr-str (assoc (edn/read-string (slurp manifest)) :source "stale")))
           (let [r (cli/upgrade! dir)]
             (is (= :rebuilt (:reasoning r)))
             (is (not= "stale" (:source (edn/read-string (slurp manifest)))))
             (is (= :current (:reasoning (cli/upgrade! dir)))
-                "the restamped image is current for the next upgrade")))
+                "the rewritten image is current for the next upgrade")))
         (finally (rm-rf! (io/file dir)))))
     (testing "a directory holding no store is refused, and no store is created in it"
       (let [dir (str (Files/createTempDirectory "vaelii-cli-empty" (make-array FileAttribute 0)))]
@@ -343,7 +343,7 @@
             (is (empty? (.list (io/file dir)))))
           (finally (rm-rf! (io/file dir))))))))
 
-(deftest upgrade-trusts-a-restamped-source-or-verifies-it-by-a-recover
+(deftest upgrade-trusts-a-rewritten-source-or-verifies-it-by-a-recover
   (tu/with-snapshot-platform
     (let [dir      (snapshot-store!)
           manifest (io/file dir "reasoning" "manifest.edn")
@@ -360,6 +360,25 @@
             (is (= :rebuilt (:reasoning r)))
             (is (= {:labels :same :against "stale"} (select-keys (:verify r) [:labels :against])))
             (is (not (.exists (io/file dir "reasoning.prev"))) "the old image is deleted once compared")))
+        (finally (rm-rf! (io/file dir)))))))
+
+(deftest upgrade-under-trust-keeps-an-image-of-other-source-and-rebuilds-a-moved-one
+  (tu/with-snapshot-platform
+    (let [dir      (snapshot-store!)
+          manifest (io/file dir "reasoning" "manifest.edn")
+          rewrite! #(spit manifest (pr-str (assoc (edn/read-string (slurp manifest)) %1 %2)))]
+      (try
+        (rewrite! :source "stale")
+        (is (= :current (:reasoning (cli/upgrade! dir {:trust true}))))
+        (is (= "stale" (:source (edn/read-string (slurp manifest)))))
+        (rewrite! :records {:moved true})
+        (is (= :rebuilt (:reasoning (cli/upgrade! dir {:trust true})))
+            "records the image does not describe are recovered from")
+        (is (not= "stale" (:source (edn/read-string (slurp manifest)))))
+        (is (= {:type :unknown-option :mismatch :conflict}
+               (select-keys (ex-data (is (thrown? clojure.lang.ExceptionInfo
+                                                  (cli/upgrade! dir {:trust true :verify true}))))
+                            [:type :mismatch])))
         (finally (rm-rf! (io/file dir)))))))
 
 (deftest compare-images-reads-a-belief-change-off-the-labels
@@ -482,7 +501,7 @@
     (is (re-find #"--starter" (ex-message e)) "the refusal names the swallowed flag")))
 
 (deftest a-flag-a-command-does-not-read-is-refused-rather-than-dropped
-  ;; The roster `parse-opts` holds says which flags exist; this one says which command
+  ;; The flag list `parse-opts` holds says which flags exist; this one says which command
   ;; may carry which. `match … --strength monotonic` bound the option, ran a read that
   ;; never looks at it, and reported nothing — indistinguishable from a strength that
   ;; was applied.

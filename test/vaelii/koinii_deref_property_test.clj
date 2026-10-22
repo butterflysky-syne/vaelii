@@ -3,7 +3,7 @@
 (ns vaelii.koinii-deref-property-test
   "Generative property tests for koinii cross-seat dereference
   (`vaelii.koinii.deref`): the invariants the example-based
-  `koinii_deref_test` pins on a handful of hand-built scenarios, restated as
+  `koinii_deref_test` asserts on a handful of hand-built scenarios, restated as
   test.check properties over randomly generated assertions.
 
   Every fact is drawn from three SMALL fixed pools — camelCase predicates,
@@ -13,7 +13,7 @@
   one assertion, distinct locators from distinct assertions) are actually
   exercised rather than assumed away by unique gensyms.
 
-  What each `defspec` pins:
+  What each `defspec` asserts:
 
   - `locator-is-content-addressed-and-handle-independent` — a locator is a
     function of the assertion, agreeing across two independent seats that reached

@@ -81,12 +81,12 @@
       Like `blocked` the map is *derived* — core recomputes it each
       settle from the equality closure — so belief stays order independent.
 
-    * forced — three sets the forced-monotonic roster writes (docs/nmtms.md, \"The
-      forced-monotonic roster\"): `:mono`, premises whose class is `:monotonic` whatever
+    * forced — three sets the forced-monotonic set writes (docs/nmtms.md, \"The
+      forced-monotonic set\"): `:mono`, premises whose class is `:monotonic` whatever
       strength they carry; `:out`, datums the fixpoint never adds, a premise included;
       and `:void`, justifications that support nothing and confer no class.  Each is an
       **attribute** of the element it names, written by the caller with the element and
-      rewritten when the roster moves (`set-forced`), so the stored content keeps the
+      rewritten when the forced-monotonic set moves (`set-forced`), so the stored content keeps the
       strength it was written at and every record a forced set governs stays stored.
 
     * blocked — a set of *justification* ids whose rule's exception currently holds
@@ -141,7 +141,7 @@
   neither representation can forget one.  A call that turns out to move no label bumps
   anyway, which costs a re-derivation and never a wrong answer.
 
-  The clock moves on both sides of the mutation.  A cache stamps an entry with the clock
+  The clock moves on both sides of the mutation.  A cache keys an entry by the clock value
   it read before computing, and installs the entry only when the clock still reads that
   value afterwards (`literal-cache/lookup`, `provers/cached-reach`).  The move before the
   mutation keeps a read made inside it from being served an entry computed before it.
@@ -342,7 +342,7 @@
     (if (< (long depth) (long (:depth n 0)))
       (lower-depth* state datum depth)
       state)
-    ;; A node the window **created** is noted as it is created, and that is the only
+    ;; A node **created** since the last reset is noted as it is created, and that is the only
     ;; place the distinction exists: by the time the relabel that follows reads the
     ;; graph, a brand-new node and a stored one that has been OUT for a hundred settles
     ;; look identical — neither is believed, and both are about to be.  `touched-new` is
@@ -543,9 +543,9 @@
                          (get-in nodes [d :consequences])))))))))
 
 (defn- note-epoch
-  "`state` with `hs` recorded in the window's open epoch, the one the last `-touch-mark`
-  opened: what `-touched-since` reads.  No epoch is open before the first mark of a
-  window, so a window nobody marks records nothing twice."
+  "`state` with `hs` recorded in the open epoch, the one the last `-touch-mark`
+  opened: what `-touched-since` reads.  No epoch is open before the first mark since the
+  last reset, so touched sets nobody marks record nothing twice."
   [state hs]
   (let [es (:epochs (:marks state))]
     (if (seq es)
@@ -564,10 +564,10 @@
   would therefore be in the region itself."
   [state region]
   (let [old-in   (:in state #{})
-        ;; the region members this window has not relabelled yet — their label right now
-        ;; is their label before anything in the window moved, and that is the reading
+        ;; the region members not relabelled since the last reset — their label right now
+        ;; is their label before anything since the reset moved, and that is the reading
         ;; `touched-in` wants.  A member relabelled earlier already contributed its own,
-        ;; and the earlier one is the one that predates the window.
+        ;; and the earlier one is the one that predates the reset.
         fresh    (into #{} (remove (:touched state #{})) region)
         ;; only the justifications that can conclude something in the region matter
         cands    (into [] (comp (mapcat #(get-in state [:nodes % :supports] #{}))
@@ -641,17 +641,17 @@
     ;; identical to the per-conclusion relabel, only cheaper.
     ;;
     ;; The consequence still enters `touched`, and that is not a hedge against the fast
-    ;; path being wrong about belief.  A caller reading the window asks a slightly larger
+    ;; path being wrong about belief.  A caller reading the touched set asks a slightly larger
     ;; question — *is what I published about this datum still current* — and a second
-    ;; witness moves the answer to that while moving no label: a reader of the window
+    ;; witness moves the answer to that while moving no label: a reader of the touched set
     ;; that kept an answer about the datum keeps one that reads fewer reasons than the KB
     ;; holds.  Noting one handle is O(1) where
     ;; polling every standing pair for its support count is O(standing) per settle — which
     ;; `lein perf`'s `negation-arbitration` measures as a 19% worse growth ratio at 800
     ;; standing dilemmas, against no measurable change for this.  `touched-in` takes it too,
-    ;; or the window would read as "newly believed" — but only when this window has not
-    ;; relabelled it already, since an earlier relabel's answer is the one that predates
-    ;; the window (`relabel-region*`'s `fresh`).
+    ;; or the touched set would read as "newly believed" — but only when no relabel since
+    ;; the last reset has relabelled it already, since an earlier relabel's answer is the
+    ;; one that predates the reset (`relabel-region*`'s `fresh`).
     (if (and (contains? in consequence)
              (or (not (valid? just in (:blocked state #{}) (forced-set state :void)))
                  (let [cls (get (:classes state) consequence :default)]
@@ -891,7 +891,7 @@
             state  (-> state
                        (assoc-in [:forced kind] (if on? (into cur moved) (disj-all cur moved)))
                        (relabel-region* region))]
-        ;; what the change took OUT, for `revived` to re-seed if it comes back this window
+        ;; what the change took OUT, for `revived` to re-seed if it comes back before the reset
         (update state :touched-out (fnil into #{}) (remove #(contains? (:in state) %)) was)))))
 
 (defn- swap-with-result!
@@ -920,7 +920,7 @@
 
 ;; ---- the reference implementation: one atom, one persistent map ---------
 
-(defn- ref-view
+(defn- ref-state
   "The state map a `RefTms` read answers from, given its `hold` and `state` fields: the map
   the open hold took when it opened, for a thread other than its owner that
   `observe/reads-held-in?` says reads it, and otherwise the live map.
@@ -952,23 +952,23 @@
   (deref [_] @state)
   Tms
   (-believed? [_ datum]
-    (let [s (ref-view hold state)]
+    (let [s (ref-state hold state)]
       (and (contains? (:in s #{}) datum)
            (not (contains? (:superseded s {}) datum)))))
-  (-believed [_] (let [s (ref-view hold state)] (seq (remove (:superseded s {}) (:in s #{})))))
-  (-any-node?   [_] (boolean (seq (:nodes (ref-view hold state)))))
-  (-any-belief? [_] (let [s (ref-view hold state)]
+  (-believed [_] (let [s (ref-state hold state)] (seq (remove (:superseded s {}) (:in s #{})))))
+  (-any-node?   [_] (boolean (seq (:nodes (ref-state hold state)))))
+  (-any-belief? [_] (let [s (ref-state hold state)]
                       (boolean (first (remove (:superseded s {}) (:in s #{}))))))
-  (-node? [_ datum] (contains? (:nodes (ref-view hold state)) datum))
-  (-datums [_] (keys (:nodes (ref-view hold state))))
-  (-depth [_ datum] (get-in (ref-view hold state) [:nodes datum :depth] 0))
-  (-premise? [_ datum] (boolean (get-in (ref-view hold state) [:nodes datum :premise?])))
-  (-premise-strength [_ datum] (get-in (ref-view hold state) [:nodes datum :premise-strength]))
+  (-node? [_ datum] (contains? (:nodes (ref-state hold state)) datum))
+  (-datums [_] (keys (:nodes (ref-state hold state))))
+  (-depth [_ datum] (get-in (ref-state hold state) [:nodes datum :depth] 0))
+  (-premise? [_ datum] (boolean (get-in (ref-state hold state) [:nodes datum :premise?])))
+  (-premise-strength [_ datum] (get-in (ref-state hold state) [:nodes datum :premise-strength]))
   (-defeat-class [_ datum]
-    (let [s (ref-view hold state)]
+    (let [s (ref-state hold state)]
       (when (contains? (:in s) datum) (get (:classes s) datum :default))))
-  (-blocked [_] (:blocked (ref-view hold state) #{}))
-  (-superseded [_] (:superseded (ref-view hold state) {}))
+  (-blocked [_] (:blocked (ref-state hold state) #{}))
+  (-superseded [_] (:superseded (ref-state hold state) {}))
   (-touched [_] (:touched @state #{}))
   (-touched-in [_] (:touched-in @state #{}))
   (-touched-new [_] (:touched-new @state #{}))
@@ -992,10 +992,10 @@
       (if (and mark (= g gen) (< i (count epochs)))
         (into #{} cat (subvec epochs i))
         (:touched st #{}))))
-  (-supports [_ datum] (get-in (ref-view hold state) [:nodes datum :supports] #{}))
-  (-dependents [_ datum] (get-in (ref-view hold state) [:nodes datum :consequences] #{}))
-  (-justification [_ jid] (get-in (ref-view hold state) [:justs jid]))
-  (-justifications [_] (vals (:justs (ref-view hold state))))
+  (-supports [_ datum] (get-in (ref-state hold state) [:nodes datum :supports] #{}))
+  (-dependents [_ datum] (get-in (ref-state hold state) [:nodes datum :consequences] #{}))
+  (-justification [_ jid] (get-in (ref-state hold state) [:justs jid]))
+  (-justifications [_] (vals (:justs (ref-state hold state))))
   (-ensure-node [_ datum depth]
     ;; skip the swap when it would write back a value-identical map — a node already
     ;; present at a depth no higher than `depth` is exactly what `ensure*` leaves
@@ -1011,8 +1011,8 @@
   (-add-justification [_ just] (swap! state add-just* just) nil)
   (-restrength-informant [_ informant strength]
     (swap! state restrength-informant* informant strength) nil)
-  (-forced? [_ kind x] (contains? (forced-set (ref-view hold state) kind) x))
-  (-forced-members [_ kind] (forced-set (ref-view hold state) kind))
+  (-forced? [_ kind x] (contains? (forced-set (ref-state hold state) kind) x))
+  (-forced-members [_ kind] (forced-set (ref-state hold state) kind))
   (-set-forced [_ kind xs on?] (swap! state set-forced* kind xs on?) nil)
   (-relabel [_] (swap! state relabel-all*) nil)
   (-set-blocked [_ jids] (swap! state set-blocked* jids) nil)
@@ -1043,11 +1043,25 @@
 
   (Rules live in the stores as sentexes, not here.)"
   []
-  (->RefTms (atom {:nodes {} :justs {} :blocked #{} :superseded {}
-                   :forced {:mono #{} :out #{} :void #{}}
-                   :classes {} :in #{}
-                   :touched #{} :touched-in #{} :touched-new #{} :touched-out #{}})
-            (AtomicReference. nil)))
+  (let [state (atom {:nodes {} :justs {} :blocked #{} :superseded {}
+                     :forced {:mono #{} :out #{} :void #{}}
+                     :classes {} :in #{}
+                     :touched #{} :touched-in #{} :touched-new #{} :touched-out #{}})
+        tms   (->RefTms state (AtomicReference. nil))]
+    ;; the state map a swap replaces is the open write record's value for this network,
+    ;; the first time a swap since the record opened replaces one (`before-network`)
+    (add-watch state ::write-record
+               (fn [_ _ old _] (when observe/*write-record* (observe/record-of tms (constantly old)))))
+    tms))
+
+(defn before-network
+  "A reference network `tms` as it stood when the open write record first recorded it,
+  as a network over that state map, or `tms` itself when the record holds none or `tms`
+  is not a reference network."
+  [tms]
+  (if-let [s (and (instance? RefTms tms) (observe/recorded tms))]
+    (->RefTms (atom s) (AtomicReference. nil))
+    tms))
 
 ;; ---- public API ---------------------------------------------------------
 ;;
@@ -1080,6 +1094,12 @@
 (defn premise-strength [tms datum] (-premise-strength tms datum))
 (defn datums [tms] (-datums tms))
 
+(defn unsupported?
+  "Does the network hold a node for `datum` that is no premise and that no justification
+  concludes?"
+  [tms datum]
+  (and (-node? tms datum) (not (-premise? tms datum)) (empty? (-supports tms datum))))
+
 (defn defeat-class
   "The current defeat-class of an IN datum (monotonic / default), or nil
   when the datum is OUT.  Valid after `relabel`.
@@ -1091,12 +1111,12 @@
 
 (defn touched
   "The datums whose region has been relabelled since the last `reset-touched!` — a
-  superset of every datum whose belief could have flipped in that window.  `settle`
+  superset of every datum whose belief could have flipped since that reset.  `settle`
   reads it to tell `tax/refresh-beliefs` which handles moved, so a cache no moved
   supporter touches is skipped.
 
   Plus the datums a **redundant** justification landed on, which is the one entry here
-  whose belief provably did *not* move: the window is read as \"what I published about
+  whose belief provably did *not* move: the touched set is read as \"what I published about
   this datum may be out of date\", and a second witness for an already-believed
   conclusion moves that without moving a label (`add-just*` says why the alternative is
   worse).  Every consumer reads a superset, so an extra handle costs a re-derivation and
@@ -1104,27 +1124,27 @@
   [tms] (-touched tms))
 
 (defn touched-in
-  "The subset of `touched` whose label was **IN** when this window first relabelled it.
+  "The subset of `touched` whose label was **IN** when a relabel since the reset first reached it.
   With `touched` and current belief this set gives the label delta: a datum in `touched`
   and IN now but not here came *in*, and one here that is OUT now went *out*.  The
   superset alone cannot say which, since most of a relabelled region does not move.  A
   superseded spelling keeps an IN label and is not believed (`in?`), so `settle-finish`
-  drops the spellings superseded when the window opened before it reports belief.
+  drops the spellings superseded when the settle began before it reports belief.
 
-  \"When first relabelled\" is what makes it a reading from before the window rather
-  than from part-way through it: a datum relabelled twice keeps the earlier answer."
+  \"When first relabelled\" is what makes it a reading from before the first relabel
+  rather than from part-way through the relabels: a datum relabelled twice keeps the earlier answer."
   [tms] (-touched-in tms))
 
 (defn touched-new
-  "The datums whose **node this window created** — the ones that had no label to move
+  "The datums whose **node was created since the last reset** — the ones that had no label to move
   because they had no node.  `touched-in` cannot say this: a brand-new datum and a
-  stored one that has been OUT since the settle before both read as \"not believed when
-  the window opened\", and they are the two halves `revived` has to keep apart."
+  stored one that has been OUT since the settle before both read as \"not believed at
+  the last reset\", and they are the two halves `revived` has to keep apart."
   [tms] (-touched-new tms))
 
 (defn revived
-  "The datums this window brought **back**: relabelled, believed now, not believed when
-  the window opened, and already in the graph before it opened.
+  "The datums brought **back** since the last reset: relabelled, believed now, not
+  believed at the reset, and already in the graph at the reset.
 
   A revival is the one belief move nothing downstream of it has seen.  A datum arriving
   is chained from as it arrives; a datum losing belief withdraws its conclusions through
@@ -1133,12 +1153,12 @@
   belief-filtered matcher hid it, so a partner that arrived meanwhile joined against
   nothing.  `settle` re-seeds these onto the agenda for exactly that reason.
 
-  The three window sets between them are the whole belief delta, and this is the corner
+  The three touched sets between them are the whole belief delta, and this is the corner
   of it that costs work rather than a report: `touched` minus `touched-in` is what
   gained belief, and minus `touched-new` is the part of *that* which is not a datum the
-  writer has already chained from.  A datum a forced-set change took OUT inside the
-  window (`-touched-out`) is one too when it is believed again by the window's end,
-  whether or not it was believed when the window opened: a partner arriving while it
+  writer has already chained from.  A datum a forced-set change took OUT since the
+  reset (`-touched-out`) is one too when it is believed again when the sets are read,
+  whether or not it was believed at the reset: a partner arriving while it
   was OUT joined against nothing.
 
   The two-arity takes `touched` as the caller already read it — `settle` reads the
@@ -1156,14 +1176,14 @@
 
 (defn reset-touched!
   "Clear the accumulated touched sets (see `touched` / `touched-in` / `touched-new`).
-  `settle` clears them once it has read them, at the *end* — so the window a caller sees
+  `settle` clears them once it has read them, at the *end* — so the touched set a caller sees
   spans everything since the last settle finished, which for `edit` is the whole
   deferred batch and its one settle rather than the settle alone."
   [tms] (-reset-touched tms) tms)
 
 (defn touch-mark
-  "A mark of this point in the touched window, for a reader that asks the window more
-  than once in it: `touched-since` answers what was recorded after it.  Each reader keeps
+  "A mark of this point in the touched set, for a reader that asks the touched set more
+  than once between resets: `touched-since` answers what was recorded after it.  Each reader keeps
   its own mark."
   [tms] (-touch-mark tms))
 
@@ -1171,7 +1191,7 @@
   "The datums `touched` recorded after `mark` (`touch-mark`): a datum relabelled again
   since the mark is in it although `touched` held it already, which a set difference over
   `touched` would drop.  A superset of what moved since the mark, as `touched` is of what
-  moved in the window.  The whole of `touched` for a mark the window outdated
+  moved since the reset.  The whole of `touched` for a mark the reset outdated
   (`reset-touched!`) or a nil one."
   [tms mark] (-touched-since tms mark))
 
@@ -1273,8 +1293,8 @@
   being **removed**, which reaches the graph on exactly two paths (`retract!`,
   `sweep!`), and both clear the cache wholesale.  `add-justification` extends the
   entry it passes through, so a bound cache never disagrees with the graph it mirrors.
-  The keys are handle-content — no canonicalization — so there is no canon stamp to
-  carry (`observe/*handle-cache*`, which has one, says what that kind of stamp is
+  The keys are handle-content — no canonicalization — so there is no cache key to
+  carry (`observe/*handle-cache*`, which has one, says what that kind of key is
   for; the `:tms` slot here is identity, not currency)."
   nil)
 
@@ -1360,7 +1380,31 @@
               (-supports tms consequence)))))))
 
 ;; Every mutating entry point below wraps its mutation in `moving`, which moves the
-;; change clock a cache derived from *belief* stamps itself with before and after it.
+;; change clock a cache derived from *belief* is keyed by, before and after it.  While a
+;; write record is open, each also notes the handles whose support it moved
+;; (`moved-supports`).
+
+(defn- note-moved!
+  "Add the handles `hs` to the handles whose support `tms` moved, in the open write
+  record."
+  [tms hs]
+  (when (and observe/*write-record* (seq hs))
+    (let [^java.util.Map m (observe/record-of ::moved #(java.util.IdentityHashMap.))
+          ^java.util.Set s (or (.get m tms) (let [s (java.util.HashSet.)] (.put m tms s) s))]
+      (run! #(.add s %) hs))))
+
+(defn moved-supports
+  "The handles whose premise mark, justifications, or forced or blocked membership `tms`
+  moved since the open write record opened, as a set, or nil."
+  [tms]
+  (some-> ^java.util.Map (observe/recorded ::moved) (.get tms) set))
+
+(defn- note-removed!
+  "Note the consequences of the supports a removal (`retract!`'s shape) took, and return
+  the result."
+  [tms result]
+  (note-moved! tms (concat (map first (:removed-supports result)) (:removed-sentexes result)))
+  result)
 
 (defn ensure-node [tms datum depth] (moving (-ensure-node tms datum depth)) datum)
 
@@ -1369,6 +1413,7 @@
   ([tms datum] (add-premise tms datum :default))
   ([tms datum strength-kw]
    (moving (-add-premise tms datum (or strength-kw :default)))
+   (note-moved! tms [datum])
    datum))
 
 (defn suspend-premise
@@ -1376,7 +1421,7 @@
   effect on belief, undone by `add-premise` at the same strength.  Unknown datums no-op.
   Bare, not `!`: the node and its justifications stay.  `core/preview` is the caller
   (docs/nmtms.md)."
-  [tms datum] (moving (-suspend-premise tms datum)) datum)
+  [tms datum] (moving (-suspend-premise tms datum)) (note-moved! tms [datum]) datum)
 
 (defn add-justification
   "Add `just` to the network.  `k`, when given, is its `justification-key`, already built
@@ -1384,6 +1429,7 @@
   ([tms just] (add-justification tms just nil))
   ([tms just k]
    (moving (-add-justification tms just))
+   (note-moved! tms [(:consequence just)])
    ;; keep a bound dedup index in step: extend the one entry this justification lands
    ;; in, when that entry has been built (an absent entry rebuilds from `-supports`,
    ;; which now includes this justification, so absence needs nothing)
@@ -1397,7 +1443,7 @@
   is `informant`, and relabel the region their consequences span.
 
   A justification's `:strength` is the *rule's* contribution, read off the record at
-  fire time (`chain/rule-view-of`) — a cache of `provers/firing-strength`.  When that
+  fire time (`chain/rule-fields-of`) — a cache of `provers/firing-strength`.  When that
   moves (a re-asserted rule's defeasibility resolves strict, or an `exceptWhen` arrives
   or leaves: `special/restrength-firings!`),
   the cache must move with it, or belief keeps the arrival order the slot resolution
@@ -1425,7 +1471,9 @@
   justifications that support nothing.  A member may be written before its node or its
   justification exists, so the element never holds a label the set rules out."
   [tms kind xs on?]
-  (when (seq xs) (moving (-set-forced tms kind xs on?)))
+  (when (seq xs)
+    (moving (-set-forced tms kind xs on?))
+    (note-moved! tms (if (= :void kind) (keep #(:consequence (-justification tms %)) xs) xs)))
   tms)
 
 (defn premise-class
@@ -1465,7 +1513,14 @@
   status changed** — blocking or unblocking j can only move j's conclusion and what
   follows from it — so cost is proportional to that region, not to the graph, and a
   call that changes nothing does no work at all.  `#{}` unblocks everything."
-  [tms jids] (moving (-set-blocked tms jids)) tms)
+  [tms jids]
+  (let [old (when observe/*write-record* (-blocked tms))]
+    (moving (-set-blocked tms jids))
+    (when old
+      (let [new (set jids)]
+        (note-moved! tms (keep #(:consequence (-justification tms %))
+                               (concat (remove new old) (remove (set old) new)))))))
+  tms)
 
 (defn hold!
   "Open hold `h` (`observe/new-hold`) on `tms`, and answer whether it opened: false when a
@@ -1500,30 +1555,40 @@
                  (into stack (comp (keep #(justification tms %)) (map :consequence))
                        (dependents tms d))))))))
 
-(defn region-in
-  "The datums of `scope`, a part of `region` closed forward within it, that stay believed
-  with `extra` forced OUT and `invalid` (justification ids) read as invalid, every datum of
-  `region` outside `scope` read at its label in `base` and every datum outside `region`
-  at its live one, added to `base`: `grounded-in-region*`'s fixpoint over `scope`."
-  [tms region scope base extra belief-only invalid]
-  (let [out?        #(or (contains? extra %) (forced? tms :out %))
-        blocked-set (blocked tms)
-        just-of     #(justification tms %)
+(defn region-valid-fn
+  "`(fn [in j])`: is the justification `j` valid with `in` the believed datums of
+  `region`, the read `region-in` makes of each justification.  An antecedent or rule
+  handle in `region` is believed when `in` holds it, one outside at its live label, and
+  one `belief-only` names for `j` (a handle or a set) at its label wherever it lies.  `j`
+  is invalid when blocked, `:void` or named by `invalid`."
+  [tms region belief-only invalid]
+  (let [blocked-set (blocked tms)
         ;; raw belief for a boundary datum: reported belief plus the superseded spellings
         ;; the fixpoint keeps IN (their twin is justified by them).
         raw-in?     (fn [d] (or (in? tms d) (superseded? tms d)))
         ;; an antecedent in the region reads the recomputed set; outside it, live belief
-        believed?*  (fn [in d] (if (contains? region d) (contains? in d) (raw-in? d)))
-        valid-here? (fn [in j] (and (if-let [b (and belief-only (belief-only j))]
-                                      (let [label? (if (set? b) b #{b})]
-                                        (every? #(if (label? %) (raw-in? %) (believed?* in %))
-                                                (:antecedents j)))
-                                      (every? #(believed?* in %) (:antecedents j)))
-                                    (let [inf (:informant j)]
-                                      (or (not (integer? inf)) (believed?* in inf)))
-                                    (not (contains? blocked-set (:id j)))
-                                    (not (contains? invalid (:id j)))
-                                    (not (forced? tms :void (:id j)))))
+        believed?*  (fn [in d] (if (contains? region d) (contains? in d) (raw-in? d)))]
+    (fn [in j] (and (if-let [b (and belief-only (belief-only j))]
+                      (let [label? (if (set? b) b #{b})]
+                        (every? #(if (label? %) (raw-in? %) (believed?* in %))
+                                (:antecedents j)))
+                      (every? #(believed?* in %) (:antecedents j)))
+                    (let [inf (:informant j)]
+                      (or (not (integer? inf)) (believed?* in inf)))
+                    (not (contains? blocked-set (:id j)))
+                    (not (contains? invalid (:id j)))
+                    (not (forced? tms :void (:id j)))))))
+
+(defn region-in
+  "The datums of `scope`, a part of `region` closed forward within it, that stay believed
+  with `extra` forced OUT and `invalid` (justification ids) read as invalid, every datum of
+  `region` outside `scope` read at its label in `base` and every datum outside `region`
+  at its live one, added to `base`: `grounded-in-region*`'s fixpoint over `scope`, each
+  justification read by `region-valid-fn`."
+  [tms region scope base extra belief-only invalid]
+  (let [out?        #(or (contains? extra %) (forced? tms :out %))
+        just-of     #(justification tms %)
+        valid-here? (region-valid-fn tms region belief-only invalid)
         ;; scope premises seed the fixpoint unless forced out
         seed        (into base (filter #(and (premise? tms %) (not (out? %)))) scope)
         ;; the justifications that can conclude something in the scope
@@ -1632,8 +1697,8 @@
   [tms datum]
   ;; the one path besides `sweep!` that removes justifications — a bound dedup index
   ;; over this TMS is cleared wholesale rather than edited (see `*dedup-cache*`)
-  (moving (when-let [^java.util.Map c (dedup-cache-for tms)] (.clear c))
-          (-retract tms datum)))
+  (note-removed! tms (moving (when-let [^java.util.Map c (dedup-cache-for tms)] (.clear c))
+                             (-retract tms datum))))
 
 (defn sweep!
   "Garbage-collect the consequence closure of `seeds`: every datum in it that is not
@@ -1652,8 +1717,8 @@
   [tms seeds]
   ;; removes justifications, so a bound dedup index over this TMS is cleared (see
   ;; `*dedup-cache*`)
-  (moving (when-let [^java.util.Map c (dedup-cache-for tms)] (.clear c))
-          (-sweep tms seeds)))
+  (note-removed! tms (moving (when-let [^java.util.Map c (dedup-cache-for tms)] (.clear c))
+                             (-sweep tms seeds))))
 
 (defn drop-justification!
   "Remove the one justification `jid` from the network, relabel the region it
@@ -1670,8 +1735,8 @@
   [tms jid]
   ;; removes a justification, so a bound dedup index over this TMS is cleared (see
   ;; `*dedup-cache*`)
-  (moving (when-let [^java.util.Map c (dedup-cache-for tms)] (.clear c))
-          (-drop-justification tms jid)))
+  (note-removed! tms (moving (when-let [^java.util.Map c (dedup-cache-for tms)] (.clear c))
+                             (-drop-justification tms jid))))
 
 (defn snapshot
   "The network as one canonical persistent map (see `-snapshot`).  A testing and
@@ -1700,7 +1765,7 @@
 (caches/register-derived
  {:id :M1 :label "Labels" :kind :index :keyed-by :handle :reads [:justifications]
   :holds-content? false
-  :retired-by {:relabelled :K :roster :K :recover :R :image-install :R}
+  :retired-by {:relabelled :K :forced-monotonic :K :recover :R :image-install :R}
   :computed :write :imaged? :network :at [[:tms]]
   :value (fn [kb] (let [s (snapshot (tms-of kb))]
                     (assoc (select-keys s [:in :blocked :classes :forced :superseded])
@@ -1709,9 +1774,9 @@
   :note "IN, blocked, monotonic class, forced and superseded per handle; a mutation relabels its region inside `moving`"})
 
 (caches/register-derived
- {:id :M2 :label "Touched window" :kind :journal :keyed-by :handle :reads [:M1]
+ {:id :M2 :label "Touched set" :kind :journal :keyed-by :handle :reads [:M1]
   :holds-content? false
-  :retired-by {:relabelled :K :roster :K :settle-exit :W :recover :W}
+  :retired-by {:relabelled :K :forced-monotonic :K :settle-exit :W :recover :W}
   :computed :write :imaged? false :at [[:tms]]
   :value (fn [kb] (select-keys (snapshot (tms-of kb))
                                [:touched :touched-in :touched-new :touched-out]))

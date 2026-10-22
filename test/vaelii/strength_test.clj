@@ -58,7 +58,7 @@
   ;; *weaker* than :default under min and *loses* to it under max.  Every caller in
   ;; the engine guards against handing nil in (`conferred-class` seeds with
   ;; `(or (:strength j) :monotonic)` and reads antecedent classes with a `:default`
-  ;; default), so this pins the fallback rather than a live code path — but it is the
+  ;; default), so this asserts the fallback rather than a live code path — but it is the
   ;; behaviour those guards are guarding, and a change here would move belief.
   (is (= 0 (strength/rank-of nil)))
   (is (= 0 (strength/rank-of :strict)) "a deleted class is simply unknown")
@@ -108,7 +108,7 @@
 (deftest a-default-anywhere-in-a-chain-caps-everything-after-it
   ;; The dual: one :default premise at the head, and the whole chain is :default —
   ;; a conclusion is never stronger than what it rests on.  Together with the test
-  ;; above this pins propagation in both directions over more than one hop.
+  ;; above this asserts propagation in both directions over more than one hop.
   (let [tms (jtms/create-tms)]
     (premise tms 1 :default)
     (justify tms 101 [1] 2)

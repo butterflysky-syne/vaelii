@@ -217,10 +217,10 @@
 
   The structural key is written unconditionally, so the direct `p/lookup` paths
   (`find-sentex-handle`, the level-0 raw lookup) always walk it; `query` and the
-  matching levels go through `candidate-handles`, so this gates *their* candidate
+  matching levels go through `candidate-handles`, so this switch decides *their* candidate
   source too — never correctness: on and off return the same matches, on returns fewer
-  candidates.  Negative and flat patterns are untouched — a `:false` key keeps its
-  body whole, so it has no deep positions to narrow on.
+  candidates.  Negative and flat patterns are untouched — a `:false` key keeps its body
+  whole, so it has no deep positions to narrow on.
 
   On by default: the oracle (`structural_index_test`) proves on == off over the
   corpus, and the structural retrieval is a strict candidate-set win on a
@@ -244,7 +244,7 @@
   its worst when a ground argument sits **after** a variable, `(parentOf ?x Tom)` or
   `(rel A ?y C)`, which it can reach only by fanning out over the intervening
   variable (a round trip per value).  For exactly that case the secondary roots are a
-  *different* index order that pins the stuck position directly, and — the point of
+  *different* index order that binds the stuck position directly, and — the point of
   this refinement — intersecting **every** ground argument's predicate-scoped root
   narrows on all the known terms at once (`sentexes-with-args`: one hash lookup when a
   single argument is bound, an intersection when several are) rather than picking one
@@ -256,7 +256,7 @@
   ground argument sits behind it and the trie can only fan out over the whole root
   child set, i.e. every functor in the KB.  That fan is linear in the vocabulary,
   which is the largest thing in a broad ontology.  The predicate-agnostic read spans
-  every functor by construction — a union of the scoped roots over the slot roster —
+  every functor by construction — a union of the scoped roots over the slot predicate set —
   so one `sentexes-with-arg` read of position 1, `Muffet` answers it flat; with no
   predicate to scope by, `sentexes-with-args` takes a `nil` `pred` and intersects
   those predicate-agnostic reads.
@@ -326,21 +326,21 @@
               ;;
               ;; The secondary indexes are the only ones that see inside a negative: the
               ;; predicate extent spans both polarities (a negative roots under its positive
-              ;; body's functor) and so do the argument roots.  With neither pinned — an
+              ;; body's functor) and so do the argument roots.  With neither bound — an
               ;; open functor over open arguments — the `:false` node's own children are
               ;; the negative analogue of the root child fan a fully-open positive gets,
               ;; and they are exactly the distinct negative bodies stored.
               ;;
-              ;; Ungated, unlike the cost refinements below: `*arg-root-retrieval*` false is
-              ;; meant to give the trie as a *reference*, and for this shape the trie has no
-              ;; answer to be a reference for.
+              ;; Unconditional, unlike the cost refinements below: `*arg-root-retrieval*`
+              ;; false is meant to give the trie as a *reference*, and for this shape the
+              ;; trie has no answer to be a reference for.
               (and (sx/negative? pat) (not (sx/ground-term? body)))
               (if (or pred (seq ground)) :negative-roots :negative-fan)
 
               ;; A ground argument sitting **after** a variable, which the trie can reach
               ;; only by fanning out over the intervening variable.  This wins over the
               ;; structural walk below even when the stuck argument is a compound: the
-              ;; argument root keys the compound *whole*, so it pins in one read what the
+              ;; argument root keys the compound *whole*, so it binds in one read what the
               ;; linearized trie key still has to fan out to reach.  A ground context
               ;; behind an open argument is the same shape at the trie's last level.
               (and *arg-root-retrieval* (or stuck? scoped?)) :arg-roots
@@ -374,11 +374,54 @@
           :functor-extent (p/sentexes-with-args ix pred [] (ctx-scope pat))
           :trie           (p/lookup ix (sx/path pat)))))))
 
+(defn holding-class
+  "`handle → class` for a separation's denial (`tax/monotonic-route-witness`) and the
+  contrapositive fan (`contrapositive-predicates`): the live
+  JTMS defeat class of the handle, nil while it is OUT, and `:monotonic` for a believed
+  literal in the forced-monotonic set (`decide/forced-literal?`) whatever strength it
+  was written at.  A forced-monotonic literal goes OUT only by retraction (docs/nmtms.md, \"The
+  forced-monotonic set\"), so a declaration and the part edges a `covering` installs
+  hold for every term as a `:monotonic` edge does."
+  [kb]
+  (let [tms  (reasoning/tms kb)
+        recs (:records kb)
+        tax  (reasoning/taxonomy kb)]
+    (fn [h]
+      (when-let [c (jtms/defeat-class tms h)]
+        (if (and (not= :monotonic c)
+                 (some->> (p/get-sentex recs h) :sentence (decide/forced-literal? tax)))
+          :monotonic
+          c)))))
+
+(defn contrapositive-predicates
+  "`[straight swapped]`: the predicates a negated pattern on `f` fans over from the vantage
+  `context`, `f`'s `genl` closure through the edges the reader holds at `:monotonic`
+  (`tax/contrapositive-closure` under `holding-class`).  `straight` members are read with
+  their arguments as written, `swapped` ones with arguments 1 and 2 exchanged.  The one
+  definition the negated arms of `match1`, `subsuming-unify` and `fanned-match` read."
+  [kb f context]
+  (tax/contrapositive-closure (reasoning/taxonomy kb) f context (holding-class kb)))
+
+(defn- fan-closure
+  "`[straight swapped]` for `f` in direction `dir`: `tax/signed-closure` `:down` for a
+  positive pattern, `contrapositive-predicates` for a negated one's body (`:up`)."
+  [kb dir f context]
+  (if (= dir :up)
+    (contrapositive-predicates kb f context)
+    (tax/signed-closure (reasoning/taxonomy kb) :down f context)))
+
+(defn- contraposes?
+  "Does a negated pattern on `af` fan to `ff` from `context`?  The unscoped-strength
+  closure is tested first, since it is held across clock stretches and most pairs fail it."
+  [kb af ff context]
+  (and (contains? (first (tax/signed-closure (reasoning/taxonomy kb) :up af context)) ff)
+       (contains? (first (contrapositive-predicates kb af context)) ff)))
+
 (defn- swapped-unify
   "Bindings unifying the binary `pattern` with `fact` read with its two arguments
   exchanged, when `fact`'s predicate is in `pattern`'s predicate's swapped `dir` fan
-  (`tax/signed-closure`, `:down` for a positive pattern, `:up` for a negated one's
-  body), else nil.  nil off one map read on a KB declaring no `genlInverse`."
+  (`fan-closure`, `:down` for a positive pattern, `:up` for a negated one's body), else
+  nil.  nil off one map read on a KB declaring no `genlInverse`."
   [kb dir pattern fact bindings context]
   (let [tx (reasoning/taxonomy kb)]
     (when-not (tax/genl-inverse-free? tx)
@@ -386,7 +429,7 @@
             ff (when (sequential? fact) (first fact))]
         (when (and (symbol? pf) (not (sx/variable? pf)) (symbol? ff) (not (sx/variable? ff))
                    (= 3 (count pattern)) (= 3 (count fact))
-                   (contains? (second (tax/signed-closure tx dir pf context)) ff))
+                   (contains? (second (fan-closure kb dir pf context)) ff))
           (unify-args (rest pattern) (list (nth fact 2) (nth fact 1)) bindings))))))
 
 (defn match1
@@ -408,7 +451,9 @@
   directions are exclusive: `(not (dog Muffet))` does not satisfy `(not (animal ?x))`,
   which is the reading a fan in the positive direction would give it.  Both sides must
   be negations for this to apply; a negation matched against a positive fact fails on
-  polarity as it does anywhere else.
+  polarity as it does anywhere else.  The negated fan climbs only the edges the reader
+  holds at `:monotonic` (`contrapositive-predicates`): a `:default` edge does not
+  contrapose.
 
   **The subsumption is scoped when a `context` is given**: the predicate-genl closure is
   walked only through the edges that context can see, so a match reached through a `genl`
@@ -427,7 +472,7 @@
            af (when (sequential? a) (first a))
            ff (when (sequential? f) (first f))]
        (or (if (and (symbol? af) (not (sx/variable? af)) (symbol? ff) (not= af ff)
-                    (contains? (first (tax/signed-closure (reasoning/taxonomy kb) :up af context)) ff))
+                    (contraposes? kb af ff context))
              (unify-args (rest a) (rest f))             ; genl of the body: unify the arguments
              (unify antecedent fact))
            ;; a `genlInverse` above the body's predicate: the arguments swapped
@@ -469,7 +514,8 @@
 
   **Under a negation the fan reverses**, exactly as it does in `match1`: a rule
   concluding `(not (animal ?x))` answers the goal `(not (dog Tom))`, because `dog ⊑
-  animal` entails `¬animal ⊑ ¬dog`.  Both sides must be negations; a negated goal
+  animal` entails `¬animal ⊑ ¬dog`, through the edges the reader holds at `:monotonic`
+  only (`contrapositive-predicates`).  Both sides must be negations; a negated goal
   against a positive consequent falls through to the plain `unify`, which rejects it on
   the functor.
 
@@ -490,11 +536,13 @@
          cf   (when (sequential? c) (first c))
          ;; the polarity picks the direction: a *spec* conclusion answers a positive
          ;; goal, a *genl* conclusion answers a negated one
-         reach (fn [tx f ctx] (first (tax/signed-closure tx (if neg? :up :down) f ctx)))]
+         reach? (if neg?
+                  #(contraposes? kb %1 %2 context)
+                  #(contains? (first (tax/signed-closure (reasoning/taxonomy kb) :down %1 context)) %2))]
      (or (if (and (symbol? gf) (not (sx/variable? gf))
                   (symbol? cf) (not (sx/variable? cf))
                   (not= gf cf)
-                  (contains? (reach (reasoning/taxonomy kb) gf context) cf))
+                  (reach? gf cf))
            (unify-args (rest g) (rest c) bindings)
            (unify goal consequent bindings))
          ;; a `genlInverse` spec conclusion (a genl one, under a negation): swapped
@@ -554,6 +602,31 @@
 
        :else
        (into var-conseq (by-conseq pred))))))
+
+(defn concludes?
+  "Is `concluding-rule-handles` non-empty, asked in every context — the same buckets,
+  read until the first one holding a rule.
+
+  `provers/shadowing-channels` asks only this, once per goal.  Built as the whole set, the
+  answer cost a probe per spec of the goal's predicate whatever the first probe found: a
+  ground `(different A B)` under 3,054 sub-predicates and 3,050 swapped ones took 12 ms,
+  and a forward join tests one per row.  The variable-consequent catch-all is read first,
+  since a rule filed there concludes every predicate, so a KB holding one answers in one
+  read.
+
+  It reads every context, past the reader's ancestor set, because the answer only decides
+  whether a computed prover may answer alone: a rule the reader cannot see sends the goal
+  down the union path, which costs time and never an answer."
+  [kb pred context]
+  (let [idx  (:index kb)
+        held (fn [k] (seq (reads/as-stored-rules-by-consequent-global idx k)))]
+    (boolean
+     (or (held p/var-consequent-key)
+         (cond
+           (sx/variable? pred) (seq (reads/as-stored-rules-in-global idx :rule))
+           (symbol? pred)      (let [[st sw] (tax/signed-closure (reasoning/taxonomy kb) :down pred context)]
+                                 (or (some held st) (some held sw)))
+           :else               (held pred))))))
 
 (defn rule-visible-from?
   "May a rule stored in `rule-ctx` answer a goal asked from `context`?
@@ -628,7 +701,7 @@
   *stored* rule is not a *believed* one.  Both chainers reach a rule through the rule
   index, which posts on storage and knows nothing of belief, so without this a rule
   whose support has gone on holding conclusions the KB no longer has grounds for — and
-  a **derived** rule (one a generator stamped out, docs/generators.md) would never come
+  a **derived** rule (one a generator generated, docs/generators.md) would never come
   back out of the KB at all, since retracting what licensed it is the only way it can
   leave.
 
@@ -640,7 +713,7 @@
   answer here is a rule that silently stops firing.
 
   An **inert rule** is a different thing and is *not* what this arm is about: it is
-  believed like any other rule and gated by its `:engines` alone
+  believed like any other rule and kept from firing by its `:engines` alone
   (`rules/forward-sentex?` / `backward-sentex?`), which is what makes it documentation
   rather than an absence (docs/inference.md)."
   [kb handle]
@@ -675,10 +748,11 @@
   ([kb handle context defeats?]
    (boolean
     (and (jtms/in? (reasoning/tms kb) handle)
-         ;; The stored excepts and defeats gate the context-sensitive cascade walk: only
-         ;; a KB that can hide something runs it.  `placed-reads?` comes first because it
-         ;; is two count reads on the index where `exc/closure-excepted-anywhere?` is an
-         ;; `exc/excepted?` per context holding an except.
+         ;; The context-sensitive cascade walk runs only when an except or a defeat is
+         ;; stored: only a KB that can hide something runs it.  `placed-reads?` comes first
+         ;; because it is two count reads on the index where
+         ;; `exc/closure-excepted-anywhere?` is an `exc/excepted?` per context holding an
+         ;; except.
          (or (and (or (not defeats?) (not (exc/placed-reads? kb)))
                   (not (exc/closure-excepted-anywhere? kb handle)))
              (not (if defeats?
@@ -703,8 +777,8 @@
   hiding it (`supporter-visible?` with no `defeat` read).  An except can hide a
   supporter at its own context while a meta-exception restores it in only one descendant
   ancestor set, so assertion contexts alone do not decide that case.
-  `exc/closure-excepted-anywhere?` is the coarse gate, so the ordinary placement path
-  takes no ancestor set walk when no except reaches the supporters.  A firing's
+  `exc/closure-excepted-anywhere?` is the coarse presence check, so the ordinary placement
+  path takes no ancestor set walk when no except reaches the supporters.  A firing's
   conclusion, a placed nogood, a guard defeat and an inherited clash's askers read it."
   [kb handles contexts]
   (let [tax (reasoning/taxonomy kb)]
@@ -756,8 +830,8 @@
 (defn- spelling-representative-in
   "`term`'s spelling-only representative as `visible?` sees the rewriteOf renames — used
   inside a quoting function's arguments, where a mention tracks a spelling rename but not
-  an identity merge (`tax/spelling-representative`).  Gated by `merged?`, so an unmerged
-  symbol is one map miss."
+  an identity merge (`tax/spelling-representative`).  The lookup runs only when `merged?`
+  holds, so an unmerged symbol is one map miss."
   [kb visible? term]
   (let [tax (reasoning/taxonomy kb)]
     (if (tax/merged? tax term)
@@ -779,7 +853,7 @@
   leaves these positions unrewritten too, so a stored `(not (equals (fatherOf (fatherOf
   Tom)) (grandfather_of Tom)))` is not restated by the equation it denies.
   `kb/equality-predicates`, which cannot be required here (`kb` requires this namespace),
-  mirrors it; `equality_test` pins the two in step."
+  mirrors it; `equality_test` asserts the two in step."
   rewrite/equality-relations)
 
 (defn equation?
@@ -814,9 +888,9 @@
 
 (defn- representative-term-plain
   "The ordinary congruence walk — every non-variable symbol to its class representative,
-  recursively.  The path every KB with no `quoting_function` takes.  An equality relation's
-  arguments are a mention: rewritten by spelling only, never folded onto a `sameAs`
-  referent (`equality-mention-heads`)."
+  recursively, for a sentence with no quoted position (`any-mention-position?`).  An
+  equality relation's arguments are a mention: rewritten by spelling only, never folded
+  onto a `sameAs` referent (`equality-mention-heads`)."
   [kb visible? term]
   (cond
     (sequential? term)
@@ -838,10 +912,10 @@
        (sequential? (nth term 2))))
 
 (defn- any-mention-position?
-  "Does `term` contain a quoted position at all — a `quoting_function` application, or an
-  attitude?  The gate that keeps the flat reads flat: a KB granting `believes` has marks,
-  but almost every sentence in it quotes nothing, and this answers that with a structural
-  walk and two set lookups per compound head."
+  "Does `term` contain a quoted position at all — a quoting function's application, or an
+  attitude?  This presence check keeps the flat reads flat: almost every sentence quotes
+  nothing, and this answers that with a structural walk and two set lookups per compound
+  head."
   [marks term]
   (boolean
    (when (sequential? term)
@@ -850,7 +924,7 @@
          (some #(any-mention-position? marks %) term)))))
 
 (defn- representative-term-mention
-  "The mention-aware walk.  Inside a **quoted position** — a `quoting_function`'s arguments,
+  "The mention-aware walk.  Inside a **quoted position** — a quoting function's arguments,
   or the proposition a `modal_predicate` attributes to its agent — symbols are rewritten by
   spelling (`rewriteOf`) only, so a quoted term does not fold onto a `sameAs` / `equals`
   referent.  `spelling?` turns on there and stays on all the way down: the whole quoted
@@ -900,16 +974,17 @@
   difference is congruence — with `(sameAs Kilogram Kg)` believed, `(QuantityFn 5
   Kilogram)` and `(QuantityFn 5 Kg)` normalize to one term here and to two there.
 
-  **Mention opacity.** Two declarations make a position a *mention* — a term named as
+  **Mention opacity.** Two kinds of head make a position a *mention* — a term named as
   syntax, rewritten by *spelling* (`rewriteOf`) only and never by a `sameAs` / `equals`
-  identity merge, so a quoted term does not fold onto its referent's class.  A
-  `quoting_function` (`Quote`, `Quasiquote`) quotes its arguments; a `modal_predicate`
+  identity merge, so a quoted term does not fold onto its referent's class.  A quoting
+  function (`Quote`, `Quasiquote`, fixed by the engine: `sx/quoting-functors`) quotes its
+  arguments; a `modal_predicate`
   (`believes`, and whatever else is granted) quotes the **proposition** it attributes,
   because an attitude is opaque: from *Oedipus believes he married Jocasta* and *Jocasta is
   his mother* it does not follow that he believes he married his mother, and the asker's
   merges are not his.  What the agent's *own* context merges does apply, and applies where
-  the projection reads it (`provers/BeliefProjectionProver`).  Gated on `tax/mention-marks`: a
-  KB declaring neither takes the plain walk unchanged, two prop reads at entry.
+  the projection reads it (`provers/BeliefProjectionProver`).  The marks are read once at
+  entry (`tax/mention-marks`); a compound node pays two set lookups for them.
 
   This covers ground congruence, which is what an identity merge does.  The oriented
   equational rewriting `kb/rewrite-term*` applies after it (`rewrite/normalize-sentence`)
@@ -920,34 +995,11 @@
   The mention marks are read unscoped: whether an argument is a mention is a fact
   about the sentence (`tax/mention-marks`)."
   [kb visible? term]
-  (if-let [marks (tax/mention-marks (reasoning/taxonomy kb))]
-    (representative-term-mention kb visible? marks term false)
-    (representative-term-plain kb visible? term)))
-
-(defn- displacements-plain
-  "Every non-variable symbol of `sentence` mapped to its class representative when that
-  differs — the `{old rep}` a plain congruence rewrite records.  Structure‑aware for one
-  reason: an equality relation's arguments are a mention (spelling‑only), so a
-  `sameAs`‑merged term inside a `(sameAs …)` is **not** recorded displaced — matching what
-  `representative-term-plain` rewrites, so `why-not` and the supersession agree with it."
-  [kb visible? sentence]
-  (letfn [(walk [term spelling? acc]
-            (cond
-              (sequential? term)
-              (if (and (not spelling?) (equality-mention-heads (first term)))
-                (reduce #(walk %2 true %1) (walk (first term) false acc) (rest term))
-                (reduce #(walk %2 spelling? %1) acc term))
-              (and (symbol? term) (not (sx/variable? term)))
-              (let [r (if spelling?
-                        (spelling-representative-in kb visible? term)
-                        (representative-in kb visible? term))]
-                (if (not= r term) (assoc acc term r) acc))
-              :else acc))]
-    (walk sentence false {})))
+  (representative-term-mention kb visible? (tax/mention-marks (reasoning/taxonomy kb)) term false))
 
 (defn- displacements-mention
   "Mention-aware collector, the traversal `representative-term-mention` rewrites by: inside
-  a quoted position — a `quoting_function`'s arguments, or a `modal_predicate`'s proposition —
+  a quoted position — a quoting function's arguments, or a `modal_predicate`'s proposition —
   a symbol moves by *spelling* (`rewriteOf`) only, so a quoted term whose referent merged
   under a `sameAs` is **not** recorded displaced.  The `why-not` map then names only the
   terms the rewrite actually moved."
@@ -984,14 +1036,13 @@
 (defn displaced-terms-in
   "The `{old-term representative}` rewrites `sentence` undergoes under `visible?`, computed
   the way `representative-term` actually rewrites it — so a quoted mention held opaque to a
-  `sameAs` is not reported displaced by `why-not`.  Gated on `tax/mention-marks`: a KB declaring
-  no `quoting_function` and no `modal_predicate` takes the flat walk unchanged.
+  `sameAs` is not reported displaced by `why-not`.  An equality relation's arguments are a
+  mention too (spelling-only), so a `sameAs`-merged term inside a `(sameAs …)` is not
+  recorded displaced either.
 
   The mention marks are read unscoped, as `representative-term` reads them."
   [kb visible? sentence]
-  (if-let [marks (tax/mention-marks (reasoning/taxonomy kb))]
-    (displacements-mention kb visible? marks sentence false {})
-    (displacements-plain kb visible? sentence)))
+  (displacements-mention kb visible? (tax/mention-marks (reasoning/taxonomy kb)) sentence false {}))
 
 (defn rewrite-rules-in
   "The believed oriented rewrite rules the reader `visible?` sees (nil: every one).  Every
@@ -1008,12 +1059,13 @@
   (`rewrite/normalize-sentence`).  Migration and query both go through here, so a stored
   term and a goal meet at one form.
 
-  Both halves are belief-following and both are gated: a KB with no merges pays a
-  representative lookup per symbol, one with no schematic equations skips normalization
-  entirely (`tax/rewrite-rules` is empty).  `visible?` is the supporter predicate already
-  built (`visible-supporter-fn`), so a caller normalizing many sentences under one reader
-  builds it once; nil is the unscoped read, which asks about the KB rather than from a
-  vantage.  `kb/rewrite-term` is the spelling for a caller holding a context instead."
+  Both halves are belief-following and each runs only when its input exists: a KB with no
+  merges pays a representative lookup per symbol, one with no schematic equations skips
+  normalization entirely (`tax/rewrite-rules` is empty).  `visible?` is the supporter
+  predicate already built (`visible-supporter-fn`), so a caller normalizing many sentences
+  under one reader builds it once; nil is the unscoped read, which asks about the KB
+  rather than from a vantage.  `kb/rewrite-term` is the spelling for a caller holding a
+  context instead."
   [kb term visible?]
   (rewrite/normalize-sentence (rewrite-rules-in kb visible?)
                               (representative-term kb visible? term)))
@@ -1227,7 +1279,7 @@
 
 ;; Refused at the `binding` form, which is the only place the wrong value is legible.
 ;; `true` is the obvious wrong guess for a var whose documented off-value is `false`, and
-;; it is truthy, so it would otherwise pass every gate here and reach `(long n)` inside
+;; it is truthy, so it would otherwise pass every check here and reach `(long n)` inside
 ;; `cap/hinting` — a ClassCastException raised from within a lazy seq several frames into
 ;; the walk, naming neither the var nor what was bound to it.  A validator runs on
 ;; `pushThreadBindings`, so the `binding` that set it is the frame that throws.  It throws
@@ -1426,7 +1478,7 @@
   "`(fn [sentence])` answering whether `view-context` reads stored `sentence` in another
   spelling under a `reifiable_function` mark some reader does not believe: it names a
   constant minted for a function the reader does not believe reifiable, or holds an
-  application of one it does, outside a `termOfUnit` or `rewriteOf` payload.  Nil when
+  application of one it does, outside a `natFormula` or `rewriteOf` payload.  Nil when
   every reader believes every such mark.
 
   The marks are read unscoped, a superset that the per-reader test narrows to
@@ -1441,7 +1493,7 @@
     (when (seq split)
       (let [minted (memoize (fn [k] (some (fn [[_ _ st]] (let [e (nth (:sentence st) 2 nil)]
                                                            (when (sequential? e) (first e))))
-                                          (raw-match kb (list 'termOfUnit k '?e) 'CxUniverse))))
+                                          (raw-match kb (list 'natFormula k '?e) 'CxUniverse))))
             other? (fn other? [form]
                      (cond
                        (symbol? form) (and (namespace form)
@@ -1449,7 +1501,7 @@
                        (sequential? form)
                        (let [f (first form)]
                          (or (and (true? (get split f)) (sx/ground-term? form))
-                             (and (not (contains? '#{termOfUnit rewriteOf} f))
+                             (and (not (contains? '#{natFormula rewriteOf} f))
                                   (boolean (some other? form)))))
                        :else false))]
         other?))))
@@ -1459,9 +1511,10 @@
   written that the marks the reader believes sort otherwise, a row read in an argument
   order those marks do not license, and a row spelled by a `reifiable_function` mark the
   reader takes the other way (`reified-reading`).  A match of a permuting predicate stays
-  when the marks the reader believes spell the fact it reads to the stored row.  Gated on
-  a permuting or reifiable mark stored at all, and per predicate on a mark some reader
-  does not believe (`uniform-marks?`); a variable or nil `view-context` filters nothing."
+  when the marks the reader believes spell the fact it reads to the stored row.  This runs
+  only when a permuting or reifiable mark is stored at all, and per predicate only when
+  some reader does not believe a mark (`uniform-marks?`); a variable or nil `view-context`
+  filters nothing."
   [kb view-context goal matches]
   (let [tax (reasoning/taxonomy kb)]
     (if-not (and (symbol? view-context) (not (sx/variable? view-context))
@@ -1478,7 +1531,9 @@
                                     (entries-at kb ents view-context))]
                          (vswap! memo assoc p v)
                          v))))
-            rr   (reified-reading kb view-context)]
+            ;; forced by the first match: it reads every `reifiable_function` mark, 1.4 ms
+            ;; under 2,061 of them, and most reads answer nothing
+            rr   (delay (reified-reading kb view-context))]
         (remove (fn [[_ b stored]]
                   (let [s (sx/sentence-of stored)]
                     (or (when-not (:antecedent stored)
@@ -1486,7 +1541,7 @@
                             (not= s (sx/sentence-of
                                      (sx/sentex (read-spelling goal b s) view-context
                                                 (spelling-opts tax e))))))
-                        (boolean (and rr (rr s))))))
+                        (boolean (when-let [rr @rr] (rr s))))))
                 matches)))))
 
 (defn sub-predicates
@@ -1509,16 +1564,8 @@
 
 (defn super-predicates
   "The **genl** closure of `f` from the vantage `context`: `sub-predicates` mirrored,
-  and what a *negative* pattern fans over.
-
-  A `genl` edge carries the opposite way through a negation — `dog ⊑ animal` puts
-  `(dog Muffet)` under the pattern `(animal ?x)` and `(not (animal Muffet))` under the
-  pattern `(not (dog ?x))` — so the negative fan walks up where the positive one walks
-  down.  The up set is bounded by the hierarchy's depth where the down set is a whole
-  subtree, which is why the negative fan is the cheaper of the two on a broad ontology
-  and the positive one is the fan the retrieval paths are written around.  Shared by
-  `match-pattern` and the rete alpha matcher for the same reason `sub-predicates` is:
-  so the two cannot drift."
+  through every visible edge whatever its strength.  A negative pattern fans over the
+  part of it the reader holds at `:monotonic`, `contrapositive-predicates`."
   [kb f context]
   (first (tax/signed-closure (reasoning/taxonomy kb) :up f context)))
 
@@ -1527,6 +1574,46 @@
   `genlInverse` edges, which a negated pattern on `f` reads swapped."
   [kb f context]
   (second (tax/signed-closure (reasoning/taxonomy kb) :up f context)))
+
+(def ^:private slot-cut-min
+  "The fewest members a fan holds before `slot-cut` reads the slot predicate sets to cut it.  A
+  smaller fan is read whole: its member reads are few, and the slot-set reads would be most
+  of what the cut costs."
+  64)
+
+(defn- slot-cut
+  "The predicates holding a stored fact that names every indexable ground argument of
+  `body` at some position, read off the slot predicate sets (`reads/as-stored-predicates-at-arg`),
+  or nil when `body` has no such argument.
+
+  A member read costs a pattern build and an index probe whether or not anything is
+  stored under it, so a fan is linear in the closure: `(different A B)` under 3,054
+  sub-predicates and 3,050 swapped ones took 54 ms for no match, and a forward join tests
+  one per row.  A member's matches unify with the goal under some arrangement of its
+  arguments, so each holds every ground argument at some position, and a member outside
+  this set has none.  The set over-approximates (a slot predicate set outlives a disbelieved fact) and
+  never drops a match, so each member left is read exactly as the uncut fan reads it,
+  mirror, arrangements and spellings included.  Read without the fan, so a goal whose
+  arguments no fact names costs the slot-set reads alone."
+  [kb body]
+  (let [idx   (:index kb)
+        n     (dec (count body))
+        held  (fn [a] (into #{} (mapcat #(reads/as-stored-predicates-at-arg idx % a)) (range 1 (inc n))))
+        terms (filterv sx/indexable-term? (rest body))]
+    (when (seq terms)
+      (reduce (fn [acc a]
+                (if (empty? acc)
+                  (reduced acc)
+                  (let [h (held a)]
+                    (if (< (count h) (count acc)) (into #{} (filter acc) h) (into #{} (filter h) acc)))))
+              (held (first terms)) (rest terms)))))
+
+(defn- within
+  "The members of `members` in the set `cut`, iterating the smaller of the two."
+  [members cut]
+  (if (< (count cut) (count members))
+    (into #{} (filter members) cut)
+    (into #{} (filter cut) members)))
 
 (defn fanned-match
   "The fan-out itself, shared by every matcher that does one: decompose `sentence` into
@@ -1544,48 +1631,60 @@
 
   Four things it decides, once:
 
-  * **A variable or absent functor pins nothing** and fans not at all — one raw match on
+  * **A variable or absent functor binds nothing** and fans not at all — one raw match on
     the sentence as written.
-  * **A negation fans its body's functor upward** (`super-predicates`), the direction a
-    `genl` edge carries through a negation, and rebuilds the `not` around each member.
+  * **A negation fans its body's functor upward** (`contrapositive-predicates`), the
+    direction a `genl` edge carries through a negation, over the edges the reader holds at
+    `:monotonic`, and rebuilds the `not` around each member.
   * **A singleton closure is `f` itself**, since both closures are reflexive, so there is
     nothing to fan and the as-written retrieval is the whole answer.  Counted rather than
     compared against a freshly built `#{f}`; the same reading `chain/fanning-functor?`
     takes of the same set.
   * **A `genlInverse` member is read swapped.**  The closure is `tax/signed-closure`,
     whose odd-parity members a binary literal reads with arguments 1 and 2 exchanged
-    (docs/inference.md, \"`genlInverse`: the fan with the arguments swapped\")."
-  [kb sentence vantage raw mapcat-fn]
-  (let [neg? (sx/negation? sentence)
-        body (if neg? (second sentence) sentence)
-        f    (when (sequential? body) (first body))]
-    (if (and (symbol? f) (not (sx/variable? f)))
-      (let [[fan swapped] (tax/signed-closure (reasoning/taxonomy kb) (if neg? :up :down) f vantage)
-            ;; a `genlInverse` reading swaps arguments 1 and 2, so only a binary
-            ;; literal takes one
-            swapped (if (= 3 (count body)) swapped #{})]
-        (cond
-          (and (= 1 (count fan)) (empty? swapped))
-          (raw sentence)
+    (docs/inference.md, \"`genlInverse`: the fan with the arguments swapped\").
 
-          (empty? swapped)
-          (let [rebuild (if neg?
-                          (fn [f'] (list sx/not-functor (cons f' (rest body))))
-                          (fn [f'] (cons f' (rest body))))]
-            (mapcat-fn (fn [f'] (raw (rebuild f'))) fan))
+  `indexed?` says `raw` reads the KB's index, as `raw-match` does, so the slot predicate sets
+  bound what it can return and a wide fan is cut to the members they list (`slot-cut`).
+  The rete alpha matcher reads its own memories, so it passes none."
+  ([kb sentence vantage raw mapcat-fn] (fanned-match kb sentence vantage raw mapcat-fn false))
+  ([kb sentence vantage raw mapcat-fn indexed?]
+   (let [neg? (sx/negation? sentence)
+         body (if neg? (second sentence) sentence)
+         f    (when (sequential? body) (first body))]
+     (if (and (symbol? f) (not (sx/variable? f)))
+       (let [[fan swapped] (fan-closure kb (if neg? :up :down) f vantage)
+             ;; a `genlInverse` reading swaps arguments 1 and 2, so only a binary
+             ;; literal takes one
+             swapped (if (= 3 (count body)) swapped #{})
+             cut     (when (and indexed? (<= slot-cut-min (+ (count fan) (count swapped))))
+                       (slot-cut kb body))
+             [fan swapped] (if cut [(within fan cut) (within swapped cut)] [fan swapped])]
+         (cond
+           (and (empty? fan) (empty? swapped))
+           ()
 
-          :else
-          ;; each member of the fan is read as written, and each swapped member with its
-          ;; two arguments exchanged, so a stored `(P a b)` under `(genlInverse P Q)`
-          ;; binds the pattern `(Q ?x ?y)` as `?x = b`, `?y = a`
-          (let [[_ x y] body
-                rebuild (fn [[f' swap?]]
-                          (let [b (if swap? (list f' y x) (cons f' (rest body)))]
-                            (if neg? (list sx/not-functor b) b)))]
-            (mapcat-fn (fn [m] (raw (rebuild m)))
-                       (concat (map #(vector % false) (nm/sort-by-content-key nm/print-key compare fan))
-                               (map #(vector % true) (nm/sort-by-content-key nm/print-key compare swapped)))))))
-      (raw sentence))))
+           (and (= 1 (count fan)) (contains? fan f) (empty? swapped))
+           (raw sentence)
+
+           (empty? swapped)
+           (let [rebuild (if neg?
+                           (fn [f'] (list sx/not-functor (cons f' (rest body))))
+                           (fn [f'] (cons f' (rest body))))]
+             (mapcat-fn (fn [f'] (raw (rebuild f'))) fan))
+
+           :else
+           ;; each member of the fan is read as written, and each swapped member with its
+           ;; two arguments exchanged, so a stored `(P a b)` under `(genlInverse P Q)`
+           ;; binds the pattern `(Q ?x ?y)` as `?x = b`, `?y = a`
+           (let [[_ x y] body
+                 rebuild (fn [[f' swap?]]
+                           (let [b (if swap? (list f' y x) (cons f' (rest body)))]
+                             (if neg? (list sx/not-functor b) b)))]
+             (mapcat-fn (fn [m] (raw (rebuild m)))
+                        (concat (map #(vector % false) (nm/sort-by-content-key nm/print-key compare fan))
+                                (map #(vector % true) (nm/sort-by-content-key nm/print-key compare swapped)))))))
+       (raw sentence)))))
 
 (defn match-pattern
   "Seq of [handle bindings] for stored sentexes matching `sentence` within
@@ -1596,9 +1695,9 @@
   sub-predicates has a singleton closure, so this is a no-op for it (the overwhelming
   common case — one cached set lookup, no fan).
 
-  **A negation fans its body's functor the other way**, over `super-predicates`:
-  `(not (dog ?x))` is answered by `(not (animal Muffet))`, since `dog ⊑ animal` entails
-  `¬animal ⊑ ¬dog`.  The `not` itself heads nothing and has no closure of its own, so
+  **A negation fans its body's functor the other way**, over `contrapositive-predicates`:
+  `(not (dog ?x))` is answered by `(not (animal Muffet))`, since a `:monotonic` `dog ⊑
+  animal` entails `¬animal ⊑ ¬dog`.  The `not` itself heads nothing and has no closure of its own, so
   the fan reads inside it and rebuilds the negation around each member; each rebuilt
   pattern is retrieved by the negative key it names, exactly as the written one is.
 
@@ -1607,13 +1706,14 @@
   exists for `matches-visible*`, which matches at each ancestor context in turn but
   stands at the *view* context throughout: scoping the fan by the ancestor would
   shrink the vantage as the walk ascends, and the set-algebra twin (which filters by
-  the view's ancestor set once) would disagree."
+  the view context's ancestor set once) would disagree."
   ([kb sentence] (match-pattern kb sentence '?ctx))
   ([kb sentence context] (match-pattern kb sentence context context))
   ([kb sentence context vantage]
    (fanned-match kb sentence vantage
                  (fn [s] (raw-match kb s context))
-                 lazy-mapcat)))
+                 lazy-mapcat
+                 true)))
 
 (defn matches-visible*
   "The reference nested fan-out: `|context-up| × |specs|` trie walks.  `matches-visible`
@@ -1658,13 +1758,13 @@
 (defn- hierarchical-literal?
   "A plain positive literal the set-algebra path handles: a concrete predicate symbol,
   or a **variable functor with something indexable to lead with** (`(?type Muffet)`).
-  The two differ only in which dimensions are pinned — a variable functor names no
+  The two differ only in which dimensions are bound — a variable functor names no
   predicate, so there is no predicate hierarchy to filter by and every candidate's
   functor is admissible, while the argument root and the context ancestor set still narrow
   exactly as they do for a concrete one.
 
   A negation keys under `not`/its positive body, a dotted pattern is not a stored-fact
-  shape, and a variable functor with no indexable argument pins nothing at all; those
+  shape, and a variable functor with no indexable argument binds nothing at all; those
   fall back to `matches-visible`."
   [sentence]
   (and (sequential? sentence) (seq sentence)
@@ -1710,18 +1810,18 @@
   drop the mirror-stored matches — as is a literal with fewer than two ground columns
   (the belief-settle diet), so those paths take the single-column lead unchanged.
 
-    :two   intersect the two lowest-`count-with-arg` ground columns (default)
-    :all   intersect every indexable ground column
-    :gated :two, but only when the leading column is a wasteful superset — its agnostic
-           count exceeds `*arg-intersect-floor*`; below that a single `unify` sweep is
-           cheaper than allocating an intersection set
-    :off   the pre-v3 single leading column, no intersection
+    :two          intersect the two lowest-`count-with-arg` ground columns (default)
+    :all          intersect every indexable ground column
+    :above-floor  :two, but only when the leading column is a wasteful superset — its
+                  agnostic count exceeds `*arg-intersect-floor*`; below that a single
+                  `unify` sweep is cheaper than allocating an intersection set
+    :off          the pre-v3 single leading column, no intersection
 
   Chosen by measurement (`lein bench-argindex join`); bind it to compare."
   :two)
 
 (def ^:dynamic *arg-intersect-floor*
-  "The `:gated` strategy's floor: skip the intersection when the leading (tightest)
+  "The `:above-floor` strategy's floor: skip the intersection when the leading (tightest)
   column already returns no more than this many handles, where feeding that short
   superset straight to `unify` costs less than allocating an intersection set."
   16)
@@ -1735,8 +1835,8 @@
   (case *arg-intersect*
     :off nil
     :all (mapv second sorted)
-    :gated (when (> (long (ffirst sorted)) *arg-intersect-floor*)
-             (mapv second (take 2 sorted)))
+    :above-floor (when (> (long (ffirst sorted)) *arg-intersect-floor*)
+                   (mapv second (take 2 sorted)))
     ;; :two — the default; bounded at two reads and one intersection
     (mapv second (take 2 sorted))))
 
@@ -1751,9 +1851,9 @@
 
     :scoped   one predicate-scoped node per sub-predicate (`[pd pos term]`).  Exactly this literal's predicates, O(|specs|) index probes — the
               pre-v4 lead, and the reference `matches_hierarchical_test` forces to compare.
-    :agnostic the slot roster (`[:argument-slot pos term]`, every functor holding `term`
+    :agnostic the slot predicate set (`[:argument-slot pos term]`, every functor holding `term`
               at `pos`), kept to `specs`, then the node of each kept functor.  One
-              roster probe and one node read per kept functor.
+              slot-set probe and one node read per kept functor.
     :auto     (default) `:agnostic` when the term holds no more postings at this position
               than there are specs, else `:scoped` — read whichever side is smaller.  The
               choice is content-derived (`count-with-arg` vs a realised `count`, both
@@ -1767,7 +1867,7 @@
 
 (defn- lead-agnostic?
   "Does `lead-candidates` read the predicate-agnostic bucket (small side) rather than one
-  scoped bucket per spec — the choice `*lead-side*` gates.  `:auto` reads the count only
+  scoped bucket per spec — the choice `*lead-side*` decides?  `:auto` reads the count only
   here, where the branch is actually taken."
   [ix pos term specs]
   (case *lead-side*
@@ -1832,10 +1932,10 @@
   closure in hand the read is each sub-predicate's own node at that position, restricted
   to the contexts in `up` (the reader's ancestor set, nil for a variable context) — the
   predicate filter is satisfied by construction, and no leaf stored where the reader
-  cannot see is read.  Where `*lead-side*` reads the slot roster, the roster's predicates
+  cannot see is read.  Where `*lead-side*` reads the slot predicate set, that set's predicates
   are kept to `specs` before a node is read, so every source holds only the literal's
   sub-predicates.  A variable functor reads the predicate-agnostic union instead (over
-  the slot roster), which spans every functor; with no bound argument at all, the
+  the slot predicate set), which spans every functor; with no bound argument at all, the
   sub-predicates' predicate extents.  A ground prefix walks the trie under it unless
   `arg-lead` reads its argument roots.  Every source reads only the contexts in `up`.  A
   symmetric sub-predicate may store the term at the mirror position, and a commutative
@@ -1923,10 +2023,10 @@
             ;; broad functor's spec closure makes O(|hierarchy|) — the dominant cost of a
             ;; cold rebuild's clash retrieval, where the queried type sits high and its
             ;; subtree is huge while the term holds a handful of memberships.  The slot
-            ;; roster, the predicates holding `term` at `pos`, is then the smaller side:
+            ;; predicate set, the predicates holding `term` at `pos`, is then the smaller side:
             ;; read it once, keep the predicates in `specs`, and read each kept one's
             ;; node, so every candidate's functor is in `specs` without a record fetch.
-            ;; Which side, and when, is `*lead-side*`; a store keeping no roster reads
+            ;; Which side, and when, is `*lead-side*`; a store keeping no such set reads
             ;; per spec.
             (lazy-mapcat (fn [pd] (scoped pd pos))
                          (or (when (lead-agnostic? ix pos term specs)
@@ -1935,7 +2035,7 @@
                              specs)))
 
           ;; A variable functor names no predicate, so there is no scope to read: the
-          ;; predicate-agnostic root (a union over the slot roster) is the whole
+          ;; predicate-agnostic root (a union over the slot predicate set) is the whole
           ;; candidate set, and `unify` binds the functor per candidate.  It permutes
           ;; nothing either — `alts` is non-nil only with a symmetric or commuting spec —
           ;; so there is no alternate position to read.
@@ -1960,7 +2060,7 @@
           ;; over — every candidate's functor is admissible, and `unify` binds
           ;; the variable to it.  `lead-candidates` gets `specs` nil here and takes its
           ;; predicate-agnostic branch: the shape is admitted only with an indexable
-          ;; argument, so the slot-roster union is its candidate source.
+          ;; argument, so the slot-set union is its candidate source.
           var-fn? (sx/variable? (first sentence))
           args  (rest sentence)
           up?   (not (sx/variable? view-context))
@@ -1974,7 +2074,7 @@
           ;; A variable functor is never a symmetric literal (`sx/symmetric-literal?`
           ;; asks the taxonomy about the functor, and a variable has no property), so
           ;; the reference runs no mirror probe for it and neither may this.
-          ;; `sym?` is a *gate*, per call: it widens `lead-candidates`' bucket
+          ;; `sym?` is a *candidate filter*, per call: it widens `lead-candidates`' bucket
           ;; selection, where a superset is safe.  Whether a given candidate may match
           ;; mirrored is that candidate's own functor's question (`sym-preds` below,
           ;; at the probe) — the reference asks `sx/symmetric-literal?` per fanned
@@ -1991,7 +2091,7 @@
           ;; nothing, so it permutes nothing here either.
           comm-preds (when-not var-fn? (tax/commuting-predicates-among tax specs))
           ;; the positions one argument may also be stored at, unioned over the
-          ;; permuting sub-predicates — `lead-candidates`' bucket gate, where a superset
+          ;; permuting sub-predicates — `lead-candidates`' bucket filter, where a superset
           ;; is safe.  Nil when nothing permutes, which is the shape all but a handful of
           ;; literals have and the one that keeps multi-column narrowing on.
           alts  (let [comps (concat (when sym? [[1 2]])
@@ -2087,9 +2187,9 @@
                       (when-let [stored (p/get-sentex (:records kb) h)]
                         (when-not (sx/exceptWhen-meta? (:sentence stored))
                           stored))))
-            ;; the unify attempt in one argument order.  Concrete view: bind no ?ctx
+            ;; the unify attempt in one argument order.  Concrete view context: bind no ?ctx
             ;; (match at the fact's own context, which is in the up-closure); variable
-            ;; view: bind ?ctx, exactly as match-one does.
+            ;; view context: bind ?ctx, exactly as match-one does.
             order (fn [stored i]
                     (let [pat (pat-for (some-> (sx/body stored) first)
                                        (if up? (:context stored) '?ctx)
@@ -2174,20 +2274,25 @@
 (defn retired-for?
   "Does `sentence` name a term the reader has retired — i.e. is it *not* in normal form
   for that reader?  Asked term by term rather than by building the rewritten sentence,
-  since the answer is a disjunction and the first displaced symbol settles it, and gated
-  per symbol on `merged?` (one `contains?` against a snapshot held by the caller) so an
-  unmerged sentence never reaches the election.  `visible` is the caller's **delay** over
-  the supporter memo, forced only by a symbol that got that far.  Public for the reads
-  whose match shape `without-retired` cannot take — `qcn-kb/refuted-pairs` yields
-  `[handle a b]` triples with no sentex at index 2, so it filters with this directly.
+  since the answer is a disjunction and the first displaced symbol settles it.  Each symbol
+  reaches the election only when `merged?` holds for it (one `contains?` against a
+  snapshot held by the caller), so an unmerged sentence never reaches the
+  election.  `visible` is the caller's **delay** over the supporter memo, forced only by a
+  symbol that got that far.  Public for the reads whose match shape `without-retired`
+  cannot take — `qcn-kb/refuted-pairs` yields `[handle a b]` triples with no sentex at
+  index 2, so it filters with this directly.
 
   **A sentence that quotes takes the mention-aware read instead.**  Inside a quoted
-  position — a `quoting_function`'s arguments, or the proposition an attitude attributes to
+  position — a quoting function's arguments, or the proposition an attitude attributes to
   its agent — a symbol is retired by a *spelling* rename and not by a `sameAs` / `equals`
   identity merge, which makes the flat per-symbol shortcut unsound there and would retire a
-  belief nobody renamed.  Whether the sentence quotes at all is asked first
-  (`any-mention-position?`), so an ordinary sentence in a KB that merely grants `believes`
-  keeps the flat read.
+  belief nobody renamed.  Whether the sentence quotes at all is asked only of a sentence
+  the flat read finds a displaced symbol in, since that is necessary for either read to
+  move it: a symbol a spelling rename moves has its identity representative moved too (a
+  `rewriteOf` loser is never elected, and a component's preferred heads are heads of the
+  class holding it), and an unmerged one is its own representative and its own spelling.
+  So a sentence in normal form answers false on the one `merged?` walk the flat read
+  takes, and never pays for `any-mention-position?`.
 
   **An equality relation's arguments are mentions too** (`equality-mention-heads`): a
   `sameAs` merge does not restate `(not (sameAs A B))`, so the flat read, which would
@@ -2203,16 +2308,18 @@
       (equation? sentence)
       false
 
-      (and marks (any-mention-position? marks sentence))
+      (not (sx/some-symbol? (fn [t]
+                              (and (merged? t) (not (sx/variable? t))
+                                   (not= t (representative-in kb @visible t))))
+                            sentence))
+      false
+
+      (any-mention-position? marks sentence)
       (not= (representative-term-mention kb @visible marks sentence false) sentence)
 
       :else
-      (and (sx/some-symbol? (fn [t]
-                              (and (merged? t) (not (sx/variable? t))
-                                   (not= t (representative-in kb @visible t))))
-                            sentence)
-           (or (not (names-equality-relation? sentence))
-               (not= (representative-term-plain kb @visible sentence) sentence))))))
+      (or (not (names-equality-relation? sentence))
+          (not= (representative-term-plain kb @visible sentence) sentence)))))
 
 (defn without-retired
   "Drop the matches whose stored spelling `view-context` has **retired** — the
@@ -2227,9 +2334,9 @@
   and leaves the one it elected, which is what makes a count over an answer set mean
   something (docs/equality.md).
 
-  **Gated on the closure being non-empty**, so a KB that has merged nothing — every KB
-  until somebody states an equality — pays one deref for the whole query, and one that
-  has pays a `contains?` per symbol of each match against a snapshot taken once here,
+  **This runs only when the closure is non-empty**, so a KB that has merged nothing —
+  every KB until somebody states an equality — pays one deref for the whole query, and one
+  that has pays a `contains?` per symbol of each match against a snapshot taken once here,
   before anything else runs.  The scoped-supporter memo is built behind a `delay`, since
   most matches in a KB with a handful of merges name none of the merged terms and the
   question never reaches it.  A variable or nil `view-context` is the unscoped read and
@@ -2298,7 +2405,7 @@
   `justification-excepted?`), where the context the except scopes to is known.
 
   Answers are **cached per KB** by the literal they answer, α-renamed so two spellings
-  of one question share an entry, and stamped with the change clock so any mutation
+  of one question share an entry, and keyed by the change clock so any mutation
   retires them (`vaelii.impl.literal-cache`).  **All three** retrieval-strategy vars are
   part of the key rather than assumed away: the set-algebra and fan-out paths must agree
   on the answer set, and so must the structural-trie and functor-extent candidate
@@ -2365,7 +2472,7 @@
          ;; a read with no reader reads each membership at its own context
          hidden?  (or (if (sx/variable? context) (exc/own-hidden-fn kb) (exc/hidden-fn kb context))
                       (constantly false))]
-     ;; the unary roster goes straight to the sentexes holding x as their LONE
+     ;; the unary predicate set goes straight to the sentexes holding x as their LONE
      ;; argument, instead of every sentex mentioning x anywhere (any position, any
      ;; nesting) or even every one holding it at argument 1 — this runs on every unary
      ;; assert, via disjoint-problem, and a term at argument 1 of n binary facts cost n
@@ -2388,24 +2495,6 @@
                         (let [sen (:sentence s)]
                           (when (and (= 1 (nm/arity sen)) (= x (first (nm/args sen))))
                             s)))))))))))
-
-(defn holding-class
-  "`handle → class` for a separation's denial (`tax/monotonic-route-witness`): the live
-  JTMS defeat class of the handle, nil while it is OUT, and `:monotonic` for a believed
-  literal on the forced-monotonic roster (`decide/roster-literal?`) whatever strength it
-  was written at.  A roster literal goes OUT only by retraction (docs/nmtms.md, \"The
-  forced-monotonic roster\"), so a declaration and the part edges a `covering` installs
-  hold for every term as a `:monotonic` edge does."
-  [kb]
-  (let [tms  (reasoning/tms kb)
-        recs (:records kb)
-        tax  (reasoning/taxonomy kb)]
-    (fn [h]
-      (when-let [c (jtms/defeat-class tms h)]
-        (if (and (not= :monotonic c)
-                 (some->> (p/get-sentex recs h) :sentence (decide/roster-literal? tax)))
-          :monotonic
-          c)))))
 
 (def ^:dynamic *membership-memo*
   "A volatile `{[x context] memberships}` the separation's denial reads a term's
@@ -2493,39 +2582,49 @@
   judgement `checks/args-problem` already makes about the memberships it reads.  A cycle
   in predicate `genl` cannot loop the walk, `genls` being a closure read.
 
-  **`pred` and its proper supers are both filtered against the roster** of predicates
-  some declaration of `kind` names (`tax/arg-declaration-props`).  A predicate the
-  roster does not name carries no `(kind predicate …)` declaration in any context, so
-  the scoped retrieval its inclusion would gate returns nothing; every consumer reads
+  **`pred` and its proper supers are both filtered against the `:props` set** of
+  predicates some declaration of `kind` names (`tax/arg-declaration-props`).  A predicate
+  the set does not name carries no `(kind predicate …)` declaration in any context, so
+  the scoped retrieval its inclusion would admit returns nothing; every consumer reads
   declarations off the predicates handed back, so an undeclared predicate contributes an
   empty retrieval whether it is listed or dropped.  The filter is a set membership rather
   than an index probe, which is what keeps the walk cheap: asked of the index it would be
   one argument-root read per predicate per assert, so a membership of a type ten deep in
   the hierarchy would pay ten of them, and nine of those types declare nothing —
   including, on a minting assert, the mint's own functor (a type name like `animal`,
-  which no sentence declares `arg` of).  The roster is global and therefore a superset of
-  what any context can see, and the scoped retrieval it gates decides which of the named
-  predicates actually speak here.  When nothing anywhere declares `kind` the roster is
-  empty and the walk returns `[]` without reading the closure at all.  The intersection
-  walks the smaller of the roster and the closure, so a membership of a type with
-  thousands of ancestors reads at most the roster.
+  which no sentence declares `arg` of).  The `:props` set is global and therefore a
+  superset of what any context can see, and the scoped retrieval of each predicate it
+  admits decides which of the named predicates actually speak here.  When nothing
+  anywhere declares `kind` the set is empty and the walk returns `[]` without reading the
+  closure at all.  The intersection walks the smaller of the set and the closure, so a
+  membership of a type with thousands of ancestors reads at most the set.
 
   The supers are sorted, so which declaration a refusal names — and the order the
   entailments are drawn in — is a function of the vocabulary rather than of the closure's
   hash order.
 
-  The roster is read unscoped, a superset: it is intersected with the `genls`
-  `context` sees, and the caller reads each declaration from `context`."
-  [kb kind pred context]
+  The `:props` set is read unscoped, a superset: it is intersected with the `genls`
+  `context` sees, and the caller reads each declaration from `context`.
+
+  `memos`, a volatile map a caller holds for one still taxonomy, keeps one
+  `tax/genls-among` memo per `kind`, for the `:props` set it was filled from, so a pass
+  over many predicates reads no closure (`checks/*pass-reads*`).  The set is compared by
+  identity: compared by value, each lookup would walk the whole set."
+  [kb kind pred context & [memos]]
   (let [tax       (reasoning/taxonomy kb)
-        declaring (tax/props tax (tax/arg-declaration-props kind))]
-    (if (empty? declaring)
-      []
-      (let [supers (tax/genls tax pred context)
-            base   (if (contains? declaring pred) [pred] [])]
-        (if (<= (count supers) 1)
-          base
-          (into base (sort (disj (set/intersection declaring supers) pred))))))))
+        declaring (tax/props tax (tax/arg-declaration-props kind))
+        base      (if (contains? declaring pred) [pred] [])]
+    (cond
+      (empty? declaring) []
+      memos (let [[held memo] (get @memos kind)
+                  memo        (if (identical? held declaring)
+                                memo
+                                (let [m (volatile! {})] (vswap! memos assoc kind [declaring m]) m))]
+              (into base (sort (disj (tax/genls-among tax pred context declaring memo) pred))))
+      :else (let [supers (tax/genls tax pred context)]
+              (if (<= (count supers) 1)
+                base
+                (into base (sort (disj (set/intersection declaring supers) pred))))))))
 
 ;; ---- backward chaining --------------------------------------------------
 ;; The pieces below — goal-key, planned-antecedents — are the
@@ -2655,8 +2754,8 @@
   so two spellings of one rule dedup to one sentex (`sentex/canonicalize-rule`) — and
   canonical order is structural, so it bears no relation to what is cheap to run.
   Reordering here changes cost, never the answer set: a conjunction is commutative,
-  and `vaelii.impl.plan` pins the two literals whose position *is* operational (the
-  evaluables and the recursive one).
+  and `vaelii.impl.plan` fixes in place the two literals whose position *is* operational
+  (the evaluables and the recursive one).
 
   Antecedents are substituted **before** planning, not after, so the planner costs
   them against real values — `count-at [parentOf Tom]` is an exact count where
@@ -2690,7 +2789,7 @@
 
 (defn solve-deferred
   "Extension binding-maps for a deferred antecedent `g` — already substituted, so its
-  inputs are ground (canonical order and the planner pin it after its binders), computed
+  inputs are ground (canonical order and the planner place it after its binders), computed
   by the prover registry through `wiring/solve-goal`.  Nothing when the literal is
   inapplicable (unbound inputs, a false test): a deferred literal that yields no solution
   simply prunes the branch, the evaluable contract `vaelii.impl.plan` documents.
@@ -2775,9 +2874,9 @@
   `(contradicts …)`, since a reader whose excepts lower a conflict member's class reads it
   defeated — or **nil** when the walk reads nothing (`exc/placed-reads?`).
 
-  Nil is the gate every caller reads, and it is the common case: a KB with no
+  Nil is the presence check every caller reads, and it is the common case: a KB with no
   contradiction pays one set deref per query and nothing else.  `:functors` is the second
-  gate, and the one that keeps the cost off a KB that *has* a defeat somewhere: a goal
+  check, and the one that keeps the cost off a KB that *has* a defeat somewhere: a goal
   whose functor no target carries can produce no withdrawn answer, so it is never
   checked.  The index reads the standing defeats and placed `contradicts`, and no nogood
   candidate: a candidate that no defeat or placed `contradicts` names is defeated at no
@@ -2809,7 +2908,8 @@
   "Could an answer to `goal` be one belief has already defeated — is its functor one some
   defeated datum carries?  False for every goal when `idx` is nil.
 
-  The push-time gate: a chainer that answers false here adds no check to the goal at all,
+  This is the push-time presence check: a chainer that answers false here adds no check to
+  the goal at all,
   so a KB with no defeat on that predicate runs the search it always ran."
   [idx goal]
   (boolean (and idx (contains? (:functors idx) (nm/functor goal)))))
@@ -2955,7 +3055,7 @@
   ;; length (`observe/with-search-scope`).  The loop is eager, which is the macro's
   ;; precondition.  A segment, not a query — `prove-seq` drives the same search in
   ;; several calls, and each opens a scope of its own, which is sound because a query
-  ;; writes nothing for the pin to hold still against.
+  ;; writes nothing that could move a held value.
   ;;
   ;; What belief has already defeated, read once for the segment and not per answer — a
   ;; `delay` rather than a `let`, so a run that expands no rule at all never touches the
@@ -3155,8 +3255,8 @@
 
   Laziness costs the search **one scope per segment** rather than one per run (see the
   comment in `prove-from`): the transitive-closure memo starts empty on each pull, and
-  resident values are re-read rather than pinned across the whole seq.  For a read that is
-  sound — a query mutates no belief, so there is no write for a pin to hold still against.
+  resident values are re-read rather than held fixed across the whole seq.  For a read
+  that is sound — a query mutates no belief, so no write can move a held value.
 
   It is also, measurably, not paid for: over a 120-answer recursive chain, realizing
   *every* answer through this costs what the eager loop costs (40.3 ms against 40.4 ms),

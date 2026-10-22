@@ -109,7 +109,7 @@
   where the edge would close a cycle `genl-problems` refuses in as many words.  A part
   disjoint from the whole is stored, and the clash is reported (the header note).
 
-  The cycle read is global, as `genl-problems`' is (E17_ROSTER): the edge the cover
+  The cycle read is global, as `genl-problems`' is (E17_ALLOW): the edge the cover
   installs closes a cycle in the whole edge set whichever context holds the edge above
   it, so a part a sibling context places above the whole is refused here as the bare
   `genl` would be."
@@ -570,6 +570,14 @@
         " which vaelii does not build) — ask it instead: (ask? kb '(different "
         (str/join " " args) "))")])
 
+(defn common-genl-problems
+  "`minCommonGenl` and `maxCommonSpec` are **not assertible**.  Each is computed from the
+  `genl` closure by the prover that answers it (`provers/CommonGenlProver`), which reads
+  no stored fact, so a stored one would be a fact no read returns."
+  [_ [f & args] _context]
+  [(str f " is not assertible: it is computed from the genl closure and never stored —"
+        " assert the genl edges and ask it, e.g. (ask? kb '(" f " " (str/join " " args) "))")])
+
 (defn brave-cautious-problems
   "`bravely` and `cautiously` are **not assertible**.  Each is a *read* on the current
   dilemmas — `(cautiously S)` is S in every optimal labeling, `(bravely S)` in some —
@@ -605,6 +613,13 @@
     (not= 3 (count s)) (conj "inverse takes two arguments")
     (nm/individual? p) (conj (str p " is an individual; inverse relates predicates"))
     (nm/individual? q) (conj (str q " is an individual; inverse relates predicates"))))
+
+(defn negates-problems
+  "The argument count alone.  Whether an argument is a predicate, and of which length, is
+  read from stored content and placed as a clash of the declaration (docs/taxonomy.md,
+  \"Predicate metadata\")."
+  [_ s _context]
+  (cond-> [] (not= 3 (count s)) (conj "negates takes two arguments")))
 
 (defn genl-inverse-problems [_ [_ p q :as s] _context]
   (cond-> []

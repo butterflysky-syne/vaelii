@@ -58,18 +58,18 @@
            [java.nio.file.attribute FileAttribute]
            [java.util.concurrent ExecutionException FutureTask]))
 
-;; ---- the switches, and the pin that hands their defaults back -----------
+;; ---- the switches, and the fixture that hands their defaults back -------
 ;;
 ;; Every switch below installs its implementation by ALTERING A ROOT: a replacement no
 ;; `binding` sees and no test undoes, which is exactly what a whole-suite sweep wants,
 ;; since the claim it tests is that the alternative answers identically.
 ;;
-;; A **counted** gate wants the opposite.  A budget or a cost shape is a claim about one
+;; A **counted** test wants the opposite.  A budget or a cost shape is a claim about one
 ;; configuration, so `assert_cost_test`, `lead_side_cost_test` and `join_lead_cost_test`
 ;; have to measure the shipped reader whichever sweep is running.  `chain/join-matches` is
-;; the sharp edge: it takes its argument lead only under the reference matcher, so a gate
-;; inheriting `VAELII_RETE=1` measures a join nobody wrote it about — which is what
-;; `join_lead_cost_test` did until its fixture pinned the matcher.
+;; the sharp edge: it takes its argument lead only under the reference matcher, so a
+;; counted test inheriting `VAELII_RETE=1` measures a join nobody wrote it about — which is
+;; what `join_lead_cost_test` did until its fixture bound the matcher back.
 ;;
 ;; So the roots are READ here, before a single switch installs itself, and handed back by
 ;; `with-shipped-config`.  Read rather than restated: a default written down a second time
@@ -80,14 +80,14 @@
   variable that selects each, and the vars whose root it replaces.  `test_util_test`
   holds the spellings against `scripts/lib/suite-configs.sh`, so a sweep added to that
   table without a row here fails — and the row is where its vars are named, which is what
-  puts them in `shipped-defaults` for a counted gate to pin back.
+  puts them in `shipped-defaults` for a counted test to bind back to the shipped value.
 
   `VAELII_TEST_TMS` names none, and that is not an omission: the TMS is a KB **option**,
-  chosen per `open-kb` rather than installed over a var, so a gate pins it by naming it in
-  its space (`assert_cost_test`'s `cost-space`) and no binding could.
+  chosen per `open-kb` rather than installed over a var, so a counted test fixes it by
+  naming it in its space (`assert_cost_test`'s `cost-space`) and no binding could.
   `VAELII_ASSERTIVE_ARG_TYPES` names none either: `vaelii.impl.checks` reads it into its
   own root before this namespace loads, so `shipped-defaults` would capture the sweep's
-  value.  `with-entailing` is its pin."
+  value.  `with-entailing` forces its shipped value."
   [{:env "VAELII_TEST_TMS"       :vars []}
    {:env "VAELII_RETE"           :vars ['vaelii.impl.chain/*matcher*]}
    {:env "VAELII_HIER"           :vars ['vaelii.impl.resolution/*hierarchical-retrieval*]}
@@ -99,15 +99,15 @@
 
 (def read-path-vars
   "The switches that decide **which reader answers**, short of replacing the matcher.  No
-  sweep installs one — they are here because a counted gate is measured under them just
-  the same, and one pin is better than the three that drifted.
+  sweep installs one — they are here because a counted test is measured under them just
+  the same, and one shared binding replaces three per-file ones that drifted.
 
   `*lead-side*` is the one measured to carry weight: `:scoped` leads a join from one
   predicate-scoped bucket per spec, which takes `join_lead_cost_test`'s reading from flat
   (32 at either width) to 27 against 39 — the structure that file exists to hold, inverted by
-  a var it does not name.  The rest are pinned because `assert_cost_test` prices exact
-  per-family budgets and each of them moves which family answers; both gates hold that
-  claim with a test rather than asserting it here."
+  a var it does not name.  The rest are bound back because `assert_cost_test` prices exact
+  per-family budgets and each of them moves which family answers; both counted tests check
+  that claim rather than asserting it here."
   ['vaelii.impl.resolution/*arg-root-retrieval*
    'vaelii.impl.resolution/*structural-index*
    'vaelii.impl.resolution/*lead-side*
@@ -130,7 +130,7 @@
                x)))))
 
 (def shipped-defaults
-  "`{var -> default}` for every var the two rosters name, read before the switches below
+  "`{var -> default}` for every var the two lists name, read before the switches below
   install themselves — so this is what the engine ships and not a transcription of it.
 
   A default that is a function another var defines is held as that var: `*matcher*`'s is
@@ -144,14 +144,14 @@
         (concat (mapcat :vars sweeps) read-path-vars)))
 
 (defn shipped-value
-  "The shipped default of the rostered switch `vr` as it stands now: the root read at load,
+  "The shipped default of the listed switch `vr` as it stands now: the root read at load,
   or the current root of the var `shipped-defaults` holds for a function-valued one."
   [vr]
   (let [d (get shipped-defaults vr)]
     (if (var? d) (var-get d) d)))
 
 (defn- shipped-bindings
-  "`{var -> shipped-value}` for the rostered switches `vars`, read at the call."
+  "`{var -> shipped-value}` for the listed switches `vars`, read at the call."
   [vars]
   (into {} (map (fn [vr] [vr (shipped-value vr)])) vars))
 
@@ -162,16 +162,16 @@
 
 (defmacro with-shipped-config
   "Run `body` with every implementation switch bound to its shipped default, whatever the
-  run inherited.  What a counted gate measures inside, and preferred to standing aside
-  under the sweep: a gate that skips is a gate not running on the configuration somebody
+  run inherited.  A counted test measures inside it, and prefers it to standing aside
+  under the sweep: a counted test that skips does not run on the configuration somebody
   is currently changing.
 
-  It **binds**, so a gate whose own axis is one of these binds it within and wins:
+  It **binds**, so a counted test whose own axis is one of these binds it within and wins:
   `(with-shipped-config (binding [res/*lead-side* :scoped] …))`."
   [& body]
   `(with-shipped-config* (fn [] ~@body)))
 
-(defn pinning
+(defn shipped-fixture
   "A `:each` fixture binding just the named vars back to the roots the engine SHIPS,
   whatever switch the run installed — the surgical half of `with-shipped-config`, for a
   file that answers FOR one implementation and so must keep answering for it under the
@@ -181,28 +181,28 @@
   One rather than all, deliberately: `with-shipped-config` would also take the file off
   the node engine, the alternative matcher and the reference retrieval, and a file that
   stops running under six sweeps to answer for one has traded a stand-aside for a
-  larger one.  Pinning is what a file does INSTEAD of standing aside — the assertion
-  count is identical under every configuration, which is what `config_expected_delta`
-  reads.
+  larger one.  Forcing the shipped value is what a file does INSTEAD of standing aside —
+  the assertion count is identical under every configuration, which is what
+  `config_expected_delta` reads.
 
-  Every var must be one `shipped-defaults` rosters: an unrostered var is a pin that
-  binds nil, which installs a third reader rather than the shipped one."
+  Every var must be a key of `shipped-defaults`: a var outside it binds nil, which
+  installs a third reader rather than the shipped one."
   [vars]
   (doseq [vr vars]
     (when-not (contains? shipped-defaults vr)
-      (throw (ex-info (str vr " is not a rostered switch — name it in "
-                           "`sweeps` or `read-path-vars` before pinning it")
-                      {:type :unrostered-pin :var vr}))))
+      (throw (ex-info (str vr " is not a switch `shipped-defaults` holds — name it in "
+                           "`sweeps` or `read-path-vars` before forcing it")
+                      {:type :unknown-shipped-switch :var vr}))))
   ;; the bindings are read per call, so a function-valued default follows a reload
   (fn [f] (with-bindings* (shipped-bindings vars) f)))
 
 (defmacro without-entailing
   "Run `body` with the argument declarations read as **constraints only** — the opt-out
   reading (`VAELII_ASSERTIVE_ARG_TYPES=0`), whatever the root is set to.  Entailing is on
-  by default (docs/argtypes.md), so this is the reading a test pins when it asserts the
+  by default (docs/argtypes.md), so this is the reading a test forces when it asserts the
   constraint-only behavior rather than the shipped one.
 
-  `with-pinned`'s job for the one switch it cannot do: `shipped-defaults` captures each
+  `with-shipped`'s job for the one switch it cannot do: `shipped-defaults` captures each
   root at *this* namespace's load, and this root is set at `vaelii.impl.checks`'s, which
   is earlier — so a capture would record the sweep's value as the shipped one.  The
   default is written out here instead, in the one place that has to state it.
@@ -215,22 +215,53 @@
 
 (defmacro with-entailing
   "Run `body` with the argument declarations read as **entailments** — the shipped
-  default reading, pinned regardless of the root so a run under
+  default reading, forced regardless of the root so a run under
   `VAELII_ASSERTIVE_ARG_TYPES=0` still measures it.  The mirror of `without-entailing`,
   for a test whose subject is the entailment itself — what it mints, or what its
   per-assert read cost is."
   [& body]
   `(binding [checks/*assertive-arg-types?* true] ~@body))
 
-(defmacro with-pinned
-  "`pinning` around one test rather than a namespace's fixture, for a file the sweep
-  should keep running everywhere else.  Prefer it: a fixture pins every test in the
-  file, and a file loses a sweep it was passing under to answer for one test that was
-  not.
+(defn write-conviction
+  "Write `sentence` in `context` with `assert` and answer the argument conviction it meets,
+  as a violation map with `:type`: the `:conviction` `why-not` answers for a fact stored
+  and held inert (docs/argtypes.md), or the `ex-data` of a refusal.  Nil for a fact stored
+  and not held.  A fact this call stored is retracted; one stored before it stays."
+  ([kb sentence context] (write-conviction kb sentence context nil))
+  ([kb sentence context opts]
+   (let [before (v/handle-of kb sentence context)]
+     (try
+       (let [h (v/assert kb sentence context opts)
+             c (:conviction (v/why-not kb sentence context))]
+         (when (and h (nil? before)) (v/retract! kb h))
+         c)
+       (catch clojure.lang.ExceptionInfo e (ex-data e))))))
 
-    (tu/with-pinned [#'plan/*enabled*] …)"
+(defn check-or-conviction
+  "`check`'s problems for `sentence` in `context`, or, when it reports none, the argument
+  conviction `assert` holds the fact inert under (`write-conviction`) as a one-element
+  vector.  Empty for a write `assert` stores and does not hold."
+  [kb sentence context]
+  (or (not-empty (v/check kb sentence context))
+      (into [] (keep identity) [(write-conviction kb sentence context)])))
+
+(defn write-type
+  "Run the write thunk `f` and answer the `:type` it meets: the `:type` of the ex-info it
+  throws, or of the argument conviction `assert` holds the fact it returns inert under
+  (`why-not`'s `:conviction`), else nil."
+  [kb f]
+  (try (let [h (f)] (when (integer? h) (-> (v/why-not kb h) :conviction :type)))
+       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+
+(defmacro with-shipped
+  "`shipped-fixture` around one test rather than a namespace's fixture, for a file the
+  sweep should keep running everywhere else.  Prefer it: a fixture forces the shipped
+  value on every test in the file, and a file loses a sweep it was passing under to answer
+  for one test that was not.
+
+    (tu/with-shipped [#'plan/*enabled*] …)"
   [vars & body]
-  `((pinning ~vars) (fn [] ~@body)))
+  `((shipped-fixture ~vars) (fn [] ~@body)))
 
 (def windows?
   "Is this JVM on Windows?  For a test that execs a `#!` stub, which Windows cannot.  Pair
@@ -299,7 +330,7 @@
 ;; binding rather than a fixture because it has to cover a lazily realized seq that
 ;; outlives whatever thread frame set it up.
 (defn query-engine-override
-  "The engine `VAELII_QUERY_ENGINE` names, or nil.  Read by tests that pin a
+  "The engine `VAELII_QUERY_ENGINE` names, or nil.  Read by tests that assert a
   DFS-specific artifact and must stand aside when the sweep is running.
 
   The domain is `*query-engine*`'s own three, refused rather than passed through: a
@@ -335,8 +366,8 @@
   engine is: every one of them is complete, so the wrong name is a sweep that runs the
   default order and passes, saying nothing about the tactician it named."
   []
-  (let [roster    @(requiring-resolve 'vaelii.impl.tactics/tacticians)
-        spellings (into {} (map (juxt name identity)) (keys roster))]
+  (let [tacticians @(requiring-resolve 'vaelii.impl.tactics/tacticians)
+        spellings  (into {} (map (juxt name identity)) (keys tacticians))]
     (config/prop-enum "VAELII_QUERY_STRATEGY" spellings nil
                       (str "one of " (str/join ", " (sort (keys spellings)))))))
 
@@ -361,7 +392,7 @@
 ;; the same shape `VAELII_HIER` takes for retrieval.
 ;;
 ;; **The claim does not hold unqualified, and the sweep is what established that.**  One
-;; test pins the ranking back rather than stand aside, because the ranking supplies its
+;; test forces the ranking back on rather than stand aside, because the ranking supplies its
 ;; answer: where the event calculus stops (`calendar_test`).  docs/inference.md, "Where
 ;; the ranking is required", carries it with its witness.
 ;;
@@ -402,7 +433,7 @@
 
 ;; The storage the whole suite runs on.  `:memory` (default) keeps everything in RAM
 ;; with no external dependency; `VAELII_TEST_BACKEND=disk-log` runs every test against the
-;; on-disk stores (the durability parity gate).  Either way the db number names a shared
+;; on-disk stores (the durability parity run).  Either way the db number names a shared
 ;; store, so the block/isolated split and `fresh`'s clear behave identically.
 ;;
 ;; The value is a `:backend` name, `<records>-<index>` (`disk-memory`, `memory-columnar`)
@@ -421,7 +452,7 @@
 
 ;; The truth-maintenance representation the whole suite runs on — `:dense` (default, the
 ;; engine default since the corpus-scale memory win) or `VAELII_TEST_TMS=reference` for
-;; the persistent-map baseline.  Same gate as the storage backend:
+;; the persistent-map baseline.  The same parity run as the storage backend:
 ;; `jtms_dense_oracle_test` proves the two agree op-by-op, and running the suite through
 ;; the reference one proves the *engine* agrees on the baseline the default replaced.
 (def ^:private tms-kind
@@ -693,9 +724,20 @@
     (run! #(.deleteOnExit ^File %) (file-seq dir))
     (.getPath dir)))
 
+(defn- dump-per-root
+  "A fn of no arguments answering the dump `build` makes, built once per JVM for each root
+  value of `checks/*assertive-arg-types?*`.  `build-dump`'s thread reads that root, and a
+  namespace that alters it around its fixtures (`web_jobs_test`) builds a dump the other
+  reading's restores must not receive."
+  [build]
+  (let [dumps (atom {})]
+    (fn []
+      (let [k (.getRawRoot #'checks/*assertive-arg-types?*)]
+        @(get (swap! dumps update k #(or % (delay (build)))) k)))))
+
 (def ^:private starter-dump
-  "An export dump of the starter ontology, built **once per JVM** and read back by
-  `load-starter!`.
+  "Answers an export dump of the starter ontology, built **once per JVM** for each root
+  argument-type reading (`dump-per-root`) and read back by `load-starter!`.
 
   `starter/load-into` re-asserts all 3,200+ sentexes through the full write path, and
   that path is not linear in the ontology's size.  64% of the load is its 28 `genlCx`
@@ -705,9 +747,9 @@
   tree: `load-into` 2,980 ms, `export!` 181 ms, `import!` 94 ms warm.
 
   A dump is a copy of the KB rather than a shortcut past building one (`build-dump`).
-  `starter_copy_test` pins that — same sentences, same contexts, same truth, same
+  `starter_copy_test` asserts that — same sentences, same contexts, same truth, same
   strength, same belief."
-  (delay (build-dump "vaelii-starter-" starter-build-space starter/load-into)))
+  (dump-per-root #(build-dump "vaelii-starter-" starter-build-space starter/load-into)))
 
 (defn load-starter!
   "Load the starter ontology into `kb` and return `kb` — `starter/load-into`'s result,
@@ -721,7 +763,7 @@
   it refuses — calls `starter/load-into` directly and pays for it, since a restored dump
   answers a different question."
   [kb]
-  (v/import! kb @starter-dump {:belief? true})
+  (v/import! kb (starter-dump) {:belief? true})
   kb)
 
 ;; ---- the upper ontology, built once and copied --------------------------
@@ -737,15 +779,16 @@
    :recover? false :tms tms-kind})
 
 (def ^:private core-context-dump
-  "An export dump of the upper ontology, built **once per JVM** and read back by
-  `load-core!`, mirroring `starter-dump`.
+  "Answers an export dump of the upper ontology, built **once per JVM** for each root
+  argument-type reading (`dump-per-root`) and read back by `load-core!`, mirroring
+  `starter-dump`.
 
   `core-context/load-into` re-asserts every `kb/upper/` file through the full write path,
   and the `neutral-fresh` fixtures rebuild a fresh core KB per test, so that cost is paid
   once for every such test.  A restored dump reaches the same state (`build-dump`) —
-  `core_copy_test` pins that, because belief does not depend on the order the records
+  `core_copy_test` asserts that, because belief does not depend on the order the records
   were written."
-  (delay (build-dump "vaelii-core-" core-build-space core-context/load-into)))
+  (dump-per-root #(build-dump "vaelii-core-" core-build-space core-context/load-into)))
 
 (defn load-core!
   "Load the upper ontology into `kb` and return `kb` — `core-context/load-into`'s
@@ -756,14 +799,14 @@
   calls `core-context/load-into` directly and pays for it, since a restored dump answers a
   different question."
   [kb]
-  (v/import! kb @core-context-dump {:belief? true})
+  (v/import! kb (core-context-dump) {:belief? true})
   kb)
 
 ;; ---- any fixture KB, built once per key and copied ---------------------
 
 (def ^:private keyed-dumps
-  "`load-dumped!`'s dumps, one delay per key, each built on its own space the first time
-  a fixture asks for it."
+  "`load-dumped!`'s dumps, one `dump-per-root` per key, each built on its own space the
+  first time a fixture asks for it."
   (atom {}))
 
 (defn load-dumped!
@@ -783,9 +826,9 @@
   (let [space {:backend :memory :space [::dump key block-top]
                :recover? false :tms tms-kind}
         dump  (get (swap! keyed-dumps update key
-                          #(or % (delay (build-dump "vaelii-fixture-" space build))))
+                          (fn [d] (or d (dump-per-root #(build-dump "vaelii-fixture-" space build)))))
                    key)]
-    (v/import! kb @dump {:belief? true})
+    (v/import! kb (dump) {:belief? true})
     kb))
 
 (defn load-core-with!
@@ -836,7 +879,7 @@
   The engine counts these, so a test asking whether a walk happened reads a number rather
   than redefining `res/matches-visible` to tally calls.  That interception could not tell a
   walk's probe from a `FactProver` lookup of the same predicate except by the `?rv` the
-  walk's patterns happen to carry, and it pinned the arity of a function whose shape is
+  walk's patterns happen to carry, and it fixed the arity of a function whose shape is
   none of the asking test's business."
   [f]
   (let [before (:misses (observe/neighbour-counts))]
@@ -978,6 +1021,40 @@
     (into [] (distinct) (sort (keep #(:context (p/get-sentex (:records kb) %))
                                     (exc/defeats-of kb h ctx))))))
 
+(defn verdict-violations
+  "Where the justification verdicts and belief disagree over the handles `hs` and the
+  readers `ctxs`, as `[handle context kind]` rows.  `:belief`: the verdict reader's belief
+  (`exc/verdict-reader`) is not `exc/belief-hidden-fn`'s.  `:verdict`: a handle IN, named
+  by no defeat in force at the reader (`exc/defeats-of`), is not believed exactly when it is a premise or a justification of it reads `:supports`.
+  `:why`: `v/why` at the handle's own context carries other verdicts."
+  [kb hs ctxs]
+  (let [tms    (reasoning/tms kb)
+        reader (exc/verdict-reader kb)
+        hids   (volatile! {})
+        hid    (fn [c] (if-let [e (find @hids c)]
+                         (val e)
+                         (let [f (exc/belief-hidden-fn kb c)] (vswap! hids assoc c f) f)))
+        live   (filterv #(jtms/in? tms %) hs)]
+    (into (vec (for [h live, c ctxs
+                     :let [{:keys [believed? verdicts]} (reader h c)
+                           f        (hid c)
+                           network  (not (and f (f h)))
+                           removed? (seq (exc/defeats-of kb h c))
+                           expected (boolean (and (not removed?)
+                                                  (or (jtms/premise? tms h)
+                                                      (some #{:supports} (vals verdicts)))))
+                           kind     (cond (not= network believed?)  :belief
+                                          (not= expected believed?) :verdict)]
+                     :when kind]
+                 [h c kind]))
+          (for [h live
+                :let [c (:context (p/get-sentex (:records kb) h))
+                      t (v/why kb h {:max-depth 1})]
+                :when (and (:believed? t) (not (:premise? t))
+                           (not= (into {} (map (juxt :justification :verdict)) (:support t))
+                                 (:verdicts (reader h c))))]
+            [h c :why]))))
+
 (defn handle-free
   "`form` with each `(sentexHandle n)` term replaced by `[sentence context]` of the sentex
   at `n`, so two KBs holding the same content compare equal whatever handles they
@@ -1069,7 +1146,8 @@
 
 (defn- retract-added!
   "Retract every premise the test added since `before` (a set of sentex ids), and every
-  record it added that is not a network datum at all.  A roster declaration whose
+  record it added that is not a network datum at all, and every inert sentex it added.  A
+  forced-monotonic declaration whose
   retraction `retract!` refuses an author (`checks/forcing-retraction-problem`) is
   retracted too, since a test that loads the upper ontology into a scratch KB owes the
   baseline.  Dependency-directed retraction sweeps the derived consequences, so the KB
@@ -1078,15 +1156,20 @@
   (with-redefs [checks/forcing-retraction-problem (constantly nil)]
     (loop [guard 0]
       (let [prems (premise-ids kb)
+            ;; An inert sentex restored by `import!` is a TMS datum held OUT with no
+            ;; strength, so it is neither a premise nor an unknown datum, and it is
+            ;; retracted by the third test.
+            inert (fn [h] (and (nil? (:strength (v/sentex kb h))) (not (v/in? kb h))))
             added (filter #(and (not (contains? before %))
-                                (or (prems %) (not (jtms/known-datum? (reasoning/tms kb) %))))
+                                (or (prems %) (not (jtms/known-datum? (reasoning/tms kb) %))
+                                    (inert %)))
                           (p/sentex-ids (:records kb)))]
         (when (and (seq added) (< guard 50))
           (doseq [h added] (try (v/retract! kb h) (catch Throwable _)))
           (recur (inc guard)))))))
 
 (defn stored-terms
-  "Every symbol term the *records* mention — the term roster's oracle, computed the
+  "Every symbol term the *records* mention — the term-name set's oracle, computed the
   expensive way (a walk over every stored sentex)."
   [kb]
   (into #{}
@@ -1139,13 +1222,13 @@
                (pr-str (mapv #(v/sentence-of (v/sentex kb %)) (take 8 leak-pm)))
                ", " (count lost-pm) " left derived that were asserted "
                (pr-str (mapv #(v/sentence-of (v/sentex kb %)) (take 8 lost-pm)))))))
-  ;; the index's term roster is an absolute invariant, not a delta: it must equal the
+  ;; the index's term-name set is an absolute invariant, not a delta: it must equal the
   ;; names the surviving records mention.  A term left behind by an incomplete unindex
   ;; shows up here even when the record sets balance.
   (let [stored (stored-terms kb)
         listed (set (v/terms kb))]
     (is (= stored listed)
-        (str "term roster drifted from the records — "
+        (str "term-name set drifted from the records — "
              (count (set/difference listed stored)) " stale, "
              (count (set/difference stored listed)) " missing: "
              (pr-str (vec (take 8 (set/union (set/difference listed stored)

@@ -80,7 +80,7 @@
   the informant, the antecedents in their stored order, the consequence and the
   strength, and the subsumptions the network keeps beside them when there are any.  The
   bindings are not hashed: belief never reads them (`jtms/graph-just`).  A dump's
-  reasoning image is stamped with an accumulator of these, so an import that lands
+  reasoning image is written with an accumulator of these, so an import that lands
   different justifications declines the image."
   ^long [^long h j]
   (-> fnv-offset

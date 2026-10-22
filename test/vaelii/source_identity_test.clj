@@ -2,7 +2,7 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.source-identity-test
   "The source identity (`vaelii.impl.source-identity`): the digest a reasoning image is
-  stamped with.  An edit to prose leaves it unchanged, an edit to a definition recover can
+  written with.  An edit to prose leaves it unchanged, an edit to a definition recover can
   run changes it, an edit to a definition recover cannot reach leaves it unchanged, two
   reads of one file agree, and the namespace set it reads reaches the namespaces recovery
   runs — including the ones only a quoted symbol names.
@@ -255,6 +255,38 @@
     (is (not= was (edit "(defn open-kb\n" "(defn ^{:edited true} open-kb\n"))
         "`vaelii.core/open-kb`, a root")))
 
+(deftest an-import-edit-keeps-the-digest
+  ;; An import's whole effect is the records it leaves, which an image's records
+  ;; fingerprint covers, so an edit to its pass must not discard every image.  The pass is
+  ;; reached only if a registry names `import!` by var (`vaelii.core/write-ops`).
+  (let [d    (engine-copy)
+        opts {:source-dirs [(str d)]}
+        imp  (io/file d "vaelii/impl/io/import.clj")
+        text (slurp imp)
+        was  (:digest (si/source-identity opts))]
+    (is (str/includes? text "(defn- mark-premises-by-strength\n"))
+    (spit imp (str/replace-first text "(defn- mark-premises-by-strength\n"
+                                 "(defn- ^{:edited true} mark-premises-by-strength\n"))
+    (.setLastModified imp (- (System/currentTimeMillis) 60000))
+    (is (= was (:digest (si/source-identity opts))) "the import pass is outside the digest")
+    (spit imp text)))
+
+(deftest every-write-that-derives-belief-in-a-session-is-a-root
+  ;; An image written at close carries the labels the session's writes derived, so the
+  ;; code of each `:replay` write is in the digest by name, now that `write-ops` names no
+  ;; var for the walk to follow.
+  (require 'vaelii.core)
+  (let [replay (for [[k [_ class]] @(resolve 'vaelii.core/write-ops)
+                     :when (= :replay class)]
+                 (symbol "vaelii.core" (name k)))]
+    (is (seq replay))
+    (is (empty? (remove (set si/roots) replay))
+        "a `:replay` write missing from `si/roots`"))
+  (let [d (si/definitions)]
+    (is (contains? d "vaelii.core/edit!"))
+    (is (not (contains? d "vaelii.core/import!")))
+    (is (not (contains? d "vaelii.impl.io.import/import-dump")))))
+
 (deftest the-closure-reaches-what-recovery-runs
   (let [c (si/closure)]
     (is (contains? c 'vaelii.impl.recovery))
@@ -292,7 +324,7 @@
         (testing "an edit that moves the modification time"
           (spit f "(ns demo.y) (defn g [x] (dec x))")
           (is (not (same? a (parse))))))
-      (testing "an edit that keeps the length and the modification time, within the window
+      (testing "an edit that keeps the length and the modification time, within the time window
                 after the read before it"
         (spit f "(ns demo.y) (defn g [x] (inc x))")
         (.setLastModified f (- (System/currentTimeMillis) 500))

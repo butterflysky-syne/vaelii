@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.defn-inference-test
-  "Query-time definitional *inference*.  Two behaviours this suite pins, both TDD-red
+  "Query-time definitional *inference*.  Two behaviours this suite asserts, both TDD-red
   until the build lands:
 
   1. **Evaluative `defnSufficient`.**  A sufficient condition built from *computed*
@@ -63,12 +63,12 @@
 
 ;; ---- 2. semantics: sufficient is authoritative, necessary is an optimization ----
 ;; defns are two-valued; a defnSufficient that passes admits, full stop;
-;; a defnNecessary is a sound negative witness / fast-fail, never a positive gate.
+;; a defnNecessary is a sound negative witness / fast-fail, never a condition that admits.
 
 (tu/deftest-kb sufficient-is-authoritative-a-failing-necessary-does-not-veto
   ;; A passing sufficient admits even when a necessary fails. That makes the KB
   ;; inconsistent — (widget 7) and (not (widget 7)) both become provable — which is FINE:
-  ;; we DOCUMENT it and pin no arbitration. Here we pin only the rule (sufficient
+  ;; we DOCUMENT it and assert no arbitration. Here we assert only the rule (sufficient
   ;; admits); the negative half is exercised in the negation tests below.
   ;; Green after Phase A: the query-time sufficient prover admits without consulting necessaries.
   (tu/with-terms [widget suff nec]
@@ -77,7 +77,7 @@
     (v/assert kb (list 'defnSufficient widget (list suff '?x)) 'CxUniverse)
     (v/assert kb (list 'defnNecessary  widget (list nec  '?x)) 'CxUniverse)
     (is (v/ask? kb (list widget 7) 'CxUniverse)
-        "sufficient is authoritative: (suff 7) holds, so 7 is admitted; the failing necessary does not veto (the resulting inconsistency is documented, not pinned)")))
+        "sufficient is authoritative: (suff 7) holds, so 7 is admitted; the failing necessary does not veto (the resulting inconsistency is documented, not asserted)")))
 
 ;; ---- 3. positive membership descends to a SPEC's sufficient (down the genl edges) ----
 
@@ -190,11 +190,11 @@
       (is (= 0 @(:midb c))      "dmid_b not checked")
       (is (= 0 @(:bottomsuff c)) "the sufficient is skipped once the top necessary fails"))))
 
-;; ---- 4. characterization: pin what asking a defn collection of a number does TODAY ----
+;; ---- 4. characterization: assert what asking a defn collection of a number does TODAY ----
 
-(tu/deftest-kb pin-baseline-a-computed-sufficient-does-not-admit-a-number-yet
-  ;; The characterization question: what currently happens when you ask (?pred 212)? Pin it
-  ;; with a test, with a comment about defns.  This assertion was pinned against the PRE-evaluative baseline
+(tu/deftest-kb baseline-a-computed-sufficient-does-not-admit-a-number-yet
+  ;; The characterization question: what currently happens when you ask (?pred 212)? Assert
+  ;; it with a test, with a comment about defns.  This assertion was written against the PRE-evaluative baseline
   ;; (a computed defnSufficient never fired forward, so the number was not admitted) and
   ;; was designed to FLIP once `sufficient-admits-by-evaluating-a-computed-condition` went
   ;; green.  Phase A (query-time evaluative defnSufficient) is exactly that change, so it

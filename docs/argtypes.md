@@ -12,7 +12,7 @@
 
 ## Relation-wide declarations and the runtime boundary
 
-`arg` (including `arg1` / `arg2` / `arg3`), `genlArg`, `quotedArg`, `interArg`, the
+`arg` (including `arg1` through `arg5`), `genlArg`, `quotedArg`, `interArg`, the
 covering forms `args` / `argsGenl` / `argAndRest` / `argAndRestGenl` (below), and the
 homogeneity forms `interArgs` / `interArgAndRest` (below) accept a `relation` as their
 subject: either a predicate or a function. A function's declarations are enforced on the
@@ -43,25 +43,25 @@ The refusal carries the arm's own `:type`, `:arg`, `:expected` and `:position` (
 position in the function), plus `:application`, the innermost application whose input
 failed. The boundary of the inner reading:
 
-- **No derivation, and a symbol convicted only under the constraint-only reading.** No
-  entailment is drawn for a nested input: a declaration arriving after the fact derives
-  over the facts it finds by predicate, and nothing finds the applications of a function
-  inside stored facts, so a nested derivation would be drawn in one arrival order and not
-  the other. Under the entailing reading a nested symbol is therefore neither derived nor
-  convicted, as at the top level; a nested value or application is convicted. Under the
-  constraint-only reading a nested input is convicted when its visible types reach
-  `thing` and miss the declared type, and an input with no visible type is no evidence.
+- **No derivation.** No entailment is drawn for a nested input: a declaration arriving
+  after the fact derives over the facts it finds by predicate, and nothing finds the
+  applications of a function inside stored facts, so a nested derivation would be drawn
+  in one arrival order and not the other. A nested input is convicted when it holds a
+  type the taxonomy separates from the declared one, and an input with no visible type is
+  no evidence. Under the entailing reading `assert` stores a nested symbol so convicted
+  and `try-assert` refuses it, as at the top level; a nested value or application is
+  convicted under both readings.
 - **Terms, not formulas.** A connective's argument (a genuine `(not (P …))`) and a
   compound whose head the KB knows as a predicate are formulas, not applications, and
   are not read as one. A head the KB has not classified is read as a function.
 - **A mention is not descended into.** A position a `quotedArg` declaration types holds
   the term written there, so an application in it is syntax, and neither its result nor
   its inputs are read. The same holds for the argument of a quoting predicate
-  (`termOfUnit`, `rewriteOf`) and of a `quoting_function`. A quoting function's own
-  declarations are still read over its application; only what it quotes is left alone.
-  `quotedArg` itself stays open-world about a compound argument's kind: it does not read
-  the shape kinds ([what a quoted form is](#what-a-quoted-form-is)), so a compound in a
-  `(quotedArg P n string)` position is neither a string nor convicted of not being one.
+  (`natFormula`, `rewriteOf`) and of a quoting function (`Quote`, `Quasiquote`). A
+  quoting function's own declarations are still read over its application; only what it
+  quotes is left alone.
+  `quotedArg` itself judges a compound argument by its shape kinds
+  ([what a quoted form is](#what-a-quoted-form-is)).
 - **Reifiable and unreifiable alike.** `assert` mints a ground reifiable application into
   a constant before the checks run, and the constant carries the result types, not the
   inputs, so the inputs are read over the sentence as written, before the mint; a refused
@@ -189,11 +189,20 @@ entailment is a derived, justified, retractable sentex under truth maintenance.
 constraint-only reading). Entailing changes what a KB *contains*, not only what it
 answers, so the constraint-only reading stays one `binding` away.
 
-**No shipped `arg`-family declaration types an argument `thing`.** Such a declaration
-rejects nothing under the constraint-only reading, and under the entailing one it derives
-only `(thing X)` (`starter_test/no-shipped-declaration-makes-an-argument-a-thing`). A
+**An `arg`-family declaration may type an argument `thing`.** `(arg P n thing)` says that
+position `n` holds a term of any kind and that no narrower type is right for it. It
+rejects nothing under the constraint-only reading, and the entailing one derives nothing
+from it: a membership in `thing`, or a `genl` edge to it, says nothing about the term
+(`checks/mintable-type?`). `kb-quality` lists each such declaration under
+`:typed-thing` with its predicate's stored extent, the facts a narrower type would type
+([quality.md](quality.md)). The second slots of the happening-participant predicates `actor`,
+`thingPerceived`, `doneBy`, `input`, `destroyedInput`, `preservedInput` and `output` are
+such positions. Their bounds stay explicit on each predicate even where inherited, so a
+parent's revision cannot silently change a child's declared constraint. A
 `(genlArg P n thing)` declaration says position `n` holds a type, and the constraint-only
-reading convicts an individual there.
+reading convicts an individual there. A position that holds a term taken as written
+declares an expression type with `quotedArg`, as `(quotedArg comment 1 denotational_term)`
+does.
 
 **Both readings prove the same sentences over the shipped ontology.** A membership or
 `genl` edge an argument declaration in `resources/kb/` derives is written in a KB file
@@ -211,15 +220,17 @@ taxonomy that `isa?` / `types-of` and the definitional checks read, and a datum 
 agenda fires rules on. A prover's answer is none of those, and it is confined to a
 CapitalCamelCase individual; `genlArg` entails a `genl` edge, which no prover can.
 
-## An argument constraint only adds support
+## An argument constraint derives; `try-assert` refuses a separated argument
 
-With the toggle on, an argument constraint derives the membership it names and never
-refuses a sentence on the memberships its argument holds (`checks/entailment-covers?`).
-A declaration read as an entailment says Fred *is* an animal, so there is no state of the
-KB in which Fred fills the slot and fails it. The same holds of every kind that types a
-symbol: `arg`, `genlArg`, `interArg`, the covering forms and the homogeneity forms, from a
-declaration written in the asking context or inherited by it, and for a declared type the
-hierarchy does not hold yet, which derives nothing until it does.
+With the toggle on, an argument constraint derives the membership it names, and `assert`
+refuses no sentence on the memberships its argument holds (`checks/entailment-covers?`).
+A declaration read as an entailment says Fred *is* an animal. The same holds of every kind
+that types a symbol: `arg`, `genlArg`, `interArg`, the covering forms and the homogeneity
+forms, from a declaration written in the asking context or inherited by it, and for a
+declared type no `genl` edge places. When
+Fred holds a type the taxonomy separates from `animal`, the derivation is a clash, and
+`try-assert` refuses the sentence with `:definitional-clash` (`:violation :arg-type`,
+[api.md](api.md#refusing-a-clash)).
 
 A membership the declared type does not reach is a second membership beside the derived
 one, not evidence against the sentence. `(achieves Ann Bee)` under `(arg accomplishes 2
@@ -235,8 +246,66 @@ Two things still convict, because no membership can be derived of them:
 - a **function application**, typed by its function's declared `result`.
 
 The constraint-only reading (`VAELII_ASSERTIVE_ARG_TYPES=0`) derives nothing and convicts a
-symbol whose memberships reach `thing` and miss the declared type, as
-[taxonomy.md](taxonomy.md) describes.
+symbol holding a type the taxonomy separates from the declared one, as
+[taxonomy.md](taxonomy.md) describes. A symbol whose types neither reach nor are separated
+from the declared type is admitted: its other type is unknown, and an unknown type stands.
+
+### An argument that fails its declared type is held inert
+
+`assert` stores a fact an argument declaration convicts and holds it in the `:out` forced
+set ([nmtms.md](nmtms.md#the-forced-monotonic-set)): the fact is never believed, forms
+no nogood and fires no rule. The held convictions are `:arg-type`, `:arg-genl`,
+`:inter-arg-type` and `:quoted-arg-type` that the entailing reading does not weigh: a value
+under `arg`, an individual in a `genlArg` position, a symbol the constraint-only reading
+convicts, and a kind outside a `quotedArg` type. The verdict is read off the stored state,
+so the stored set and belief are the same whichever of the declaration, the fact and a
+membership arrives first:
+
+```clojure
+(v/assert kb '(genl dog thing) 'CxUniverse)
+(v/assert kb '(unary_predicate needs) 'CxUniverse)
+(v/assert kb '(needs 5) 'CxUniverse)              ; stored and believed
+(v/assert kb '(arg needs 1 dog) 'CxUniverse)      ; (needs 5) is held inert
+(v/why-not kb '(needs 5) 'CxUniverse)
+;; {:reason :inert :conviction {:type :arg-type :arg 5 :expected dog :position 1 …} …}
+```
+
+`violations` lists each held fact as `:inert-argument`, with the violation under
+`:detail`. Retracting the declaration, or a membership or `genl` edge the conviction read,
+releases the fact. `try-assert` refuses the write as `:definitional-clash`
+([api.md](api.md#refusing-a-clash)).
+
+The settle decides the hold again for every stored fact a write can move
+(`checks/refresh-argument-holds!`): the tuples under a declaration stored, removed or
+relabelled; under the constraint-only reading, the facts naming a term whose membership
+moved; under a declaration naming a type a definition stored, removed or relabelled
+reaches, the held facts and the convicted tuples; and, after a `genl`, separation or
+`genlCx` move, the facts its ends reach, held or not; a held fact the ends do not reach is
+not decided again (`lein perf --only genl-write-beside-held-facts`). A
+`genlCx` move reads only the tuples of the predicates a declaration constrains, stated at
+or below the edge's context, and no other fact stated there (`lein perf --only
+mints-under-context-edge`). Each
+declaration is read per position it types, a covering form at every position from its
+start, and only the atoms there that can be held are tested: under the entailing reading a
+value, an individual in a `genlArg` position and a `quotedArg` term. Each test is memoized
+per term kind and context for the pass, and per value where a `:monotonic` definition can
+decide one, so a declared type's closure is walked once and
+not once per atom (`lein perf --only recover-genlarg-types-down-a-chain`). The memo is
+keyed by the declared kind and type, so the declarations naming one type share it, and
+each predicate position's atoms are read once per pass. A recover
+reads every declaration whole (`argtype_entail_test/a-value-argument-under-a-declared-type-is-inert-in-either-order`,
+`argtype_entail_test/a-separated-symbol-argument-is-inert-in-every-order-under-the-constraint-reading`,
+`quoted_arg_test/a-quotedarg-violation-is-inert-in-either-order`).
+
+Three cases stay outside the hold:
+
+- A declaration arriving after the fact reads the atoms at its position, so a compound
+  argument there is decided only at the fact's own write. A `quotedArg` declaration also
+  reads the compounds at its position, when its type is separated from some compound kind.
+- A function application nested inside an argument is checked against its function's
+  declarations at the write (`checks/check-application-inputs`), which refuses it.
+- A bulk load runs no argument check, so a bulk-loaded fact under a declaration already
+  stored is held only when a later write moves its verdict.
 
 **A real conflict is a clash, decided by belief.** A derived membership disjoint from one
 the term holds is placed and weighed at settle, as a rule's conclusion is
@@ -250,10 +319,10 @@ a rule derives, derives and is weighed the same way
 A clash between two derivations of one cascade — `(p1 Fred)` and the `(p2 Fred)` it
 entails — is found by the settle from the stored records in the same way.
 
-A derivation at an arity its type denies is stored too. With `t` declared binary, `(arg rel
-1 t)` and `(rel Rex Mary)` store the fact and `(t Rex)`, and a reader that sees the binding
-reads `(t Rex)` OUT as an inert tuple
-(`argtype_entail_test/an-entailment-of-a-length-its-type-denies-is-read-out`,
+A declaration whose type an arity statement binds to another length derives nothing. With
+`t` declared binary, `(arg rel 1 t)` and `(rel Rex Mary)` store the fact and no `(t Rex)`,
+and the declaration waits until the binding leaves
+(`argtype_entail_test/a-type-bound-to-another-length-mints-nothing-and-its-declaration-waits`,
 [taxonomy.md](taxonomy.md#arity)).
 
 **What the entry point still asks of the derivations.** `checks/entailment-check` walks the
@@ -264,6 +333,63 @@ each derivation as it is stored (`special/inadmissible`): a derived `(genl X T)`
 a taxonomy cycle is dropped and reported in `(violations kb)`, since the derivation runs
 after the triggering sentex is stored and inside a fixpoint, neither of which may abort
 halfway.
+
+### A rule whose variable no term can fill is held inert
+
+`assert` stores a rule that `checks/variable-clash-problem` convicts and holds it in the
+`:out` forced set, as a fact above is held. A variable of such a rule stands in two
+positions whose demands are separated types, so every firing would conclude a fact the
+argument checks convict; [taxonomy.md](taxonomy.md#and-against-the-variables-of-a-rule)
+states which demands the arm reads. The held rule is never believed, so it fires nothing
+forward and answers no goal backward, and a firing it made while believed loses its
+support. The verdict is read from the rule's own context off the stored state, so the
+stored set and belief are the same in every arrival order of the rule, its declarations
+and the separation
+(`rule_variable_arg_test/a-rule-a-separation-convicts-is-held-in-every-arrival-order`, all
+24 orders). A rule a generator or a `defn*` fact mints is held the same way
+(`checks/hold-rule-conviction!`).
+
+```clojure
+(v/assert kb '(implies (comment ?x ?string) (genl ?x ?string)) 'CxUniverse)
+(v/why-not kb '(implies (comment ?x ?string) (genl ?x ?string)) 'CxUniverse)
+;; {:reason :inert :conviction {:type :arg-variable :variable ?string
+;;                              :expected [string unary_predicate] …} …}
+```
+
+`violations` lists the rule as `:inert-rule`, with the conviction under `:detail`. `check`
+reports nothing. `try-assert` refuses the rule as `:definitional-clash` with `:violation
+:arg-variable`, and refuses an `arg`, `genlArg` or `quotedArg` declaration that would
+convict a stored, believed rule, naming the rule in `:clashes-with`
+(`checks/rule-declaration-conflict`). Retracting a declaration or the separation the
+conviction read releases the rule, and its firings come back IN.
+
+The drain that decides the facts' holds decides the rules' too
+(`checks/refresh-argument-holds!`). It reads the rules on the predicates a write names,
+through both rule indexes (`checks/rules-on`):
+
+- a declaration stored, removed or relabelled reads the rules on its predicate and the
+  predicates below it;
+- a `type_relation_predicate` membership stored or removed reads the rules on its member;
+- a `genl` or separation move reads the rules on the predicates at or below an end that a
+  declaration constrains, and on the predicates of each declaration naming a type at or
+  below an end, with every rule on a `genlArg`-declared predicate or a
+  `type_relation_predicate` when an end is at or above `unary_predicate`;
+- a `genlCx` move reads the rules stated at or below the edge's context;
+- a recover, and a move at a value kind, read the rules on every constrained predicate and
+  on every `type_relation_predicate`.
+
+A recover decides the holds in its rebuild settle, before a family reads a label
+(`settle/*rebuilding?*`), so no step of it believes a fact or rule the live KB holds OUT
+(`recovery_test/a-recover-holds-out-what-the-live-kb-holds-out-before-its-settle-reads-a-label`).
+
+Each predicate's declarations are read once per context for the pass
+(`checks/*pass-reads*`). Before a rule is read from its context, the pass reads its
+variables' constraints as stored over every context and tests each pair unscoped with no
+`siblingDisjointException` (`checks/clash-possible?`); a rule no pair there can separate
+is not convicted at any context, and is decided without a scoped read. Two cases stay outside the hold: `try-assert` of a separation
+or a `type_relation_predicate` membership that would convict a stored rule does not refuse
+it, and a rule an equality merge restates (docs/equality.md) is decided only when a later
+write reaches it.
 
 ## Where it lives
 
@@ -333,7 +459,8 @@ One named path is not the only path. With `pa → pb → pd` and `pa → pc → 
 `(arg pd 1 tt)` over `(pa Xone)` names the route through `pb`, and retracting
 `(genl pa pb)` deletes that justification while the route through `pc` still entails
 `(tt Xone)`. The removal draws the entailment again from the taxonomy it left
-(`special/rederive-descended`): the retraction path reads the justifications the sweep
+(`special/rederive-descended`), for a cover on the route and for a trigger
+membership as for a `genl` edge: the retraction path reads the justifications the sweep
 deleted before it deletes their records (`special/edge-descended-justifications`), and a
 settle that defeats an edge reads the derivations the edge took OUT
 (`special/lost-descended-derivations`). Where a route survives, the type comes back resting
@@ -357,7 +484,9 @@ points:
   declared predicate's whole `genl` **spec** subtree, since the declaration binds every
   predicate beneath the one it names;
 * **edge meets both** — `entail-under-edge`, walking the same subtree under the arriving
-  edge's sub-predicate. It is the taxonomy twin of `entail-existing`, and there for the
+  edge's sub-predicate, and under each part of an arriving `covering`, `separating` or
+  `partition`, which installs an edge per part (`tax/installed-edges`). It is the taxonomy
+  twin of `entail-existing`, and there for the
   reason `subsumption-seeds` beside it is: the arriving datum is the *edge*, and nothing
   else on the assert path re-examines the facts it just brought under a declaration;
 * **context edge meets both** — `entail-under-context-edge`, from the settle's drain of
@@ -369,7 +498,7 @@ points:
   counts, which `lein perf`'s `genlcx-edge-beside-declared-facts` holds.
 
 Every order of {declaration, fact} reaches the identical KB, and so does every order of
-{declaration, fact, edge}. That is the gate:
+{declaration, fact, edge}. Three regression tests enforce it:
 `every-arrival-order-reaches-the-same-belief` runs all six orders of {declaration, fact,
 a competing type}, `every-arrival-order-of-the-three-ingredients-mints-the-same-type`
 runs all six of {declaration, fact, edge}, and
@@ -377,23 +506,37 @@ runs all six of {declaration, fact, edge}, and
 declaration, inherited declaration, predicate edge, context edge, fact}, with a sampled
 twin at the default selector.
 
-No member of the family refuses on a membership under the entailing reading, so the
-**facts** a KB holds are the same in every order as well as the derivations. The
-constraint-only reading keeps a refusal half with no such reach: it convicts on an
-absence, so a KB given the ingredients in different orders under
-`VAELII_ASSERTIVE_ARG_TYPES=0` can hold different facts ([taxonomy.md](taxonomy.md),
+No member of the family refuses on a membership, so the **facts** a KB holds are the same
+in every order as well as the derivations. The constraint-only reading holds a convicted
+fact inert in every order
+([held inert](#an-argument-that-fails-its-declared-type-is-held-inert), [taxonomy.md](taxonomy.md),
 "What each constraint does in each arrival order").
 
-**A declared type the hierarchy does not hold yet mints nothing, and then everything.**
-`mintable-type?` asks whether the type reaches `thing`, and it reads the hierarchy as it
-stands, so a declaration and its facts stored before that edge minted nothing. The
-declaration is kept in the refusal record, and the settle that sees a `genl` generation
-move re-asks it; once the type is mintable, `entail-existing` runs for it again and mints
-over every fact stored meanwhile ([exceptions.md](exceptions.md), "A refused firing is
-remembered as bindings"). Until then the declaration reads none of its facts: every arm
-asks `mintable-type?` of the declaration's own type before it draws, so the extent would
-yield nothing. The answer is held per `genl` generation (`tax/genl?-global-held`), so a
-sweep over n facts walks the type's ancestors once rather than n times.
+**A type is a unary predicate, so a declared type mints by its arity.** `mintable-type?`
+reads the declared type's own IN arity bindings, one read with no `genl` closure: a type
+mints when no binding gives it a length other than one, no `variable_arity` releases it
+and no `arityMin` floors it above one. A
+declaration that mints also entails `(unary_predicate T)` of each type it names, justified
+by the declaration alone (`special/entail-existing`), so the type's arity is stored beside
+its first mints. A length `T` inherits through `genl` is not read.
+
+A declared type an arity statement binds to another length mints nothing, and the
+declaration waits in the refusal record under its own handle, naming the types it waits
+on. The settle re-asks the entry when the arity family's refresh moves the length of one
+of them (`special/owe-mints-on-lengths!`), and once each is mintable `entail-existing`
+runs for the declaration and mints over every fact stored meanwhile
+([exceptions.md](exceptions.md), "A refused firing is remembered as bindings"). A `genl`
+or `genlCx` edge re-asks no entry. Until then the declaration reads none of its facts:
+every arm asks `mintable-type?` of the declaration's own type before it draws, so the
+extent would yield nothing.
+
+An arity statement binding `T` to another length after the declaration has minted
+withdraws the entailed `(unary_predicate T)` (`special/withdrawn-type-entailments`, in
+the arity family's refresh) and leaves the declaration waiting on `T`, as it waits when
+the statement arrived first. The memberships the declaration minted stay stored, and
+`T`'s length holds them inert ([taxonomy.md](taxonomy.md#arity)); arriving first, the
+statement leaves neither stored, and both orders reach the same belief
+(`clash_oracle_test/a-length-arriving-after-a-minting-declaration-reads-as-one-arriving-before-it`).
 
 `entail-existing` puts each stored sentex back through `constraint-entailments` in its
 *own* context, narrowed to the arriving declaration (`checks/declaration-entailments`),
@@ -421,12 +564,13 @@ it again (`special/rederive-descended`), as for a `genl` route.
 
 The starter's `(arg parentOf 1 organism)` lives in CxUniverse (`life.txt`) while the individuals live in
 `CxNaturalWorld`, below it, so a `parentOf` fact there derives `(organism X)` in
-`CxNaturalWorld`. Every argument position in the shipped ontology is declared, so a
-toggle-on starter load derives a membership per declared position, less the ones
-pruning withholds (the table under [Cost](#cost)). The root's own `genl` supertype
-position is the single undeclared one, and `core.txt` says why beside it: `thing` cannot be
-a proper subtype of itself, so the constraint the root would fail is the wrong constraint
-rather than a missing one.
+`CxNaturalWorld`. A toggle-on starter load derives a membership per declared position,
+less the ones pruning withholds (the table under [Cost](#cost)). Each argument position
+of arity 2 and up in the shipped ontology is declared, except the ones `ontology_test`'s
+`undeclared-positions` names: the two `genl` positions, the example predicates' quoted
+sentence and the aggregation operators' slots. `core.txt` says why beside `genl`: `thing`
+cannot be a proper subtype of itself, so the constraint the root would fail is the wrong
+constraint rather than a missing one.
 
 ### Where a mint is placed
 
@@ -467,7 +611,9 @@ Each arrival direction reaches the placement:
 - a **`genlCx` edge arriving** draws over the facts stated in the contexts a context under
   its `sub` sees and its `super` does not, and the declarations stated there over the facts
   stated where the edge newly shows `sub` (`entail-under-context-edge`), which `lein
-  perf`'s `genlcx-edge-beside-seen-declared-facts` holds;
+  perf`'s `genlcx-edge-beside-seen-declared-facts` holds. An edge whose newly shown
+  contexts store nothing draws nothing, which `genlcx-edge-showing-an-empty-context`
+  holds;
 - a **`genlCx` edge leaving** takes the mints that named it, and `rederive-descended`
   draws the pair again at the placements that stand. A context under its `sub` can also
   become a maximal common descendant of a pair placed in a context it saw only through the
@@ -543,12 +689,17 @@ mint is drawn. The membership, the edge that puts its type under the mint's, the
 the declaration in any of their twenty-four orders leave the same KB, which is what
 `every-arrival-order-prunes-the-same-way` asks, and
 `every-arrival-order-prunes-the-same-way-across-contexts` asks of the `genlCx` edge that
-lets the mint's context see the membership.
+lets the mint's context see the membership. The candidate subtypes are the predicates of
+the term's unary predicate set (`reads/as-stored-unary-predicates`), which a derived membership
+enters as a stated one does, so a predicate holding the term in a fact of another arity
+costs the check nothing.
 
 Both arrival orders reach that state, and neither remembers how it got there:
 
 * the specific membership **first** — `special/entail-arg-type` finds it
-  (`checks/subsumed-mint`) and writes no record;
+  (`checks/subsumed-mint`) and writes no record. It asks before the admission checks, and
+  the assert entry point's check skips the mint too, so a withheld mint runs no admission
+  check (`lein perf`'s `withheld-mint-beside-covers`);
 * the specific membership **last**, or the `genl` or `genlCx` edge that makes it more
   specific or visible — the mint is already stored, so `settle` blocks its justifications
   (`special/subsumed-mint-blocks`) and the sweep that collects an excepted conclusion
@@ -597,7 +748,10 @@ justifications; `recover` and a fork read it and rebuild nothing for it
 
 Two conditions keep the withdrawal from eating what holds it up: the record has to be the
 entailment's own (no premise support, every justification an argument declaration's), and
-the subsuming membership must not itself rest on the mint.
+some subsuming record must not rest on the mint. Every subsumer is asked, so a minted
+`(animal Muffet)` that `(awake Muffet)` subsumes while resting on it is withdrawn by
+`(dog Muffet)`, as the mint drawn after `(dog Muffet)` is withheld
+(`argtype_entail_test/a-subsumer-resting-on-the-mint-does-not-keep-it`).
 
 **Nothing records a withheld mint.** It comes back when the record that displaced it
 leaves belief or the store — retracted, defeated or swept — and the settle finds it by
@@ -629,6 +783,20 @@ it: a firing in the same write can mint onto the record before the settle reads 
 the order that stores the record first draws every mint onto it
 (`argtype_entail_test/a-record-a-rule-concludes-takes-the-withheld-mints-in-every-order`).
 
+A settle under `special/*release-withheld?*` false draws neither release. It keeps each
+departure and arrival it read on `:owed` in `mint-queues`, which the reasoning image
+carries, and `v/owed-releases` counts them; the browser's store card shows the count. The
+switch is false in a bulk load, in the settles `recover` runs (an open and `lein cli
+upgrade` among them) and in the first settle after a trusted image install. Nothing drains
+the queue implicitly. `v/release-withheld!` draws what the owed rows release, chains from
+the mints and settles, returning `{:terms n :released n :ms n}`. While a row is owed,
+`isa?` and matching miss the membership it would draw. A preview keeps its own releases
+owed unless asked otherwise ([preview.md](preview.md#what-a-preview-omits)). The draw matches what a
+settle per fact draws at the departure
+(`argtype_entail_test/a-departure-under-the-switch-owes-its-mint-until-release-withheld`),
+and a close and a reopen keep the queue
+(`reasoning_image_test/the-image-carries-the-owed-releases-and-an-image-without-them-installs`).
+
 The KB **answers** the same either way: `isa?`, matching and the definitional checks all
 read the taxonomy, which reaches `animal` from `dog` with or without a record in between.
 Storage differs — the shipped starter holds 2,568 sentexes against 3,561, `core.txt` 932
@@ -645,7 +813,7 @@ cause. A minted `genl` edge is seeded as an asserted one is: the facts under its
 go back on the agenda through `special/minted-seeds`, which calls `subsumption-seeds`
 for each minted edge, so `(wolf Rex)` stored before `(genl wolf animal)` is minted fires
 a rule on `(animal ?x)`. That holds on `assert`, on a rule conclusion, and on the settle
-that releases a declaration whose type has just reached `thing`.
+that releases a declaration whose type's other arity has just left.
 `argtype_entail_test/a-minted-genl-edge-fires-the-rules-it-connects-in-every-order` runs
 all 120 orders.
 
@@ -675,10 +843,12 @@ declarations; the target materialized those entailments when it first became bel
 | case | what happens instead |
 |---|---|
 | an **individual** in an `genlArg` position | `genls-problem` convicts; an individual can never acquire `genl` edges |
-| the declared type is not one the hierarchy holds | nothing, and no conviction either — a name that does not reach `thing` is not a type we invent a membership in. This is where a structural constraint lands without needing a list of exemptions to keep in step |
+| the declared type is `thing` | nothing, in either reading, and no waiting entry: a membership in `thing` says nothing about a term. `kb-quality` lists the declaration under `:typed-thing` |
+| an arity statement binds the declared type to another length | nothing until the binding leaves; the declaration waits in the refusal record |
 | a `genlArg` position filled by the declared type itself | nothing — `(genl t t)` is a reflexive edge `wff` refuses, so `arg-entailments` never draws it. A `(genlArg P n thing)` declaration over a sentence whose position `n` holds `thing` would otherwise store a violation |
 | a **function application** in the position | `args-problem` / `genls-problem` check it against the function's declared `result` / `genlResult` and refuse where the result misses ([nat.md](nat.md)) — but nothing is minted, a declared result being a claim about the *function* and not about this application, and a compound having no membership to mint |
 | a genuine negation, or a rule | not argument-checked, so not entailed from either |
+| an **inert** fact (`assert-inert`, or `set/inert` in a text file) | nothing, in every arrival order: the fact, a declaration reaching back over it, a forward chain, and a `genlCx` edge each skip it, since an inert sentex claims nothing (`argtype_entail_test/a-declaration-draws-no-type-from-an-inert-fact`) |
 | a **query** | nothing, ever. The entailment is on the store path alone |
 | a bulk or dump load | skipped: `*bulk-load?*` draws none of the four arrival orders (the fact, the declaration, the `genl` edge, and the `genlCx` edge the settle drains), and a dump import writes records directly. `v/record-arg-types`, run once after the load on the recovered KB, records what the stored facts derive, so the store then holds what a per-fact load holds (`argtype_entail_test/a-bulk-loaded-store-records-its-derivations-once`) |
 
@@ -697,36 +867,36 @@ sentexes — the corpus these readings were taken on:
 With the toggle **off** an assert reads one dynamic var and stops. With it **on** — the
 default — and nothing to do, on/off straddles parity, which is as precise
 as this bench gets; the shared `declaration-reader` is what bought that. Where it mints,
-the run stores twice as many sentexes, so the ~1.9× is the minting, not the gate.
+the run stores twice as many sentexes, so the ~1.9× is the minting, not the declaration check.
 
-**With subsumed mints pruned, the default, a membership a settle moves costs one mint-roster
+**With subsumed mints pruned, the default, a membership a settle moves costs one mint-set
 lookup**, and nothing on a KB that holds no mint. The records the settle relabelled are
 filtered by shape (only a membership, a `genl` edge or a `genlCx` edge can subsume a mint)
 and by transition (a record that did not move subsumes what it subsumed before), and an
-empty roster stops the trigger before any record is read. A membership about a term
+empty mint set stops the trigger before any record is read. A membership about a term
 holding no mint reads no posting however many facts name the term — the one read the
 release adds for a membership that is not a mint, `checks/subsumed-mint`, is the term's
-slot roster — which `lein perf`'s `mint-withdrawal-under-busy-term` holds. A `genl` edge
+slot predicate set — which `lein perf`'s `mint-withdrawal-under-busy-term` holds. A `genl` edge
 still reads its subtree's stored extent, the read `entail-under-edge` makes for the same
 edge. The release is paid on a departure rather than on a write: a membership leaving
 re-derives the facts naming its term, a `genl` edge the facts naming each term under it,
 and a `genlCx` edge the facts stored under it, and a settle that moves none of the three
 reads nothing about the mints the KB withholds, which `settle-beside-withheld-mints`
-holds. The gate in front of the release reads the taxonomy's declaration roster rather
-than the index, so `assert_cost_test`'s budgets are the ones the entailment alone sets
+holds. The check in front of the release reads the taxonomy's declaring `:props` sets
+rather than the index, so `assert_cost_test`'s budgets are the ones the entailment alone sets
 whichever way the switch stands. With it off none of that runs.
 
-**`interArg` is read behind an O(1) gate where the other two are unconditional**, and
+**`interArg` is read behind an O(1) presence check where the other two are unconditional**, and
 the asymmetry is deliberate. `arg` is what a typed ontology is mostly made of, so its
 declaration read pays for itself on the facts it constrains. The shipped ontology declares
 no `interArg` at all, and the check runs on *every* assert — measured at **~11% per
 assert** of a declaration-carrying predicate for a retrieval that found nothing, against a
 `count-with-functor` that answers "is one stored at all" for free. Add a fourth
-argument-constraint kind the same way: gate it until something declares it. A ratio-based
+argument-constraint kind the same way: skip it unless something declares it. A ratio-based
 perf check cannot catch this class, since a constant added to every write divides out
 (`bench/vaelii/bench/perf.clj` says so in its preamble).
 
-## The gates
+## Which runs cover each reading
 
 `lein gate` runs the suite under the entailing reading, the default. The constraint-only
 reading is the `assertive-off` sweep (`VAELII_ASSERTIVE_ARG_TYPES=0`): `lein test-sweeps`,
@@ -734,18 +904,18 @@ reading is the `assertive-off` sweep (`VAELII_ASSERTIVE_ARG_TYPES=0`): `lein tes
 test-matrix --owed` names it for a change to `checks.clj`, `special.clj` or
 `resources/kb/`. Both readings must fail the same set and run the same number of
 assertions, as every sweep must ([CONTRIBUTING.md](../CONTRIBUTING.md)), so a test whose
-count or answer depends on the reading pins one: `tu/with-entailing` where the entailment
+count or answer depends on the reading forces one: `tu/with-entailing` where the entailment
 is its subject, `tu/without-entailing` where the constraint is.
 
 On `memory` at `:default` both readings run 5,102 tests, and a per-namespace count
 (`VAELII_TEST_NS_COUNTS=1`) puts every namespace at the same assertion count under both.
 The sampling oracles `arg-root-retrieval-test` and `matches-hierarchical-test` run the
 same count under both readings. `full-kb-test`'s small-KB twin samples derived literals
-per context, where the mints sit, so it pins the entailing reading. Subsumed-mint pruning
+per context, where the mints sit, so it forces the entailing reading. Subsumed-mint pruning
 (`VAELII_PRUNE_SUBSUMED_MINTS`) acts only on mints, so the constraint-only run leaves it
-idle; the tests of pruning pin the entailment on.
+idle; the tests of pruning force the entailment on.
 
-`backend_parity_test` pins the toggle off inside its scripted session. That namespace's
+`backend_parity_test` forces the toggle off inside its scripted session. That namespace's
 question is whether eight storage backends answer hand-written expectations alike, and
 the entailment would change the script itself: `(arg ownerOf 2 animal)` and
 `(ownerOf Ann Rex)` both sit in `CxParity`, so Rex would carry a second, independent
@@ -799,26 +969,26 @@ the fact and the `argArg` declaration. The declaration itself is checked as `int
 is: both positions must be positions `P` has, and one position named twice is
 `:not-well-formed`.
 
-**A named type the hierarchy does not hold yet waits on the fact.** `arg` names one type,
-so a declaration whose type is not mintable waits under its own handle and is swept again
+**A named type bound to another length waits on the fact.** `arg` names one type, so a
+declaration whose type is not mintable waits under its own handle and is swept again
 once the type is mintable (`special/note-unmintable!`). An `argArg` names no type of its
 own: each fact names one. A fact whose named type `mintable-type?` refuses waits under
 the fact's handle (`special/note-unmintable-fact!`), and `release-mint!` draws its mints
-through `deduce-placed` once the type is mintable, so the edge that makes `dog` a type
-arriving after `(kindOfPet Rex dog)` mints `(dog Rex)` as it would had it come first.
+through `deduce-placed` once the type is mintable, so the binding of `dog` leaving after
+`(kindOfPet Rex dog)` mints `(dog Rex)` as it would had it left first.
 `argtype_entail_test/every-arrival-order-of-an-arg-arg-reaches-the-same-belief` runs the
 six orders of the declaration, the fact and the edge. A fact waits only on declarations
 visible from its context or placed below it, the two reads the assert path makes.
 
 **`resultArg` types a reified constant through the same arm.** `(resultArg F n)` types
 the value of an application of `F` by the type the application's argument `n` names. Over
-a `(termOfUnit K E)` fact, `E` an application of `F`, `checks/result-arg-rows` reads each
-declaration as an `arg` row at position 1. `(resultArg MemberFn 1)` over `(termOfUnit K
-(MemberFn dog))` therefore derives `(dog K)`, justified by the `termOfUnit` fact and the
+a `(natFormula K E)` fact, `E` an application of `F`, `checks/result-arg-rows` reads each
+declaration as an `arg` row at position 1. `(resultArg MemberFn 1)` over `(natFormula K
+(MemberFn dog))` therefore derives `(dog K)`, justified by the `natFormula` fact and the
 declaration. The mint is placed, waits on an unmintable type and is released as an
-`argArg` mint is. A name the hierarchy does not hold mints nothing until it becomes a
-type, and retracting the declaration withdraws the mint. A declaration arriving after the
-mints reads the stored `termOfUnit` facts of `F`'s applications
+`argArg` mint is. A type bound to another length mints nothing until the binding leaves,
+and retracting the declaration withdraws the mint. A declaration arriving after the
+mints reads the stored `natFormula` facts of `F`'s applications
 (`special/entail-existing`). The membership is an entailment, so the constraint-only
 reading (`VAELII_ASSERTIVE_ARG_TYPES=0`) draws none, and a minted constant there holds its
 `result` types alone. `argtype_entail_test/a-result-arg-types-a-minted-constant-in-every-order`
@@ -865,8 +1035,8 @@ the start, so the animal there triggers nothing.
   neither direction: `(interArgs R animal)` refuses a reptile beside a plant that
   `(interArgs R mammal)` stores, and `(interArgs R mammal)` refuses a mammal beside a
   reptile that `(interArgs R animal)` stores.
-- **Behind a gate.** Both readings sit behind the taxonomy `:props` gate the covering
-  forms use.
+- **Behind a presence check.** Both readings sit behind the taxonomy `:props` presence
+  check the covering forms use.
 
 **Arrival order.** Under the entailing reading a declaration arriving after the
 applications derives over them (`entail-existing`), and a trigger's membership arriving
@@ -881,21 +1051,24 @@ family's other cells that read "nothing".
 
 `(quotedArg P n T)` types argument `n` **as a term** rather than by what it denotes: its
 EDN kind — a `string`, a `number` (with `integer` below it), a `symbol` — checked through
-`genl` against a syntactic type. `(quotedArg name_of_guy 1 string)` refuses `(name_of_guy 5)`,
-5 being a number and not a string, and admits `(name_of_guy "Bob")`. It is the mention twin
+`genl` against a syntactic type. Under `(quotedArg name_of_guy 1 string)`, `(name_of_guy 5)`
+is stored and held inert, 5 being a number and not a string, in either arrival order
+([held inert](#an-argument-that-fails-its-declared-type-is-held-inert)), and
+`(name_of_guy "Bob")` is believed. It is the mention twin
 of `arg`: where `arg` reads the referent's type, `quotedArg` reads the argument's own
 syntax, which is decidable from the value — so it is **checked, never entailed**, there
-being nothing to mint about a term that already is what it is. Open-world about a kind it
-does not type (a compound) and about a declared type outside the syntactic lattice, so an
-imported constraint on a domain collection never convicts a value it cannot judge.
-`checks/args-quoted-problem`, behind the same O(1) gate as `interArg`. Why the kind
+being nothing to mint about a term that already is what it is. A compound is judged by the
+kinds its spelling decides ([what a quoted form is](#what-a-quoted-form-is)). Open-world
+about a declared type outside the syntactic lattice, so an imported constraint on a domain
+collection never convicts a value it cannot judge.
+`checks/args-quoted-problem`, behind the same O(1) presence check as `interArg`. Why the kind
 decides at all, rather than every non-symbol being exempt:
 [defenses.md](defenses.md#a-value-is-typed-by-its-kind-and-the-openness-moves-to-the-declared-type).
 
 **Checked and never entailed is not the same as read literally.** Whose declarations speak
 for a tuple is one question for all four spellings — `res/constraining-predicates`, the
 predicate's own and every super-predicate the asking context can see — so a `quotedArg` on
-`pAgeOf` refuses a `pInfantAgeOf` tuple at the entry point. `provers/MetaConstraintProver`
+`pAgeOf` holds a `pInfantAgeOf` tuple inert. `provers/MetaConstraintProver`
 answers `quotedArg` along that same closure, position 1 descending the predicate and
 position 3 widening up the type, exactly as it answers the other three; the alternative was
 one declaration meaning one thing to `assert` and another to `ask`. What stays out is the
@@ -912,7 +1085,7 @@ than forcing one artificial leaf.
 
 **Both declarations read the refinements, and for the reason they share the kinds.** A
 sign is as decidable from the `5` written in a position as from what that `5` denotes,
-so `(quotedArg p n positive_integer)` refuses `-5` and admits `5`, exactly as
+so `(quotedArg p n positive_integer)` holds `-5` inert and admits `5`, exactly as
 `(arg p n positive_integer)` does. Reading the refinements on one side only was tried
 and is the trap this page already warns about one paragraph down, arrived at from the
 other direction: `positive_integer` is *inside* the syntactic lattice, being below
@@ -925,6 +1098,35 @@ nothing and cost a trap: `quotedArg` reads a type outside the syntactic lattice
 open-world, so a second spelling stores clean and convicts nothing, with no report
 ([why one vocabulary](defenses.md#one-vocabulary-not-two)).
 
+**A type that refines a kind convicts only by separation.** A declared type below the
+value's own root and above none of its kinds, such as `ip_address` under `string` or a
+subtype of `integer` other than the four above, is one the value may or may not belong
+to: the kind does not decide it. Both declarations convict a value there only where the
+taxonomy separates the declared type from one of the value's kinds, so `5` under
+`negative_integer` is held and `"192.0.2.1"` under `ip_address` is believed
+(`checks/value-outside?`,
+`argtype_entail_test/a-value-is-held-only-where-the-declared-type-excludes-it`).
+
+**A `:monotonic` definition states the kind a type's values are.** A type with no `genl`
+edge to a value kind, such as a `character_string` under `thing` alone, convicts every
+value under it. `(defnIff character_string (string ?x))`, `defnSufficient` or
+`defnNecessary`, asserted at `:monotonic` over the value-kind predicates or any evaluable
+condition, decides the value before the kind does, in both declarations and both readings
+(`provers/value-definition`):
+
+- a sufficient condition of the type or of a subtype that is true on the value admits it,
+  so `(nameString X "Foo")` under `(arg nameString 2 character_string)` is believed;
+- a necessary condition of the type or of a supertype that is false on the value convicts
+  it, so `5` there is held, and a subtype of `character_string` holds it too;
+- a `:default` definition decides nothing, and with no definition the kind decides.
+
+A condition decides only where every conjunct is evaluable, since a value is open about a
+stored predicate. The definitions are read at the write, and the drain reads the
+declarations naming a type at, above or below a definition stored, removed or relabelled
+(`argtype_entail_test/a-monotonic-definition-decides-a-value-under-the-declared-type`,
+`argtype_entail_test/a-value-a-monotonic-definition-admits-owes-no-release-after-a-recover`).
+The form and the order the conditions are read in are [defns.md](defns.md#a-definition-decides-a-literal-value-at-the-argument-check).
+
 `symbol` is the exception, and is **mention-only**. A symbol does not denote itself, so
 the set of names and the set of things named are not one set — `parentOf` written in a
 sentence denotes a predicate, and `(Quote parentOf)` denotes the symbol. `symbol` is below
@@ -933,8 +1135,8 @@ predicate.
 
 ## What a quoted form is
 
-`(Quote X)` denotes the expression X, and X's kind in `reflection.txt`'s expression lattice is
-read off how X is written (`provers/shape-kinds`):
+`(Quote X)` denotes the expression X. The kinds X's spelling decides in `reflection.txt`'s
+expression lattice are read off how X is written (`provers/shape-kinds`):
 
 | X | kinds |
 |---|---|
@@ -949,25 +1151,67 @@ A variable inside a nested `(Quote …)`, or bound by a quantifier in X, is not 
 (`sx/unquoted-free-vars`). The expression `?x` is open; the sentence around `(Quote ?x)` is
 closed (`sx/closed?`), which is a different expression.
 
-`ExpressionKindProver` answers `(k (F X))` for `k` below `expression` and `F` a
-`quoting_function`, true when one of X's kinds reaches `k` through `genl`. A reifiable
-quoting function's application arrives minted, and the prover reads the constant's
-`termOfUnit` back to the form; an application never minted names no stored term, so a
-query over it matches nothing, as for any NAT ([nat.md](nat.md)). The answer rests on the
-`quoting_function` statements, the `termOfUnit` statement and one `genl` path, and a
-forward firing names them. A datum on `quoting_function` or on an edge-installing functor
-re-joins the rules over an expression kind, so the mark or the lattice arriving after the
-rule and the fact fires it. Forward chaining discharges an antecedent through the prover
-only for the kinds `provers/expression-kind-predicates` names.
+`ExpressionKindProver` answers `(k (F X))` for `k` below `expression` and `F` a quoting
+function — `Quote` or `Quasiquote`, which the engine fixes and no statement declares —
+true when one of X's kinds reaches `k` through `genl`. A reifiable quoting function's
+application arrives minted, and the prover reads the constant's `natFormula` back to the
+form; an application never minted names no stored term, so a query over it matches
+nothing, as for any NAT ([nat.md](nat.md)). The answer rests on the `natFormula`
+statement and one `genl` path, and a forward firing names them. A datum on an
+edge-installing functor re-joins the rules over an expression kind, so the lattice
+arriving after the rule and the fact fires it. Forward chaining discharges an antecedent
+through the prover only for the kinds `provers/expression-kind-predicates` names.
+`(sentence (Quote (not (dog Muffet))))` holds by the form's own shape, with no `genl` edge
+and no `natFormula` behind it, so its answer carries no handle. It joins beside the stored
+fact that bound the form, and that fact supports the firing; a firing whose combined
+handles are empty is dropped, so `(implies (sentence (Quote …)) …)` alone concludes nothing
+(`kind_antecedent_forward_test`).
 
-**The spelling does not say whether `(R a)` is a predication or a `non_atomic_term`**: that
-is R's stored kind, and the prover does not decide it, so `(predication (Quote (dog
-Muffet)))` is not answered.
+A **value kind** antecedent (`string`, `number`, `boolean`, `keyword`, `character`,
+`integer`) is computed once another antecedent binds its argument, as `lessThan` is
+(`sentex/deferred-predicates`): `(implies (and (valueOf ?a ?x) (string ?x)) …)` fires when
+`(valueOf Ann "rex")` arrives, in either order. A value kind of a constant or a function
+application reads the stored membership, since either can denote a value of any kind. A
+rule in which nothing binds the argument is refused (`:naf-not-closed`).
 
-**`quotedArg` does not read these kinds.** Its check runs at the assert entry point only:
-a value it refuses when the declaration is already stored is stored and believed when the
-declaration arrives after it. Judging a compound by its kinds would extend that order
-dependence to compounds.
+**What the KB states of the head decides the rest** (`provers/stated-kinds`). The kinds of a
+compound `(R a …)` under a symbol head are read from R's stored memberships and length,
+never from R's spelling:
+
+| what the KB states of R | `(R a …)` closed | `(R a …)` open |
+|---|---|---|
+| a member of `predicate`, or of a type below it, and not of `function` | `closed_predication`, so a `literal` and a `sentence` | `open_predication` |
+| a member of `function`, or of a type below it, and not of `predicate` | `non_atomic_term`, so a `denotational_term` and a `wff_expression` | no further kind: a `denotational_term` is closed |
+| a length the argument count breaks (`arity/broken-binding`) | `ill_formed_sentence` for a predicate, else `ill_formed_expression` | `ill_formed` for a predicate, else `ill_formed_expression` |
+| neither, or both | no further kind | no further kind |
+
+An application whose length is broken is neither a predication nor a `non_atomic_term`:
+only a `wff_expression` predicates or denotes. The answer rests on the membership and one
+`genl` path from its type to `predicate` or `function`, and a broken length rests on the
+bindings stating it and the `genl` edges up to them, so a forward firing withdraws when one
+of them goes. A membership classifies the form for the contexts that see it; a length is
+read the same at every context ([taxonomy.md](taxonomy.md#arity)). A membership `(T R)` of
+a type at or below `relation` re-joins the rules over a kind it can move
+(`provers/support-answers-reading`) when a stored sentex holds a quoted application headed
+by R, and a settle pass that moved R's length re-joins them under the same condition
+(`special/recheck-on-lengths`). A rule over `(predication ?q)` therefore fires whether the
+head's membership arrives before or after the rule and the quoted fact (`quote_test`).
+
+Only the head is read. An ill-formed operand inside `(R a …)` leaves the form at the head's
+kinds, and `(not (R a))` stays at `sentence` or `open_formula`. No kind answers
+`wff_expression` for a formula, nor `wff` or `wff_sentence`: the positive half of
+well-formedness needs every operator's length in X, which no reader collects.
+
+**`quotedArg` judges a compound by the kinds its spelling decides.** A compound in a `quotedArg` position is
+held inert where one of its kinds is separated from the declared type
+(`checks/compound-kind-against`, `tax/disjointness-test`). A kind that merely fails to reach
+the type convicts nothing, since the spelling leaves `(R a)` at `non_atomic_expression`,
+which reaches neither `non_atomic_term` nor `formula`. Under `(quotedArg P 1 string)`,
+`(P (MsrFn 5))` is held, a `non_atomic_expression` being separated from `string`; under
+`(quotedArg P 1 non_atomic_term)` it is believed, and `(P (not (dog Fido)))` is held,
+`reflection.txt` separating `formula` from `non_atomic_term`. The verdict is the same in
+either arrival order of the declaration and the fact
+(`quoted_arg_test/a-compound-is-held-only-where-one-of-its-kinds-is-separated-from-the-type`).
 
 ## Scope
 
@@ -981,9 +1225,15 @@ direction of the entailment.
 nothing to mint about a term that already is what it is — it is *answered* along the `genl`
 closure with the other three, which is a different question; `(ListOfType T)` element typing, which stays
 disjoint-check-only so a `(ListOfType thing)` slot refuses nothing and sprays nothing;
-making `checks` write, for the sequencing reason above; and a dry-run mode, since
-`preview` has its own machinery and the two are not wired together.
+making `checks` write, for the sequencing reason above; a dry-run mode, since
+`preview` has its own machinery and the two are not wired together; and judging a rule
+variable against a `quotedArg` demand at a kind other than `string`, `number` or a type
+below one, or against a second `quotedArg` demand: the rule-variable arm stores and
+believes a rule no term can satisfy at both ends of such a pair
+(`rule_variable_arg_test/a-quoted-symbol-demand-is-not-judged-by-the-rule-arm`,
+`rule_variable_arg_test/two-quoted-demands-are-not-judged-by-the-rule-arm`,
+[taxonomy.md](taxonomy.md#and-against-the-variables-of-a-rule)).
 
 **On by default.** The constraint-only reading stays available under
-`VAELII_ASSERTIVE_ARG_TYPES=0`, and the tests that assert it pin it there
+`VAELII_ASSERTIVE_ARG_TYPES=0`, and the tests that assert it force it there
 (`tu/without-entailing`).

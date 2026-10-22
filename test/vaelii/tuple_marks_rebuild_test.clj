@@ -88,7 +88,7 @@
           (decide/rebuild-candidates! kb))
         (is (<= @reads 2) (str @reads " reads of " q "'s marks for " k " tuples"))))))
 
-(deftest a-rebuild-reads-the-marks-above-each-functor-off-the-roster-cut
+(deftest a-rebuild-reads-the-marks-above-each-functor-off-the-props-set-cut
   ;; a chain of predicates, the top `functional` and `anti_transitive`, and a tuple of
   ;; each: the marks above every functor are read off one memo per kind, where a
   ;; closure per functor costs the sum of the closures
@@ -110,7 +110,7 @@
         (is (zero? @closures) "no functor's whole closure is built")
         (is (= before (tuple-half kb)) "and the rebuild finds what the writes found")))))
 
-(deftest the-roster-cut-reads-the-marks-props-over-reads
+(deftest the-props-set-cut-reads-the-marks-props-over-reads
   ;; random predicate hierarchies, some edges closing a cycle, marks of both kinds on
   ;; some predicates: one memo per kind across every predicate answers `props-over`
   (let [rnd  (java.util.Random. 9127)

@@ -11,7 +11,7 @@
   deep positions, OFF falls back to the functor extent, and the existing `unify`
   filters both to the identical set.
 
-  So the gate: `match-pattern` / `matches-visible` / `ask` with the flag OFF must
+  The oracle test asserts: `match-pattern` / `matches-visible` / `ask` with the flag OFF must
   return exactly what they return with it ON, over a corpus mixing flat facts,
   top-level-variable queries, deep-leaf-variable queries `(p (F ?x) b)`,
   whole-subterm-variable queries `(p ?y b)`, and nested compounds `(p (F (G ?x)) b)`.
@@ -20,7 +20,6 @@
   arguments is unaffected."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.plan :as plan]
             [vaelii.impl.protocols :as p]
@@ -30,7 +29,7 @@
 
 ;; a corpus with nested compound arguments (the structural case) alongside flat facts
 (defn- load-corpus [kb]
-  (core-context/load-into kb)
+  (tu/load-core! kb)
   (doseq [s '[(mass Obj1 (QuantityFn 5 Kilogram))
               (mass Obj2 (QuantityFn 9 Meter))
               (mass Obj3 (QuantityFn 5 Meter))

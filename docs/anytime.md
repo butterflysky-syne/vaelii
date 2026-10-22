@@ -67,7 +67,7 @@ because each holds a handful of entries: the rules that conclude a goal
 (`provers/candidate-rules`, by `[sentence context]`) and the node frontier's cost ties
 (`inference/frontier-key`). So a capped proof whose rules each have one witness answers
 the same in any order, and a capped read that chooses among stored facts does not.
-`order_independence_test` pins both halves. A `:max-ms` deadline cuts at a moment rather
+`order_independence_test` asserts both halves. A `:max-ms` deadline cuts at a moment rather
 than at a count, so its prefix depends on the machine as well as on arrival order.
 
 `take` over the lazy stream `ask` and `query` return has the same contract. Those streams
@@ -128,15 +128,25 @@ resume loop under a fixed budget terminates here too. The other readers of the s
 ```clojure
 {:results    [ … ]        ; the solutions realized in THIS step (a vector)
  :status     :complete    ; the source ran dry — the answer is exhaustive
-             ;; | :timeout   :max-ms elapsed, the source not yet dry
-             ;; | :capped    :max-results reached, the source not yet dry
+             ;; | :incomplete the source ran dry, :unenumerated is non-empty
+             ;; | :timeout    :max-ms elapsed, the source not yet dry
+             ;; | :capped     :max-results reached, the source not yet dry
  :count      n            ; (count :results)
  :elapsed-ms ms           ; wall-clock spent in this step
- :resume     <fn | nil>}  ; nil iff :complete; else (budget -> partial result)
+ :resume     <fn | nil>   ; nil iff :complete or :incomplete; else (budget -> partial result)
+ :unenumerated [P …]      ; ask-within / prove-within: transitive predicates whose closure
+                          ; a both-open goal did not enumerate, cumulative over the steps
+ :unenumerated-in-guards [P …]}  ; the subset recorded inside unknown / exceptWhen
 ```
 
 `:complete` is the required one and it is exact: it is reported only when the
-source was pulled and ended. The other two are the negation of `:complete` rather than
+source was pulled and ended, and no goal `(P ?x ?y)` over a `transitive` `P` was
+answered from `P`'s extent. Such a goal is answered from the stored pairs and not the
+closure ([taxonomy.md](taxonomy.md#predicate-metadata)), so a run whose source ended
+after one reads `:incomplete`: the answers may lack a derived pair, and `:unenumerated`
+names each `P`. A predicate recorded in one step bounds the union of every step's
+`:results`, so a step's `:unenumerated` holds every predicate the steps before it
+recorded. `:timeout` and `:capped` keep their meaning and carry the set too. The other two are the negation of `:complete` rather than
 a claim that work remains — `collect` stops *before* pulling past its bound, since
 deciding whether a tail exists means realizing one more element than the cap allows.
 So `{:max-results 3}` over a source of exactly three answers reports `:capped` with a
@@ -168,13 +178,35 @@ continuation is independently budgeted; `core/resume` calls it (and returns a
 
 A bounded run is a **strict prefix** of the unbounded stream, so concatenating
 `:results` across `resume` reconstructs exactly what `ask` / `prove` would have
-returned (`budget_test` pins this, dedup included).
+returned (`budget_test` asserts this, dedup included).
 
 The continuation captures an in-memory lazy tail (or the DFS goal stack), so
 resumption is **in-process only** — it does not survive a restart, and holding a
-partial pins its captured state in the heap. This sits under the single-writer
+partial keeps its captured state reachable in the heap. This sits under the single-writer
 contract (see [storage.md](storage.md)); a cross-restart resume would need the
 search state serialized, which it is not.
+
+## Where the collector lives
+
+`TransitivePredicateProver` adds `P` to the dynamic `provers/*unenumerated*` when it
+declines a both-open goal, and a read reports the set only where a binding of the
+collector covers the call that runs the prover. Each read binds it around the stretch of
+its search that runs eagerly:
+
+| read | binding |
+|---|---|
+| the node engine (`search-report`, `search-tree`, `compare-tacticians`, `prove-within` at a depth, its `resume`) | the session's `:unenumerated` collector, bound around each expansion's solve in `step!`; the session is the continuation, so a resume adds to the same set |
+| the DFS arm of `prove-within` and its `resume` | one collector the continuation closure carries, bound around each `res/prove-from` step |
+| `ask-within` and its `resume` | one collector bound around each pull of the lazy stream (`provers/collecting-seq`), including the stream a `:timeout` continuation rebuilds |
+| `query-status` without a depth, `explain-levels`, `escalate` | `provers/with-unenumerated` around a realized read: per level for `explain-levels`, the stopping level's probe for `escalate` |
+
+`compare-tacticians` reads a row `:incomplete` under the same rule. Every tactician runs
+the same goals, so the rows' `:unenumerated` sets are equal, as their answer sets are.
+`escalate` returns the stopping level's results lazily, and its set covers the probe that
+pulled the first result; a later pull of `:results` records nothing. `query`, `prove` and
+`ask` return a vector or a seq with no status slot and report nothing. The `unknown` and
+`exceptWhen` evaluations record into `:unenumerated-in-guards` as well
+([inference.md](inference.md#truncation-is-observable-corequery-status)).
 
 ## `:max-cost` — the qualitative bound
 
@@ -270,7 +302,7 @@ instead.
 - **No estimate-based admission control.** The budget spends *real* time, never a
   per-prover estimate
   [why qualitative](defenses.md#qualitative-cost-tiers-over-time-estimates);
-  `:max-cost` is the tier-based version, and there is no finer gate reading a
+  `:max-cost` is the tier-based version, and there is no finer check reading a
   prover's `est-bindings` against the remaining budget.
 - **No cross-process / cross-restart resume.** The continuation is heap state.
 - **No resume over the wire.** The daemon serves `:ask-within` and `:prove-within`

@@ -91,6 +91,34 @@
       (testing "nothing else — a witness, not a transcript"
         (is (= 5 (count reasons)) (pr-str reasons))))))
 
+(tu/deftest-kb a-firing-over-a-preserved-transitive-predicate-rests-on-both-relations
+  ;; `(locatedIn Piston House)` composes `partOf` with `locatedIn`'s own transitivity, so
+  ;; the firing over it names the claim, the edges of both relations, the declaration and
+  ;; `(transitive locatedIn)`, and retracting a `partOf` edge withdraws it.
+  (tu/with-terms [partOf locatedIn housed Piston Engine Car Garage House]
+    (v/with-deferred-settle kb
+      (v/assert kb (list 'transitive partOf) ctx)
+      (v/assert kb (list 'transitive locatedIn) ctx)
+      (v/assert kb (list 'transitiveInArgInverse locatedIn 1 partOf) ctx)
+      (v/assert kb (list partOf Piston Engine) ctx)
+      (v/assert kb (list partOf Engine Car) ctx)
+      (v/assert kb (list locatedIn Car Garage) ctx)
+      (v/assert kb (list locatedIn Garage House) ctx)
+      (v/assert kb (list 'implies (list locatedIn '?x House) (list housed '?x)) ctx
+                {:direction :forward}))
+    (is (holds? kb (list housed Piston)))
+    (let [w       (v/why kb (v/handle-of kb (list housed Piston) ctx))
+          reasons (into #{} (comp (mapcat :because) (map :sentence)) (:support w))]
+      (is (some #(and (contains? % (list partOf Engine Car))
+                      (contains? % (list locatedIn Car Garage))
+                      (contains? % (list 'transitive locatedIn))
+                      (contains? % (list 'transitiveInArgInverse locatedIn 1 partOf)))
+                (map #(into #{} (map :sentence) (:because %)) (:support w)))
+          (pr-str reasons)))
+    (v/retract! kb (v/handle-of kb (list partOf Engine Car) ctx))
+    (is (not (holds? kb (list housed Piston))))
+    (is (holds? kb (list housed Car)))))
+
 (tu/deftest-kb a-claim-stated-at-the-tuple-is-justified-once
   ;; The diagonal.  `witness-terms` is reflexive, so the stored claim is among the
   ;; claims bearing on its own tuple — and it already has the ordinary matcher's
@@ -228,15 +256,15 @@
 ;; ---- the relation is a parameter ----------------------------------------
 
 (tu/deftest-kb a-fact-relation-carries-a-firing-the-same-way
-  ;; No types in sight: the reach is walked over stored `partOf` facts, and the
-  ;; justification names those facts and the `(transitive partOf)` that licensed
+  ;; No types in sight: the reach is walked over stored `tangiblePartOf` facts, and the
+  ;; justification names those facts and the `(transitive tangiblePartOf)` that licensed
   ;; closing them.
-  (tu/with-terms [partOf needs_maintenance schedule Car Engine Piston]
+  (tu/with-terms [tangiblePartOf needs_maintenance schedule Car Engine Piston]
     (v/with-deferred-settle kb
-      (v/assert kb (list 'transitive partOf) ctx)
-      (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 partOf) ctx)
-      (v/assert kb (list partOf Engine Car) ctx)
-      (v/assert kb (list partOf Piston Engine) ctx))
+      (v/assert kb (list 'transitive tangiblePartOf) ctx)
+      (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 tangiblePartOf) ctx)
+      (v/assert kb (list tangiblePartOf Engine Car) ctx)
+      (v/assert kb (list tangiblePartOf Piston Engine) ctx))
     (v/assert kb (list needs_maintenance Car) ctx)
     (v/assert kb (list 'implies (list needs_maintenance '?x) (list schedule '?x)) ctx {:direction :forward})
     (is (holds? kb (list schedule Piston)) "two hops down the part chain")
@@ -245,18 +273,18 @@
                         (comp (mapcat :because) (map :sentence))
                         (:support (v/why kb (v/handle-of kb (list schedule Piston) ctx))))]
       (is (contains? reasons (list needs_maintenance Car)))
-      (is (contains? reasons (list partOf Piston Engine)))
-      (is (contains? reasons (list partOf Engine Car)))
-      (is (contains? reasons (list 'transitive partOf))
+      (is (contains? reasons (list tangiblePartOf Piston Engine)))
+      (is (contains? reasons (list tangiblePartOf Engine Car)))
+      (is (contains? reasons (list 'transitive tangiblePartOf))
           "read at use, so a firing that rests on it says so"))
     (testing "and withdrawing the transitivity withdraws what it closed"
-      (v/retract! kb (v/handle-of kb (list 'transitive partOf) ctx))
+      (v/retract! kb (v/handle-of kb (list 'transitive tangiblePartOf) ctx))
       (is (not (holds? kb (list schedule Piston))))
       (is (holds? kb (list schedule Car)) "the stated claim is untouched"))))
 
 (tu/deftest-kb a-declaration-derived-inside-a-run-licenses-the-joins-after-it
-  ;; The forward path gates every preserved-antecedent question on "does this KB
-  ;; declare any preservation at all", cached per chaining run
+  ;; The forward path asks every preserved-antecedent question only when "this KB
+  ;; declares any preservation at all", a presence check cached per chaining run
   ;; (`chain/*declarations-cell*`).  A run can *derive* the declaration — here one fact
   ;; fires two rules that conclude both `transitiveInArgInverse`s — and everything the same run
   ;; joins after that placement has to see it: the declaration datum's own re-join of the
@@ -271,7 +299,7 @@
           _     (v/assert kb (list largerThan dog_t cat_t) ctx quiet)
           rh    (v/assert kb (list 'set/forwardRule (list 'implies (list largerThan '?x '?y) (list outweighs '?x '?y)))
                           ctx quiet)
-          ;; a firing concludes a `transitiveInArgInverse` only from roster antecedents
+          ;; a firing concludes a `transitiveInArgInverse` only from forced-monotonic antecedents
           _     (v/assert kb (list 'forced_monotonic_predicate preservesBoth) ctx quiet)
           _     (v/assert kb (list 'set/forwardRule (list 'implies (list preservesBoth '?p)
                                                           (list 'transitiveInArgInverse '?p 1 'genl))) ctx quiet)
@@ -280,7 +308,7 @@
           fh    (v/assert kb (list preservesBoth largerThan) ctx quiet)]
       (testing "nothing has chained yet"
         (is (not (holds? kb (list outweighs dog_t cat_t)))))
-      ;; One run, seeded in this order: the rule datum joins first and asks the gate
+      ;; One run, seeded in this order: the rule datum joins first and asks the presence check
       ;; while no declaration exists; the fact datum then derives both declarations,
       ;; whose own datums re-join the rule — under the same run's cache.
       (chain/chain-all kb [rh fh] nil)
@@ -561,23 +589,23 @@
 
 (tu/deftest-kb an-R-fact-arriving-last-connects-and-fires
   ;; genl has the shuffled oracle and genlCx the relanding edge; this is the
-  ;; declared relation's turn: the trigger index cannot connect `partOf` to the
+  ;; declared relation's turn: the trigger index cannot connect `tangiblePartOf` to the
   ;; preserved predicate, so only the preserving re-join fires these.
-  (tu/with-terms [partOf needs_maintenance schedule Car Engine Piston]
+  (tu/with-terms [tangiblePartOf needs_maintenance schedule Car Engine Piston]
     (v/with-deferred-settle kb
-      (v/assert kb (list 'transitive partOf) ctx)
-      (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 partOf) ctx))
+      (v/assert kb (list 'transitive tangiblePartOf) ctx)
+      (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 tangiblePartOf) ctx))
     (v/assert kb (list needs_maintenance Car) ctx)
     (v/assert kb (list 'implies (list needs_maintenance '?x) (list schedule '?x)) ctx {:direction :forward})
     (is (not (holds? kb (list schedule Piston))) "nothing connects the part yet")
-    (v/assert kb (list partOf Engine Car) ctx)
+    (v/assert kb (list tangiblePartOf Engine Car) ctx)
     (is (holds? kb (list schedule Engine)) "one hop, connected by the late fact")
-    (v/assert kb (list partOf Piston Engine) ctx)
+    (v/assert kb (list tangiblePartOf Piston Engine) ctx)
     (is (holds? kb (list schedule Piston)) "and the second hop extends the reach")
     (testing "withdrawing and re-asserting the transitivity round-trips the firings"
-      (v/retract! kb (v/handle-of kb (list 'transitive partOf) ctx))
+      (v/retract! kb (v/handle-of kb (list 'transitive tangiblePartOf) ctx))
       (is (not (holds? kb (list schedule Piston))))
-      (v/assert kb (list 'transitive partOf) ctx)
+      (v/assert kb (list 'transitive tangiblePartOf) ctx)
       (is (holds? kb (list schedule Piston))))))
 
 (tu/deftest-kb a-batch-and-a-sequence-reach-the-same-firings-off-genl
@@ -587,12 +615,12 @@
   ;; arrival.
   (doseq [batch? [true false]]
     (testing (if batch? "one deferred batch" "one assert at a time")
-      (tu/with-terms [partOf needs_maintenance schedule Car Engine Piston
+      (tu/with-terms [tangiblePartOf needs_maintenance schedule Car Engine Piston
                       appliesIn noticed TheDecree CxWide CxNarrow]
-        (let [content [(list 'transitive partOf)
-                       (list 'transitiveInArgInverse needs_maintenance 1 partOf)
-                       (list partOf Engine Car)
-                       (list partOf Piston Engine)
+        (let [content [(list 'transitive tangiblePartOf)
+                       (list 'transitiveInArgInverse needs_maintenance 1 tangiblePartOf)
+                       (list tangiblePartOf Engine Car)
+                       (list tangiblePartOf Piston Engine)
                        (list needs_maintenance Car)
                        (list 'set/forwardRule (list 'implies (list needs_maintenance '?x) (list schedule '?x)))
                        (list 'genlCx CxWide ctx)

@@ -12,7 +12,7 @@
   `provers/solve-goal` — so the two chainers disagreed about the same rule, which is
   the thing they may never do.
 
-  What is pinned here:
+  This namespace asserts:
 
     * a comparison **tests** — the rule fires for the pairs that satisfy it and no
       others, in one direction only;
@@ -85,9 +85,9 @@
 
 (tu/deftest-kb an-evaluate-written-before-its-binder-is-pulled-forward
   ;; the deferred literal is written FIRST, but its input `?a` is bound by the generator
-  ;; that follows.  `ready` gates it on that input, not on its own written `?next` (which
-  ;; no generator binds), so it is pulled forward to where the input arrives and computes;
-  ;; gating on every variable would strand it in the tail.
+  ;; that follows.  `ready` holds it until that input is bound, not until its own written
+  ;; `?next` is (which no generator binds), so it is pulled forward to where the input
+  ;; arrives and computes; waiting on every variable would strand it in the tail.
   (tu/with-terms [ageOf nextAge Ann]
     (v/assert kb (list ageOf Ann 10) 'CxNaturalWorld {:chain? false})
     (v/assert kb (fwd [(list 'evaluate '?next (list '+ '?a 1)) (list ageOf '?x '?a)]

@@ -20,7 +20,7 @@
   argument (`orient`).  The heavier side (by `term-size`) rewrites to the lighter; an
   **equal-weight** pair is oriented by a fixed symbol precedence (root, then
   lexicographically on the arguments), so a shape like `(f (g ?x)) = (g (f ?x))`
-  orients where a size-only rule would refuse it.  Both are gated by the variable
+  orients where a size-only rule would refuse it.  Both are conditional on the variable
   condition (`var-dominates?`), which keeps the order stable under *every*
   substitution.  Only a **permutative** equation — `(rel ?x ?y) = (rel ?y ?x)`, which
   no term order can orient — or one whose variable condition fails both ways is
@@ -142,7 +142,7 @@
   (stable under substitution and context, well-founded), so a rule `l → r` with `l ≻ r`
   terminates whatever the rule set — the termination guarantee for schematic rewriting.
 
-  Decided in order: the variable condition gates it; then the heavier side wins; an
+  Decided in order: the variable condition must hold; then the heavier side wins; an
   equal-weight pair is decided by the precedence on the two roots (a constant's root
   is itself), and same-root compounds by a lexicographic comparison of the arguments.
   With unit weights `term-size` *is* the weight, so this refines a size-only rule —
@@ -157,7 +157,7 @@
            (> ws wt)      true
            (< ws wt)      false
            (sx/variable? s) false          ; a variable is minimal
-           (sx/variable? t) false          ; equal weight + t a variable ⇒ not > (var cond already gates)
+           (sx/variable? t) false          ; equal weight + t a variable ⇒ not > (var cond already decided)
            :else (let [f (root s) g (root t)]
                    (cond
                      (prec> f g) true

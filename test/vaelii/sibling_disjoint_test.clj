@@ -226,7 +226,7 @@
 
 (tu/deftest-kb an-exception-exempts-a-pair-from-every-mark-and-not-from-a-stated-disjoint
   ;; the marks are a sibling_disjoint parent, a partition (which keeps its cover), a
-  ;; separating roster and a disjoint_metatype; a stated disjoint names its pair, and the
+  ;; separating declaration and a disjoint_metatype; a stated disjoint names its pair, and the
   ;; exception lifts nothing there
   (doseq [[mark decls]
           {:sibling    (fn [w a b _] [(list 'genl a w) (list 'genl b w) (list 'sibling_disjoint w)])
@@ -243,8 +243,8 @@
       (when (= :partition mark)
         (is (true? (v/genl? kb alpha whole)) "the cover's part edges stand")))))
 
-(tu/deftest-kb an-exempted-pair-of-parts-lifts-what-the-roster-separated-below-it
-  ;; a roster names its parts, so the separated pair of supertypes is the exempted one; a
+(tu/deftest-kb an-exempted-pair-of-parts-lifts-what-the-declaration-separated-below-it
+  ;; a separating declaration names its parts, so the separated pair of supertypes is the exempted one; a
   ;; sibling_disjoint parent separates every pair of its specializations, so a subtype
   ;; stays separated there (an-exemption-does-not-leak-to-a-subtype)
   (tu/with-terms [whole upperA upperB subA subB]

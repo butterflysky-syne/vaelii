@@ -153,7 +153,7 @@
   caller discriminates on `:type` — that is the one vocabulary `docs/operations.md`
   promises — and the status is the coarse split under it: the caller's mistake at 4xx,
   the daemon's fault at 5xx.  Without it that split is a fact only a caller writing its
-  own HTTP could read, and a `:type` outside the daemon's request-refusal roster
+  own HTTP could read, and a `:type` outside the daemon's request-refusal types
   reaches this client looking exactly like one inside it."
   ([conn op args] (call conn op args nil))
   ([conn op args {:keys [timeout-ms]}]
@@ -299,9 +299,10 @@
   (call conn :believed? [handle context]))
 
 (defn blocked-justifications
-  "The ids of the justifications the network currently holds **blocked**: their rule's
-  `exceptWhen` exception holds, so the JTMS has ruled them invalid and they confer nothing
-  — even with every antecedent IN (docs/exceptions.md)."
+  "The ids of the justifications the network currently holds **blocked**: a block their
+  rule carries holds (a closed extent, a withdrawn `different`), so the JTMS has ruled
+  them invalid and they confer nothing — even with every antecedent IN
+  (docs/exceptions.md)."
   [conn]
   (call conn :blocked-justifications []))
 
@@ -356,18 +357,29 @@
   ([conn] (call conn :clear-caches []))
   ([conn opts] (call conn :clear-caches [opts])))
 
+(defn common-genls
+  "The supertypes **every** type in `types` has, a collection of types: the intersection of
+  their `genls`."
+  ([conn types] (call conn :common-genls [types]))
+  ([conn types context] (call conn :common-genls [types context])))
+
+(defn common-specs
+  "The subtypes **every** type in `types` has: the intersection of their `specs`."
+  ([conn types] (call conn :common-specs [types]))
+  ([conn types context] (call conn :common-specs [types context])))
+
 (defn compare-tacticians
   "Run `goal` in `context` under several **tacticians** — the node engine's search
   orderings — each to completion, and return one row per tactician: the search it ran, its
-  wall-clock, and its answer set."
+  wall-clock, its `:status`, its `:unenumerated` and its answer set."
   ([conn goal] (call conn :compare-tacticians [goal]))
   ([conn goal context] (call conn :compare-tacticians [goal context]))
   ([conn goal context opts] (call conn :compare-tacticians [goal context opts])))
 
 (defn conflicts
   "The contradictions the last settle could not satisfy — the reported 'solve result'."
-  [conn]
-  (call conn :conflicts []))
+  ([conn] (call conn :conflicts []))
+  ([conn opts] (call conn :conflicts [opts])))
 
 (defn context-down
   "The contexts that inherit from `c`, reflexively — `c` plus every context that sees it."
@@ -395,7 +407,8 @@
   "The coexisting pairs the last settle left standing — **represented dilemmas**, not
   failures."
   ([conn] (call conn :contradictions []))
-  ([conn context] (call conn :contradictions [context])))
+  ([conn context] (call conn :contradictions [context]))
+  ([conn context opts] (call conn :contradictions [context opts])))
 
 (defn count-in-context
   "How many sentexes are **stored** in `context` — one set-size read, O(1), nothing
@@ -413,6 +426,14 @@
   "How many fact sentexes with functor `pred` are **stored** — one set-size read, O(1)."
   [conn pred]
   (call conn :count-with-functor [pred]))
+
+(defn covers-of
+  "The believed `covering`, `separating` and `partition` sentexes whose whole is `whole`,
+  in every context, as a set of `[kind parts]`: `kind` is `:covering`, `:separating` or
+  `:partition`, and `parts` is the declared part vector, deduplicated and sorted by
+  printed name."
+  [conn whole]
+  (call conn :covers-of [whole]))
 
 (defn defeat-class
   "The current defeat-class of a believed handle (:monotonic / :default), or nil when it is
@@ -485,7 +506,8 @@
   first level with results."
   ([conn goal] (call conn :escalate [goal]))
   ([conn goal context] (call conn :escalate [goal context]))
-  ([conn goal context floor] (call conn :escalate [goal context floor])))
+  ([conn goal context floor] (call conn :escalate [goal context floor]))
+  ([conn goal context floor opts] (call conn :escalate [goal context floor opts])))
 
 (defn explain-levels
   "What every level yields for `goal`: a seq of {:level :name :count}."
@@ -563,8 +585,8 @@
   `:asymmetric`, `:reflexive`, `:functional`, `:irreflexive`, `:anti-symmetric`,
   `:anti-transitive`), the grants (`:decontextualized`, `:forced-decontextualized`,
   `:forced-monotonic`, `:abducible`, `:closed-extent`, `:modal`, `:target-following`), the
-  function kinds (`:reifiable`, `:unreifiable`, `:quoting`) and the `:declares-*` kinds
-  naming a predicate as the subject of an argument constraint."
+  function kinds (`:reifiable`, `:unreifiable`) and the `:declares-*` kinds naming a
+  predicate as the subject of an argument constraint."
   ([conn kind pred] (call conn :has-prop? [kind pred]))
   ([conn kind pred context] (call conn :has-prop? [kind pred context])))
 
@@ -591,6 +613,16 @@
   (`:bad-handle`)."
   [conn jid]
   (call conn :justification [jid]))
+
+(defn justification-verdicts
+  "The verdict `context` reads on each justification of `handle`, as `{justification-id
+  reason}`: `:supports` where every handle it rests on is believed there, else
+  `:antecedent-out`, unless the network blocks it (`:blocked`, its rule's `exceptWhen`
+  holds) or holds it void (`:void`), `context`'s forced-monotonic reading holds it void
+  (`:void`), a guard defeat in force at `context` covers it (`:guard`, docs/naf.md), or it
+  is a `nogood` justification of a placement `context` exempts (`:exempt`)."
+  [conn handle context]
+  (call conn :justification-verdicts [handle context]))
 
 (defn kb-diff
   "What two KBs disagree about, as content: `{:added :removed :moved :belief-changed}`."
@@ -624,6 +656,12 @@
   ([conn level goal] (call conn :lookup [level goal]))
   ([conn level goal context] (call conn :lookup [level goal context])))
 
+(defn max-common-specs
+  "The **maximal** common subtypes of `types`: the members of `common-specs` that are no
+  member of `types` and have no other such member strictly above them."
+  ([conn types] (call conn :max-common-specs [types]))
+  ([conn types context] (call conn :max-common-specs [types context])))
+
 (defn max-context-children
   "The **maximal** contexts that inherit from context `c`: the contexts that reach `c` over
   one `genlCx` edge with no other such context strictly above them."
@@ -642,6 +680,12 @@
   [conn m]
   (call conn :metatype-members [m]))
 
+(defn min-common-genls
+  "The **minimal** common supertypes of `types`: the members of `common-genls` that are no
+  member of `types` and have no other such member strictly below them."
+  ([conn types] (call conn :min-common-genls [types]))
+  ([conn types context] (call conn :min-common-genls [types context])))
+
 (defn min-context-parents
   "The **minimal** contexts context `c` inherits from: the contexts `c` reaches over one
   `genlCx` edge with no other such context strictly below them."
@@ -653,6 +697,13 @@
   other direct parent of `t` strictly below them."
   ([conn t] (call conn :min-genls [t]))
   ([conn t context] (call conn :min-genls [t context])))
+
+(defn owed-releases
+  "How many departures and arrivals the settles of an open, a recover, an upgrade or a bulk
+  load left owed: the general argument-type mints a departed specific membership had
+  withheld are not drawn until `release-withheld!` runs, so the KB may miss them."
+  [conn]
+  (call conn :owed-releases []))
 
 (defn possible-relations
   "The base relations `calculus` still allows between `a` and `b`, given everything
@@ -759,6 +810,12 @@
   [conn sx]
   (call conn :readable-sentence [sx]))
 
+(defn relation-arity
+  "The exact number of places that binds `term`, its own or one inherited through `genl`,
+  or nil when no exact length binds it (a `variable_arity` relation, or none stored)."
+  [conn term]
+  (call conn :relation-arity [term]))
+
 (defn relation?
   "Is `term` a relation of two or more places by what the KB stores of it, visible from
   `context` (default `?ctx`, every context): an `(arity P n)` declaration or exact-arity
@@ -841,8 +898,9 @@
   ([conn pred opts] (call conn :sentexes-with-functor [pred opts])))
 
 (defn separating-covers
-  "The believed `separating` and `partition` rosters, as a set of `[whole parts kind]`:
-  every two distinct `parts` are disjoint, and `disjoint?` reads them from this table."
+  "The believed `separating` and `partition` declarations, as a set of `[whole parts
+  kind]`: every two distinct `parts` are disjoint, and `disjoint?` reads them from this
+  table."
   [conn]
   (call conn :separating-covers []))
 
@@ -866,6 +924,13 @@
   `genl`."
   ([conn t] (call conn :specs [t]))
   ([conn t context] (call conn :specs [t context])))
+
+(defn stored-first-args
+  "The terms **stored** at argument 1 of a fact with functor `pred`, as a set: the index's
+  own child set under `pred`, one read — no record fetched and no belief consulted, so a
+  defeated or unsupported fact's term is in it."
+  [conn pred]
+  (call conn :stored-first-args [pred]))
 
 (defn subsumption-status
   "The subsumption relationship of type `a` to type `b`, one of: `:coextensional` (each is
@@ -901,7 +966,7 @@
 (defn term-expression
   "The functional expression a reified term denotes — `(FruitFn AppleTree)` for the
   constant minted from it — or nil for an ordinary term, and for a reified one whose
-  `(termOfUnit K E)` map is not believed."
+  `(natFormula K E)` map is not believed."
   [conn term]
   (call conn :term-expression [term]))
 
@@ -916,7 +981,12 @@
   visible from `context`: a `:disjoint`, `:functional`, `:asymmetric`, `:anti-transitive`
   or `:cover` clash formed by the sentence, by a membership its argument declarations
   mint, or, for a `(forced_decontextualized_predicate P)` declaration, by a `(P …)`
-  premise it moves into CxUniverse (`rehome-forced-extent!`)."
+  premise it moves into CxUniverse (`rehome-forced-extent!`); an argument holding a type
+  the taxonomy separates from its declared type (`:arg-type`, `:arg-genl`,
+  `:inter-arg-type`), under either argtype reading; an `arg` / `genlArg` / `interArg`
+  declaration a stored tuple breaks; a rule one of whose variables no term can fill
+  (`:arg-variable`); and an `arg` / `genlArg` / `quotedArg` declaration that would convict
+  a stored, believed rule so, which names the rule in `:clashes-with`."
   ([conn sentence] (call conn :try-assert [sentence]))
   ([conn sentence context] (call conn :try-assert [sentence context]))
   ([conn sentence context opts] (call conn :try-assert [sentence context opts])))
@@ -932,6 +1002,13 @@
   term index."
   ([conn x] (call conn :types-of [x]))
   ([conn x context] (call conn :types-of [x context])))
+
+(defn unsupported
+  "The stored records the last `recover` found with no premise mark, no justification and
+  no `:inert` mark, as `{:n n :handles [h …]}`, ascending, re-checked against the KB now:
+  a handle since premise-marked, concluded, marked `:inert` or retracted is left out."
+  [conn]
+  (call conn :unsupported []))
 
 (defn violations
   "The definitional constraints a *derived* conclusion would have broken during the last

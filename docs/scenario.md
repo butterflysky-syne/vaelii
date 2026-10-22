@@ -31,7 +31,7 @@ Ordinary backtracking, with the two refinements that make it bearable:
 
 * **fewest possibilities first.** The most constrained undecided pair is chosen next, so a
   wrong choice is made where it is cheapest to be wrong about.
-* **re-tighten after every choice.** A relation is pinned, path consistency runs again, and
+* **re-tighten after every choice.** A relation is chosen, path consistency runs again, and
   a choice that empties some *other* pair is abandoned at once rather than at the leaf.
 
 A choice is made on a pair, never on a node, because a constraint network's variables *are*
@@ -91,7 +91,7 @@ bound the sequence:
 | Network | Scenarios |
 |---------|-----------|
 | unsatisfiable | none — an arrangement nothing rules out cannot exist when everything is ruled out |
-| fully pinned by the facts and their composition | exactly one, equal to the tightened network |
+| fully determined by the facts and their composition | exactly one, equal to the tightened network |
 | fewer than two nodes | exactly one, the empty scenario: no pair to decide is not the same as no arrangement |
 
 ## Checking one

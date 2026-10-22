@@ -29,7 +29,7 @@
   that, and naming them is half of what naming the levels is for:
 
     1 -> 2 **narrows**.  Level 1 is candidate retrieval and never looks at the goal's
-    arguments; level 2 unifies.  So for any goal that pins an argument level 2 is a
+    arguments; level 2 unifies.  So for any goal that binds an argument level 2 is a
     *subset* of level 1 — which is one of the two reasons `escalate` floors at 2.
 
     3 -> 4 can **drop** an answer.  Level 4 is `res/matches-visible`, which reads the
@@ -59,7 +59,8 @@
   them, and a transitive closure has no partial answer.  The property that does
   hold everywhere is that per-result work — a record fetch, an expensive prover, a
   rule expansion — is paid per result consumed."
-  (:require [vaelii.impl.except :as exc]
+  (:require [vaelii.impl.budget :as budget]
+            [vaelii.impl.except :as exc]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.naming :as nm]
             [vaelii.impl.nat :as nat]
@@ -233,7 +234,7 @@
   The `except` visibility filter is deliberately **not** here: it lives in
   `res/matches-visible`, which is level 4, so an excepted handle is matched at this
   level and gone at the next — that difference is level 4's contribution made visible,
-  and `an-excepted-fact-is-the-one-answer-that-falls-out-of-the-stack` pins it.
+  and `an-excepted-fact-is-the-one-answer-that-falls-out-of-the-stack` asserts it.
 
   A scoped defeat **is** here, because it is belief and not visibility: the view context
   is the reader, and a handle defeated at a vantage it sees, or resting only on one, is
@@ -334,17 +335,22 @@
   below it: `escalate` climbs until something answers and reads one result to decide, and
   the browser pages a level at a time — so a level that realized its whole answer set
   before returning would make the most expensive level the one that costs the most to
-  merely ask.  `res/prove-seq` drives the same search a solution at a time."
-  [kb goal context]
-  (let [goal     (engine-goal kb goal context)
-        rules-fn (fn [g] (provers/candidate-rules kb g context))
-        leaf     (fn [kb g context] (provers/solve-goal kb g context))]
-    (nm/distinct-by answer-key
-                    (map #(derived-result 7 goal context %)
-                         (res/prove-seq kb rules-fn [goal] context
-                                        {:leaf-solver  leaf
-                                         :est-override (provers/registry-est-override
-                                                        kb context)})))))
+  merely ask.  `res/prove-seq` drives the same search a solution at a time.
+
+  `dl`, a `budget/now` instant, is the one bound it takes: `escalate`'s `:max-ms`, which
+  ends the seq where the search stands when it passes."
+  ([kb goal context] (level-7 kb goal context nil))
+  ([kb goal context dl]
+   (let [goal     (engine-goal kb goal context)
+         rules-fn (fn [g] (provers/candidate-rules kb g context))
+         leaf     (fn [kb g context] (provers/solve-goal kb g context))]
+     (nm/distinct-by answer-key
+                     (map #(derived-result 7 goal context %)
+                          (res/prove-seq kb rules-fn [goal] context
+                                         (cond-> {:leaf-solver  leaf
+                                                  :est-override (provers/registry-est-override
+                                                                 kb context)}
+                                           dl (assoc :deadline dl))))))))
 
 (def ^:private level-fns
   [level-0 level-1 level-2 level-3 level-4 level-5 level-6 level-7])
@@ -360,23 +366,59 @@
                     {:type :bad-level :level level})))
   ((nth level-fns level) kb goal context))
 
+(defn- with-unenumerated-keys
+  "`m` plus `provers/with-unenumerated`'s report keys whose vectors are non-empty."
+  [m report]
+  (into m (filter (comp seq val)) report))
+
+(defn- passed? [dl] (and dl (>= (long (budget/now)) (long dl))))
+
+(defn- probe
+  "Level `n`'s lazy answer to `goal` and whether it has a first one: `[rs hit? report]`,
+  where `hit?` is `::timeout` when the deadline `dl` passed inside the probe.  Level 7
+  takes the deadline itself; a lower level stops at it only inside a walk that reads
+  `budget/*deadline*`."
+  [kb n goal context dl]
+  (let [rs (if (and dl (= n max-level))
+             (level-7 kb goal context dl)
+             (lookup kb n goal context))
+        [hit? report] (provers/with-unenumerated
+                        #(let [r (budget/interruptible dl (fn [] (boolean (seq rs))))]
+                           (cond (= ::budget/interrupted r)  ::timeout
+                                 (and (not r) (passed? dl)) ::timeout
+                                 :else                      r)))]
+    [rs hit? report]))
+
 (defn escalate
   "Climb the stack from `floor` (default `query-floor`, 2) and stop at the first
   level that answers `goal`, returning {:level :name :results :tried}.  `:results`
   is the lazy seq from that level, so the climb costs one result per level tried,
   not a full answer per level.  Nothing answers → :level nil with every level tried.
+  The result carries `:unenumerated` (and `:unenumerated-in-guards`) when the probe of
+  the level it stopped at recorded a transitive predicate whose closure a both-open goal
+  did not enumerate; a pull of `:results` past the first is not collected.
 
   The default floor skips the two retrieval levels, which can report a hit for a
-  goal they cannot verify — see `query-floor`.  Pass 0 to include them."
+  goal they cannot verify — see `query-floor`.  Pass 0 to include them.
+
+  `opts` takes `:max-ms`, a deadline on the climb.  It is checked between levels, inside
+  level 7's search, and inside a lower level's walk only where that walk reads
+  `budget/*deadline*`; one level's probe otherwise runs to its end.  A climb the deadline
+  stops before anything answers is `{:level nil :status :timeout}` with `:tried` up to
+  the level it stopped in — not \"nothing answers\", which it has not shown.  A hit found
+  in time is the ordinary result, and a pull of its `:results` after the deadline ends
+  at it when the level is 7."
   ([kb goal context] (escalate kb goal context query-floor))
-  ([kb goal context floor]
+  ([kb goal context floor] (escalate kb goal context floor nil))
+  ([kb goal context floor opts]
    ;; the same 0-7 vocabulary `lookup` refuses outside of: a floor above the top
    ;; would make `tried` empty and answer {:level nil} — a plausible "nothing
    ;; answered" for what is an off-by-one in the caller's arithmetic
    (when-not (and (integer? floor) (<= 0 floor max-level))
      (throw (ex-info (str "floor must be an integer 0-" max-level ", got " (pr-str floor))
                      {:type :bad-level :floor floor})))
-   (let [tried (range floor (inc max-level))
+   (let [dl    (budget/deadline opts)
+         tried (range floor (inc max-level))
          ;; `some`, not `(first (keep ...))`: `(range 2 8)` is a **chunked** seq, and
          ;; `keep`'s chunked path runs its function over the whole chunk before
          ;; yielding anything — so a goal answered at level 2 would still probe levels
@@ -384,18 +426,33 @@
          ;; ran: the expensive half of the climb's claim, silently false.  `some` walks
          ;; with `recur` and stops at the first hit.
          hit   (some (fn [n]
-                       (let [rs (lookup kb n goal context)]
-                         (when (seq rs) [n rs])))
+                       (if (and (> n floor) (passed? dl))
+                         [(dec n) nil ::timeout]               ; level n never ran
+                         (let [[rs hit? report] (probe kb n goal context dl)]
+                           (cond (= ::timeout hit?) [n nil ::timeout]
+                                 hit?               [n rs report]))))
                      tried)]
-     (if hit
-       (let [[n rs] hit]
-         {:level n :name (level-name n) :results rs :tried (vec (range floor (inc n)))})
+     (cond
+       (= ::timeout (nth hit 2 nil))
+       {:level nil :name nil :results () :status :timeout
+        :tried (vec (range floor (inc (first hit))))}
+
+       hit
+       (let [[n rs report] hit]
+         (with-unenumerated-keys
+           {:level n :name (level-name n) :results rs :tried (vec (range floor (inc n)))}
+           report))
+
+       :else
        {:level nil :name nil :results () :tried (vec tried)}))))
 
 (defn explain
   "Run every level over `goal` and report what each yields: a seq of {:level :name
   :count}.  A diagnostic — it counts, so it realizes every level fully.  The first
-  level whose count jumps is the mechanism the answer depends on."
+  level whose count jumps is the mechanism the answer depends on.  A row also carries
+  `:unenumerated` (and `:unenumerated-in-guards`) when its level answered a both-open goal
+  over a transitive predicate from the extent, so its count may omit derived pairs."
   [kb goal context]
   (for [{:keys [level name]} level-table]
-    {:level level :name name :count (count (lookup kb level goal context))}))
+    (let [[n report] (provers/with-unenumerated #(count (lookup kb level goal context)))]
+      (with-unenumerated-keys {:level level :name name :count n} report))))

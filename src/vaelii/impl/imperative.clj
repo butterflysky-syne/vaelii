@@ -8,11 +8,11 @@
 
   This is not part of the assertion write-path — it is a separate feature (answer-set
   labeling, docs/labeling.md) routed through `assert` for one entry point — so it lives
-  outside `vaelii.core`.  The backing functions live under `vaelii.impl.asp.*`, which
-  requires the engine, so they are resolved **lazily**: a static require would be
-  circular, and the resolve keeps ASP optional (a build without a backend still loads,
-  and the backend choice is made inside the resolved fn).  An unavailable build throws a
-  legible error rather than failing to load the engine."
+  outside `vaelii.core`.  The backing functions live under `vaelii.impl.asp.*` and are
+  resolved by symbol on first use, so loading `vaelii.core` does not load the ASP
+  namespaces; `vaelii.core`'s reasoner and solver tables defer the same way.  No `asp`
+  namespace requires this one, so the deferral breaks no require cycle.  The clingo or
+  clasp choice is made inside the resolved fn (`vaelii.impl.asp.solver`)."
   (:require [clojure.string :as str]))
 
 (defn- imperative-fn
@@ -23,9 +23,8 @@
                'do/classify 'vaelii.impl.asp.solve-context/classify}]
     (if-let [sym (known functor)]
       (or (requiring-resolve sym)
-          (throw (ex-info (str "imperative " functor " is unavailable in this build — it"
-                               " is backed by " sym ", and that namespace is not on the"
-                               " classpath")
+          (throw (ex-info (str "imperative " functor " is backed by " sym
+                               ", and that namespace defines no such var")
                           {:type :not-assertible :form functor :wanted sym})))
       (throw (ex-info (str "unknown imperative " functor
                            "; known: " (str/join ", " (sort (map str (keys known)))))

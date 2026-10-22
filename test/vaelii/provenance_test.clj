@@ -2,9 +2,9 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.provenance-test
   "Per-handle provenance: a bookkeeping map (creator + creation date, plus arbitrary
-  application fields) kept beside the record, stamped on `assert`, first-writer-wins
+  application fields) kept beside the record, recorded on `assert`, first-writer-wins
   on creation, extensible with `add-provenance`, and torn down with the record.  The
-  clock and default creator are dynamic vars so a test can pin them; belief never
+  clock and default creator are dynamic vars so a test can fix them; belief never
   reads provenance, so nothing here touches order independence."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
@@ -12,7 +12,7 @@
 
 (use-fixtures :each (tu/neutral-fresh tu/fresh))
 
-(tu/deftest-kb assert-stamps-creator-and-created
+(tu/deftest-kb assert-records-creator-and-created
   (tu/with-terms [dog Muffet CxFarm]
     (binding [v/*creator* "alice" v/*clock* (constantly 1000)]
       (let [h (v/assert kb (list dog Muffet) CxFarm)]
@@ -41,7 +41,7 @@
           h2 (binding [v/*creator* "bob" v/*clock* (constantly 2000)]
                (v/assert kb (list dog Muffet) CxFarm))]
       (is (= h1 h2) "re-asserting resolves to the same handle")
-      (testing "the original creation stamp is preserved, not overwritten"
+      (testing "the original creation time is preserved, not overwritten"
         (is (= {:creator "alice" :created 1000} (v/provenance kb h1)))))))
 
 (tu/deftest-kb re-assert-still-merges-new-application-fields
@@ -75,7 +75,7 @@
 
 (tu/deftest-kb default-creator-is-nil-and-created-is-always-present
   (tu/with-terms [dog Muffet CxFarm]
-    ;; no *creator* bound -> nil creator, but a :created stamp is always recorded
+    ;; no *creator* bound -> nil creator, but a :created time is always recorded
     (binding [v/*clock* (constantly 4242)]
       (let [h (v/assert kb (list dog Muffet) CxFarm)
             p (v/provenance kb h)]
@@ -83,7 +83,7 @@
         (is (nil? (:creator p)))
         (is (= 4242 (:created p)))))))
 
-(tu/deftest-kb conjunctive-consequent-stamps-every-handle
+(tu/deftest-kb conjunctive-consequent-records-provenance-on-every-handle
   (tu/with-terms [p a b c CxFarm]
     (binding [v/*creator* "alice" v/*clock* (constantly 1000)]
       ;; a rule concluding (and C1 C2) is polycanonicalized into two rules; assert
@@ -100,6 +100,6 @@
   (tu/with-terms [dog Muffet CxFarm]
     (binding [v/*creator* "alice" v/*clock* (constantly 1000)]
       (let [h (v/assert kb (list dog Muffet) CxFarm)]
-        (testing "stamping provenance does not disturb belief or query"
+        (testing "recording provenance does not disturb belief or query"
           (is (v/in? kb h))
           (is (seq (v/sentexes-matching kb (list dog Muffet) CxFarm))))))))

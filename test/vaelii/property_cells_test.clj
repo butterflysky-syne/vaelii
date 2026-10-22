@@ -5,7 +5,7 @@
   scoping, belief filtering and order independence, across the anytime readers, the lookup
   levels, exceptions, schematic rewriting, modal belief, generators and abduction — and
   locality through a whole KB on each index and network representation, where
-  `jtms_locality_test` reads the window off a bare network.
+  `jtms_locality_test` reads the touched set off a bare network.
 
   Each test states one subsystem against one property: a sibling context that must not see, a
   stored-but-defeated sentex that must not be read as believed, or two arrival orders that
@@ -202,7 +202,7 @@
 
 ;; ---- generators / scoping ----------------------------------------------
 
-(tu/deftest-kb a-stamped-rule-does-not-fire-in-a-sibling
+(tu/deftest-kb a-generated-rule-does-not-fire-in-a-sibling
   (tu/with-terms [plan_verb outcomeEmotion planOf feels succeededAt Joy Tom Plan CxA CxB]
     (siblings! kb CxA CxB)
     (v/assert kb (list 'implies
@@ -218,13 +218,13 @@
       (v/assert kb (list planOf Tom Plan) cx)
       (v/assert kb (list succeededAt Tom Plan) cx))
     (let [feels-in #(into #{} (map '?e) (v/ask kb (list feels Tom '?e) %))]
-      (testing "control: the stamped rule concludes in its own context"
+      (testing "control: the generated rule concludes in its own context"
         (is (= #{Joy} (feels-in CxA))))
       (testing "the sibling, holding the same member facts, gets no conclusion"
         (is (= #{} (feels-in CxB)))
         (is (nil? (v/handle-of kb (list feels Tom Joy) CxB)))
         (is (empty? (filter :antecedent (v/sentexes-in-context kb CxB)))
-            "a rule was stamped into the sibling")))))
+            "a rule was generated into the sibling")))))
 
 ;; ---- abduction / order -------------------------------------------------
 
@@ -261,15 +261,15 @@
     (dotimes [i n] (v/assert kb (list 'lp_root (symbol (str "Lp" i))) C)))
   kb)
 
-(defn- window
-  "The datums every settle `f` ran relabelled, taken as each window is cleared."
+(defn- touched-by-settles
+  "The datums every settle `f` ran relabelled, taken as each settle clears its touched set."
   [f]
   (let [orig jtms/reset-touched! w (atom #{})]
     (with-redefs [jtms/reset-touched! (fn [tms] (swap! w into (jtms/touched tms)) (orig tms))]
       (f))
     @w))
 
-(deftest a-settle-window-does-not-grow-with-the-kb-on-any-representation
+(deftest a-settle-touched-set-does-not-grow-with-the-kb-on-any-representation
   ;; One chain's root arriving and one leaving relabel that chain — root, middle, leaf —
   ;; at 20 chains and at 400, on either network, over the KV index, the columnar trie,
   ;; and a fork whose chains all sit in its base.
@@ -292,6 +292,6 @@
              (into [] (mapcat (fn [n]
                                 (let [kb (open n)]
                                   (when-not (= "fork" label) (tu/clear-kb! kb) (chains! kb n))
-                                  [(count (window #(v/assert kb '(lp_root LpNew) C)))
-                                   (count (window #(v/retract! kb (v/handle-of kb '(lp_root Lp3) C))))])))
+                                  [(count (touched-by-settles #(v/assert kb '(lp_root LpNew) C)))
+                                   (count (touched-by-settles #(v/retract! kb (v/handle-of kb '(lp_root Lp3) C))))])))
                    [20 400]))))))

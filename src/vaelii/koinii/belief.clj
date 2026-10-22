@@ -96,7 +96,7 @@
   spec-ctx)
 
 (defn convened-agents
-  "The agents whose belief contexts `spec-ctx` sees — the roster `convene` gathered,
+  "The agents whose belief contexts `spec-ctx` sees — the agent set `convene` gathered,
   read back off the visibility lattice."
   [kb spec-ctx]
   (into #{} (keep v/agent-of-context) (v/context-up kb spec-ctx)))

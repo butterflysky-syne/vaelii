@@ -4,21 +4,25 @@
   "`(quotedArg pred n type)` — the mention twin of `arg` (docs/argtypes.md).  Where `arg`
   types what an argument *denotes*, `quotedArg` types the argument *as a term*: its EDN
   kind (string, number with integer below it, symbol) checked through genl against a
-  syntactic type.  `(quotedArg name_of_guy 1 string)` refuses `(name_of_guy 5)` — 5 is a
-  number, not a string — and admits `(name_of_guy \"Bob\")`."
+  syntactic type, and a compound's expression kinds checked for a separation from it.  Under `(quotedArg name_of_guy 1 string)`, `assert` stores
+  `(name_of_guy 5)` inert — 5 is a number, not a string — `try-assert` refuses it, and
+  `(name_of_guy \"Bob\")` is believed."
   (:require [clojure.test :refer [is testing use-fixtures]]
+            [clojure.walk :as walk]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.test-util :as tu]))
 
-(use-fixtures :once (tu/loaded core-context/load-into))
+(use-fixtures :once (tu/loaded tu/load-core!))
 (use-fixtures :each (tu/neutral))
 
 (defn- refusal
-  "The violation type `check` predicts for `sentence` in CxUniverse, or nil when it is
-  well-formed."
+  "The violation `try-assert` refuses `sentence` with in CxUniverse (a
+  `:definitional-clash`'s `:violation`), or nil when it stores it, retracting what it
+  stored."
   [kb sentence]
-  (:type (first (v/check kb sentence 'CxUniverse))))
+  (try (some->> (v/try-assert kb sentence 'CxUniverse) (v/retract! kb)) nil
+       (catch clojure.lang.ExceptionInfo e
+         (let [d (ex-data e)] (or (:violation d) (:type d))))))
 
 (tu/deftest-kb quotedarg-types-an-argument-by-its-literal-kind
   (tu/with-terms [name_of_guy]
@@ -41,21 +45,36 @@
     (testing "a string is not a number"
       (is (= :quoted-arg-type (refusal kb (list countOf "five")))))))
 
-(tu/deftest-kb quotedarg-is-open-world-about-a-kind-it-does-not-type
-  ;; Every leaf kind a sentence can carry has a name in `checks/syntactic-roots`, so the
-  ;; exempt case is the one that is genuinely open rather than merely unnamed: a
-  ;; **compound**.  What `(MsrFn 5)` denotes is its function's business — `result`, not
-  ;; its syntax — so no syntactic kind would be the right answer and the check stays
-  ;; silent, the same open-world floor `arg` gives an argument outside the hierarchy.
-  (tu/with-terms [holds MsrFn]
+(tu/deftest-kb quotedarg-decides-every-leaf-kind
+  ;; every leaf kind a sentence can carry has a name in `checks/syntactic-roots`
+  (tu/with-terms [holds]
     (v/assert kb (list 'unary_predicate holds) 'CxUniverse)
     (v/assert kb (list 'quotedArg holds 1 'string) 'CxUniverse)
-    (v/assert kb (list 'unreifiable_function MsrFn) 'CxUniverse)
-    (is (nil? (refusal kb (list holds (list MsrFn 5))))
-        "a compound is exempt, not convicted")
-    (testing "while a kind that does have a name is decided rather than waved through"
-      (is (= :quoted-arg-type (refusal kb (list holds :a-keyword))))
-      (is (= :quoted-arg-type (refusal kb (list holds true)))))))
+    (is (= :quoted-arg-type (refusal kb (list holds :a-keyword))))
+    (is (= :quoted-arg-type (refusal kb (list holds true))))))
+
+(tu/deftest-kb a-compound-is-held-only-where-one-of-its-kinds-is-separated-from-the-type
+  ;; a compound's kinds are its spelling's (`provers/shape-kinds`): `(MsrFn 5)` is a
+  ;; closed non_atomic_expression, which neither reaches non_atomic_term nor is separated
+  ;; from it, and `(not (dog Fido))` is a sentence, which reflection.txt separates from
+  ;; non_atomic_term.  Each row runs in both arrival orders of {declaration, fact}.
+  (doseq [[t compound held] [['string          '(MsrFn 5)          :quoted-arg-type]
+                             ['symbol          '(MsrFn 5)          :quoted-arg-type]
+                             ['non_atomic_term '(MsrFn 5)          nil]
+                             ['formula         '(MsrFn 5)          nil]
+                             ['non_atomic_term '(not (dog Fido))   :quoted-arg-type]
+                             ['sentence        '(not (dog Fido))   nil]]
+          decl-first? [true false]]
+    (tu/with-terms [holds MsrFn dog Fido]
+      (v/assert kb (list 'unreifiable_function MsrFn) 'CxUniverse)
+      (let [d    (list 'quotedArg holds 1 t)
+            fact (list holds (walk/postwalk-replace {'MsrFn MsrFn 'dog dog 'Fido Fido} compound))]
+        (v/assert kb (list 'unary_predicate holds) 'CxUniverse)
+        (doseq [s (if decl-first? [d fact] [fact d])] (v/assert kb s 'CxUniverse))
+        (testing (str t " " compound (if decl-first? ", declaration first" ", fact first"))
+          (is (= held (some #(when (= fact (:sentence %)) (get-in % [:detail :type]))
+                            (v/violations kb))))
+          (is (= (nil? held) (v/ask? kb fact 'CxUniverse))))))))
 
 (tu/deftest-kb quotedarg-and-arg-are-independent
   ;; the entailing reading: the derivation is the subject
@@ -118,26 +137,53 @@
 (tu/deftest-kb a-quoted-symbol-is-distinct-from-using-its-denotation
   ;; A different predicate asks for a symbol at the use level.  The bare parentOf denotes
   ;; a predicate and therefore fails that constraint; `(Quote parentOf)` is a compound
-  ;; mention and remains WFF.  This pins the boundary without conflating it with the
+  ;; mention and remains WFF.  This asserts the boundary without conflating it with the
   ;; preceding predicate's simultaneous arg/quotedArg declarations.
-  ;; Pinned to the constraint reading: the contrast is between the quoted arm's verdict and
+  ;; Forced to the constraint reading: the contrast is between the quoted arm's verdict and
   ;; the ordinary one's, and with the entailment on the ordinary arm mints rather than
   ;; convicts (docs/argtypes.md).  The quoted arm is unchanged by the toggle.
   (tu/without-entailing
-   (tu/with-terms [quotedTestPred parentOf Quote PredicateQuote]
+   (tu/with-terms [quotedTestPred parentOf]
      (v/assert kb (list 'unary_predicate quotedTestPred) 'CxUniverse)
      (v/assert kb (list 'binary_predicate parentOf) 'CxUniverse)
      (v/assert kb (list 'arg quotedTestPred 1 'symbol) 'CxUniverse)
-     (v/assert kb (list 'unreifiable_function Quote) 'CxUniverse)
-     (v/assert kb (list 'quoting_function Quote) 'CxUniverse)
-     (v/assert kb (list 'result Quote 'symbol) 'CxUniverse)
-     (v/assert kb (list 'unreifiable_function PredicateQuote) 'CxUniverse)
-     (v/assert kb (list 'quoting_function PredicateQuote) 'CxUniverse)
-     (v/assert kb (list 'result PredicateQuote 'predicate) 'CxUniverse)
+     (v/assert kb (list 'unreifiable_function 'Quote) 'CxUniverse)
+     (v/assert kb (list 'result 'Quote 'symbol) 'CxUniverse)
+     ;; `Quasiquote` is the other quoting function; no `unreifiable_function` mark, so the
+     ;; quasiquote reducer stays off and the mention reaches the check as written
+     (v/assert kb (list 'result 'Quasiquote 'predicate) 'CxUniverse)
      (is (= :arg-type (refusal kb (list quotedTestPred parentOf)))
          "using parentOf denotes a predicate, not a symbol")
      (is (= :arg-type
-            (refusal kb (list quotedTestPred (list PredicateQuote parentOf))))
+            (refusal kb (list quotedTestPred (list 'Quasiquote parentOf))))
          "a quoted compound whose declared result is predicate does not satisfy symbol")
-     (is (nil? (refusal kb (list quotedTestPred (list Quote parentOf))))
+     (is (nil? (refusal kb (list quotedTestPred (list 'Quote parentOf))))
          "Quote declares a symbol result, so the quoted mention satisfies the use-level slot"))))
+
+(tu/deftest-kb a-quotedarg-violation-is-inert-in-either-order
+  (tu/with-terms [holds]
+    (doseq [arg [5 'Muffet]]
+      (let [decl (list 'quotedArg holds 1 'string)
+            fact (list holds arg)
+            read (fn [order]
+                   (let [hs (mapv #(v/assert kb % 'CxUniverse)
+                                  (cons (list 'unary_predicate holds)
+                                        (map {:decl decl :fact fact} order)))
+                         h  (v/handle-of kb fact 'CxUniverse)
+                         r  [(some? h) (v/believed? kb h 'CxUniverse)
+                             (-> (v/why-not kb fact 'CxUniverse) :conviction :type)
+                             (into [] (comp (filter #(= :inert-argument (:violation %)))
+                                            (map (juxt :sentence (comp :type :detail))))
+                                   (v/violations kb))]]
+                     (doseq [h (rseq hs)] (v/retract! kb h))
+                     r))]
+        (is (= #{[true false :quoted-arg-type [[fact :quoted-arg-type]]]}
+               (into #{} (map read) [[:decl :fact] [:fact :decl]]))
+            (str arg " is stored, held and reported in both orders"))))
+    (let [hs (mapv #(v/assert kb % 'CxUniverse)
+                   [(list 'unary_predicate holds) (list holds 5) (list 'quotedArg holds 1 'string)
+                    (list holds "x")])]
+      (is (v/believed? kb (peek hs) 'CxUniverse) "a string stays believed")
+      (v/retract! kb (nth hs 2))
+      (is (v/believed? kb (nth hs 1) 'CxUniverse) "the declaration's retraction releases 5")
+      (doseq [h (rseq (assoc hs 2 nil)) :when h] (v/retract! kb h)))))

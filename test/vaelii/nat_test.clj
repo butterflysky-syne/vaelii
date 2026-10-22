@@ -6,17 +6,16 @@
   A ground reifiable NAT `(FruitFn AppleTree)` reifies to an opaque `nat/` constant
   before it reaches the index (Strategy A), so it autoindexes like an atomic symbol;
   an unreifiable structural NAT `(QuantityFn 5 Kilogram)` stays structural.  The constant↔
-  expression map is an ordinary `(termOfUnit K E)` fact, so rename rides the equality
+  expression map is an ordinary `(natFormula K E)` fact, so rename rides the equality
   migration and remove rides the retraction sweep."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.naming :as nm]
             [vaelii.impl.nat :as nat]
             [vaelii.test-util :as tu]))
 
-(use-fixtures :once (tu/loaded core-context/load-into))
+(use-fixtures :once (tu/loaded tu/load-core!))
 (use-fixtures :each (tu/neutral))
 
 (defn- k-of
@@ -48,9 +47,9 @@
         (is (= (list 'color (list FruitFn AppleTree) 'Red)
                (nat/expand-expression kb (:sentence (v/sentex kb h))))))
       (testing "an unknown NAT resolves to no-match and mints nothing"
-        (let [before (count (v/sentexes-matching kb (list 'termOfUnit '?k '?e) 'CxUniverse))]
+        (let [before (count (v/sentexes-matching kb (list 'natFormula '?k '?e) 'CxUniverse))]
           (is (empty? (v/sentexes-matching kb (list 'color (list FruitFn 'PearTree) '?c) '?ctx)))
-          (is (= before (count (v/sentexes-matching kb (list 'termOfUnit '?k '?e) 'CxUniverse)))))))))
+          (is (= before (count (v/sentexes-matching kb (list 'natFormula '?k '?e) 'CxUniverse)))))))))
 
 (tu/deftest-kb handle-of-and-why-not-resolve-a-nat-to-its-stored-constant
   ;; `ist` stores the constant, so its non-creating counterpart has to ask for the
@@ -79,7 +78,7 @@
   ;; twin, and every belief-blind read finds it from the compound spelling.  Stored raw the
   ;; compound was a record `sentexes-matching`/`ask` reified past, `count-with-functor`
   ;; answered 2 for one proposition, and the reads split across two spellings.  A NAT this
-  ;; KB never minted is refused (`:unminted-nat`): minting a `termOfUnit` is the belief-
+  ;; KB never minted is refused (`:unminted-nat`): minting a `natFormula` is the belief-
   ;; carrying side effect this entry point never has.
   (tu/with-terms [FruitFn AppleTree PearTree Rex]
     (v/assert kb (list 'reifiable_function FruitFn) 'CxUniverse)
@@ -130,8 +129,8 @@
     (let [h1 (v/assert kb (list 'color (list FruitFn AppleTree) 'Red)   'CxUniverse)
           h2 (v/assert kb (list 'taste (list FruitFn AppleTree) 'Sweet) 'CxUniverse)]
       (is (= (k-of kb h1) (k-of kb h2)))
-      (testing "one termOfUnit maps the expression"
-        (is (= 1 (count (v/sentexes-matching kb (list 'termOfUnit '?k (list FruitFn AppleTree))
+      (testing "one natFormula maps the expression"
+        (is (= 1 (count (v/sentexes-matching kb (list 'natFormula '?k (list FruitFn AppleTree))
                                              'CxUniverse))))))))
 
 (tu/deftest-kb the-same-nat-yields-the-same-constant-in-independent-kbs
@@ -159,7 +158,7 @@
 
 (tu/deftest-kb a-vector-spelled-nat-is-the-nat-the-list-spelling-names
   ;; Reification runs **before** `canon`, and canon makes `[F a]` and `(F a)` one
-  ;; sentence — so a gate on the list spelling alone stores the raw compound for one
+  ;; sentence — so a reify check on the list spelling alone stores the raw compound for one
   ;; spelling and the constant for the other: two handles and two maps for one claim,
   ;; decided by how whoever typed it spelled a bracket.  Both arrival orders, since the
   ;; second spelling has to resolve to what the first stored either way round.
@@ -175,7 +174,7 @@
         (is (= ha hb) (str what ": one handle for one canonical sentence"))
         (is (nat/reified-nat-symbol? (nth (:sentence (v/sentex kb ha)) 2))
             (str what ": and it holds the constant rather than the compound"))
-        (is (= 1 (count (v/sentexes-matching kb (list 'termOfUnit '?k E) 'CxUniverse)))
+        (is (= 1 (count (v/sentexes-matching kb (list 'natFormula '?k E) 'CxUniverse)))
             (str what ": one map for one expression"))))))
 
 ;; ---- 3. nested -----------------------------------------------------------
@@ -188,7 +187,7 @@
                              'CxUniverse)
           inner-k  (nat/dedup-constant kb (list BestTreeIn Orchard1))
           outer-k  (k-of kb h)]
-      (testing "both the inner and outer NAT have a termOfUnit"
+      (testing "both the inner and outer NAT have a natFormula"
         (is (nat/reified-nat-symbol? inner-k))
         (is (nat/reified-nat-symbol? outer-k))
         (is (= (list FruitFn inner-k) (nat/nat-expression kb outer-k)))
@@ -208,7 +207,7 @@
       (testing "the constant is stable and its expression is rewritten"
         (is (= (list FruitFn MalusTree) (nat/nat-expression kb k)))
         (is (= k (nat/dedup-constant kb (list FruitFn MalusTree))))
-        (is (= 1 (count (v/sentexes-matching kb (list 'termOfUnit '?k (list FruitFn MalusTree))
+        (is (= 1 (count (v/sentexes-matching kb (list 'natFormula '?k (list FruitFn MalusTree))
                                              'CxUniverse)))))
       (testing "the retired spelling stays a usable question, resolving to the same K"
         ;; AppleTree is deprecated to MalusTree, so a goal naming the old term rewrites
@@ -225,7 +224,7 @@
         (v/assert kb (list 'rewriteOf MalusTree AppleTree) 'CxUniverse)
         (testing "the colliding constants merge to one"
           (is (empty? (nat/colliding-constant-groups kb)))
-          (is (= 1 (count (v/sentexes-matching kb (list 'termOfUnit '?k (list FruitFn MalusTree))
+          (is (= 1 (count (v/sentexes-matching kb (list 'natFormula '?k (list FruitFn MalusTree))
                                                'CxUniverse))))
           (is (= survivor (nat/dedup-constant kb (list FruitFn MalusTree)))
               "the lexicographically smallest constant survives"))))))
@@ -247,8 +246,8 @@
         ;; staged the way the mint writes one — the map is `:monotonic` bookkeeping,
         ;; and the second is the one no dedup probe stopped
         (doseq [k (if smallest-first? ks (rseq ks))]
-          (v/assert kb (list 'termOfUnit k E) 'CxUniverse {:strength :monotonic}))
-        (is (= 2 (count (v/sentexes-matching kb (list 'termOfUnit '?k E) 'CxUniverse)))
+          (v/assert kb (list 'natFormula k E) 'CxUniverse {:strength :monotonic}))
+        (is (= 2 (count (v/sentexes-matching kb (list 'natFormula '?k E) 'CxUniverse)))
             (str what ": both maps stand, so there is a collision to resolve"))
         (is (= (first ks) (nat/dedup-constant kb E)) what)
         (is (= [(first ks)]
@@ -284,7 +283,7 @@
             reading (fn [order]
                       (let [k (fresh-constant)]
                         (doseq [E order]
-                          (v/assert kb (list 'termOfUnit k E) 'CxUniverse {:strength :monotonic}))
+                          (v/assert kb (list 'natFormula k E) 'CxUniverse {:strength :monotonic}))
                         (v/assert kb (list (typ (if type-of-least? least (second Es))) k)
                                   'CxUniverse {:strength :monotonic})
                         (let [stored (set (map :id (kb/find-sentexes kb k)))]
@@ -448,12 +447,12 @@
 
 (tu/deftest-kb the-bookkeeping-set-is-an-answer-rather-than-a-plan
   ;; The caller retracts what `bookkeeping-handles` hands back, and the question
-  ;; "is this one of `k`'s own?" is itself read off `k`'s `termOfUnit` — so an answer
+  ;; "is this one of `k`'s own?" is itself read off `k`'s `natFormula` — so an answer
   ;; still being computed while the caller acts on it reads a KB the caller has already
   ;; torn the map out of, and everything after that point stops looking like
   ;; bookkeeping.  What survives is a materialized type naming a collected constant.
   ;; The order the term index yields decides whether it happens, so the two tests above
-  ;; witness it only in some retrieval orders; this one pins the property instead.
+  ;; witness it only in some retrieval orders; this one asserts the property instead.
   (tu/with-terms [FruitFn AppleTree fruit color]
     (v/assert kb (list 'reifiable_function FruitFn) 'CxUniverse)
     (v/assert kb (list 'result FruitFn fruit) 'CxUniverse)
@@ -493,8 +492,8 @@
         (is (nil? (nat/dedup-constant kb (list BestTreeIn Orchard1)))))
       (is (empty? (nat/orphaned-constants kb))))))
 
-;; A use does not always leave by the retraction's own dependency sweep: an exception
-;; that starts holding blocks a justification, and the settle that follows deletes what
+;; A use does not always leave by the retraction's own dependency sweep: a closed-extent
+;; negative antecedent that stops holding blocks a justification, and the settle that follows deletes what
 ;; it was solely supporting (docs/exceptions.md).  Nothing is retracted here at all, so
 ;; the constant is reachable only through what the *settle* removed.
 
@@ -503,32 +502,30 @@
     (v/assert kb (list 'reifiable_function FruitFn) 'CxUniverse)
     ;; `fruity` is the function's declared result type, so the sentence that mints the
     ;; constant is the constant's own materialized type — one sentex, and bookkeeping.
-    ;; The exception is about the weather rather than about the fruit, so the rule's
-    ;; conclusion is the only sentence in the whole test that names the constant.
+    ;; The negative antecedent is about the weather rather than about the fruit, so the
+    ;; rule's conclusion is the only sentence in the whole test that names the constant.
     (v/assert kb (list 'result FruitFn fruity) 'CxUniverse)
     (let [h (v/assert kb (list fruity (list FruitFn AppleTree)) 'CxUniverse)
           k (k-of kb h)]
       (v/assert kb (list weather Sunny) 'CxUniverse)
-      (v/assert kb (list 'exceptWhen (list overcast '?w)
-                         (list 'set/defaultRule
-                               (list 'set/forwardRule (list 'implies (list 'and (list fruity '?x) (list weather '?w))
-                                                            (list brightAs '?x Sun)))))
-                'CxUniverse)
+      (v/assert kb (list 'closed_extent_predicate overcast) 'CxUniverse)
+      (v/assert kb (list 'implies (list 'and (list fruity '?x) (list weather '?w)
+                                        (list 'not (list overcast '?w)))
+                         (list brightAs '?x Sun))
+                'CxUniverse {:direction :forward})
       (testing "the rule's conclusion is the constant's one live use"
         (is (nat/reified-nat-symbol? k))
         (is (seq (v/sentexes-matching kb (list brightAs k Sun) 'CxUniverse)))
         (is (false? (nat/orphan? kb k))))
-      ;; known-true, so the block sweeps: a `:default` blocker stores the conclusion with a
-      ;; defeat, and the constant keeps that use
-      (v/edit! kb {:add [[(list overcast Sunny) 'CxUniverse {:strength :monotonic}]]})
-      (testing "the exception blocks the rule and the settle sweeps the conclusion"
+      (v/edit! kb {:add [[(list overcast Sunny) 'CxUniverse]]})
+      (testing "the closed extent blocks the rule and the settle sweeps the conclusion"
         (is (empty? (v/sentexes-matching kb (list brightAs k Sun) 'CxUniverse))))
       (testing "and the constant it was the last use of goes with it"
         (is (nil? (nat/nat-expression kb k)))
         (is (nil? (nat/dedup-constant kb (list FruitFn AppleTree))))
         (is (empty? (nat/orphaned-constants kb)))))))
 
-;; ---- 6. unreifiable gate -------------------------------------------------
+;; ---- 6. unreifiable functions --------------------------------------------
 
 (tu/deftest-kb an-unreifiable-nat-stays-structural
   (tu/with-terms [QuantityFn Obj]
@@ -547,7 +544,7 @@
   ;; life.txt declares FatherFn reifiable, so the KB here is an empty one of its own.
   (tu/with-cleared-kb [kb tu/isolated-fresh]
     (tu/with-terms [FruitFn AppleTree]
-      (testing "the gate is off and a plain compound is stored verbatim"
+      (testing "the presence check answers false and a plain compound is stored verbatim"
         (is (false? (nat/any-reifiable-functions? kb)))
         ;; a compound argument with no reifiable_function declared is left structural
         (let [h (v/assert kb (list 'grows (list FruitFn AppleTree) 'Spring) 'CxUniverse)]
@@ -627,13 +624,13 @@
     (v/assert kb (list 'resultArg PickFn 1) 'CxUniverse)
     (v/assert kb (list 'genl kind 'thing) 'CxUniverse)
     (v/assert kb (list 'genl other 'thing) 'CxUniverse)
+    (v/assert kb (list 'disjoint kind other) 'CxUniverse)
     (v/assert kb (list 'arg needsKind 2 kind) 'CxUniverse)
     (is (some? (v/assert kb (list needsKind Ann (list PickFn kind)) 'CxUniverse))
         "an application naming the demanded type is admitted")
-    (is (= :arg-type
-           (try (v/assert kb (list needsKind Ann (list PickFn other)) 'CxUniverse) nil
-                (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
-        "and one naming a type outside it is refused")))
+    (is (= :arg-type (:type (tu/write-conviction kb (list needsKind Ann (list PickFn other))
+                                                 'CxUniverse)))
+        "and one naming a type disjoint from it is held inert")))
 
 (tu/deftest-kb rewriteof-reifies-a-nat-to-an-existing-real-term
   (tu/with-terms [CapitalFn France Paris]
@@ -663,12 +660,12 @@
           "a fresh constant stands until the disagreement is resolved")
       (is (not (contains? #{Mary Maria} stored))))))
 
-;; ---- recover: the reifiable gate + reified NAT data survive a rebuild -----------
+;; ---- recover: the reifiable presence check + reified NAT data survive a rebuild ---
 
 (tu/deftest-kb nat-data-survives-recover
-  ;; the reifiable prop and the termOfUnit / result-type facts are all durable, so a
-  ;; rebuild from the records must reconstruct the gate, dedup, and expansion — else a
-  ;; recovered KB would disagree with the running one about what a NAT reifies to.
+  ;; the reifiable prop and the natFormula / result-type facts are all durable, so a
+  ;; rebuild from the records must reconstruct the presence check, dedup, and expansion —
+  ;; else a recovered KB would disagree with the running one about what a NAT reifies to.
   ;; `recover` rebuilds the taxonomy + JTMS in place from the store (it adds no
   ;; sentex), so the fixture's net-neutral teardown still restores the baseline.
   (tu/with-terms [FruitFn AppleTree fruit]
@@ -677,7 +674,7 @@
     (let [h (v/assert kb (list 'color (list FruitFn AppleTree) 'Red) 'CxUniverse)
           k (k-of kb h)]
       (v/recover kb)
-      (testing "the gate, the constant map, and the materialized type all rebuild"
+      (testing "the presence check, the constant map, and the materialized type all rebuild"
         (is (true? (nat/any-reifiable-functions? kb)))
         (is (= (list FruitFn AppleTree) (nat/nat-expression kb k)))
         (is (= k (nat/dedup-constant kb (list FruitFn AppleTree))))
@@ -703,7 +700,7 @@
     (let [h (v/assert kb (list caresFor Bob (list MotherFn Muffet)) 'CxUniverse)]
       (testing "the application resolves to the value, and mints nothing beside it"
         (is (= (list caresFor Bob Mary) (:sentence (v/sentex kb h))))
-        (is (empty? (v/sentexes-matching kb (list 'termOfUnit '?k (list MotherFn Muffet))
+        (is (empty? (v/sentexes-matching kb (list 'natFormula '?k (list MotherFn Muffet))
                                          'CxUniverse))))
       (testing "a query written with the application still finds it"
         (is (= [{'?w Bob}] (v/ask kb (list caresFor '?w (list MotherFn Muffet)) 'CxUniverse)))))))
@@ -823,7 +820,7 @@
 
 (tu/deftest-kb a-correspondence-survives-recover
   ;; the declaration is read through the index rather than a taxonomy cache, so a
-  ;; rebuild has nothing to reconstruct — which is the claim worth pinning, since a
+  ;; rebuild has nothing to reconstruct — which is the claim asserted here, since a
   ;; recovered KB that stopped resolving applications would be a restart changing an
   ;; answer.
   (tu/with-terms [MotherFn motherOf Muffet Mary Bob caresFor]
@@ -851,6 +848,71 @@
         (is (empty? (kb/find-sentexes kb k)))
         (is (empty? (v/ask kb (list motherOf Muffet '?m) '?ctx)))
         (is (empty? (nat/orphaned-constants kb)))))))
+
+;; ---- the result type reaches the corresponding predicate -----------------
+;; A function's result type is the type of the value its corresponding predicate holds at
+;; the value position, so `result` and the correspondence together type that argument of
+;; the predicate.  The vocabulary below is made up, so the tests read the rules and no
+;; shipped function.
+
+(tu/deftest-kb a-correspondence-types-the-last-argument-of-a-binary-predicate-by-the-result
+  (tu/with-terms [GlowFn glowOf lamp glow_level]
+    (v/assert kb (list 'reifiable_function GlowFn) 'CxUniverse)
+    (v/assert kb (list 'unary_function GlowFn) 'CxUniverse)
+    (v/assert kb (list 'binary_predicate glowOf) 'CxUniverse)
+    (v/assert kb (list 'arg glowOf 1 lamp) 'CxUniverse)
+    (v/assert kb (list 'result GlowFn glow_level) 'CxUniverse)
+    (v/assert kb (list 'functionCorrespondingPredicate GlowFn glowOf) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'arg2 glowOf glow_level) 'CxUniverse)))
+    (is (false? (v/ask? kb (list 'arg1 glowOf glow_level) 'CxUniverse)))))
+
+(tu/deftest-kb a-correspondence-types-the-last-argument-of-a-ternary-predicate-by-the-result
+  (tu/with-terms [BlendFn blendOf paint blend_shade]
+    (v/assert kb (list 'reifiable_function BlendFn) 'CxUniverse)
+    (v/assert kb (list 'binary_function BlendFn) 'CxUniverse)
+    (v/assert kb (list 'ternary_predicate blendOf) 'CxUniverse)
+    (v/assert kb (list 'arg blendOf 1 paint) 'CxUniverse)
+    (v/assert kb (list 'arg blendOf 2 paint) 'CxUniverse)
+    (v/assert kb (list 'result BlendFn blend_shade) 'CxUniverse)
+    (v/assert kb (list 'functionCorrespondingPredicate BlendFn blendOf) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'arg3 blendOf blend_shade) 'CxUniverse)))
+    (is (false? (v/ask? kb (list 'arg2 blendOf blend_shade) 'CxUniverse)))))
+
+(tu/deftest-kb a-correspondence-types-the-last-argument-of-a-quaternary-predicate-by-the-result
+  (tu/with-terms [MixFn mixOf paint mix_shade]
+    (v/assert kb (list 'reifiable_function MixFn) 'CxUniverse)
+    (v/assert kb (list 'ternary_function MixFn) 'CxUniverse)
+    (v/assert kb (list 'quaternary_predicate mixOf) 'CxUniverse)
+    (doseq [position [1 2 3]]
+      (v/assert kb (list 'arg mixOf position paint) 'CxUniverse))
+    (v/assert kb (list 'result MixFn mix_shade) 'CxUniverse)
+    (v/assert kb (list 'functionCorrespondingPredicate MixFn mixOf) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'arg mixOf 4 mix_shade) 'CxUniverse)))
+    (is (false? (v/ask? kb (list 'arg mixOf 3 mix_shade) 'CxUniverse)))))
+
+(tu/deftest-kb a-correspondence-types-the-last-argument-of-a-quinary-predicate-by-the-result
+  (tu/with-terms [PaletteFn paletteOf paint palette_shade]
+    (v/assert kb (list 'reifiable_function PaletteFn) 'CxUniverse)
+    (v/assert kb (list 'quaternary_function PaletteFn) 'CxUniverse)
+    (v/assert kb (list 'quinary_predicate paletteOf) 'CxUniverse)
+    (doseq [position [1 2 3 4]]
+      (v/assert kb (list 'arg paletteOf position paint) 'CxUniverse))
+    (v/assert kb (list 'result PaletteFn palette_shade) 'CxUniverse)
+    (v/assert kb (list 'functionCorrespondingPredicate PaletteFn paletteOf) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'arg paletteOf 5 palette_shade) 'CxUniverse)))
+    (is (false? (v/ask? kb (list 'arg paletteOf 4 palette_shade) 'CxUniverse)))))
+
+(tu/deftest-kb a-ternary-correspondence-types-the-argument-at-its-declared-position-by-the-result
+  (tu/with-terms [CornerFn cornerOf crossing heading corner_lot]
+    (v/assert kb (list 'reifiable_function CornerFn) 'CxUniverse)
+    (v/assert kb (list 'binary_function CornerFn) 'CxUniverse)
+    (v/assert kb (list 'ternary_predicate cornerOf) 'CxUniverse)
+    (v/assert kb (list 'arg cornerOf 2 crossing) 'CxUniverse)
+    (v/assert kb (list 'arg cornerOf 3 heading) 'CxUniverse)
+    (v/assert kb (list 'result CornerFn corner_lot) 'CxUniverse)
+    (v/assert kb (list 'functionCorrespondingPredicate CornerFn cornerOf 1) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'arg1 cornerOf corner_lot) 'CxUniverse)))
+    (is (false? (v/ask? kb (list 'arg3 cornerOf corner_lot) 'CxUniverse)))))
 
 ;; ---- the derivation path -------------------------------------------------
 ;; A forward rule whose consequent builds a function term stores what `assert` stores:
@@ -960,10 +1022,10 @@
           (is (v/ask? kb (list grownIn k Orchard) 'CxUniverse)))
         (v/retract! kb h2)))))
 
-(tu/deftest-kb a-stamped-rule-names-the-constant-in-its-antecedent
-  ;; a generator's stamped rule is a derived conclusion too, and a ground application in
+(tu/deftest-kb a-generated-rule-names-the-constant-in-its-antecedent
+  ;; a generator's generated rule is a derived conclusion too, and a ground application in
   ;; its antecedent has to be the constant the stored claim is spelled with, or the
-  ;; stamped rule never matches the claim
+  ;; generated rule never matches the claim
   (tu/with-terms [FruitFn AppleTree marked tagged ripe]
     (v/assert kb (list 'reifiable_function FruitFn) 'CxUniverse)
     (v/assert kb (list tagged (list FruitFn AppleTree)) 'CxUniverse)
@@ -994,12 +1056,12 @@
     (is (some #(= grownIn (first (:sentence %))) (v/violations kb))
         "the drop is recorded")))
 
-(tu/deftest-kb a-mint-the-assert-path-refuses-drops-the-conclusion-without-throwing
+(tu/deftest-kb a-mint-whose-projection-fails-a-declared-type-holds-the-projection-inert
   ;; the correspondence projects the new constant onto a predicate whose `arg` declaration
-  ;; its result type is disjoint from, so the mint's own assert refuses; a firing may not
-  ;; throw, so the conclusion is dropped and the refusal recorded.  Pinned to the
-  ;; constraint reading, where the declaration convicts the constant; the entailing one
-  ;; mints `(beast …)` beside `(fruit …)` and stores the clash (docs/argtypes.md)
+  ;; its result type is disjoint from, so the mint's own assert holds the projection inert
+  ;; and the conclusion is stored.  Forced to the constraint reading, where the
+  ;; declaration convicts the constant; the entailing one mints `(beast …)` beside
+  ;; `(fruit …)` and stores the clash (docs/argtypes.md)
   (tu/without-entailing
    (tu/with-terms [FruitFn AppleTree Pear Orchard fruit beast keeperOf bears grownIn tagged]
      (v/assert kb (list 'reifiable_function FruitFn) 'CxUniverse)
@@ -1009,17 +1071,19 @@
      (v/assert kb (list 'result FruitFn fruit) 'CxUniverse)
      (v/assert kb (list 'arg keeperOf 2 beast) 'CxUniverse)
      (v/assert kb (list 'functionCorrespondingPredicate FruitFn keeperOf) 'CxUniverse)
-     (testing "the assert path refuses the same application"
-       (is (thrown? clojure.lang.ExceptionInfo
-                    (v/assert kb (list tagged (list FruitFn Pear)) 'CxUniverse))))
+     (testing "the assert path stores the same application and holds its projection"
+       (is (some? (v/assert kb (list tagged (list FruitFn Pear)) 'CxUniverse))))
      (v/assert kb (list 'set/forwardRule
                         (list 'implies (list bears '?t '?o) (list grownIn (list FruitFn '?t) '?o)))
                'CxUniverse)
      (is (some? (v/assert kb (list bears AppleTree Orchard) 'CxUniverse))
          "the assert that fires the rule is not refused")
-     (is (empty? (v/sentexes-matching kb (list grownIn '?f Orchard) 'CxUniverse))
-         "the conclusion is dropped")
-     (is (some #(and (= :mint-refused (:violation %)) (= grownIn (first (:sentence %)))
-                     (keyword? (get-in % [:detail :refusal])))
-               (v/violations kb))
-         "the refused mint is recorded, carrying the refusal's kind"))))
+     (is (seq (v/sentexes-matching kb (list grownIn '?f Orchard) 'CxUniverse))
+         "the conclusion is stored")
+     (let [vs (v/violations kb)]
+       (is (= #{[keeperOf AppleTree] [keeperOf Pear]}
+              (into #{} (comp (filter #(= :inert-argument (:violation %)))
+                              (map #(vec (take 2 (:sentence %)))))
+                    vs))
+           "both projections are held inert")
+       (is (not-any? #(= :mint-refused (:violation %)) vs))))))

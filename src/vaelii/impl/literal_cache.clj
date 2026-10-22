@@ -36,15 +36,15 @@
   the answer is a function of the KB alone.  `solve-goal` is **tier**-dependent, because
   `ask-capped` drops provers above a cost tier, and **scope**-dependent, because provers
   underneath it read the taxonomy closures and the resident networks through
-  `observe/cached` — so inside a pinned scope they answer from the view that scope froze.
+  `observe/cached` — so inside a held-values scope they answer from the values that scope holds fixed.
   An answer cached at that layer would therefore have to carry the tier and the scope
   that produced it.  `matches-visible` carries neither and reads nothing through
-  `observe/cached`, so a pinned scope cannot hand it a view the clock has left.
+  `observe/cached`, so a held-values scope cannot hand it a reading the clock has left.
 
   There is **one layer, not two**.  A per-query memo would be redundant: a query
   performs no mutation, so the change clock cannot move while one runs, and every
   repeat a per-query memo would catch is a repeat this cache already serves under an
-  unmoved stamp."
+  unmoved change clock."
   (:require [vaelii.impl.caches :as caches]
             [vaelii.impl.observe :as observe]
             [vaelii.impl.sentex :as sx]
@@ -196,14 +196,14 @@
   "The cached value of `k` in the per-KB `cache` atom, or `compute`'s answer on the way
   into it.  A nil `cache` computes every time.
 
-  **The stamp is read before `compute` runs, and the entry is stored only if the clock
-  has not moved by the time it is complete.**  Both halves matter.  Stamping afterwards
-  would claim the value describes a state it was never computed from; storing across a
-  moved clock would keep a value the mutation invalidated.  Together they mean a stored
-  entry describes exactly the state its stamp names — and that a scope which *writes
-  while it reads* (forward chaining, `chain/process-datum`) fills the cache with
-  nothing, since its own conclusions move the clock under it.  A backward query moves
-  the clock never, so it stores everything it completes.
+  **The clock is read before `compute` runs, and the entry is stored only if the clock
+  has not moved by the time it is complete.**  Both halves matter.  Reading the clock
+  afterwards would claim the value describes a state it was never computed from; storing
+  across a moved clock would keep a value the mutation invalidated.  Together they mean a
+  stored entry describes exactly the state its clock value names — and that a scope which
+  *writes while it reads* (forward chaining, `chain/process-datum`) fills the cache with
+  nothing, since its own conclusions move the clock under it.  A backward query moves the
+  clock never, so it stores everything it completes.
 
   The correctness argument is `observe/note-change`'s, unrestated: any mutation moves
   the clock, so a hit is served only across a stretch in which the engine performed no
@@ -238,7 +238,7 @@
 (defn stats
   "`{:size :limit :hits :misses :clock}` — entries held for `kb`, the bound they are
   cleared wholesale at, `kb`'s hit and miss counts (its tally, `caches/row-tally`), and
-  the change clock a fresh lookup would stamp with."
+  the change clock a fresh lookup would key by."
   [kb]
   (let [{:keys [hits misses]} (caches/tally-map (caches/tally-of (reasoning/matches kb) :R1))]
     {:size   (count @(reasoning/matches kb))

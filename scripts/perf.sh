@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/perf.sh — `lein perf`: the scaling gate, with its report kept.
+# scripts/perf.sh — `lein perf`: the scaling checks, with their report kept.
 #
 # The checks themselves are `vaelii.bench.perf`, and this adds nothing to what
 # they judge.  What it adds is the RECORD: the report goes to
@@ -51,9 +51,9 @@ LOG="$PERF_ROOT/run-$$.log"
 mkdir -p "$PERF_ROOT" || exit 1
 
 runlog_start
-revision_stamp perf >"$LOG"
-# `${PIPESTATUS[0]}`, not `$?`: a pipeline reports `tee`'s status, and a perf gate
-# as green as `tee` is gates nothing.
+revision_header perf >"$LOG"
+# `${PIPESTATUS[0]}`, not `$?`: a pipeline reports `tee`'s status, and a perf check
+# that reports `tee`'s status checks nothing.
 lein with-profile +bench run -m vaelii.bench.perf "$@" 2>&1 | tee -a "$LOG"
 rc=${PIPESTATUS[0]}
 
@@ -69,7 +69,7 @@ verdict=$(sed 's/\x1b\[[0-9;]*m//g' "$LOG" \
 # NO VERDICT LINE, NO ROW.  The harness prints one on every run it completes,
 # pass or fail, so its absence means this was not a run: a refused argument
 # (`--only <no such check>` exits 2 before anything is measured), a ^C, a JVM
-# that died.  A ledger row for one of those would read as a failing perf gate
+# that died.  A ledger row for one of those would read as a failing perf check
 # at this revision and send somebody looking for a regression nobody caused.
 if [[ -n "$verdict" ]]; then
   [[ $rc -eq 0 ]] && state=passed || state=failed

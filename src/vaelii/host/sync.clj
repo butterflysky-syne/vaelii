@@ -42,6 +42,12 @@
   back up.  What cannot go in that order — a retraction of a record an addition lands on —
   goes before it (`sync!`).
 
+  **Or one change at a time.**  On a corpus of millions of sentexes the one batch is one
+  settle that reports nothing until it ends, and a refused addition rolls all of it back.
+  `sync-each!` makes the plan's changes in the same order as one `edit!` each, reporting
+  each change and how many are left; it costs a settle per change and gives up the shared
+  witness, and buys a sync whose progress can be read and which stops between changes.
+
   **Write-back** is the other direction: `write-back!` edits the shipped files to state
   what a KB's exact contexts gained and lost since a `held` reading, one line per
   premise.  The development browser runs it for the starter (docs/catalog.md)."
@@ -53,6 +59,7 @@
             [vaelii.host.starter :as starter]
             [vaelii.impl.io.text :as text]
             [vaelii.impl.kb :as kbi]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.sentex :as sx]))
 
@@ -117,14 +124,27 @@
 
 (defn- held-forms
   "`{[context form] entry}` for the premises `kb` stores in `context`, less the `genlCx`
-  premises in CxUniverse, which sync leaves as they are."
-  [kb context]
-  (let [[entries _] (text/premise-entries
-                     kb (filterv #(some? (:strength %)) (v/sentexes-in-context kb context)))]
-    (into {}
-          (comp (remove #(and (= sx/root-context context) (edge? (:form %))))
-                (map (fn [e] [[(:context e) (:form e)] e])))
-          entries)))
+  premises in CxUniverse, which sync leaves as they are.  Given `vocab`, only the premises
+  naming nothing outside it: `plan` compares a held form with the shipped ones and
+  retracts only one about the engine's vocabulary, so a premise naming an author's term
+  is neither, and rendering it as a file form — the whole cost of this read on a corpus
+  that keeps its own content in CxUniverse — is skipped by a set test on its terms."
+  ([kb context] (held-forms kb context nil))
+  ([kb context vocab]
+   (let [;; a rule and an exceptWhen are kept whole, since text/premise-entries pairs the
+         ;; two records of a qualified rule; there are few of them
+         ours?       (if vocab
+                       #(let [s (:sentence %)]
+                          (or (nil? s) (and (seq? s) (= sx/except-wrapper (first s)))
+                              (every? vocab (terms s))))
+                       (constantly true))
+         [entries _] (text/premise-entries
+                      kb (filterv #(and (some? (:strength %)) (ours? %))
+                                  (v/sentexes-in-context kb context)))]
+     (into {}
+           (comp (remove #(and (= sx/root-context context) (edge? (:form %))))
+                 (map (fn [e] [[(:context e) (:form e)] e])))
+           entries))))
 
 (defn- stored?
   "Does `kb` hold `form` in `context` as a premise at least as strong as the form states?
@@ -168,7 +188,8 @@
                        (distinct (filter symbol? (keep :file shipped))))
          ours    (into #{} (map (juxt :context :form)) shipped)
          vocab   (vocabulary shipped)
-         held    (into {} (mapcat #(held-forms kb %)) (filter (every-pred exact present) exact))
+         held    (into {} (mapcat #(held-forms kb % vocab))
+                       (filter (every-pred exact present) exact))
          wanted  (filter #(present (:file %)) shipped)
          ;; a default premise of one record, shipped known-true: the `:add` raises it.
          ;; An exceptWhen is two records, and is restated whole.
@@ -196,21 +217,29 @@
   and message, rather than throwing: a KB whose own content refuses a shipped sentence is
   a finding about that KB, and the rest of the sync still applies."
   [kb entries]
-  (let [attempt (fn [es]
-                  (reduce (fn [acc {:keys [context form] :as e}]
-                            (let [[sentence o] (text/peel-form form)]
-                              (try (v/assert kb sentence context (or o {})) acc
-                                   (catch clojure.lang.ExceptionInfo ex
-                                     (conj acc (assoc e :type (:type (ex-data ex))
-                                                      :message (ex-message ex)))))))
-                          [] es))]
+  (let [attempt (fn [round total es]
+                  (with-open [r (progress/start ::add
+                                                (str "sync: assert the set-aside entries (round "
+                                                     round ")")
+                                                total)]
+                    (reduce (fn [acc {:keys [context form] :as e}]
+                              (let [[sentence o] (text/peel-form form)
+                                    acc (try (v/assert kb sentence context (or o {})) acc
+                                             (catch clojure.lang.ExceptionInfo ex
+                                               (conj acc (assoc e :type (:type (ex-data ex))
+                                                                :message (ex-message ex)))))]
+                                (progress/tick! r)
+                                acc))
+                            [] es)))]
     (v/with-deferred-settle kb
-      (loop [pending (attempt entries)]
+      (loop [round   1
+             pending (attempt 1 (when (counted? entries) (count entries)) entries)]
         (if (empty? pending)
           []
-          (let [remaining (attempt (map #(select-keys % [:context :form]) pending))]
+          (let [remaining (attempt (inc round) (count pending)
+                                   (map #(select-keys % [:context :form]) pending))]
             (if (< (count remaining) (count pending))
-              (recur remaining)
+              (recur (inc round) remaining)
               remaining)))))))
 
 (defn- records
@@ -236,22 +265,36 @@
   with its refusal's `:type` and message and the batch runs again without it.  Returns
   the entries set aside."
   [kb entries handles]
-  (loop [entries (vec entries) aside []]
-    (if (and (empty? entries) (empty? handles))
-      aside
-      (let [refused (try (v/edit! kb {:add (mapv edit-entry entries) :remove handles})
-                         nil
-                         (catch clojure.lang.ExceptionInfo ex
-                           (let [{:keys [rolled-back in index] :as data} (ex-data ex)]
-                             ;; a removal's refusal is the KB refusing writes: not an
-                             ;; entry to set aside
-                             (if (and rolled-back (= :add in))
-                               {:index index :type (:type data) :message (ex-message ex)}
-                               (throw ex)))))]
-        (if-let [{:keys [index] :as r} refused]
-          (recur (into (subvec entries 0 index) (subvec entries (inc index)))
-                 (conj aside (merge (nth entries index) (dissoc r :index))))
-          aside)))))
+  (with-open [rep (progress/start ::batch "sync: run the batch edit, once per refused entry" nil)]
+    (loop [entries (vec entries) aside []]
+      (if (and (empty? entries) (empty? handles))
+        aside
+        (let [refused (try (v/edit! kb {:add (mapv edit-entry entries) :remove handles})
+                           nil
+                           (catch clojure.lang.ExceptionInfo ex
+                             (let [{:keys [rolled-back in index] :as data} (ex-data ex)]
+                               ;; a removal's refusal is the KB refusing writes: not an
+                               ;; entry to set aside
+                               (if (and rolled-back (= :add in))
+                                 {:index index :type (:type data) :message (ex-message ex)}
+                                 (throw ex)))))]
+          (progress/tick! rep)
+          (if-let [{:keys [index] :as r} refused]
+            (recur (into (subvec entries 0 index) (subvec entries (inc index)))
+                   (conj aside (merge (nth entries index) (dissoc r :index))))
+            aside))))))
+
+(defn- ordered
+  "`plan`'s changes in the order `sync!` makes them: `:before`, the retractions of a
+  record an addition lands on; `:adds`; `:after`, the other retractions."
+  [{adds :add removes :remove}]
+  (let [landing  (into #{} (mapcat (fn [{:keys [context form]}]
+                                     (map #(vector context %) (records form))))
+                       adds)
+        restated (fn [{:keys [context form]}] (some #(landing [context %]) (records form)))]
+    {:before (filterv restated removes)
+     :adds   adds
+     :after  (filterv (complement restated) removes)}))
 
 (defn sync!
   "Make `kb`'s shipped contexts state what this engine ships (see the namespace doc), as
@@ -271,25 +314,62 @@
   is `:refused`.  Each refusal costs the batch one rollback.
 
   `kb` must accept writes (`v/write-hazards` empty).  `ships` is `(premises)`, passed by a
-  caller that syncs more than one KB or prices the sync apart from the scratch load."
+  caller that syncs more than one KB or prices the sync apart from the scratch load.
+  `sync-each!` makes the same changes one at a time, reporting each."
   ([kb] (sync! kb (premises)))
   ([kb ships]
-   (let [{adds :add removes :remove} (plan kb ships)
-         landing  (into #{} (mapcat (fn [{:keys [context form]}]
-                                      (map #(vector context %) (records form))))
-                        adds)
-         restated (fn [{:keys [context form]}] (some #(landing [context %]) (records form)))
-         handles  (fn [es] (into [] (comp (mapcat :handles) (distinct)) es))
-         before   (handles (filter restated removes))]
+   (let [{:keys [before adds after]} (ordered (plan kb ships))
+         handles (fn [es] (into [] (comp (mapcat :handles) (distinct)) es))]
      (when (seq before)
-       (v/edit! kb {:remove before}))
-     (let [aside   (batch! kb adds (handles (remove restated removes)))
+       (v/edit! kb {:remove (handles before)}))
+     (let [aside   (batch! kb adds (handles after))
            refused (if (seq aside)
                      (add! kb (map #(select-keys % [:context :form]) aside))
                      [])]
        {:added   (- (count adds) (count refused))
-        :removed (count removes)
+        :removed (+ (count before) (count after))
         :refused refused}))))
+
+(defn sync-each!
+  "`sync!`'s changes made one at a time, each its own `v/edit!`, for a KB on which the
+  one batch would run for hours without a word.  The plan comes first and its size is
+  reported, then `report` is called before each change as
+
+    {:done i :total n :op {:op :add|:remove :context :form}}
+
+  and once more with `:done n` at the end, so a reader always knows how far it has got.
+  The order is `sync!`'s: the retractions an addition lands on, the additions, the other
+  retractions.  An addition `edit!` refuses is set aside and retried after the rest while
+  a round makes progress (`add!`), and costs no rollback of anything else.  A `report`
+  that throws stops the sync between two changes, each of which has settled, so a rerun's
+  plan is what is left.  Returns what `sync!` returns."
+  ([kb report] (sync-each! kb (premises) report))
+  ([kb ships report]
+   (let [{:keys [before adds after]} (ordered (plan kb ships))
+         ops   (vec (concat (map #(assoc % :op :remove) before)
+                            (map #(assoc % :op :add) adds)
+                            (map #(assoc % :op :remove) after)))
+         n     (count ops)
+         aside (reduce (fn [aside [i {:keys [op handles] :as o}]]
+                         (report {:done i :total n :op (select-keys o [:op :context :form])})
+                         (if (= :add op)
+                           (try (v/edit! kb {:add [(edit-entry o)]})
+                                aside
+                                (catch clojure.lang.ExceptionInfo ex
+                                  (let [{:keys [rolled-back in] :as data} (ex-data ex)]
+                                    (if (and rolled-back (= :add in))
+                                      (conj aside (assoc (select-keys o [:context :form])
+                                                         :type (:type data) :message (ex-message ex)))
+                                      (throw ex)))))
+                           (do (v/edit! kb {:remove (vec (distinct handles))}) aside)))
+                       [] (map-indexed vector ops))
+         refused (if (seq aside)
+                   (add! kb (map #(select-keys % [:context :form]) aside))
+                   [])]
+     (report {:done n :total n})
+     {:added   (- (count adds) (count refused))
+      :removed (+ (count before) (count after))
+      :refused refused})))
 
 ;; ---- writing back ---------------------------------------------------------
 

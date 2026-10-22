@@ -9,12 +9,11 @@
   binds its holes, deterministically (content-addressed dedup) so a re-derivation converges."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.impl.nat :as nat]
             [vaelii.impl.quasiquote :as quasiquote]
             [vaelii.test-util :as tu]))
 
-(use-fixtures :once (tu/loaded core-context/load-into))
+(use-fixtures :once (tu/loaded tu/load-core!))
 (use-fixtures :each (tu/neutral))
 
 (defn- qq [& xs] (apply list 'Quasiquote xs))
@@ -59,12 +58,12 @@
                    (list believes Tom (qq (list isa (unq '?x) Dog))) 'CxUniverse {:direction :forward})
     (v/assert kb (list dog Fido) 'CxUniverse)
     (v/assert kb (list friend Fido) 'CxUniverse)
-    (is (= 1 (count (v/sentexes-matching kb (list 'termOfUnit '?k (list 'Quote (list isa Fido Dog)))
+    (is (= 1 (count (v/sentexes-matching kb (list 'natFormula '?k (list 'Quote (list isa Fido Dog)))
                                          'CxUniverse)))
         "one expression, one constant, however many firings construct it")))
 
 (tu/deftest-kb an-unenabled-kb-pays-nothing-and-leaves-the-quasiquote-alone
-  ;; The gate: without `ensure-quasiquote-functions`, `any-quasiquote?` is false, the reducer
+  ;; Without `ensure-quasiquote-functions`, `any-quasiquote?` is false, the reducer
   ;; is a no-op, and `(Quasiquote …)` is an ordinary stored compound (nothing reifies it).
   (tu/with-terms [Tom Fido Dog isa believes]
     (is (false? (quasiquote/any-quasiquote? kb)))
@@ -74,7 +73,7 @@
 
 (tu/deftest-kb a-nested-quasiquote-is-left-literal-and-round-trips
   ;; a Quasiquote nested inside a construction is its own mention level — left whole, not
-  ;; reduced.  The write path re-asserts (termOfUnit K E) through full assert, so without
+  ;; reduced.  The write path re-asserts (natFormula K E) through full assert, so without
   ;; holding the mention payload opaque the nested construction would be reduced a second
   ;; time and the exact form asserted would be unretrievable.
   (tu/with-terms [Tom foo bar Fido believes]

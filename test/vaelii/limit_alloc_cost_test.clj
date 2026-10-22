@@ -19,7 +19,7 @@
   answer instead — a few doublings in the case where the hits really do run to the bound,
   and nothing at all in the case the bound exists for.
 
-  **The property, not the bytes**, is what this file pins: the slope of allocation in the
+  **The property, not the bytes**, is what this file asserts: the slope of allocation in the
   requested bound is zero, and the slope in the matched set is not.  Two arms, one per
   reader, and a control beside each.
 
@@ -36,8 +36,8 @@
   it records about escape analysis, warm-up and what the counter cannot see is the
   reasoning here.
 
-  The **absolute** byte figure is a property of the corpus — the roster filter dominates
-  it — so it is not what is pinned.  A slope is: bytes per unit of requested bound, as an
+  The **absolute** byte figure is a property of the corpus — the filter over the term-name set dominates
+  it — so it is not what is asserted.  A slope is: bytes per unit of requested bound, as an
   integer, and the number is **0**.  The defect reads 4 (one compressed reference per
   requested element), which is what an `Object[]` costs and what the floor of a
   four-byte-per-unit slope makes visible at any size.  A budget of zero is also the one
@@ -107,7 +107,7 @@
 ;; ---- the corpus ----------------------------------------------------------
 
 (def ^:private vocabulary
-  "Terms in the roster the readers filter.  Big enough that the filter is the reading's
+  "Terms in the term-name set the readers filter.  Big enough that the filter is the reading's
   dominant term — which is the baseline to measure, since that is what a search costs
   — and small enough that building it is a second."
   600)
@@ -128,7 +128,7 @@
   kb)
 
 (defn- more-needles!
-  "Widen the matched set without widening the roster much: `n` further terms carrying
+  "Widen the matched set without widening the term-name set much: `n` further terms carrying
   `needle`.  The control's fixture — a reader whose allocation is bounded by the answer
   must move when the *answer* does, or the arms above are measuring a constant."
   [kb n]
@@ -190,21 +190,21 @@
 
 (defn- find-rows-bytes
   "Bytes one continuation fragment at `offset` allocates."
-  ^long [view ^long offset]
-  (alloc-bytes #(count (:body (web/find-rows-page view needle offset)))))
+  ^long [env ^long offset]
+  (alloc-bytes #(count (:body (web/find-rows-page env needle offset)))))
 
 (deftest a-page-offset-off-the-url-sizes-nothing
   (let [kb (tu/isolated-fresh)]
     (try
       (tu/with-shipped-config
         (corpus! kb)
-        (let [view  (web/view kb {})
-              small (find-rows-bytes view small-offset)
-              large (find-rows-bytes view large-offset)
+        (let [env  (web/render-env kb {})
+              small (find-rows-bytes env small-offset)
+              large (find-rows-bytes env large-offset)
               span  (- large-offset small-offset)]
           (testing "both offsets are past the only hit, so both render nothing"
-            (is (= "" (:body (web/find-rows-page view needle small-offset))))
-            (is (= "" (:body (web/find-rows-page view needle large-offset)))))
+            (is (= "" (:body (web/find-rows-page env needle small-offset))))
+            (is (= "" (:body (web/find-rows-page env needle large-offset)))))
           (testing "so the millionth page costs what the thousandth did"
             (is (zero? (bytes-per-requested-unit small large span))
                 (str "the offset is sizing something — " small " B at offset " small-offset

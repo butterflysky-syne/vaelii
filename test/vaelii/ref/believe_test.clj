@@ -10,7 +10,7 @@
   disjointness clash pass `disjoint-double`, a test double that reads one declaration
   shape and is not the spec of the family. The tests that need the covering, functional
   or inherited family read `vaelii.ref.nogoods/families` and print a SKIP line when that
-  namespace is absent. A test pinning a maintainer decision names it as
+  namespace is absent. A test asserting a maintainer decision names it as
   docs/reference.md does, D1 to D17."
   (:require [clojure.test :refer [deftest is]]
             [vaelii.core :as v]
@@ -154,16 +154,20 @@
     (is (= '#{(dog Rex) (barks Rex) (dog Fido) (barks Fido)}
            (disj (believed-at after 'CxC) '(genlCx CxC CxA))))))
 
-(deftest a-genlCx-edge-is-monotonic-and-its-denial-inert
-  ;; D1: a :default genlCx write is stored :monotonic, and a denial of one is set aside
-  ;; as inert
-  (is (= [[:monotonic] [[] 1] false]
-         [(mapv :strength (:writes (w/check-world (world ['(genlCx CxC CxA) 'CxUniverse
-                                                          :default]))))
-          (let [c (w/check-world (world ['(not (genlCx CxC CxA)) 'CxUniverse :monotonic]))]
-            [(:writes c) (count (:inert c))])
-          (unsupported? #(w/check-world (world ['(genlCx CxC CxA) 'CxUniverse
-                                                :monotonic])))])))
+(deftest a-genlCx-edge-is-monotonic-and-its-denial-loses-to-it
+  ;; D1: a :default genlCx write is stored :monotonic.  A denial of one is an ordinary
+  ;; write, believed alone and the loser beside the edge at either strength
+  (let [denial ['(not (genlCx CxC CxA)) 'CxUniverse :monotonic]
+        edge   ['(genlCx CxC CxA) 'CxUniverse :default]]
+    (is (= [[:monotonic] [1 0] false]
+           [(mapv :strength (:writes (w/check-world (world edge))))
+            (let [c (w/check-world (world denial))]
+              [(count (:writes c)) (count (:inert c))])
+            (unsupported? #(w/check-world (world ['(genlCx CxC CxA) 'CxUniverse
+                                                  :monotonic])))]))
+    (is (= [true false]
+           (mapv #(contains? (believed-at (b/believe (apply world %) []) 'CxUniverse) (first denial))
+                 [[denial] [denial edge]])))))
 
 (deftest a-derivation-over-two-genl-routes-takes-the-widest-bottleneck
   ;; D9. CxA: (genl dog animal) :default; (genl dog mammal) (genl mammal animal)
@@ -293,7 +297,7 @@
            [(contains? (:believed v) '(rr Zed)) (contains? (:believed v) '(happy Zed))
             (:out v)]))))
 
-(deftest a-roster-declaration-forces-its-predicate-only-where-it-is-seen
+(deftest a-forced-monotonic-declaration-forces-its-predicate-only-where-it-is-seen
   ;; CxA sees CxU and states (forced_monotonic_predicate ta); CxU holds a dilemma and a
   ;; denial beside a default membership
   (let [r (b/believe (world ['(genlCx CxA CxU) 'CxUniverse :monotonic]
@@ -304,7 +308,7 @@
                      [disjoint-double])
         at (fn [c] (mapv #(contains? (believed-at r c) %)
                          '[(ta Ind) (tb Ind) (ta Jay) (not (ta Jay))]))]
-    (is (= [true false true false] (at 'CxA)) "CxA: the rival loses and the denial is inert")
+    (is (= [true false true false] (at 'CxA)) "CxA: the rival loses, and the denial loses to (ta Jay)")
     (is (= [true true false true] (at 'CxU)) "CxU: a dilemma, and the denial defeats (ta Jay)")))
 
 (deftest scenario-b-a-released-edge-leaves-no-clash-at-the-context-that-reads-the-release
@@ -437,36 +441,40 @@
               (contains? (:believed v) '(pP chi Bone))
               (into #{} (comp (filter #(= :inherited (:kind %))) (map :verdict)) (:nogoods v))])))))
 
-;; ---- the forced-monotonic roster (D7) ---------------------------------------
+;; ---- the forced-monotonic set (D7) ---------------------------------------
 
-(deftest a-roster-member-keeps-its-strength-and-its-denial-is-inert
+(deftest a-forced-monotonic-member-keeps-its-strength-and-its-denial-loses-to-it
   ;; D7, D10, D11: each mark, declaration and predicate genl edge written :default keeps
-  ;; its strength, and a denial of one is set aside as inert; a genl edge between types
-  ;; may be :default and may be denied
-  (let [roster  '[(irreflexive likes) (anti_symmetric likes) (asymmetric likes)
+  ;; its strength, and a :monotonic denial of one is an ordinary write that loses to it;
+  ;; a genl edge between types may be :default and may be denied
+  (let [forced  '[(irreflexive likes) (anti_symmetric likes) (asymmetric likes)
                   (functional likes) (functionalInArg likes 2) (anti_transitive likes)
                   (disjoint dog cat)
-                  (covering vehicle car boat) (genl partOf nearTo)]
-        n       (count roster)
+                  (covering vehicle car boat) (genl tangiblePartOf nearTo)]
+        n       (count forced)
         refused (fn [triple] (unsupported? #(w/check-world (world triple))))
         stored  (fn [triple] (mapv :strength (:writes (w/check-world (world triple)))))
-        inert   (fn [triple] (count (:inert (w/check-world (world triple)))))]
-    (is (= [(vec (repeat n [:default])) (vec (repeat n 1)) (vec (repeat n false))]
-           [(mapv #(stored [% 'CxA :default]) roster)
-            (mapv #(inert [(list 'not %) 'CxA :monotonic]) roster)
-            (mapv #(refused [% 'CxA :monotonic]) roster)]))
+        inert   (fn [triple] (count (:inert (w/check-world (world triple)))))
+        loses?  (fn [s] (contains? (:out (b/view (world [s 'CxA :default] [(list 'not s) 'CxA :monotonic])
+                                                 'CxA []))
+                                   (list 'not s)))]
+    (is (= [(vec (repeat n [:default])) (vec (repeat n 0)) (vec (repeat n false)) (vec (repeat n true))]
+           [(mapv #(stored [% 'CxA :default]) forced)
+            (mapv #(inert [(list 'not %) 'CxA :monotonic]) forced)
+            (mapv #(refused [% 'CxA :monotonic]) forced)
+            (mapv loses? forced)]))
     (is (= [[:default] [:default] 0]
            [(stored ['(genl dog animal) 'CxA :default])
             (stored ['(not (genl dog animal)) 'CxA :default])
             (inert ['(not (genl dog animal)) 'CxA :default])]))
-    (is (refused ['(transitiveInArgInverse likes 1 partOf) 'CxA :monotonic])
+    (is (refused ['(transitiveInArgInverse likes 1 tangiblePartOf) 'CxA :monotonic])
         "a transitiveInArgInverse over a relation other than genl")))
 
 (deftest a-mark-reaches-a-sub-predicate-over-a-predicate-edge-written-default
   ;; D7, D10. CxA: (functional ageOf) (ageAtDeath Bob 5) :monotonic; (genl ageAtDeath
   ;; ageOf) and (ageOf Bob 6) written :default. The edge keeps its strength and carries
-  ;; the mark, so (ageOf Bob 6) is the unique weakest member. A denial of the edge is
-  ;; inert and leaves the verdict as it is.
+  ;; the mark, so (ageOf Bob 6) is the unique weakest member. A denial of the edge loses
+  ;; to it and leaves the verdict as it is.
   (tu/with-requirement @reference-families "vaelii.ref.nogoods/families is not loadable"
     (let [base  [['(functional ageOf) 'CxA :monotonic]
                  ['(ageAtDeath Bob 5) 'CxA :monotonic]
@@ -476,7 +484,7 @@
       (is (= [:monotonic :default #{'(ageOf Bob 6)} true]
              [((:class reach) '(functional ageOf)) ((:class reach) '(genl ageAtDeath ageOf))
               (:out reach) (contains? (:believed reach) '(ageAtDeath Bob 5))]))
-      (is (= [(:out reach) (:believed reach)]
+      (is (= [(conj (:out reach) '(not (genl ageAtDeath ageOf))) (:believed reach)]
              ((juxt :out :believed)
               (b/view (apply world (conj base ['(not (genl ageAtDeath ageOf)) 'CxA :monotonic]))
                       'CxA @reference-families)))))))
@@ -560,7 +568,7 @@
     (is (= [:merge :merge :merge :hard :hard :defeat :hard]
            [(verdict mono :functional '#{(fatherOf Ann Bob) (fatherOf Ann Cy)})
             (verdict mono :functional-in-arg '#{(bornIn Ann Oslo) (bornIn Ann Rome)})
-            (verdict mono :anti-symmetric '#{(partOf Hub Rim) (partOf Rim Hub)})
+            (verdict mono :anti-symmetric '#{(tangiblePartOf Hub Rim) (tangiblePartOf Rim Hub)})
             (verdict mono :functional '#{(ageOf Bob 5) (ageOf Bob 6)})
             (verdict mono :disjoint '#{(dog Rex) (cat Rex)})
             (verdict {'(fatherOf Ann Bob) :monotonic '(fatherOf Ann Cy) :default}
@@ -604,13 +612,13 @@
                                       (implies (and (bird ?b) (unknown (and (sick ?b) (old ?b))))
                                                (flies ?b)))))))))
 
-(deftest a-rule-concluding-a-roster-predicate-is-inert
+(deftest a-rule-concluding-a-forced-monotonic-predicate-is-inert
   ;; D17: a declaration, a mark and a predicate genl edge as a consequent parse as
   ;; inert, and the world check sets such a rule aside rather than refusing it
   (let [forms '[(set/forwardRule (implies (dog ?x) (disjoint ?x cat)))
                 (set/forwardRule (implies (dog ?x) (not (disjoint ?x cat))))
                 (set/forwardRule (implies (likes ?x ?y) (functional likes)))
-                (set/forwardRule (implies (dog ?x) (genl partOf nearTo)))]]
+                (set/forwardRule (implies (dog ?x) (genl tangiblePartOf nearTo)))]]
     (is (= [true true true true] (mapv #(:inert? (w/parse-rule %)) forms)))
     (is (= [[] 4] (let [c (w/check-world (apply world (map #(vector % 'CxA) forms)))]
                     [(:writes c) (count (:inert c))])))

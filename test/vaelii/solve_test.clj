@@ -283,7 +283,7 @@
   ;; with one member already out still has two live, so a stub reading it that way
   ;; decides the nogood a second time and disbelieves a second datum to satisfy a
   ;; constraint that already holds.  Here the {2,3,4} nogood is satisfied the moment
-  ;; (b) is defeated, and defeating (d) as well is the failure this pins.
+  ;; (b) is defeated, and defeating (d) as well is the failure this asserts against.
   ;;
   ;; Latent rather than live — `negation-nogoods` only ever builds P/¬P pairs — but
   ;; `program` is a public fn that accepts any nogood, and over-defeating is the
@@ -304,7 +304,7 @@
     (is (= [] (:violated r)))))
 
 (deftest the-stub-is-greedy-and-not-globally-minimal
-  ;; Pinning the documented boundary between the stub and the ASP backend
+  ;; Asserts the documented boundary between the stub and the ASP backend
   ;; (docs/nmtms.md: "where the stub walks contradictions one at a time, ASP optimizes
   ;; globally").  Both nogoods share handle 1, so defeating (a) alone would settle
   ;; them; the stub takes the greatest content-key of each in turn and spends two.

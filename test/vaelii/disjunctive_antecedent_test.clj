@@ -44,7 +44,7 @@
 ;; DECISION: `(implies (or A B) C)` is stored as one rule per alternative, so a datum
 ;; satisfying *either* alternative reaches the conclusion.  A single stored rule reading
 ;; the `or` as a literal on a predicate named `or` — which is what the engine did before
-;; the expansion existed — satisfies neither and is the failure this pins.
+;; the expansion existed — satisfies neither and is the failure this asserts against.
 
 (tu/deftest-kb a-pet-is-fed-if-it-is-a-dog-or-a-cat
   (tu/with-terms [dog cat fed Muffet Tibbles Gerald CxPets]
@@ -121,7 +121,7 @@
 
 ;; ---- 5. order independence ----------------------------------------------
 ;; DECISION: "The same knowledge in any order yields the same beliefs"
-;; (docs/nmtms.md).  Two orders are at stake here and both are pinned: the facts before
+;; (docs/nmtms.md).  Two orders are at stake here and both are asserted: the facts before
 ;; or after the rule, and the *disjuncts* written either way round.  The second is the
 ;; one the expansion could get wrong on its own — a disjunct order that reached the
 ;; canonicalizer would give two spellings two pairs of handles.

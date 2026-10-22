@@ -19,7 +19,9 @@
 ;;     :refused          [ …check-edit shape… ]
 ;;     :violations       [ …violations shape… ]
 ;;     :contradictions   [ …contradictions shape… ]
-;;     :bounded?         bool}
+;;     :bounded?         bool
+;;     :owed-releases    n
+;;     :release-path     :deferred | :swept}
 ```
 
 `check` ([api.md](api.md), "Validating without writing") answers whether a batch would
@@ -56,7 +58,12 @@ the rollback queues it again when the premise returns.
 **`settle`'s own sweep is off for the duration** (`settle/*sweep?*`). An added
 `exceptWhen`, or a fact that triggers one, blocks a justification without deleting what
 it supported: the conclusion goes OUT and is reported, and its record and justification
-stay.
+stay. A guard defeat's justification the apply drops stays too (`chain/place-guard-defeats!`
+with its drop off), and the preview's answer reads it through the read walk, which takes a
+guard out of force wherever a blocker of it is OUT or excepted, as the drop does
+(`exc/verdict-reader`'s `:guard`). `preview_test`'s random stream holds the two answers
+alike over a rule with a `:default` blocker and excepts of that blocker
+(`a-preview-predicts-the-edit-over-a-random-stream`).
 
 The **rollback** settles with the sweep back on. That settle collects a conclusion the
 preview's own removals brought into being: removing a blocker releases an exception,
@@ -124,7 +131,7 @@ it. A throw that is not an `ex-info` propagates after the rollback.
 ([inference.md](inference.md)). The KB's own ledger is restored, so a preview never
 shows up in `(violations kb)`. `:violations` lists no `:forced-conclusion` entry, since
 `violations` reads that entry off the stored firings and files nothing in the ledger
-([nmtms.md](nmtms.md#the-forced-monotonic-roster)).
+([nmtms.md](nmtms.md#the-forced-monotonic-set)).
 
 `:contradictions` is the dilemmas the batch would **open**, with the standing ones
 subtracted. Asserting the negation of a believed default withdraws nothing — a defeasible
@@ -135,6 +142,23 @@ silent about that clash, and this key is where it shows.
 [storage.md](storage.md#and-until-it-is-rebuilt-the-kb-does-not-accept-writes) states why
 a dry run must refuse with it.
 
+## What a preview omits
+
+A preview's settle keeps the withheld-mint releases owed, as an open's settles do
+([argtypes.md](argtypes.md#pruning-what-the-kb-says-more-specifically--vaelii_prune_subsumed_mints-on)).
+A batch that removes the membership withholding a mint therefore previews without the
+general membership the apply draws, and without any contradiction that membership enters:
+with `(disjoint animal plant)` and `(plant Fred)` beside `(dog Fred)`, removing `(dog
+Fred)` draws `(animal Fred)` into a clash with `(plant Fred)` on the apply, while the
+preview reports none. `:owed-releases` counts the departures and arrivals the preview kept
+owed, and `:release-path` is `:deferred`. A preview whose `:owed-releases` is above 0 can
+omit mints and contradictions alike. The rollback discards the debt, so `owed-releases`
+reads the same before and after.
+
+`{:release-withheld? true}` runs the release sweep inside the preview: `:release-path` is
+`:swept`, `:owed-releases` is 0, and the diff and `:contradictions` report what the apply
+draws (`preview_test/a-deferred-preview-omits-the-clash-a-released-mint-enters`).
+
 ## What the rollback restores, and what it does not
 
 The KB is left with the same live sentexes and justifications at the same handles, and the
@@ -143,6 +167,19 @@ violations ledger, the program, and the **refusal record**, which a firing the b
 own content refused would otherwise leave holding handles the rollback took away
 ([exceptions.md](exceptions.md), "A refused firing is remembered as bindings"). An entry
 the batch consumed comes back through the rollback's own re-chain.
+
+A constraint or lift entry records the `genl` and `genlCx` generations it was decided
+under, and `settle` re-asks an entry whose generations moved. A batch that adds or removes
+an edge moves them, and the rollback's removal moves them again, since a generation only
+grows. When the rollback has put both relations and the separations back as the batch found
+them (`tax/relations-match?`, which compares the edges out of each lower end moved since),
+the restored entries recorded under the generations of the batch's start take the
+generations now (`special/advance-refusal-generations!`). The next write therefore
+re-asks what it would have re-asked with no preview before it. An entry already owed a
+re-ask when the batch started keeps its generations. A `:mint` entry records the rebuild
+epoch alone (`special/mint-generations`), which no edge moves, so a previewed edge leaves
+it settled
+(`preview_test/a-rolled-back-preview-leaves-the-next-write-no-mint-refusal-to-re-ask`).
 
 The violations ledger keeps an entry filed on **another thread** while the batch ran. The
 qualitative, metric and sign calculi file an inconsistency from inside a read, so a
@@ -194,7 +231,7 @@ relabel is region-local ([nmtms.md](nmtms.md)), the rollback walks the premises 
 marked, and the diff is taken over the **relabelled region**. `settle` hands a copy of
 that region to `settle/*touched-sink*`, a superset of every handle whose belief moved;
 diffing the believed set instead is O(KB)
-([defenses.md](defenses.md#the-touched-window-is-a-superset-not-the-flip-set)). The one
+([defenses.md](defenses.md#the-touched-set-is-a-superset-not-the-flip-set)). The one
 belief change with no relabel behind it, a supersession flip, is folded into the region
 ([nmtms.md](nmtms.md)).
 
@@ -202,18 +239,26 @@ Belief **before** is read *after* the rollback, on the restored KB, so the two r
 need no snapshot: a candidate believed now was believed before, and a handle the rollback
 took away reads as not believed.
 
-`:contradictions` is read off the touched window. With the batch in force,
+`:contradictions` is read off the touched set. With the batch in force,
 `clashes/opened` takes the placed `(contradicts …)` sentexes among the handles the batch
 relabelled, stored or suspended, and reads the report of each of their nogoods over every
-placement of its sentence (`clashes/placements-of`, off the term index), as
-`contradictions` reads it. After the rollback, `clashes/standing-removed` reads the same
-sentences' placements again and subtracts the reports standing then. A batch that places,
-removes or relabels no `contradicts` reads no nogood
-(`preview_test/a-preview-reads-no-placed-nogood-its-window-does-not-touch`). `perf`'s
-`preview-beside-standing-dilemmas` holds a preview of a fact no nogood reads flat in the
-dilemmas standing in its context, and
+placement of its sentence (`clashes/placements-of`, at the sentence's own index path under
+every context), as `contradictions` reads it. After the rollback,
+`clashes/standing-removed` reads the same sentences' placements again and subtracts the
+reports standing then. A batch that places, removes or relabels no `contradicts` reads no
+nogood, and an empty batch has nothing in its touched set
+(`preview_test/a-preview-reads-no-placed-nogood-outside-its-touched-set`). The placements
+are read once per nogood, however many nogoods share a member
+(`preview_test/a-preview-reads-each-placement-once-however-many-nogoods-share-a-member`).
+`perf`'s `preview-beside-standing-dilemmas` holds a preview of a fact no nogood reads, and
+of an empty batch, flat in the dilemmas standing in its context, and
 `preview_test/a-preview-opens-the-dilemmas-the-full-read-opens-over-a-random-stream`
 compares the answer with the reading over every stored `contradicts`.
+
+The operation log records a preview as a write, because the handles it allocates stay
+allocated. `oplog/replay!` runs the logged preview's writes and rollback, and takes none
+of its reads: no reading before the batch, no touched set, no diff and no dilemma report
+(`oplog_seal_test/a-restore-replays-a-preview-s-writes-and-rollback-and-none-of-its-reads`).
 
 A batch whose conclusions cascade costs what the cascade costs; `:max-depth` and
 `:max-derivations` bound the chaining, and `:max-results` caps each half of the answer but
@@ -245,7 +290,7 @@ writer did not say.
 **Where the diff comes from.** There is no rollback to read belief-before off, so the
 labels are captured on the way through. Alongside the relabelled region (`jtms/touched`),
 every relabel records which of the region was **already believed** when it first touched
-it (`jtms/touched-in`, first reading wins). The window runs from the end of the last
+it (`jtms/touched-in`, first reading wins). The touched set accumulates from the end of the last
 settle, so for a batch it covers the whole deferred phase and its one settle.
 `settle/*touched-in-sink*` receives that set beside `*touched-sink*`, and
 `core/moved-handles` turns region, before-labels and belief now into the delta. A
@@ -262,7 +307,7 @@ nothing this way.
 relabel to record it. The settle publishes the supersession moves since the last settle,
 each with its entry before (`special/take-supersession-moves!`), so `(sameAs Pref Dep)`
 over a stored `(dog Pref)` reports `(dog Dep)` added and `(dog Pref)` removed here, and
-`preview` reports `(dog Pref)` as `:superseded`. `feed_test` pins that the change feed
+`preview` reports `(dog Pref)` as `:superseded`. `feed_test` asserts that the change feed
 agrees.
 
 ## The third caller: the change feed
@@ -293,7 +338,7 @@ content a released exception re-derives, lands on a fresh handle either way.
 `web_test.clj` covers the editor's lookahead over it (`POST /edit/preview`,
 [web.md](web.md)).
 
-`jtms_dense_oracle_test` applies `suspend-premise` in its randomized op streams and pins
+`jtms_dense_oracle_test` applies `suspend-premise` in its randomized op streams and asserts
 it by name, so the two TMS representations agree about it op by op.
 `VAELII_TEST_TMS=reference` runs these tests against the persistent-map network and
 `VAELII_TEST_BACKEND=disk-log` against the durable store.

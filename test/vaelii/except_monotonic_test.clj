@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.except-monotonic-test
-  "A visibility `(except (sentexHandle H))` hides a sentex on the forced-monotonic roster
+  "A visibility `(except (sentexHandle H))` hides a sentex in the forced-monotonic set
   from the context it is asserted in and every context below, as it hides a `:default`
   one, and the consequences the engine computes from it follow.  See docs/contexts.md,
   \"except: removing visibility down a context subtree\"."
@@ -26,13 +26,13 @@
   [base]
   (gensym (str base "Tmp")))
 
-;; ---- roster target 1: disjoint ---------------------------------------------
+;; ---- forced-monotonic target 1: disjoint ---------------------------------------------
 
 (tu/deftest-kb an-except-hides-a-forced-monotonic-disjoint-from-its-subtree-only
   (tu/with-terms [dog_t cat_t Rex CxParent CxChild]
     (parent-and-child kb CxParent CxChild)
     (let [decl  (list 'disjoint dog_t cat_t)
-          _     (is (checks/forced-monotonic? kb decl) "the target is on the roster")
+          _     (is (checks/forced-monotonic? kb decl) "the target is forced-monotonic")
           dh    (v/assert kb decl CxParent mono)
           _dog  (v/assert kb (list dog_t Rex) CxParent mono)
           cat-h (v/assert kb (list cat_t Rex) CxParent)]
@@ -43,7 +43,7 @@
         (is (not (v/believed? kb cat-h CxParent)))
         (is (not (v/believed? kb cat-h CxChild))))
       (let [eh (v/assert kb (list 'except (v/sentex-handle dh)) CxChild mono)]
-        (testing "(b) the except of a roster handle is admitted"
+        (testing "(b) the except of a forced-monotonic handle is admitted"
           (is (v/believed? kb eh CxChild)))
         (testing "(c) hidden from the child, still read from the parent"
           (is (not (v/ask? kb decl CxChild)))
@@ -59,7 +59,7 @@
           (is (v/disjoint? kb dog_t cat_t CxChild))
           (is (not (v/believed? kb cat-h CxChild))))))))
 
-;; ---- roster target 2: genl between predicates ------------------------------
+;; ---- forced-monotonic target 2: genl between predicates ------------------------------
 
 (tu/deftest-kb an-except-hides-a-forced-monotonic-predicate-genl-from-its-subtree-only
   (tu/with-terms [Ann Bob CxParent CxChild]
@@ -68,7 +68,7 @@
           knowsX (relation "knows")
           edge (list 'genl likesX knowsX)
           goal (list knowsX Ann Bob)
-          _    (is (checks/forced-monotonic? kb edge) "a predicate genl is on the roster")
+          _    (is (checks/forced-monotonic? kb edge) "a predicate genl is forced-monotonic")
           gh   (v/assert kb edge CxParent mono)]
       (v/assert kb (list likesX Ann Bob) CxParent)
       (testing "(a) before the except: visible from both, and the general tuple proved"
@@ -77,7 +77,7 @@
         (is (v/ask? kb goal CxParent))
         (is (v/ask? kb goal CxChild)))
       (let [eh (v/assert kb (list 'except (v/sentex-handle gh)) CxChild mono)]
-        (testing "(b) the except of a roster handle is admitted"
+        (testing "(b) the except of a forced-monotonic handle is admitted"
           (is (v/believed? kb eh CxChild)))
         (testing "(c) hidden from the child, still read from the parent"
           (is (not (v/ask? kb edge CxChild)))

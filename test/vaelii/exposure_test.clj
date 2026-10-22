@@ -59,7 +59,7 @@
   (v/assert kb (list 'genlCx v decl) 'CxUniverse))
 
 (tu/deftest-kb siblings-with-no-joint-viewer-expose-nothing
-  ;; the pin for the ∃-descendant reading: the memberships coexist, the declaration
+  ;; the test of the ∃-descendant reading: the memberships coexist, the declaration
   ;; is visible to both writers, and still no single context sees the whole clash —
   ;; so there is nothing to report and nobody to report it to.
   (tu/with-terms [CxA CxB left_t right_t Pip]
@@ -602,7 +602,7 @@
       (is (empty? (v/contradictions kb)) "seeing one side is not seeing the clash")
       (v/assert kb (list 'genlCx CxW CxB) 'CxUniverse)
       (is (= [:functional] (mapv :kind (v/contradictions kb)))
-          "the edge that completes the view weighs the pair")
+          "the edge that completes CxW's view weighs the pair")
       (is (= #{#{[one CxA] [two CxB]}} (decided-pairs kb)))
       (is (empty? (filter (comp #{:functional} :violation) (v/violations kb)))
           "decided is not exposed"))))
@@ -726,7 +726,7 @@
   ;; defeat the :default loser against a :monotonic rival — and the answer may not turn on
   ;; which of {mark, facts, edge} arrived last.
   ;; `functional` and `asymmetric` both decide the clash by defeat and run here together;
-  ;; `functionalInArg` decides by merging the fillers, a different outcome, so it is pinned
+  ;; `functionalInArg` decides by merging the fillers, a different outcome, so it is asserted
   ;; by its own witness above rather than folded into this defeat test.
   (tu/with-terms [CxU CxD birthYear Tom beats Ann Bob]
     (doseq [[mark mono loser]
@@ -760,7 +760,7 @@
     (v/assert kb (list birthYear Tom 1980) CxB)
     (is (empty? (filter (comp #{:functional} :violation) (v/violations kb))))))
 
-;; ---- and the edge that carries the mark rather than the view -------------
+;; ---- and the edge that carries the mark rather than a visibility edge ----
 ;;
 ;; A mark is read up the predicate hierarchy (`tax/props-over`), so a pair of `fatherOf`
 ;; facts either side of a visibility edge is a `(functional parentOf)` clash — and the
@@ -812,7 +812,7 @@
       (is (empty? (filter (comp #{:asymmetric} :violation) (v/violations kb)))))))
 
 (deftest the-mark-may-descend-before-or-after-the-facts-and-the-decision-is-the-same
-  ;; The control beside the case that was silent, and the reason it is worth pinning: with
+  ;; The control beside the case that was silent, and the reason it is asserted: with
   ;; the edge already in place the region walk found the pair by itself, since `declared?`
   ;; reads the mark up the hierarchy — so that arm passed throughout and the asymmetry
   ;; between the two was invisible from either side alone.  Two cleared KBs over one term

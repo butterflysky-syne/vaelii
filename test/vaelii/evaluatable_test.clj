@@ -187,7 +187,7 @@
              (boolean (seq (v/query kb (list topScorer Carol) 'CxUniverse {:max-depth 5}))))))))
 
 ;; ---- and the firing is order-independent, facts before the rule --------------
-;; `planned-join` pins the evaluatable after its binder by cost, not by the static
+;; `planned-join` places the evaluatable after its binder by cost, not by the static
 ;; canonical antecedent order (which a per-KB evaluatable is not in), so which of the
 ;; fact and the rule arrives first cannot change what is derived.
 

@@ -48,7 +48,7 @@
   `:results` are per-step, **not cumulative**: concatenate across steps for the
   whole answer.  The resume continuation captures an in-memory lazy tail (or, for
   `prove-within`, the DFS goal stack), so resumption is **in-process only** — it
-  does not survive a restart, and holding one pins its captured state in the heap
+  does not survive a restart, and holding one retains its captured state in the heap
   (see the single-writer contract in docs/storage.md)."
   (:require [vaelii.impl.opts :as opts]))
 
@@ -68,7 +68,7 @@
   "Every bound a budget may carry — the **union** of what `ask-within` and `prove-within`
   each read.  `resume` continues either, so it holds a partial to this union rather than to
   one entry point's half; `check-budget!` defaults to it, and the two entry points pass
-  their own narrower roster instead.  Public for the reason `vaelii.core/assert-opt-keys`
+  their own narrower key set instead.  Public for the reason `vaelii.core/assert-opt-keys`
   is: it is the answer to \"is this a real bound?\"."
   (into ask-budget-keys prove-budget-keys))
 
@@ -86,7 +86,7 @@
 
   `opt-keys` defaults to the union `budget-keys` — what `resume`, `collect` and the two
   drivers hold a budget to, since a `resume` continues either entry point.  `ask-within`
-  and `prove-within` pass their own narrower roster and subject, so a caller who names
+  and `prove-within` pass their own narrower key set and subject, so a caller who names
   `:max-depth` at `ask-within` is told it is not a bound `ask` reads."
   ([budget] (check-budget! budget budget-keys "budget"))
   ([budget opt-keys subject]
@@ -140,8 +140,8 @@
   "A budget as the DFS prover's `bounds` map (`res/prove-from`) — the deadline the
   wall-clock bound resolves to, plus the caps it reads under their own names.
 
-  One translation, and it lives beside `budget-keys` on purpose: the roster and the
-  map that honours it are two halves of one claim, and a bound rostered there but not
+  One translation, and it lives beside `budget-keys` on purpose: the key set and the
+  map that honours it are two halves of one claim, and a bound listed there but not
   built here is accepted and then ignored — precisely what `check-budget!` refuses a
   misspelt key to prevent.  `:max-cost` is absent because it bounds `ask`'s prover tiers
   rather than a search, and the node-engine arm of
@@ -173,6 +173,20 @@
    :count      (count results)
    :elapsed-ms (ms-since start-nanos)
    :resume     (when (not= status :complete) resume-fn)})
+
+(defn reporting-unenumerated
+  "`partial` merged with `(report)`, a map holding `:unenumerated` (the transitive
+  predicates whose closure the search did not enumerate), with a `:complete` status read
+  as `:incomplete` when that vector is non-empty, and its continuation wrapped the same
+  way, so the keys a later step carries are cumulative over every step before it."
+  [partial report]
+  (let [r (report)]
+    (cond-> (merge partial r)
+      (and (= :complete (:status partial)) (seq (:unenumerated r)))
+      (assoc :status :incomplete)
+
+      (:resume partial)
+      (assoc :resume (fn [b] (reporting-unenumerated ((:resume partial) b) report))))))
 
 (defn- collect*
   [xs budget restart delivered unbounded-first?]
@@ -226,7 +240,7 @@
 
   **How many elements that realizes is the source's business, not this loop's.**  n pulls
   realize exactly n elements of an **unchunked** seq, which is what every seq the engine
-  hands here is — a `lazy-seq`/`cons` chain out of the solvers and the index, pinned by
+  hands here is — a `lazy-seq`/`cons` chain out of the solvers and the index, asserted by
   `laziness_test/a-capped-ask-pays-for-the-cap-and-not-for-a-chunk`.  A *chunked* source —
   anything built by `map`/`filter` over a vector or a range — realizes its whole 32-element
   chunk on the first pull whatever the cap says, and no cap check above it can prevent

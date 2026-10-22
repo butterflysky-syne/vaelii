@@ -99,7 +99,7 @@ previous answer was computed from. [qcn.md](qcn.md) makes the same choice on the
 side, since retraction is rare where loading is not.
 
 Two further limits bound the work. Only the bounds a relaxation moved are read back, so a
-constraint that pins one new instant rewrites that instant's row and leaves the rest of the
+constraint that determines one new instant rewrites that instant's row and leaves the rest of the
 closed network the same object. And relaxing `k` edges costs `k·n²` against the closure's
 `n³`, so at `n` or more moved edges it runs the pass; the branch cannot change the answer.
 
@@ -153,7 +153,7 @@ directly.
 
 Constraints spanning **more than one dimension** are refused rather than mixed: `problem`
 returns nil, and no metric goal is answered. Gaps in metres are not durations — the same
-gate `totalDuration` applies to its components. The interval network reading the refused
+dimension check `totalDuration` applies to its components. The interval network reading the refused
 problem is unsatisfiable, as it is over an unsatisfiable one ("The interval algebra reads
 it"), so no Allen goal is answered in the context either, and every firing that rested on
 an Allen entailment there is withdrawn until the refusal ends.
@@ -174,7 +174,7 @@ once per KB and context.
   Both bounds must be finite: no structural NAT denotes a half-bounded gap, so the goal has
   no answer.
 * **check** — a ground `M` is **entailed** exactly when the derived bound is *contained* in
-  it, in the same base unit. After the closure pins `P → Q` at 13 minutes, both
+  it, in the same base unit. After the closure narrows `P → Q` to 13 minutes, both
   `(QuantityFn 780 Second)` and the original loose `(QuantityIntervalFn 10 20 Minute)` are
   answered, and anything tighter than 13 minutes is not.
 
@@ -363,14 +363,15 @@ them, and nothing here is about clocks or calendars.
 One closure is O(n³) in the **instant** count, not in the number of constraints, and it is
 memoized on the network value, so a query loop over one belief state pays for it once. The
 network read is **resident on the KB** under a key of this namespace's own and the
-tolerance, stamped with the change clock as a qualitative network is ([qcn.md](qcn.md), "The network is resident, and
-the clock is what makes that sound"), so a rule joining a metric antecedent does not re-read
-the KB once per binding, and a settle does not re-read it once per firing. The closed state
-is resident on the same atom, and an arriving constraint is relaxed into it. The tolerance
-is in both keys, so a rebound `*quantity-tolerance*` reads and closes its own network.
+tolerance, keyed by the change clock as a qualitative network is ([qcn.md](qcn.md), "The
+network is resident, and the clock is what makes that sound"), so a rule joining a metric
+antecedent does not re-read the KB once per binding, and a settle does not re-read it once
+per firing. The closed state is resident on the same atom, and an arriving constraint is
+relaxed into it. The tolerance is in both keys, so a rebound `*quantity-tolerance*` reads
+and closes its own network.
 
 Measured by `lein bench-stp` over a chain of instants — the form a sequence of events
-produces, and the dense case for the read-back, since a chain pins a bound between *every*
+produces, and the dense case for the read-back, since a chain determines a bound between *every*
 pair. The closure figure is the fastest of five runs; each per-arrival figure is the mean of
 twenty arrivals.
 
@@ -405,6 +406,6 @@ never held** — a timeline being loaded — moves that instant's own row only, 
 **The belief read is linear where the closure is cubic.** At four hundred instants the read
 is 3.6 ms against a 78 ms pass; at twenty-five it is most of what an ask costs.
 
-`lein perf`'s `metric-closure-warm-start` is the gate over the arriving-instant column: 8×
+`lein perf`'s `metric-closure-warm-start` is the perf check over the arriving-instant column: 8×
 the instants under 35× per arrival. It reads 12.6× to 13.4× across full runs, and 99.5×
 with the same check driving `close-state` on the whole network instead.

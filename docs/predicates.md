@@ -3,7 +3,7 @@
 - **Covers:** the declaration every term of the engine's own grammar carries in
   `vaelii.impl.predicates` — its eleven fields, the five closed vocabularies they are
   written from and the contract each facet commits an entry to — how it is joined to the
-  arms in `vaelii.impl.special`, which rosters derive from it, what is refused at namespace
+  arms in `vaelii.impl.special`, which lists derive from it, what is refused at namespace
   load, what a new interpreted term owes and what adding one comes to, and the three things
   the declaration deliberately does not carry.
 - **Not here:** adding an ordinary domain predicate, which is a KB edit and no code at all
@@ -43,12 +43,12 @@ distance between them is the whole subject below.
 ## One term, one entry
 
 An interpreted predicate is a fact about a functor that nine different namespaces each
-need a piece of, and the twenty-odd rosters keyed on functor names are all projections of
-it. `vaelii.impl.predicates` is where the fact is written once; a roster that reads the
-entry is a **view**, not a second copy, and cannot drift from it.
+need a piece of, and the twenty-odd lists keyed on functor names are all projections of
+it. `vaelii.impl.predicates` is where the fact is written once; a functor list that reads
+the entry is a **projection**, not a second copy, and cannot drift from it.
 
 Five namespaces read it today — `special`, `taxonomy`, `settle`, `spec` and `vocabulary`,
-enumerated below, and a roster one of them owns can itself be a view read once more
+enumerated below, and a list one of them owns can itself be a projection read once more
 (`provers/transitive-predicates` *is* `taxonomy/closure-relations`). The rest still hold
 their own list: `checks`' four, `provers/evaluable-predicates`, `sentex`'s three
 (`sentex/aggregate-functors`, `sentex/rule-direction-wrappers`,
@@ -135,8 +135,8 @@ governing it, so a keyword can never come to mean whatever its first user assume
 | Vocabulary | Members | What a member commits you to |
 |---|---|---|
 | `argument-kinds` | `:predicate` `:relation` `:relation-name` `:type` `:context` `:function` `:position` `:integer` `:term` `:sentence` | a kind here is one a well-formedness arm can be **generated** from; a position no kind fits is a position whose check stays hand-written |
-| `storage-kinds` | `:prop` `:mark` `:edge` `:keyed-pair` `:pred-position` `:none` | each names what the add / drop / rebuild triple looks like. `:prop` means the `tax/props` roster specifically, whose keys `spec/::prop-kind` pins — a one-term mark into a table of its own is `:mark`, not `:prop` |
-| `facets` | `:cached` `:derived` `:migrates` `:arbitrable` `:reach` `:query-only` `:answers` `:retriggers` `:convicts` `:inert` | the lanes that read the term. Six are reconstructible from a live data structure and are pinned that way; `:answers`, `:retriggers`, `:convicts` and `:inert` are *claims*, which is exactly why they are the ones that go wrong quietly |
+| `storage-kinds` | `:prop` `:mark` `:edge` `:keyed-pair` `:pred-position` `:none` | each names what the add / drop / rebuild triple looks like. `:prop` means the `tax/props` table specifically, whose keys `spec/::prop-kind` lists — a one-term mark into a table of its own is `:mark`, not `:prop` |
+| `facets` | `:cached` `:derived` `:migrates` `:arbitrable` `:reach` `:query-only` `:answers` `:retriggers` `:convicts` `:inert` | the lanes that read the term. Six are reconstructible from a live data structure and are tested that way; `:answers`, `:retriggers`, `:convicts` and `:inert` are *claims*, which is exactly why they are the ones that go wrong quietly |
 | `mark-families` | `:functional` `:argument-constraint` | a family lives in more than one lane. Naming it once is what makes a third spelling reach every lane at once |
 
 `facets` is the one that is not written out. `facet-contract` gives every facet a row — the
@@ -152,8 +152,8 @@ a predicate does, a function is CapitalCamelCase and so is indistinguishable fro
 relation may be denoted by a NAT rather than named. Collapsing the two refuses the
 conventional spelling and waves the exotic one through.
 
-A family is **not** a storage roster. `functional` stores under the `:functional` prop where
-`functionalInArg` stores `[pred n]` pairs; the two have no common storage to be rostered by,
+A family is **not** a storage kind. `functional` stores under the `:functional` prop where
+`functionalInArg` stores `[pred n]` pairs; the two have no common storage to be listed by,
 only a common family and a common argument 1.
 
 ## The arms, and the join
@@ -179,9 +179,9 @@ Once the entry exists, these follow from it. None of them is a list you also edi
 | `taxonomy/closure-relations` | every term whose storage kind is `:edge` — being cached as a closure and being in this set are one fact |
 | `taxonomy/arg-declaration-props` | the `:argument-constraint` family, each paired with its own prop keyword |
 | `taxonomy/functional-family-marks` | the `:functional` family, each spelling with the shape its own argument list implies |
-| `settle`'s trigger rosters | `:arbitrable` marks paired with their prop keyword, and the `:edge` storage kind |
+| `settle`'s trigger lists | `:arbitrable` marks paired with their prop keyword, and the `:edge` storage kind |
 | `spec/::prop-kind` | the set of `tax/props` keywords the grammar declares |
-| `vocabulary/roster` | the `:enforced` / `:inert` prose, classed by `:facets` — and through it `interpreted` and `vocabulary-audit` |
+| `vocabulary/classification` | the `:enforced` / `:inert` prose, classed by `:facets` — and through it `interpreted` and `vocabulary-audit` |
 
 Case conversion is not an alternative to pairing a functor with its prop keyword and never
 was: `anti_transitive` stores under `:anti-transitive`. The declaration states the keyword.
@@ -197,7 +197,7 @@ that caller do.
 |---|---|
 | `special/check-entries` | an entry with *some* of the cache triple — the cache would fill on assert and leak on retract, or come back wrong after a recover (`:mismatch :partial-cache-triple`); and an entry with no arm at all, which is a typo (`:mismatch :no-arm`) |
 | `special/check-declarations` | a functor with arms and no declaration or the reverse (`:mismatch :enumeration`); a `:cached` declaration whose arms have no triple, or the reverse (`:mismatch :cached`); a `:checked` declaration with no `:wff` arm, or the reverse (`:mismatch :checked`) |
-| `predicates/check-facets`, run at `settle`'s load | a field value outside its closed vocabulary (`:vocabulary`); `:cached` disagreeing with the storage kind (`:storage`); an `:arbitrable` term with no `:opposing-read` claim (`:arbitrable`); an `:inert` term carrying a second facet or a storage (`:inert`); a roster that reads a mark family as a family and enumerates something other than that family (`:family-roster`); a facet the entry is committed to and neither carries nor records — by `facet-contract` (`:implication`), by a sibling spelling of its family (`:family-lane`), or by answering goals about a predicate and posting no exception re-check (`:recheck`); and a `:stops-short` record that is not owed or carries no reason (`:stops-short`) |
+| `predicates/check-facets`, run at `settle`'s load | a field value outside its closed vocabulary (`:vocabulary`); `:cached` disagreeing with the storage kind (`:storage`); an `:arbitrable` term with no `:opposing-read` claim (`:arbitrable`); an `:inert` term carrying a second facet or a storage (`:inert`); a list that reads a mark family as a family and enumerates something other than that family (`:family-list`); a facet the entry is committed to and neither carries nor records — by `facet-contract` (`:implication`), by a sibling spelling of its family (`:family-lane`), or by answering goals about a predicate and posting no exception re-check (`:recheck`); and a `:stops-short` record that is not owed or carries no reason (`:stops-short`) |
 
 `check-entries` and `check-declarations` are two validators at two layers rather than one
 duplicated: the first sees only the arms and so can check only that they mirror each other,
@@ -214,25 +214,25 @@ no longer prove anything on its own.
 
 **One rule has no `:stops-short` escape, and the reason is the distinction the field
 rests on.** A facet is a *claim* — nothing in the tree states `:answers` or `:convicts`, so
-an entry that falls short of one can answer for itself in prose. A **roster** is not a
+an entry that falls short of one can answer for itself in prose. A **hand-kept list** is not a
 claim: it is a set sitting in another namespace, and two enumerations of one fact do not
-get to disagree. `quotedArg` is why the rule exists. Three rosters read the argument
+get to disagree. `quotedArg` is why the rule exists. Three lists read the argument
 constraints as a family — the declarations here, `checks/constraint-declaration-functors`
 at the entry point, `provers/meta-constraint-functors` on the query surface — and the third held
 three of the four for as long as nothing compared them, so one declaration meant one thing
 to `assert` and another to `ask`. The lane rule below caught the missing facet and offered
-a record; a record was the wrong answer, and `:family-roster` is what refuses instead.
+a record; a record was the wrong answer, and `:family-list` is what refuses instead.
 `special/entailing-declarations` is deliberately a *proper* subset of the family and so is
-not one of these rosters — a `quotedArg` mints nothing, and that absence is recorded on the
+not one of these lists — a `quotedArg` mints nothing, and that absence is recorded on the
 entry where it belongs.
 
-The rule's **reach** is the map `settle` hands the validator, and a map of rosters is a
-roster with the same failure: one that reads a family and is not named there is one the
+The rule's **reach** is the map `settle` hands the validator, and a map of lists is a
+hand-kept list with the same failure: one that reads a family and is not named there is one the
 rule says nothing about. So `predicates_test` reads the loaded tree for any var whose
 members are a subset of a family's spellings — subset and not equality, because the
-`quotedArg` bug *was* a roster holding three of four — and holds each to being named at
+`quotedArg` bug *was* a list holding three of four — and holds each to being named at
 that call site or recorded as derived from these declarations, which is the one way a
-roster cannot disagree with them.
+list cannot disagree with them.
 
 An implication is a refusal **unless the entry records the exception**, in `:stops-short`,
 which maps the facet to prose saying why. The record is checked against the set actually owed
@@ -266,21 +266,21 @@ is not reported, in the one arrival order that route was the only way into.
    answers goals about a predicate has to post an exception re-check. Whichever you cannot
    meet goes in `:stops-short` with the reason, and an `:arbitrable` term states its
    `:opposing-read` outright. `settle`'s load is where you find out.
-6. **Let the views follow.** Do not add the functor to `taxonomy`'s three rosters,
-   `settle`'s eight, `spec/::prop-kind` or `vocabulary/roster` — they are reads, and adding
-   it by hand puts back exactly the drift this structure removed. The rosters that are *not*
-   views, listed under "One term, one entry" above, are the ones that still need the entry
+6. **Let the projections follow.** Do not add the functor to `taxonomy`'s three lists,
+   `settle`'s eight, `spec/::prop-kind` or `vocabulary/classification` — they are reads, and adding
+   it by hand puts back exactly the drift this structure removed. The lists that are *not*
+   projections, listed under "One term, one entry" above, are the ones that still need the entry
    written into them.
 
 ### What a new term owes
 
 | Test | Because |
 |---|---|
-| `predicates_test` | the declaration's own contract: every inert term carries a stated reason, every note names a lane the facet vocabulary does not reach, every `:arbitrable` term claims its `:opposing-read`, and a roster that has moved states its value as a **literal** — reconstructing a derived var proves the wiring and nothing about what it holds. The validators' enforcement are driven here too, one deliberately broken declaration per rule |
+| `predicates_test` | the declaration's own contract: every inert term carries a stated reason, every note names a lane the facet vocabulary does not reach, every `:arbitrable` term claims its `:opposing-read`, and a list that has moved states its value as a **literal** — reconstructing a derived var proves the wiring and nothing about what it holds. The validators' enforcement are driven here too, one deliberately broken declaration per rule |
 | `special_table_test` | the table's order, each `:props` kind and each derivation-path flag, frozen in a table written out that nothing derives |
 | `vocabulary_audit_test` | `:unclassified`, `:retired` and `:contradicted` are empty on the shipped ontology |
-| `core_context_test` | the upper layer's sentex count, which [kbs.md](kbs.md)'s shipped-KB table quotes and nothing else pins — update both together |
-| `refusal_roster_test`, `type_contract_test` | a new `ex-info` `:type` needs both, with its changelog entry. Reusing `:bad-table-entry` with a new `:mismatch` value is the cheaper move and needs one line — `type_contract_test`'s `discriminants`, where the `:mismatch` vocabulary is pinned as the `:type` one is. Check there first that the condition is not one another validator already has a word for |
+| `core_context_test` | the upper layer's sentex count, which [kbs.md](kbs.md)'s shipped-KB table quotes and nothing else asserts — update both together |
+| `refusal_types_test`, `type_contract_test` | a new `ex-info` `:type` needs both, with its changelog entry. Reusing `:bad-table-entry` with a new `:mismatch` value is the cheaper move and needs one line — `type_contract_test`'s `discriminants`, where the `:mismatch` vocabulary is frozen as the `:type` one is. Check there first that the condition is not one another validator already has a word for |
 
 Then `lein gate`, and `lein test-matrix --owed`: a declaration change reaches inference,
 TMS and planning, so the matrix is owed — fourteen of the sixteen configurations, for a mark
@@ -297,16 +297,16 @@ the total:
 |---|---|
 | the **declaration** | one row of `predicates/entries`, and nothing else in the namespace |
 | **arms** carrying semantics nothing derives | the table and its add / drop / rebuild triple in `taxonomy`, plus the readers that follow belief through it; the check itself in `checks` and the two call sites that ask it; the arms map in `special` and the shape refusal in `wff`; `settle`'s partner posting and its message arm; the `(comment …)` block in `core.txt`; the term's own test namespace |
-| **frozen surfaces**, each named by a **failing test** rather than found by reading | `special_table_test`'s order, `type_contract_test`'s `:type` vocabulary, `predicates_test`'s roster pins, and `troubleshooting.md`'s `:type` row, which `refusal_roster_test` requires. All four are in "What a new term owes" above |
-| **rosters that are not views** | `checks/arbitrable-kinds`, and `settle`'s hand-unions — the two under "Where this stops" below |
+| **frozen surfaces**, each named by a **failing test** rather than found by reading | `special_table_test`'s order, `type_contract_test`'s `:type` vocabulary, `predicates_test`'s frozen term sets, and `troubleshooting.md`'s `:type` row, which `refusal_types_test` requires. All four are in "What a new term owes" above |
+| **lists that are not projections** | `checks/arbitrable-kinds`, and `settle`'s hand-unions — the two under "Where this stops" below |
 
 `web.clj`'s clash chip is the one surface nothing names, and it does not need to: an
 unlisted `:type` renders as its own keyword name, which is a worse word than a chosen one
 and not a wrong one.
 
-The rosters that take a new functor with **no edit at all** are `special/entries`' four
-walks, `taxonomy`'s three, `spec/::prop-kind`, `vocabulary/roster`, and `settle`'s trigger
-rosters.
+The lists that take a new functor with **no edit at all** are `special/entries`' four
+walks, `taxonomy`'s three, `spec/::prop-kind`, `vocabulary/classification`, and `settle`'s trigger
+lists.
 
 ## Where this stops
 
@@ -320,13 +320,13 @@ first, `ArgTypeProver` answers a goal on any predicate carrying a declared argum
 none of the three has an entry to write. `add-prover` is public API and registers with no
 entry at all: nine opt-in provers ship in-tree and third-party ones are the point of the
 extension, so a framework requiring an entry either breaks them or grows an escape hatch that
-makes the entry advisory — and an advisory entry is a roster again. And `sole-prover` already
+makes the entry advisory — and an advisory entry is a hand-kept list again. And `sole-prover` already
 answers the coordination question a per-predicate binding would be reaching for, as a question
 about the KB rather than about the vocabulary. What the declaration carries instead is
 `:answers`: not who answers a goal, but that this term's *arrival* moves what a level-6 query
 says about some predicate, which is what obliges it to post an exception re-check. A prover's
 **shape** table stays with the prover; its **enrolment** is the declaration's, which is the
-line `provers`' four functor rosters sit on either side of ([inference.md](inference.md)).
+line `provers`' four functor lists sit on either side of ([inference.md](inference.md)).
 
 **The structural connectives are declared for their shape and nothing else.** `not`, `and`,
 `or`, `implies` and the rule-direction wrappers are written through the `structural`
@@ -339,7 +339,7 @@ retraction to mirror. `:shape` is the whole of what the engine is told, and the 
 that shape implies is enforced before the record exists. This is permanent: the day a
 connective needed an arm would be the day it stopped being a connective.
 
-**Two joins are stated by hand.** They are of a piece with the rosters under "One term, one
+**Two joins are stated by hand.** They are of a piece with the lists under "One term, one
 entry" above — a set some namespace holds itself because no field of the eleven carries the
 fact it needs — and they are the two an *arbitrable* mark runs into.
 

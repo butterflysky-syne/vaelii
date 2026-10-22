@@ -215,7 +215,7 @@
 ;; ---- the guards' refusal paths -------------------------------------------
 
 (tu/deftest-kb post-op-refuses-a-cors-simple-content-type
-  ;; the CSRF gate: `application/edn` is not a CORS-*simple* type, so a browser must
+  ;; the CSRF check: `application/edn` is not a CORS-*simple* type, so a browser must
   ;; preflight it and this daemon answers no preflight — demanding it is what keeps a
   ;; page the operator merely visits from driving the write route
   (tu/with-terms [dog Muffet CxServe]
@@ -257,7 +257,7 @@
     (is (not-any? #{::serve/op-error} @logged))))
 
 (tu/deftest-kb post-op-refuses-a-cross-origin-caller
-  ;; the other CSRF gate, and the one that bites when a browser *does* stamp an origin:
+  ;; the other CSRF check, and the one that applies when a browser *does* send an origin:
   ;; `edn-body?` forces a preflight this daemon will not answer, and this refuses the
   ;; page that got one anyway.  A `:type` on the wire because a client discriminating on
   ;; the message string is discriminating on prose.
@@ -287,7 +287,7 @@
 
 (tu/deftest-kb post-op-accepts-edn-however-legally-spelled
   ;; `guard/edn-body?` trims, lower-cases and prefix-matches, so a parameterized or
-  ;; case-varied header is still the declaration the gate requires
+  ;; case-varied header is still the declaration the CSRF check requires
   (tu/with-terms [dog Muffet CxServe]
     (let [handler (open-app kb)]
       (doseq [ct ["application/edn; charset=utf-8"
@@ -302,7 +302,7 @@
           "the accepted spelling reached the op — the fact is stored"))))
 
 (tu/deftest-kb the-daemon-refuses-a-rebound-host-on-every-route
-  ;; the DNS-rebinding gate: `same-origin?` folds when the attacker controls both
+  ;; the DNS-rebinding check: `same-origin?` folds when the attacker controls both
   ;; `Origin` and `Host` (a domain re-resolving to 127.0.0.1), so `host-allowed?` is
   ;; the check that has to hold — and it wraps the whole server, because a rebound
   ;; page reads the KB as happily as it writes to it
@@ -476,7 +476,7 @@
 (clojure.test/deftest the-token-comparison-is-one-named-constant-time-fn
   ;; Asserted structurally rather than by timing: a wall-clock assertion over a
   ;; nanosecond difference is flaky by construction on a machine running anything else,
-  ;; and would fail on a laptop that throttled mid-run.  What is pinnable is that the
+  ;; and would fail on a laptop that throttled mid-run.  The assertable part is that the
   ;; comparison is one fn (`MessageDigest/isEqual` over UTF-8 bytes, which reads every
   ;; byte whatever the lengths) and that it answers correctly either side of equal
   ;; length — the two cases a `=` on strings would short-circuit differently.  It lives
@@ -837,7 +837,7 @@
 
 (tu/deftest-kb a-bound-value-outside-its-domain-is-a-typed-400-not-a-500
   ;; The floor under docs/operations.md's one-vocabulary promise, for the value domains
-  ;; rather than the key rosters.  Without the value check a string where a number belongs
+  ;; rather than the key sets.  Without the value check a string where a number belongs
   ;; reaches arithmetic and throws a bare `ClassCastException`, which the daemon answers
   ;; `:internal-error` (500) — a backend fault at every 5xx alarm between the caller and
   ;; the daemon.  A caller's mistake is a 400, so one op per family is checked here: the
@@ -997,7 +997,7 @@
               (is (clipped? (client/why conn h {:max-depth 1})))
               (is (not (clipped? (client/why conn h {:max-depth 32}))))
               (is (thrown? clojure.lang.ExceptionInfo (client/why conn h {:max-dpeth 32}))
-                  "and the daemon holds the opts to the same roster the in-process entry point
+                  "and the daemon holds the opts to the same key set the in-process entry point
                    does, rather than taking a default in silence")))
           (testing "a remote refusal surfaces as an ex-info carrying the daemon error"
             (is (thrown? clojure.lang.ExceptionInfo

@@ -301,8 +301,8 @@
   ;; The argument roots are a **derived** family: `[:argument-root :handles [pred pos term
   ;; ctx]] → handles`, written beside the trie and read by the multi-column probe.  Losing one is
   ;; not hypothetical — a crash inside the index write persists a prefix of the batch, and
-  ;; `vaelii.impl.reindex` repairs by dropping and rewriting postings — so the claim worth
-  ;; pinning is what the store answers in between: the probe under that column answers
+  ;; `vaelii.impl.reindex` repairs by dropping and rewriting postings — so the claim this
+  ;; asserts is what the store answers in between: the probe under that column answers
   ;; *nothing*, never a handle whose posting is gone, and every other family the sentex is
   ;; filed under still answers.  Then the ordinary write path puts it back.
   (tu/with-cleared-kb [kb tu/fresh]

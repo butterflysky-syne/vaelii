@@ -38,8 +38,8 @@
       believed                           = in - superseded
 
   `graph` is the nodes and justifications.  `attributes` are the per-element strengths
-  the class fixpoint reads, and the three **forced** sets the forced-monotonic roster
-  writes (docs/nmtms.md, \"The forced-monotonic roster\"): `:mono`, premises whose class is
+  the class fixpoint reads, and the three **forced** sets the forced-monotonic set
+  writes (docs/nmtms.md, \"The forced-monotonic set\"): `:mono`, premises whose class is
   `:monotonic` whatever strength they carry; `:out`, datums never IN; and `:void`,
   justifications that support nothing.  The caller decides each membership from the
   stored content and writes it with the element, as it writes a strength.  `blocked` and
@@ -74,7 +74,7 @@
   | `:blocked` | the blocked justification-id set | the caller's exception query |
   | `:superseded` | the `datum -> reason` map | the caller's equality closure |
   | `:output` | `in`, `classes` | every relabel |
-  | `:window` | the touched sets | every relabel |
+  | `:touched` | the touched sets | every relabel |
   | `:hold` | the labels a settle has moved, as they were when it began | the settle |
 
   **A third place belief is decided is not on this protocol.**  A reader's verdict and a
@@ -88,8 +88,8 @@
 
   Four obligations.  Miss one and a network is *wrong*, not slow — belief is the last
   thing in the engine that may drift silently, since a bad label does not throw, it
-  just answers a query differently.  Each names the gate that holds it, because an
-  obligation with no gate is a comment.
+  just answers a query differently.  Each names the regression test that enforces it,
+  because an obligation with no test is a comment.
 
   1. **The same fixpoint over the same region.**  Binds `:output`, and through it
      `:blocked`, the fixpoint's override argument.  A datum is believed when it is a
@@ -100,7 +100,7 @@
      the region fixpoint is equal to the global one because a least fixpoint with the
      boundary fixed is unique, and uniqueness is also the whole of why locality costs
      no order independence.  An implementation may move where the graph lives; it may
-     not move what is believed.  Gate: `jtms_dense_oracle_test`, which compares the
+     not move what is believed.  Enforced by: `jtms_dense_oracle_test`, which compares the
      entire `-snapshot` after **every** step of a randomized operation stream — not a
      sampled read, because a divergence in a class or a block is invisible to
      `-believed?` until a later operation reads it.
@@ -111,25 +111,25 @@
      owes the incidental reader that much (a web browser over a REPL's KB,
      docs/storage.md).  *How* is not the obligation and the two differ: the reference
      by compare-and-set on its state atom, the dense network by taking its
-     `StampedLock` for writing.  Gate: `jtms_atomicity_test`, whose atomicity half runs
+     `StampedLock` for writing.  Enforced by: `jtms_atomicity_test`, whose atomicity half runs
      against both networks for exactly this reason.  **While a hold is open**
      (`-hold`), a thread other than its owner reads the `:output`, `:blocked` and
      `:superseded` roles as they stood when the hold began, so a settle's
      run of relabels reaches such a reader as one step when the hold closes.  The reference keeps
      its state map from that moment; the dense network records each label the first
-     relabel after it moves, which costs the region that relabel walks.  Gate:
-     `kb_concurrency_test`, on both networks.
+     relabel after it moves, which costs the region that relabel walks.  Enforced
+     by: `kb_concurrency_test`, on both networks.
 
-  3. **The flips are inside the published window, and the window inside the region.**
-     Binds `:window`.  `-touched` is not diagnostics: `preview`, the consequence report and the change
+  3. **The flips are inside the published set, and the touched set inside the region.**
+     Binds `:touched`.  `-touched` is not diagnostics: `preview`, the consequence report and the change
      feed all read it instead of diffing the believed set, which would be O(KB) per
-     write (docs/preview.md, docs/feed.md).  A window that missed a flip serves a stale
+     write (docs/preview.md, docs/feed.md).  A touched set that missed a flip serves a stale
      report; one that outran its own region would say the operation was not local after
-     all.  The containment is deliberately one-way — the window is a **superset** of
+     all.  The containment is deliberately one-way — the touched set is a **superset** of
      the flip set (defenses.md) — so this obligation is containment and never equality.
-     Gate: the oracle test checks both containments on both networks after every
-     step, and `jtms_locality_test` measures the published window across graph sizes
-     on both — a region widened back to the whole graph answers identically, so a
+     Enforced by: the oracle test checks both containments on both networks after
+     every step, and `jtms_locality_test` measures the published touched set across
+     graph sizes on both — a region widened back to the whole graph answers identically, so a
      comparison of labels alone would pass it.
 
   4. **No store, by construction.**  Binds every role, and its second half binds
@@ -137,15 +137,15 @@
      and plain values.  Nothing crossing the boundary can carry a record store, an index or a KB,
      and no implementation may acquire one.  Two things rest on that and neither is
      optional.  A node holds **no reference to the sentex it labels** — the network is
-     always resident, so a strong reference would pin every record in RAM and defeat a
+     always resident, so a strong reference would keep every record reachable in RAM and defeat a
      paging backend entirely (measured: the nodes reached 50% of the record store).
      And `-premise-strength`, which the class fixpoint reads per in-region node, is a
      *memory* read on every representation, which is what makes locality a claim about all of them rather than
      about the one whose reads happen to be free — on a disk store that read would be a
      lock and a slot decode, on a server store a round trip, per in-region node per
-     worklist pop.  Gate: the structure of this protocol, plus both implementations' `ns`
+     worklist pop.  Enforced by: the structure of this protocol, plus both implementations' `ns`
      forms, which name no store.  A store-backed network would break the structural
-     guarantee and inherit an obligation nothing here gates: it would owe a
+     guarantee and inherit an obligation nothing here enforces: it would owe a
      read-counting one of its own.
 
   One claim is deliberately **not** on that list, because nothing at this boundary can hold
@@ -240,16 +240,16 @@
     shape `RefTms` happens to store, and a dense implementation materializes it, so it
     is a debugging and testing surface, never something an engine path calls.")
 
-  ;; ---- :window — the published flip window ------------------------------------
+  ;; ---- :touched — the published flip set --------------------------------------
   (-touched          [tms]       "Datums whose region was relabelled since the reset.")
   (-touched-in       [tms]       "Of those, the ones already believed when first relabelled.")
-  (-touched-new      [tms]       "Datums whose node this window created.")
+  (-touched-new      [tms]       "Datums whose node was created since the reset.")
   (-touched-out      [tms]       "Datums a forced-set change (`-set-forced`) took from IN
-    to OUT this window.")
+    to OUT since the reset.")
   (-reset-touched    [tms]       "Clear the touched sets, and outdate every mark.")
-  (-touch-mark       [tms]       "A mark of this point in the window, which
-    `-touched-since` reads: every datum the window records after this call is in it.")
-  (-touched-since    [tms mark]  "The datums the window recorded after `mark`, a datum
+  (-touch-mark       [tms]       "A mark of this point in the touched sets, which
+    `-touched-since` reads: every datum they record after this call is in it.")
+  (-touched-since    [tms mark]  "The datums the touched sets recorded after `mark`, a datum
     relabelled again since included; the whole `-touched` set for a mark taken before the
     last `-reset-touched`, or nil.")
 
@@ -282,6 +282,6 @@
     :blocked    #{-blocked -set-blocked}
     :superseded #{-superseded -supersede}
     :output     #{-believed? -believed -any-belief? -defeat-class -snapshot}
-    :window     #{-touched -touched-in -touched-new -touched-out -reset-touched
+    :touched    #{-touched -touched-in -touched-new -touched-out -reset-touched
                   -touch-mark -touched-since}
     :hold       #{-hold -release -held}})

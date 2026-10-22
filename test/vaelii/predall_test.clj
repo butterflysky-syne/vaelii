@@ -20,10 +20,10 @@
   extensible `indeterminate_term` category (skolem is its built-in first member), so an
   author-asserted *Exists* placeholder passes and a skolemised witness does not — the
   exact antagonist of the *Exists* class.  The same category drives the UNA identity
-  exemption: the unique-name assumption is suspended for an unpinned indeterminate term.
+  exemption: the unique-name assumption is suspended for an unmerged indeterminate term.
 
   The tracer is predAllInstance on Pace's `sign` / `-212` example.  The generator's
-  stamped rule (defeasible, direction `:both` — `set/defaultRule`'s default) fires on a
+  generated rule (defeasible, direction `:both` — `set/defaultRule`'s default) fires on a
   believed membership, and its backward arm closes the keystone: bare-literal membership
   derives (the evaluative defnSufficient provers, #59) and is discharged inside a
   query/prove proof (`pred-all-instance-keystone-proves-from-the-bare-literal`).  `ask`
@@ -46,7 +46,7 @@
 ;; ==== the -212 subtlety, isolated ==========================================
 ;; Pace named -212 the keystone: (sign -212 "negative") should be provable from the BARE
 ;; literal, with membership DERIVED, not hand-asserted.  Both halves hold: membership
-;; derives via the evaluative defnSufficient prover (#59), and the stamped defaultRule's
+;; derives via the evaluative defnSufficient prover (#59), and the generated defaultRule's
 ;; backward arm discharges that antecedent inside a query/prove proof — see
 ;; pred-all-instance-keystone-proves-from-the-bare-literal.  The one instrument caveat:
 ;; `ask` expands no rule by contract, so the ask-mode answer is false by design, not gap.
@@ -62,7 +62,7 @@
 ;; ==== Instance class: real inference =======================================
 
 (tu/deftest-kb pred-all-instance-mechanism-fires-on-a-believed-membership
-  ;; the generator's stamped defaultRule (bidirectional), on Pace's sign/-212 predicates:
+  ;; the generator's generated defaultRule (bidirectional), on Pace's sign/-212 predicates:
   ;; once (negative_integer -212) is believed — here asserted directly, exercising the
   ;; forward arm on its own; the keystone test below covers the backward, query-time
   ;; path — the rule concludes (sign -212 "negative") and binds the fixed position.
@@ -75,11 +75,11 @@
       "and querying the fixed position binds it to the filler"))
 
 (tu/deftest-kb pred-all-instance-keystone-proves-from-the-bare-literal
-  ;; THE KEYSTONE, closed: with no hand-asserted membership, the stamped rule's backward
+  ;; THE KEYSTONE, closed: with no hand-asserted membership, the generated rule's backward
   ;; arm discharges (negative_integer -212) through the evaluative defnSufficient prover
   ;; at query time, so the acceptance criterion holds from the bare literal.  Under `ask`
   ;; the same goal answers false BY CONTRACT — level 6 is the registry and expands no
-  ;; rule (docs/levels.md) — so the pair below pins both the capability and the
+  ;; rule (docs/levels.md) — so the pair below asserts both the capability and the
   ;; instrument distinction that once hid it.
   (v/assert kb '(binary_predicate sign) 'CxUniverse)
   (v/assert kb '(predAllInstance sign negative_integer "negative") 'CxUniverse)
@@ -103,7 +103,7 @@
         "with no member yet, nothing is concluded")
     (v/assert kb (list widget W1) 'CxUniverse)
     (is (believes? kb (list color W1 Blueish) 'CxUniverse)
-        "a directly-asserted member fires the stamped rule")))
+        "a directly-asserted member fires the generated rule")))
 
 (tu/deftest-kb pred-all-instance-retracts-and-belief-follows
   (tu/with-terms [color widget Blueish W1]
@@ -114,11 +114,11 @@
       (is (believes? kb (list color W1 Blueish) 'CxUniverse))
       (v/retract! kb dh)
       (is (not (believes? kb (list color W1 Blueish) 'CxUniverse))
-          "retracting the declaration withdraws the stamped rule and its conclusion"))))
+          "retracting the declaration withdraws the generated rule and its conclusion"))))
 
 (tu/deftest-kb a-generator-declaration-reaches-the-members-already-stored
   ;; The arrival order every other test here writes the other way round: the members are
-  ;; stored first and the declaration second, so the stamped rule arrives over an extent
+  ;; stored first and the declaration second, so the generated rule arrives over an extent
   ;; that already exists.  Both cells, and both must read as the declaration-first
   ;; ordering does — a generator whose descent depended on which came first would make
   ;; belief a function of the file.
@@ -129,7 +129,7 @@
       (v/assert kb (list widget W1) 'CxUniverse)
       (v/assert kb (list 'predAllInstance color widget Blueish) 'CxUniverse)
       (is (believes? kb (list color W1 Blueish) 'CxUniverse)
-          "the stamped rule fires on the member stored before it")))
+          "the generated rule fires on the member stored before it")))
   (testing "predInstanceAll"
     (tu/with-terms [enjoys Alice hobby Chess]
       (v/assert kb (list 'binary_predicate enjoys) 'CxUniverse)
@@ -143,7 +143,7 @@
   ;; The third ingredient: the member is of a **sub**collection, so the descent runs
   ;; through a `genl` edge and the declaration, the edge and the fact are three things
   ;; that can arrive in any of six orders.  Each is a different retroactive arm — the
-  ;; stamped rule reaching stored facts, the edge making stored facts matchable at the
+  ;; generated rule reaching stored facts, the edge making stored facts matchable at the
   ;; declared collection, the fact meeting a rule already indexed — and all six must
   ;; conclude the same thing.
   (doseq [order [[:decl :edge :fact] [:decl :fact :edge] [:edge :decl :fact]
@@ -176,7 +176,7 @@
 ;; inert — a stored, queryable record plus a sanctioned per-cell placeholder functor
 ;; for authors, and the engine derives NOTHING.  This supersedes the earlier generator
 ;; design that materialized (?pred ?x P) over the members; inertness is also what makes
-;; the two pure-existential cross-cells expressible (nothing to stamp, so no range
+;; the two pure-existential cross-cells expressible (nothing to generate, so no range
 ;; restriction to fail and no variable-functor rule to pollute the planner with).
 
 (tu/deftest-kb an-exists-declaration-is-a-record-and-derives-nothing
@@ -285,7 +285,7 @@
 ;; The aspirational existential-inference test (Pace, 2026-08-29 — KEEP, do NOT delete).
 ;; Under pure-record inert semantics nothing at all is derivable from the declaration,
 ;; so no existential filler for `(parts Lain ?x)` is provable.  That is the expected
-;; outcome and it is pinned here as a standing marker for future existential-inference
+;; outcome and it is asserted here as a standing marker for future existential-inference
 ;; work rather than as a passing feature.
 ;;
 ;; Cyc taught us that skolems suck, so we're not prioritizing this line of inference
@@ -361,14 +361,26 @@
                "same arm, same typed reason as (arg owns 3 dog)")))
     (is (not (v/ask? kb (list 'arg3 owns '?t) 'CxUniverse))
         "and nothing stored a believed-but-inert binary spelling")
-    (try (v/assert kb (list 'arg1 'genl dog) 'CxUniverse)
-         (is false "arg on a type_relation_predicate must refuse through arg1 too")
-         (catch clojure.lang.ExceptionInfo e
-           (is (= :arg-constraint-kind (:type (ex-data e)))
-               "the relation-kind arm fires for the projection as for the ternary")))
-    (is (= [:arg-constraint-kind]
-           (mapv :type (v/check kb (list 'interArg 'genl 1 dog 2 dog) 'CxUniverse)))
-        "and for an interArg over the same relation")))
+    (tu/with-terms [kindOf]
+      (v/assert kb (list 'type_relation_predicate kindOf) 'CxUniverse)
+      (is (v/assert kb (list 'arg1 kindOf 'unary_predicate) 'CxUniverse)
+          "arg on a type_relation_predicate is admitted through arg1, as the ternary is")
+      (is (= [] (mapv :type (v/check kb (list 'interArg kindOf 1 dog 2 dog) 'CxUniverse)))
+          "and so is an interArg over the same relation"))))
+
+(tu/deftest-kb args-entails-argAndRest-from-the-first-position
+  ;; `(args P T)` states what `(argAndRest P 1 T)` states, so asking the tail form of a
+  ;; relation declared through the every-position form is answered — proved at query time,
+  ;; so the store keeps the one declaration that was written.
+  (tu/with-terms [tally animal]
+    (v/assert kb (list 'variable_arity_predicate tally) 'CxUniverse)
+    (v/assert kb (list 'genl animal 'thing) 'CxUniverse)
+    (v/assert kb (list 'args tally animal) 'CxUniverse)
+    (is (= [{'?n 1 '?t animal}]
+           (v/query kb (list 'argAndRest tally '?n '?t) 'CxUniverse {:max-depth 3}))
+        "args entails argAndRest at 1, and only at 1")
+    (is (empty? (v/sentexes-matching kb (list 'argAndRest tally '?n '?t) 'CxUniverse))
+        "and nothing is stored, so the covering check reads the declaration once")))
 
 (tu/deftest-kb a-declaration-without-slot-typing-is-a-reported-gap
   ;; missing slot typing is an explicit declaration-contract diagnostic, never a silent
@@ -461,7 +473,7 @@
       (is (false? (admissible? kb rel F1 #{one other} 2 'CxUniverse))
           "but not both — a filler meeting one of two constraints is not admissible"))))
 
-(tu/deftest-kb membership-self-satisfaction-is-the-pinned-design
+(tu/deftest-kb membership-self-satisfaction-is-the-documented-design
   ;; the membership arm's vacuity for stored fillers is a documented contract, not an
   ;; accident: argument-type inference answers (zpet2 y) off the very (arg zgoverns2 2
   ;; zpet2) declaration the constraint derives from, so a stored filler cannot fail the
@@ -497,7 +509,7 @@
   ;; the derived contract has two arms: (arg p 2 t) asks membership, (genlArg p 2 t)
   ;; asks subtypehood — the same split the assert-time checker runs.  A filler that is
   ;; itself the constraint type passes reflexively (no genl self-edge is stored).
-  ;; Pinned to the constraint-only reading: on the default (entailing) reading the
+  ;; Forced to the constraint-only reading: on the default (entailing) reading the
   ;; `genlArg`-declared slot mints its filler's `genl thing` edge, so `lone_individual`
   ;; would gain a visible path and M3 would not violate.  The audit's open-world excuse
   ;; is the constraint-only behavior this asserts.
@@ -526,12 +538,12 @@
 (tu/deftest-kb multiple-slot-constraints-compose-conjunctively
   ;; two visible slot-2 constraints must BOTH be satisfied.  The division of labour the
   ;; comment in `satisfies-typing?` describes shows up concretely here: a filler with
-  ;; visible evidence reaching the WRONG constraint is refused at assert by the checker
-  ;; (composition enforced at the entry point — there is no storable
+  ;; visible evidence reaching the WRONG constraint is held inert at assert by the checker
+  ;; (composition enforced at the entry point — there is no believed
   ;; passes-one-fails-the-other case), so what the audit's conjunction meets on stored
   ;; facts is the checker's open-world excuse: a filler with NO visible evidence stores
   ;; fine and violates both derived constraints, and one under both passes.
-  ;; Pinned to the constraint-only reading: on the default (entailing) reading each
+  ;; Forced to the constraint-only reading: on the default (entailing) reading each
   ;; `genlArg governs 2 …` mints the filler's type, so `mystery_kind` would no longer be
   ;; the evidence-free filler the audit's conjunction is meant to catch.
   (tu/without-entailing
@@ -551,15 +563,13 @@
      (v/assert kb (list 'genl car_kind insured_kind) 'CxUniverse)  ; under both
      (v/assert kb (list governs M1 car_kind) 'CxUniverse)
      (v/assert kb (list governs M2 mystery_kind) 'CxUniverse)      ; no visible evidence
-     ;; the partially-conforming case is unstorable, which is itself worth pinning:
+     ;; the partially-conforming case is held inert, which is itself asserted:
      (tu/with-terms [boat_kind M3]
        (v/assert kb (list meta_kind M3) 'CxUniverse)
        (v/assert kb (list 'genl boat_kind vehicle_kind) 'CxUniverse)
-       (try (v/assert kb (list governs M3 boat_kind) 'CxUniverse)
-            (is false "a filler visibly under one constraint and not the other must refuse")
-            (catch clojure.lang.ExceptionInfo e
-              (is (= :arg-genl (:type (ex-data e)))
-                  "refused by the genlArg conviction specifically, not incidentally"))))
+       (v/assert kb (list 'disjoint boat_kind insured_kind) 'CxUniverse)
+       (is (= :arg-genl (:type (tu/write-conviction kb (list governs M3 boat_kind) 'CxUniverse)))
+           "held by the genlArg conviction specifically, not incidentally"))
      (let [vs (:violations (predall/specified-violations kb governs meta_kind 'CxUniverse))]
        (is (not (contains? vs M1)) "car_kind satisfies both subtype constraints")
        (is (contains? vs M2)
@@ -623,12 +633,13 @@
              small " against " large))))
 
 (tu/deftest-kb a-late-argn-declaration-reaches-facts-stored-before-it
-  ;; arg1/arg2/arg3 carry `:reach` in the declaration, and `the-declaration-reconstructs-the-
-  ;; reach-rosters` holds the facet roster to that — so the behaviour the facet claims
-  ;; is pinned here rather than left to the roster's own comment. The projection has no
+  ;; arg1/arg2/arg3 carry `:reach` in the declaration, and `the-declaration-names-the-
+  ;; terms-that-reach` holds the `:reach` facet to that — so the behaviour the facet claims
+  ;; is tested here rather than left to the facet's own comment. The projection has no
   ;; reach mechanism of its own: the bridge rule's `arg` conclusion is what
   ;; `special/entail-existing` reads, so the reach arrives at one remove and has to be
-  ;; measured through the twin. Gated on `*assertive-arg-types?*`, as `arg`'s own is.
+  ;; measured through the twin. The reach runs only when `*assertive-arg-types?*` is true,
+  ;; as `arg`'s own does.
   (binding [checks/*assertive-arg-types?* true]
     (tu/with-terms [relA kindA subjA objA relB kindB subjB objB]
       (doseq [[label rel kind subj obj decl]
@@ -692,7 +703,7 @@
             "and the same sweep carries the other gap kind beside it")))))
 
 (tu/deftest-kb a-legacy-gap-does-not-displace-the-declaration-it-shares-a-prefix-with
-  ;; an unmigrated KB carries both spellings at once, which is the whole window the
+  ;; an unmigrated KB carries both spellings at once, which is the whole period the
   ;; legacy gap serves.  A key off the functor and the first two arguments alone is
   ;; the same key the migrated binary declaration takes, so the stale sentex replaced
   ;; a real violation set; and two stale sentexes over one predicate and one
@@ -822,7 +833,7 @@
 ;; thread's rulings, normalized to the binary (pred, collection) form.  Parked lines are
 ;; deliberately absent: the at_least_* collections (await the arity vocabulary lane), the
 ;; all-functions fcp audit (known unreifiable noise), and the arityMin family (its own
-;; vocabulary-only PR).  What is pinned here is that each surviving declaration is
+;; vocabulary-only PR).  This section asserts that each surviving declaration is
 ;; assertable against the shipped core vocabulary and audits — deriving a real slot
 ;; contract, not a gap.
 
@@ -842,7 +853,7 @@
   ;; declaration, and giving it one clears it, which no gap-suppression stub could fake.
   (is (v/ask? kb '(type_relation_predicate genl) 'CxUniverse)
       "the arm the genl declaration audits through is a believed membership")
-  ;; content of the type_relation_predicate arm is pinned in isolation by
+  ;; content of the type_relation_predicate arm is asserted in isolation by
   ;; a-type-relation-slot-audits-the-type-position-arm; here the packet declaration
   ;; only has to assert and audit rather than gap.
   (is (= :audited (:status (predall/specified-violations kb 'genl 'unary_predicate
@@ -851,9 +862,9 @@
 
 ;; ==== the IndeterminateTerm identity exemption + the UNA matrix ============
 ;; The unique-name assumption applies to DETERMINATE terms (distinct names are provably
-;; different, a term is never different from itself) but is SUSPENDED for an unpinned
+;; different, a term is never different from itself) but is SUSPENDED for an unmerged
 ;; indeterminate_term: neither equals nor different is provable of it against a determinate
-;; term until a merge pins it.  Built data-driven over the grid rather than N hand-written
+;; term until a merge identifies it.  Built data-driven over the grid rather than N hand-written
 ;; cases (Pace, "DRY it").
 ;;
 ;; FLAGGED for a future ruling: (1) the design notes also want a non-evaluatable
@@ -861,10 +872,10 @@
 ;; NAT-determinacy question explicitly PUNTED ("for now only skolem is a
 ;; member; flag the NAT call"), so the category here is skolem + whatever is declared
 ;; (genl _ indeterminate_term), and the generic-NAT cell is left to that ruling.  (2)
-;; rewriteOf-pinning restores UNA for a skolem (below), but for an explicitly-declared
+;; a rewriteOf merge restores UNA for a skolem (below), but for an explicitly-declared
 ;; indeterminate kind the equality merge MIGRATES the kind membership onto the winner, so
-;; the winner inherits the indeterminacy — pin-restoration for that row needs a
-;; merge-surviving pin signal (a Pace design call).
+;; the winner inherits the indeterminacy — restoring UNA for that row needs a signal that
+;; survives the merge (a Pace design call).
 
 (defn- a-skolem
   "Skolemize a witness through a head-existential rule and return the minted skolem
@@ -894,10 +905,10 @@
       (is (not (v/ask? kb (list 'different a a) 'CxUniverse))
           (str "reflexive: " (pr-str a) " is not different from itself")))))
 
-(tu/deftest-kb una-is-suspended-for-unpinned-indeterminate-terms
+(tu/deftest-kb una-is-suspended-for-unmerged-indeterminate-terms
   ;; all three ways into the category — the built-in skolem, a declared kind, and a
-  ;; DIRECT membership — are exempt.  The direct case is the regression pin: the prover's
-  ;; cheap gate once required a declared subkind to exist before it would look, so a
+  ;; DIRECT membership — are exempt.  The direct case is the regression test: the prover's
+  ;; presence check once required a declared subkind to exist before it would look, so a
   ;; direct member's exemption appeared and disappeared with an unrelated (genl _
   ;; indeterminate_term) declaration, and the audit and the prover disagreed about the
   ;; same term.  Tested in ITS OWN kb-shape (no subkind declared) below.
@@ -921,24 +932,24 @@
     (is (not (v/ask? kb (list 'different Hazy Other) 'CxUniverse))
         "and so does the different prover — no subkind declaration required")))
 
-(tu/deftest-kb a-rewriteOf-pins-a-skolem-and-restores-una
+(tu/deftest-kb a-rewriteOf-identifies-a-skolem-and-restores-una
   ;; a merge that gives the skolem a determinate identity lifts the exemption for it.
   (tu/with-terms [Real Other]
     (let [sk (a-skolem kb)]
-      (is (not (v/ask? kb (list 'different sk Other) 'CxUniverse)) "unpinned: exempt")
-      (v/assert kb (list 'rewriteOf Real sk) 'CxUniverse)          ; pin sk -> Real
+      (is (not (v/ask? kb (list 'different sk Other) 'CxUniverse)) "unmerged: exempt")
+      (v/assert kb (list 'rewriteOf Real sk) 'CxUniverse)          ; identify sk with Real
       (is (v/ask? kb (list 'different sk Other) 'CxUniverse)
-          (str "once pinned by rewriteOf, the SKOLEM itself obeys the UNA — its"
+          (str "once identified by rewriteOf, the SKOLEM itself obeys the UNA — its"
                " representative has moved off it, which is the exemption's lifting"
                " condition"))
       (is (v/ask? kb (list 'different Real Other) 'CxUniverse)
-          "control: the determinate pin target was never exempt"))))
+          "control: the determinate rewrite target was never exempt"))))
 
 (tu/deftest-kb negative-zero-permutations-are-canonicalized
   ;; Pace's Cyc-canonicalizer check: -0.0 must not be a distinct term from 0.0 (the
   ;; Allegro bug).  Scope note: (= 0.0 -0.0) is true in Clojure, so the -0.0 rows
   ;; are settled by =-level canonicalization before the equality closure is ever
-  ;; consulted — this pins the reader-and-equality layer, not a closure read.  (An
+  ;; consulted — this asserts the reader-and-equality layer, not a closure read.  (An
   ;; integer -0 literal reads as 0 and is pure reflexivity, so it is not a row.)
   (doseq [[a b una?] [[0.0 -0.0 false]   ; same magnitude+kind: NOT different (no -0.0 bug)
                       [0   0.0  true]    ; integer 0 vs float 0.0: distinct EDN kinds
@@ -980,7 +991,7 @@
   ;; answerable by argument-type inference, which `ask` runs and a stored-sentex read does
   ;; not.  Either answer is defensible; disagreeing is not, because the audit would call a
   ;; filler indeterminate while `different` treated it as a determinate name.
-  ;; Pinned to the constraint-only reading: on the default (entailing) reading
+  ;; Forced to the constraint-only reading: on the default (entailing) reading
   ;; `(arg pointsAt 2 vague_kind)` mints `(vague_kind Hazy)`, so the category becomes one
   ;; the KB HOLDS and the audit flips — which is the very split this test asserts cannot
   ;; happen when the membership is only prover-inferable.
@@ -1004,7 +1015,7 @@
 (tu/deftest-kb the-audit-runs-through-the-public-api
   ;; the declarations in CxUniverse send an author to `vaelii.core`, so the audit answers there
   ;; without a caller requiring anything under `vaelii.impl`.  `predall` sits ABOVE core and
-  ;; the delegation runs back down through `wiring`, which is the arrangement being pinned:
+  ;; the delegation runs back down through `wiring`, which is the arrangement under test:
   ;; a broken resolve there fails at call time rather than at load.
   (tu/with-terms [hasPet person pet Alice Bob Rex]
     (v/assert kb (list 'binary_predicate hasPet) 'CxUniverse)

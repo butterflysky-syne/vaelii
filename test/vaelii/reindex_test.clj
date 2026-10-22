@@ -59,11 +59,11 @@
       (v/assert kb (list holds loves Tom Ann) 'CxUniverse)
       (let [var0?  (fn [t] (re-find #"var0" (str t)))
             snap   (fn [] {:backward? (v/provable? kb (list loves Tom Ann) 'CxUniverse)
-                           :roster-clean? (not-any? var0? (reads/stored-terms-global (:index kb)))})
+                           :names-clean? (not-any? var0? (reads/stored-terms-global (:index kb)))})
             before (snap)]
-        (testing "the backward goal reaches the var-consequent rule, and ?var0 never rostered"
+        (testing "the backward goal reaches the var-consequent rule, and ?var0 never enters the term-name set"
           (is (:backward? before))
-          (is (:roster-clean? before)))
+          (is (:names-clean? before)))
         (p/clear-index! (:index kb))
         (let [{:keys [rules]} (reindex/reindex kb)]
           (is (= 1 rules) "the var-consequent rule was re-registered"))

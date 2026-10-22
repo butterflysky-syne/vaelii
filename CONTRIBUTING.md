@@ -26,7 +26,7 @@ prefer `lein browser` while you are editing.
 ### 1.1 Static analysis (`lein lint`) setup
 
 Building, running and testing Vaelii needs only a JDK (21 or later; CI runs Temurin 25)
-and Leiningen. `lein lint` is a separate gate that shells out to three more binaries,
+and Leiningen. `lein lint` is a separate check that shells out to three more binaries,
 none of which Leiningen installs:
 
 - [`clj-kondo`](https://github.com/clj-kondo/clj-kondo) — `brew install
@@ -37,7 +37,7 @@ none of which Leiningen installs:
 - `python3` — usually already present
 
 **On Windows** every script alias runs under [Git for Windows](https://gitforwindows.org/)'s
-bash (the `bash` def at the top of `project.clj` finds it beside a `git.exe` on `PATH`,
+bash (the `bash` def in `project-env.clj` finds it beside a `git.exe` on `PATH`,
 or in the machine-wide, per-user or Scoop install), and the three tools are Windows
 programs on its `PATH` — with [Scoop](https://scoop.sh/):
 
@@ -69,25 +69,25 @@ that answer two different questions — well-formed, right — and it is
 deliberately **not** fail-fast, because the suite takes minutes and learning about both
 failures once beats learning about them one cycle at a time. Each stage streams
 to its own log under `logs/gate/run-<pid>/`, which `logs/gate/latest` points at — a
-run owns its directory, because two gates share a working tree here and neither may read
+run owns its directory, because two `lein gate` runs share a working tree here and neither may read
 the other's verdict. A failing stage prints its tail inline. Two checks then read the
 stage logs: `reflect`, for reflection warnings in the test tree, and `jvm`, for a JDK
 warning (a restricted native call, a `sun.misc.Unsafe` caller, a deprecated `-XX:` flag)
 or lein's leaked `$CLASSPATH` — so a dependency or a JDK that brings one in goes red here.
 **Perf is opt-in**: `lein release-gate` adds the scaling claims before a tag or a
-perf-sensitive land, `--perf` adds them without the release framing, and a fast gate
+perf-sensitive land, `--perf` adds them without the release framing, and a `lein gate` run
 that lands a hot-path change without them prints "perf owed". `lein release-gate` also
 runs an `uberjar` stage, which AOT-compiles every namespace into the standalone jar and
-loads `vaelii.core` from it. A gate at `:default` that
+loads `vaelii.core` from it. A `lein gate` run at `:default` that
 lands an index, TMS or inference change prints "slow owed" (§5).
 `--fail-fast`, `--only <stage>`, `--skip <stage>`, `--quick`, `--all`, and
 `PERF_TOLERANCE` on a loaded machine.
 
-You do not need the lint binaries to build, run or test; only to run the gate locally.
+You do not need the lint binaries to build, run or test; only to run `lein gate` locally.
 
 **Two of those checks are ratchets: each stops the build rather than printing at you.**
 A **reflection or auto-boxing warning fails the build** — `reflect` compiles `src` and
-`bench`, and the gate's test stage reads its own log for the tree that pass does not
+`bench`, and `lein gate`'s test stage reads its own log for the tree that pass does not
 compile, so both halves are covered. The fix is always a type hint at the call site;
 the allow-list is for a third-party release that still reflects, and turning
 `*warn-on-reflection*` off to get past it is the one response that is not available.
@@ -109,7 +109,7 @@ head commit.
 What the pull-request path leaves out, the `deep` workflow picks up: the `^:slow`
 tests, which carry more than half the suite's assertions; the `^:multi-jvm` and `^:fuzz`
 ones, which neither `:default` nor `:all` selects; the five record×index pairs
-the two-backend gate skips, plus `overlay` (the fork decorator, not a seventh pair); and
+the two-backend required checks skip, plus `overlay` (the fork decorator, not a seventh pair); and
 the seven **sweeps** — the whole suite re-run through the persistent-map JTMS, the
 incremental matcher, the node query engine, one of its tacticians, the reference
 retrieval fan-out, the planner turned off, and the argument declarations read as
@@ -117,7 +117,7 @@ constraints only. The first six replace something the engine otherwise picks for
 and each must be failing-set-identical with the default it replaces, since every one is
 a cost decision rather than a semantic one. The seventh is the supported opt-out reading
 (`VAELII_ASSERTIVE_ARG_TYPES=0`, [docs/argtypes.md](docs/argtypes.md)), and it is held to
-the same identity: a test whose answer depends on the reading pins one with
+the same identity: a test whose answer depends on the reading forces one with
 `tu/with-entailing` or `tu/without-entailing`.
 
 It blocks nothing and nobody waits on it, which is why a change touching storage, the
@@ -161,7 +161,7 @@ free to change on the same breath. A shim is cheap; a boundary nobody keeps is n
 boundary.
 
 This is not a convention, it is the compatibility boundary: it is what lets the
-internals move at the pace they move at. `test/vaelii/public_api_test.clj` pins it
+internals move at the pace they move at. `test/vaelii/public_api_test.clj` checks it
 from the outside, deliberately requiring nothing under `vaelii.impl.*` except the test
 scaffolding. The API itself is [`docs/api.md`](docs/api.md); what lives in which
 namespace is [`docs/namespaces.md`](docs/namespaces.md).
@@ -169,7 +169,7 @@ namespace is [`docs/namespaces.md`](docs/namespaces.md).
 `vaelii.koinii.*` is the one thing in the tree that is neither of the two: an
 **application** built on those six ([`docs/koinii.md`](docs/koinii.md)), so it lives at
 `src/vaelii/koinii/` rather than under `impl/` and requires nothing from there — the same
-test pins that. It is not a seventh public namespace: the engine's rosters (the API
+test checks that. It is not a seventh public namespace: the engine's frozen lists (the API
 golden, the SPI interfaces, the refusal types) exclude it, because freezing an app's surface
 there would put its development inside the engine's compatibility contract. What koinii
 needs and the API lacks gets published in `vaelii.core`, never reached around.
@@ -243,7 +243,7 @@ to refuse.
 Naming a new fn, add `!` only when it destroys or removes stored knowledge. Adding one
 to a fn that merely mutates — `assert`, `index-sentex`, `mark-premise`, `relabel`,
 `settle`, `forward-chain`, `recover` — is the mistake to avoid, because it dilutes the
-signal. The roster is in [`docs/api.md`](docs/api.md).
+signal. The list is in [`docs/api.md`](docs/api.md).
 
 ### 3.3 File ordering, not `declare`
 
@@ -360,13 +360,13 @@ deployment script that set it keeps setting it and stops being obeyed — so it 
 `test/golden/config-surface.edn` and its row in `docs/operations.md` in the same commit.
 Adding one is Additive and owes the same golden and the same row.
 
-**The published API and the extension points are pinned the same way.** Every public var
+**The published API and the extension points are frozen the same way.** Every public var
 of the six public namespaces is frozen with its arglists in
-`test/golden/api-surface.edn`, and a roster var (an option-key set such as
+`test/golden/api-surface.edn`, and a keyword-set var (an option-key set such as
 `assert-opt-keys`, or `vaelii.serve/ops`) with its members; the protocols a doc invites
 an out-of-tree implementation of — the storage contracts, `KvBackend`, `Solver`,
 `Prover`, `Provider` — are frozen in `test/golden/spi-protocols.edn`. Removing a var or a
-roster member, or changing an arglist, is class 1 and takes the label with a migration
+keyword-set member, or changing an arglist, is class 1 and takes the label with a migration
 line. Adding one is Additive. **Both move the
 golden**, which is the point: a golden that only moved on a break would be regenerated
 by whoever hit the break, and the additions — the way a surface actually grows — would
@@ -380,11 +380,11 @@ the old one.
 
 **The shipped ontology's content is not part of that surface, and the line runs between
 the code and the data.** `resources/kb/` is data the engine ships, and a caller takes the
-ontology their engine version carries — there is no separate thing to pin, no way to hold
+ontology their engine version carries — there is no separate thing to freeze, no way to hold
 one version of the terms against another of the engine. So an edit to a term, a
 declaration or a comment there takes **no** Breaking label however far it moves an
-answer, and rides any release. What it owes instead is the roster or golden test that
-pins the shipped set, so the change is visible rather than quiet, and a changelog entry
+answer, and rides any release. Such an edit owes instead the test or golden that
+freezes the shipped set, so the change is visible rather than quiet, and a changelog entry
 that says what moved.
 
 The engine *code* that reads the ontology is surface as usual, and the distinction is
@@ -445,7 +445,7 @@ Three process rules follow:
   `bash scripts/check-breaking-siblings.sh` (`lein check-siblings`) reads those
   tokens off the unreleased section and greps every sibling checkout on the
   machine for each, printing the hits with file and line. It is a **release
-  step**, not a gate: it reads other repositories, and which of them are cloned
+  step**, not a required check: it reads other repositories, and which of them are cloned
   is not a fact about this tree, so a missing sibling is named and adds no work
   and the run exits 0 whatever it finds. Every hit gets a verdict in the release
   notes — fixed in the sibling, filed against the sibling, or a non-issue with
@@ -511,8 +511,9 @@ pronoun points at. Eight rules:
 
 1. **Name the subject in every sentence.** No `it`, `that`, `this` or `the same` whose
    referent is a preceding clause rather than a noun already written down.
-2. **No pseudo-cleft.** Not "What holds the wrap to the library is a version pin."
-   Write "A version pin holds the wrap to the nippy release it was written against."
+2. **No pseudo-cleft.** Not "What keeps the wrap on its nippy release is the
+   expected-version check." Write "The expected-version check keeps the wrap on the nippy
+   release it was written against."
 3. **No verbless sentence and no fragment.** Every sentence has a subject and a finite
    verb. Not "Two ways to be wrong, and they are not the same one." Write "This throws
    for two distinct reasons."
@@ -542,6 +543,31 @@ pronoun points at. Eight rules:
    A KB modelling convention is a **pattern**, and gets named — "the `exceptWhen`
    pattern", never "the exception interface".
 
+   Six more words name no one mechanism, so each has a replacement per sense. An
+   identifier is held to them too: `exception-roster-gate` is a perf check, and its name
+   is `watched-rule-membership`.
+
+   | Word | What it actually is | Write |
+   |---|---|---|
+   | roster | the forced-monotonic predicates a context reads | **the forced-monotonic set**; "on the roster" is **forced-monotonic**, never bare "monotonic", which is the `:monotonic` strength |
+   | roster | the parts of a `covering`, `separating` or `partition` declaration | **part list**, **cover declaration** |
+   | roster | an index name set, a handle bitmap, an option-key set | **term-name set**, **slot predicate set**, **handle set**, **key set** |
+   | roster | a hand-kept table in code or a test | **table**, **list**, **allowlist** |
+   | gate | a presence test that skips work | **presence check**; "gated on X" is "runs only when X" |
+   | gate | a validation that refuses input | **check**, named for what it checks (layout check, CSRF check) |
+   | gate | a test or CI job that fails the build | **regression test**, **perf check**, **required check**; the verb is **enforces** |
+   | pin | a test, golden or fixture | **asserts**, **freezes**, **forces** |
+   | pin | a constraint narrowing, a bound argument, a fixed version | **determines**, **binds**, **fixed version** |
+   | stamp | what an image is checked against, or a cache key | **records fingerprint**, **manifest**, **generation**, **cache key** |
+   | stamp | what a generator's firing produces, or a provenance mark | **generated rule**, **records `:creator`**, **marks `:inert`** |
+   | window | the handles a settle relabelled | **touched set**, **published set** |
+   | window | a list cut at a limit, a byte buffer, a run of samples | **truncated list**, **read buffer**, **the last n samples** |
+   | view | a browser render map, a KB copy, an overlay union, a decoded rule | **render env**, **read copy**, **merged contents**, **rule fields** |
+
+   `view` stays for one thing: what a context sees up its `genlCx` ancestor set ("CxB's
+   view", the view context). `window` stays for a span of time (a grace window, a retry
+   window), and `gate` for the `lein gate` tool.
+
 5. **Mechanism first, reason second.** State what the code does, then why.
 6. **One claim per sentence.** No second claim chained onto the first with a subordinate
    clause.
@@ -553,10 +579,11 @@ pronoun points at. Eight rules:
 
 **`lein lint`'s `prose` check** (`scripts/check-prose.py`) enforces the mechanical part:
 P1 banned metaphors, P2 banned rhetoric, P3 pseudo-cleft, P4 a copula with `are` straight
-after it. It reads `src/`, `test/`, `bench/`, `docs/`, `scripts/`, `resources/kb/`
+after it, P5 the five words of the last table above other than `view`, and P6 `view` outside the context
+sense. It reads `src/`, `test/`, `bench/`, `docs/`, `scripts/`, `resources/kb/`
 and the root markdown against `scripts/prose-baseline.txt`, a per-file budget
 that only
-shrinks — a file absent from the baseline is pinned at zero, so new and rewritten files
+shrinks — a file absent from the baseline is held at zero, so new and rewritten files
 are clean by default. The sentence-form rules are held by review. This section states the
 rule, so it quotes the banned tokens in order to ban them and is exempt by name, the
 arrangement §3.6 and §3.7 already use.
@@ -566,9 +593,11 @@ instead, and a substitution made across the tree at once is how a batch of their
 gets fixed, so `is read as a` rewritten to `is are indistinguishable from a` is what such
 a pass leaves behind.
 
-The tree is at zero today, so `scripts/prose-baseline.txt` holds no entries and any hit
-fails. The file stays because the ratchet is how a batch of new prose lands without
-blocking on rewriting all of it at once.
+`scripts/prose-baseline.txt` holds one entry per file whose P5 hits are names the code
+must still read or a changelog entry must quote: the old keys in the Unreleased
+*Migration:* lines, `:stamp-inert` in a development build's `ops.log`, the `:window`
+dump framing, a durable fork's `::base-pinned` key and `matrix.plan`'s `roster` key. Each
+line carries its reason, and any other hit fails.
 
 ## 4. Adding things
 
@@ -580,9 +609,9 @@ bootstrap with the starter ontology, or assert it at runtime.
 If your predicate is transitive, symmetric or functional, assert the meta-predicate
 alongside it and the existing machinery picks it up. A declaration the engine does not
 read is worse than none, because it is indistinguishable from one that works:
-`vaelii.impl.vocabulary` is the roster of what the engine's own grammar actually
-enforces, and `vocabulary_audit_test.clj` fails both on a `core.txt` term the roster
-does not mention and on a roster entry naming a term the grammar has retired. If you
+`vaelii.impl.vocabulary` is the classification table of what the engine's own grammar
+actually enforces, and `vocabulary_audit_test.clj` fails both on a `core.txt` term the
+table does not mention and on a table entry naming a term the grammar has retired. If you
 add a declaration, add it there too.
 
 ### 4.2 Adding a prover
@@ -597,7 +626,7 @@ registered ones in `vaelii.impl.provers` are the templates; see
 
 **Not here.** The engine ships no reader for a format it does not write: a reader is a
 separate artifact that declares itself on the classpath, and this repo's
-`foreign_contract_test.clj` pins the fact that nothing in this tree names one, carries
+`foreign_contract_test.clj` asserts the fact that nothing in this tree names one, carries
 one, or declares a format. Readers live in
 [`vaelii-foreign`](https://github.com/vaelii/vaelii-foreign), which is Apache-2.0 and
 has its own contribution terms. [`docs/foreign.md`](docs/foreign.md)
@@ -655,7 +684,7 @@ mocks — the in-memory stores by default, with no external dependency.
   compare, since a configuration that ran fewer assertions than the others is green.
 - **`lein gate` runs the memory pair and only that one**, so a change touching storage,
   the index, records, recovery or overlay owes `./scripts/test-backends.sh` a run
-  before it lands. A durable-store bug is invisible to the one backend the gate
+  before it lands. A durable-store bug is invisible to the one backend `lein gate`
   exercises, which is the whole reason there are nine.
 - **`./scripts/test-sweeps.sh` is the other axis**, and a change touching inference,
   the TMS or context retrieval owes it the same run. Six switches re-run the suite
@@ -665,19 +694,19 @@ mocks — the in-memory stores by default, with no external dependency.
   is a cost decision rather than a semantic one. A seventh runs the argument
   declarations as constraints only. All seven must be failing-set-identical with each
   other and with a plain `lein test`, and their assertion counts are identical too: where an assertion
-  pins an artifact of one implementation (`prove`'s multiplicity, a depthless `query`),
+  asserts an artifact of one implementation (`prove`'s multiplicity, a depthless `query`),
   the test asserts the expectation of the engine in force, read off
   `tu/query-engine-override`, rather than standing aside — so `config_expected_delta`
   expects no shortfall anywhere, and any shortfall is a skip.
 - **Run both locally rather than asking CI for them.** The `deep` workflow runs the
   same sixteen configurations, and one run of it is 209 job-minutes — the local
-  scripts cost wall time and nothing else, so they are the gate and CI is the
-  confirmation.
+  scripts cost wall time and nothing else, so they are the required run and CI is
+  the confirmation.
 - **`^:slow` marks a test costing about a second or more on its own**, and `lein test`
   skips those by default. They carry over a quarter of the suite's assertions, and a
   change to the files they drive owes them: when the diff about to land touches the
-  index, the TMS or inference (`SLOW_OWED_RE` in `scripts/gate.sh`), a gate at
-  `:default` prints "slow owed", names the files and `lein gate --all`, and blocks
+  index, the TMS or inference (`SLOW_OWED_RE` in `scripts/gate.sh`), a `lein gate`
+  run at `:default` prints "slow owed", names the files and `lein gate --all`, and blocks
   nothing. The run answers for every commit it contains, so one green `:all` at the
   newest commit of a batch covers the batch. Mark a *new* test only when it is
   measurably over the line — a mark guessed at is a fast test nobody runs. Not one of
@@ -696,8 +725,8 @@ mocks — the in-memory stores by default, with no external dependency.
   process boundary makes visible and nothing else does: the single-writer lock refusing
   a second JVM, the OS releasing that lock when a killed one exits, a KB opened cold
   over a directory another process wrote, and the daemon and CLI contending for one
-  directory. **Nothing runs them for you** — not `lein test`, not `:all`, not `lein
-  gate`. `lein test-multi-jvm` does, and so does `deep`. Fork `java -cp` rather than
+  directory. **Nothing runs them for you** — not `lein test`, not `:all`, not
+  `lein gate`. `lein test-multi-jvm` does, and so does `deep`. Fork `java -cp` rather than
   `lein`, give each child its own temp directory, and handshake on a marker rather than
   a sleep.
 - **`^:fuzz` marks an exhaustive sweep no configuration varies**, and it is the other
@@ -719,7 +748,7 @@ mocks — the in-memory stores by default, with no external dependency.
   is also, for now, the only lever: `F_FULLFSYNC` serializes at the device, so four
   workers against APFS measured 0.96× one, and where concurrency does pay (2.7× on a RAM
   disk) a sharded sweep makes a green run print at `:error`. That line is benign —
-  `durability.clj` closes the window a close under a queued auto-compaction opens, and
+  `durability.clj` closes the race window a close under a queued auto-compaction opens, and
   nothing is written — but it is reported beside real failures, so sweeps stay serial
   until it is classified apart from them.
 - **`^:full-kb` marks a probe of a full-size KB**, the third mark `:all` passes over,
@@ -758,7 +787,7 @@ mocks — the in-memory stores by default, with no external dependency.
   conclusions by construction and every `fresh-kb` opens over the space the row before it
   filled, so `lein perf` printed 1,307 log lines around its verdicts. `:bench` raises the
   floor, and `VAELII_BENCH_LOG_LEVEL=info lein perf` puts it back.
-- **Never gate on a piped test run.** `lein test 2>&1 | tail -30` reports `tail`'s exit
+- **Never read a piped test run's exit status.** `lein test 2>&1 | tail -30` reports `tail`'s exit
   status, always 0, so a red suite reads as green *and* the failure list is truncated
   out of the log. Redirect to a file, read the status, then grep it.
 
@@ -812,7 +841,7 @@ remote shell. See [`.github/SECURITY.md`](.github/SECURITY.md).
 - **Commit style** is Conventional Commits: `type(scope): subject`, with the scope
   optional. The types in use are `feat`, `fix`, `perf`, `refactor`, `docs`, `test`,
   `style`, `build`, `bench`, `chore`, `deps`. Examples from `git log`:
-  - `fix(settle): recompute the touched window instead of reusing the published one`
+  - `fix(settle): recompute the touched set instead of reusing the published one`
   - `perf(checks): skip the declaration read when the predicate declares nothing`
   - `docs(kbs): document loading each of the four KBs from a fresh clone`
 
@@ -849,7 +878,7 @@ remote shell. See [`.github/SECURITY.md`](.github/SECURITY.md).
 - **One change per commit** where feasible. Bundle related cleanups.
 - **Run `lein gate` before pushing** (§1.1), plus `lein test-matrix` if you touched
   storage, the index, records, recovery, overlay, inference, the TMS or retrieval, and
-  `lein gate --all` when the gate prints "slow owed".
+  `lein gate --all` when `lein gate` prints "slow owed".
 - **Don't `--no-verify`**: fix the hook failure rather than bypassing it.
 - **Don't amend pushed commits**: make a new one.
 - **Merges may be rewritten.** Vaelii may squash, reword or amend your commits when
@@ -898,7 +927,7 @@ reach. Every page opens with the same three bullets — **Covers**, **Not here**
 `lein lint` also checks that every relative link in `README.md` and `docs/` resolves,
 and that no link escapes the repository.
 
-**A big measured number is written approximately unless something in the tree pins it.**
+**A big measured number is written approximately unless something in the tree asserts it.**
 A figure precise to the last digit — a sentex count, a µs/read, a wall clock in
 milliseconds — is a claim a reader can check, so it stays only where a test, a bench or a
 golden reproduces it
@@ -906,7 +935,7 @@ golden reproduces it
 workload *and* the method it was measured by. Everywhere else write the magnitude and
 name what it was taken on: `~1.2M sentexes on an OpenCyc-sized import`, `about 5 GB`,
 `tens of microseconds`, `roughly 7×`. Keep the argument the figure was carrying — a ratio
-between rows usually is the argument — and cite the pin or the page that measures it
+between rows usually is the argument — and cite the test or the page that measures it
 rather than restating a count of your own. Small exact counts the tree holds (provers,
 tool schemas, caches) stay exact, because a test counts them.
 

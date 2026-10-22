@@ -267,7 +267,7 @@
     @sent))
 
 (deftest a-genl-edge-under-no-rule-reading-above-it-seeds-no-fact-below-it
-  ;; the rule reads a predicate the edge does not reach, so the roster is not empty
+  ;; the rule reads a predicate the edge does not reach, so the set of rule antecedent functors is not empty
   (let [kb   (tu/fresh)
         m    {:strength :monotonic}
         edge (fn [top] (seeds-sent #(v/assert kb (list 'genl 'sss_low top) 'CxUniverse m)))]
@@ -325,7 +325,7 @@
     @hs))
 
 (deftest a-batch-of-merges-reads-the-region-once-per-settle
-  ;; the write path's supersession reconcile leaves the window to the batch's settle
+  ;; the write path's supersession reconcile leaves the touched set to the batch's settle
   (let [kb (tu/isolated-fresh)]
     (try
       (tu/with-shipped-config

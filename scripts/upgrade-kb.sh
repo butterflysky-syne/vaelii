@@ -12,10 +12,13 @@
 # KB-DIR defaults to checkouts/kb beside this checkout. A current KB installs its image
 # and is left as it was. A stale one pays one full recover, which grows with the store.
 # A KB another process holds open is refused by its single-writer lock. The heap is
-# VAELII_HEAP, default 40g (scripts/lib/start.sh).
+# VAELII_HEAP, default 40g, and a KB over postgres records runs under `+with-postgres`
+# (scripts/lib/start.sh).
 #
 # --verify goes to every `upgrade` run (docs/operations.md): it recovers anyway and
-# reports whether belief changed.
+# reports whether belief changed. --trust keeps an image written under other engine
+# source, as the browser's open does, and recovers only a KB whose records moved behind
+# its images.
 #
 # The records are read, never rewritten: a change to the record format is a migration
 # this script does not perform.
@@ -41,8 +44,9 @@ export JVM_OPTS
 
 for arg in "${DIRS[@]}"; do
   KB="$(start_kb_dir "$arg")" || exit 1
+  PROFILES="$(start_profiles "$KB")"
   echo "upgrading $KB" >&2
-  lein cli upgrade --dir "$KB" ${FLAGS[@]+"${FLAGS[@]}"}
+  lein ${PROFILES:+with-profile "$PROFILES"} cli upgrade --dir "$KB" ${FLAGS[@]+"${FLAGS[@]}"}
 done
 exit
 }

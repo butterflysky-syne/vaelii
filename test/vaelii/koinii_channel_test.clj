@@ -16,7 +16,6 @@
             [taoensso.trove :as trove]
             [vaelii.client :as vc]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.host.serve :as serve]
             [vaelii.impl.sentex :as sx]
             [vaelii.koinii.channel :as ch]
@@ -32,7 +31,7 @@
   reply to cascade."
   []
   (tu/load-dumped! (tu/fresh) :koinii/speech-acts
-                   #(doto % (core-context/load-into) (sa/load-speech-acts))))
+                   #(doto % (tu/load-core!) (sa/load-speech-acts))))
 
 (use-fixtures :each (tu/neutral-fresh channel-kb))
 
@@ -49,7 +48,7 @@
     (is (= 'CxDeploy (:channel atlas)))
     (is (v/sees? kb 'CxDeploy 'CxAtlas) "lifted under the channel, so the channel sees it")
     (is (v/sees? kb 'CxAtlas 'CxSpeechActs) "and rooted so it speaks the reply vocabulary")
-    (testing "assert writes into the agent's OWN context, creator stamped"
+    (testing "assert writes into the agent's OWN context, creator recorded"
       (let [h (ch/assert atlas (list 'usesDatabase 'ProdCluster 'PostgreSQL14))]
         (is (= 'CxAtlas (:context (v/sentex kb h))))
         (is (= 'AgentAtlas (:creator (v/provenance kb h))))))
@@ -59,8 +58,8 @@
 
 (tu/deftest-kb an-agent-cannot-assert-under-another-agents-name
   ;; The creator is the write boundary's other half: the context is fixed by identity, and
-  ;; so is the stamp.  A caller's `:creator` neither wins (Atlas signing Boreas's name) nor
-  ;; is dropped in silence (a stamp that looks like it took) — it is refused.
+  ;; so is the creator.  A caller's `:creator` neither wins (Atlas signing Boreas's name) nor
+  ;; is dropped in silence (a creator that looks like it took) — it is refused.
   (let [atlas (join! kb 'AgentAtlas)]
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"cannot assert as"
                           (ch/assert atlas '(usesDatabase ProdCluster PostgreSQL14)
@@ -289,7 +288,7 @@
                 "B sees A's query though A is gone — the KB is the medium")
             (let [ah (ch/answer boreas 'PostgreSQL14 qh)]
               (is (= 'AgentBoreas (:creator (v/provenance kb ah)))
-                  "the daemon stamped the creator from the wire opts, not from the connection")))
+                  "the daemon recorded the creator from the wire opts, not from the connection")))
           (let [a2     (conn)                                ; A reconnects
                 atlas2 (ch/join (ch/wire a2) 'CxDeploy 'AgentAtlas)
                 as     (ch/answers-to atlas2 qh)]
@@ -561,7 +560,7 @@
         "writing another agent's context is a cooperative move, not the registry breach")))
 
 (tu/deftest-kb an-agent-cannot-sign-anothers-name-in-a-speech-act
-  ;; `speaker-of` reads the speaker off the reply's own sentence; the entry point stamps the
+  ;; `speaker-of` reads the speaker off the reply's own sentence; the entry point records the
   ;; creator off the handle.  For the two to agree — the invariant every reader relies on
   ;; — a handle may assert a speech act only when it names itself as the speaker.
   (let [atlas (join! kb 'AgentAtlas)

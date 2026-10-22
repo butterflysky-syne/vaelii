@@ -4,7 +4,7 @@
   "Would a **cross-query subgoal table** pay?  The census that answers it, and the replay
   that prices it.
 
-  `res/matches-visible` answers survive a query in a clock-stamped per-KB cache
+  `res/matches-visible` answers survive a query in a clock-keyed per-KB cache
   (`literal-cache`); `provers/solve-goal` answers do not.  The asymmetry is deliberate and
   its reason is written down — a solve is dependent on the prover set that answered it,
   because `ask-capped` drops provers above a cost tier — so a table would have to carry
@@ -28,9 +28,9 @@
   inside one API call (which nothing serves today — the node engine's claimed-key set
   drops a node before it reaches the leaf, so what is counted here is already
   post-dedup), repeats across API calls, and repeats across API calls **under an unmoved
-  change clock**, which is the only kind a clock-stamped table could serve.
+  change clock**, which is the only kind a clock-keyed table could serve.
 
-  **The replay** prices it: a prototype table — clock-stamped, keyed the same way, storing
+  **The replay** prices it: a prototype table — clock-keyed, keyed the same way, storing
   only a completed realization (`literal-cache/storing`, so a bounded run leaves no
   prefix behind) — switched on and off in one JVM with the two arms interleaved, at three
   workloads.  Numbers are comparable **within this harness only**: a hand-rolled `lein
@@ -285,7 +285,7 @@
 
   `:within` is the repeats inside one API call; `:cross` the first solve of a key in a
   call that an *earlier* call already solved; `:cross-clock` the subset of those whose
-  earlier solve ran under the same change clock — the only ones a clock-stamped table
+  earlier solve ran under the same change clock — the only ones a clock-keyed table
   could serve."
   [entries]
   (let [by-call (sort-by first (group-by first entries))
@@ -376,7 +376,7 @@
 (defn- run-koinii!
   "The fifth arm, reported apart because it has a KB of its own and because its shape is
   the point: a koinii conversation **interleaves writes with reads**.  Every speech act is
-  an assert, so the change clock moves between one read and the next, and a clock-stamped
+  an assert, so the change clock moves between one read and the next, and a clock-keyed
   table meets each read empty however much the reads repeat.  The roommates' emergent
   argument from `koinii_roommates_test`, minus the wire."
   []

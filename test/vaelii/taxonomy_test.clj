@@ -589,7 +589,7 @@
   ;; by building the full closure `agrees?` compares.  The prune is sound only while
   ;; the depth potential holds (`edge x→y ⇒ depth[x] > depth[y]`); deletion leaves
   ;; depths loose, so this hammers `genl?` for **every ordered pair** against the
-  ;; reference closure's membership after every add/delete — the direct gate that a
+  ;; reference closure's membership after every add/delete — the direct regression test that a
   ;; loose depth never yields a wrong reachability verdict.
   (let [nodes (mapv #(symbol (str "m_" %)) (range 12))
         rnd   (java.util.Random. 314159)
@@ -625,7 +625,7 @@
   ;; way, every trial closes cycles and splits them again, and `sees?` is checked for
   ;; **every ordered pair** against the reference closure.
   ;;
-  ;; That is the gate on the condensation potential.  A stale component would answer
+  ;; That is the regression test on the condensation potential.  A stale component would answer
   ;; *true* for a pair a deletion has just separated; a stale depth would answer
   ;; *false* for a real path.  Both are invisible to a closure comparison that only
   ;; ever reads a repaired taxonomy, so the pairs are checked while the relation is
@@ -1132,7 +1132,7 @@
 
 (deftest common-descendant-existence
   ;; the boolean sibling of the placement function, for the callers that only ever
-  ;; ask existence — pinned shape by shape, then against the full function wholesale.
+  ;; ask existence — asserted shape by shape, then against the full function wholesale.
   (let [t (tax/create-taxonomy)]
     (tax/add-genlCx t 'CxBio 'CxUniverse 1)
     (tax/add-genlCx t 'CxChem 'CxUniverse 2)
@@ -1655,6 +1655,68 @@
             (when (first want) (swap! found inc))
             (is (= want (walk)) (str "trial " trial " " sub " " super))))))
     (is (pos? @found) "some pairs have a path")))
+
+(deftest a-witness-read-off-held-route-lengths-names-the-path-the-walk-names
+  ;; random graphs of 120 types, a few edges closing cycles, edges in four contexts and
+  ;; some with a second supporter of the other class: every witness asked of one router
+  ;; per supporter-class reading, from three vantages, against the walk asked alone
+  (let [rnd   (java.util.Random. 6017)
+        found (atom 0)
+        cls   #(if (even? %) :monotonic :default)]
+    (dotimes [trial 6]
+      (let [t   (tax/create-taxonomy)
+            ts  (mapv #(symbol (str "rl" %)) (range 120))
+            cxs [nil 'CxRlA 'CxRlB 'CxRlC]]
+        (tax/add-genlCx t 'CxRlA 'CxUniverse 1)
+        (tax/add-genlCx t 'CxRlB 'CxUniverse 2)
+        (tax/add-genlCx t 'CxRlC 'CxRlA 3)
+        (dotimes [h 500]
+          (let [i (.nextInt rnd 120) j (.nextInt rnd 120)]
+            (when (and (not= i j) (or (< i j) (zero? (.nextInt rnd 40))))
+              (tax/add-genl t (ts i) (ts j) (+ 10 h) (cxs (.nextInt rnd 4)))
+              (when (zero? (.nextInt rnd 4))
+                (tax/add-genl t (ts i) (ts j) (+ 1000 h) (cxs (.nextInt rnd 4)))))))
+        (let [routers {nil (java.util.HashMap.) cls (java.util.HashMap.)}]
+          (tax/with-neighbours
+            (atom {})
+            (fn []
+              (dotimes [_ 60]
+                (let [sub   (ts (.nextInt rnd 60))
+                      super (ts (+ 60 (.nextInt rnd 60)))]
+                  (doseq [ctx [nil 'CxRlA 'CxRlC] c [nil cls]]
+                    (let [want (tax/reach-support t :genl sub super ctx c [:monotonic :default])]
+                      (when (seq want) (swap! found inc))
+                      (is (= want (tax/reach-support t :genl sub super ctx c [:monotonic :default]
+                                                     (routers c)))
+                          (str "trial " trial " " sub " " super " " ctx)))))))))))
+    (is (pos? @found) "some pairs have a path")))
+
+(deftest a-routed-witness-walk-builds-no-up-closure-of-the-types-it-enters
+  ;; a braid of 40 levels of four types, each under two of the level above and a side
+  ;; type of its level, which is under another root: walks from the four bottom types to
+  ;; the root over one router compute no closure, where a test of each entered type's
+  ;; up-closure computes one per type the walk enters
+  (let [t    (tax/create-taxonomy)
+        node #(symbol (str "rb" %1 "_" %2))
+        h    (atom 0)
+        add  #(tax/add-genl t %1 %2 (swap! h inc))]
+    (dotimes [j 4] (add (node 0 j) 'rbroot))
+    (doseq [i (range 1 40) j (range 4)]
+      (add (node i j) (node (dec i) j))
+      (add (node i j) (node (dec i) (mod (inc j) 4)))
+      (add (node i j) (symbol (str "rbside" i))))
+    (dotimes [i 40] (add (symbol (str "rbside" i)) 'rbother))
+    (let [misses #(get (caches/tally-map (:tally (:closure-lru @t))) :misses 0)
+          before (misses)
+          router (java.util.HashMap.)
+          ws     (mapv #(tax/reach-support t :genl (node 39 %) 'rbroot nil (constantly :monotonic)
+                                           [:monotonic :default] router)
+                       (range 4))
+          after  (misses)]
+      (is (= before after))
+      (is (every? #(= 40 (count %)) ws))
+      (is (= ws (mapv #(tax/reach-support t :genl (node 39 %) 'rbroot nil (constantly :monotonic))
+                      (range 4)))))))
 
 (deftest the-uncovered-routes-a-pass-reads-over-held-neighbours-are-those-read-alone
   ;; random graphs of 60 types, edges stated in four contexts (one with none) under two

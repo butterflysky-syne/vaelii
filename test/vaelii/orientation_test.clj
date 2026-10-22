@@ -86,7 +86,7 @@
     (v/assert kb (list 'northeastOf B D) C)
     (testing "ne∘ne = ne, so A is northeast of D though nobody said so"
       (is (v/ask? kb (list 'northeastOf A D) C)))
-    (testing "and the computed table pins it to exactly that"
+    (testing "and the computed table narrows it to exactly that"
       (is (= #{:ne} (qkb/possible dir/cardinal kb C A D)))
       (is (= :ne (qkb/definite dir/cardinal kb C A D))))
     (testing "so a direction the network excludes is not answered"

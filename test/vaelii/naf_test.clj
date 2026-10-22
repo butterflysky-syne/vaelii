@@ -136,12 +136,12 @@
     (testing "derived while the NAF query is absent"
       (is (v/ask? kb (list rr Aa) 'CxWell)))
     (let [h (v/assert kb (list qq Aa) 'CxWell {:strength :monotonic})]
-      (testing "a later fact that satisfies the query blocks and sweeps the conclusion"
+      (testing "a later fact that satisfies the query defeats the conclusion"
         (is (not (v/ask? kb (list rr Aa) 'CxWell)))
-        (is (nil? (v/handle-of kb (list rr Aa) 'CxWell))
-            "the conclusion is deleted, not merely disbelieved (garbage collection, not defeat)"))
+        (is (some? (v/handle-of kb (list 'defeat (list 'sentexHandle (v/handle-of kb (list rr Aa) 'CxWell))) 'CxWell))
+            "the conclusion stays stored, and a guard defeat hides it"))
       (v/retract! kb h)
-      (testing "retracting it revives the conclusion by re-derivation"
+      (testing "retracting it withdraws the defeat"
         (is (v/ask? kb (list rr Aa) 'CxWell))))))
 
 (tu/deftest-kb a-guarded-firing-over-monotonic-facts-confers-default
@@ -321,11 +321,12 @@
     (is (v/ask? kb (list ss Aa) 'CxWell)
         "one conjunct holding leaves the query underivable")
     (let [h (v/assert kb (list rr Aa) 'CxWell {:strength :monotonic})]      ; the *second* conjunct, last
-      (testing "completing the conjunction blocks and sweeps the conclusion"
+      (testing "completing the conjunction defeats the conclusion"
         (is (not (v/ask? kb (list ss Aa) 'CxWell)))
-        (is (nil? (v/handle-of kb (list ss Aa) 'CxWell))))
+        (is (some? (v/handle-of kb (list 'defeat (list 'sentexHandle (v/handle-of kb (list ss Aa) 'CxWell))) 'CxWell))
+            "the conclusion stays stored, and a guard defeat hides it"))
       (v/retract! kb h)
-      (testing "and breaking it again revives the conclusion by re-derivation"
+      (testing "and breaking it again withdraws the defeat"
         (is (v/ask? kb (list ss Aa) 'CxWell))))))
 
 (tu/deftest-kb a-conjunctive-NAF-goal-agrees-with-the-rule-antecedent
@@ -532,11 +533,12 @@
     (testing "no sick child, so the rule fires"
       (is (v/ask? kb (list unworried Tom) 'CxWell)))
     (let [h (v/assert kb (list sick Kid) 'CxWell {:strength :monotonic})]
-      (testing "the *second* conjunct's predicate is watched too, so the firing is swept"
+      (testing "the *second* conjunct's predicate is watched too, so the firing is defeated"
         (is (not (v/ask? kb (list unworried Tom) 'CxWell)))
-        (is (nil? (v/handle-of kb (list unworried Tom) 'CxWell))))
+        (is (some? (v/handle-of kb (list 'defeat (list 'sentexHandle (v/handle-of kb (list unworried Tom) 'CxWell))) 'CxWell))
+            "the conclusion stays stored, and a guard defeat hides it"))
       (v/retract! kb h)
-      (testing "and retracting it revives the conclusion by re-derivation"
+      (testing "and retracting it withdraws the defeat"
         (is (v/ask? kb (list unworried Tom) 'CxWell))))))
 
 (tu/deftest-kb a-joined-NAF-antecedent-is-order-independent
@@ -730,6 +732,23 @@
       (is (v/ask? kb (list accountOn Alice HostA) CxHosts))
       (is (not (v/ask? kb (list 'not (list accountOn Carol HostB)) CxHosts))))))
 
+(tu/deftest-kb the-four-and-five-position-sugar-derives-the-ternary-grant
+  ;; "the bookings in Room9 at slot 4 are exactly the stored ones", at positions 4 and 5
+  (doseq [[sugar position] '[[closedExtentForArg4 4] [closedExtentForArg5 5]]]
+    (tu/with-terms [bookedIn Alice Carol Desk Room9 Room10 CxRooms]
+      (let [row     (fn [who room] (if (= 4 position)
+                                     (list bookedIn who Desk 1 room)
+                                     (list bookedIn who Desk 1 2 room)))]
+        (v/assert kb (list 'genlCx CxRooms 'CxUniverse) 'CxUniverse)
+        (v/assert kb (row Alice Room9) CxRooms)
+        (v/assert kb (list sugar bookedIn Room9) CxRooms)
+        (testing (str sugar " derives the ternary grant")
+          (is (v/ask? kb (list 'closedExtentForArg bookedIn position Room9) CxRooms)))
+        (testing "and reads exactly as the ternary does"
+          (is (v/ask? kb (list 'not (row Carol Room9)) CxRooms))
+          (is (not (v/ask? kb (list 'not (row Alice Room9)) CxRooms)))
+          (is (not (v/ask? kb (list 'not (row Carol Room10)) CxRooms))))))))
+
 (tu/deftest-kb a-per-argument-closed-extent-is-scoped-to-its-context
   (tu/with-terms [accountOn Alice Carol HostA CxHosts CxSibling]
     (v/assert kb (list 'genlCx CxHosts 'CxUniverse) 'CxUniverse)
@@ -885,8 +904,8 @@
     (let [h (v/assert kb (list childOf Bob Kid3) 'CxWell {:strength :monotonic})]
       (testing "a third child nobody says is asleep is the counterexample"
         (is (not (v/ask? kb (list all_kids_asleep Bob) 'CxWell)))
-        (is (nil? (v/handle-of kb (list all_kids_asleep Bob) 'CxWell))
-            "the conclusion is withdrawn, not merely disbelieved"))
+        (is (some? (v/handle-of kb (list 'defeat (list 'sentexHandle (v/handle-of kb (list all_kids_asleep Bob) 'CxWell))) 'CxWell))
+            "the conclusion stays stored, and a guard defeat hides it"))
       (testing "and the goal form agrees with the rule antecedent"
         (is (not (v/ask? kb (list 'forall '?y (list 'implies (list childOf Bob '?y)
                                                     (list asleep '?y)))
@@ -1322,34 +1341,39 @@
     :unknown (list 'implies (list 'and (list pp '?x) (list 'unknown (list qq '?x))) (list rr '?x))))
 
 (defn- guard-reading
-  "Build the lattice above in `kb` with the steps `ops` in order (`:pp`, `:qq`, `:g`, `:h`,
-  `:uu`, `:g2`, `:premise`, `:retract-qq`), read `[CxA believes F, CxB believes F, the
-  defeats of F stored at CxA, and at CxB]`, and retract what it asserted."
-  [kb kind ops]
-  (tu/with-terms [pp qq rr tt uu Zed CxA CxB]
-    (let [as  (fn [s c] (v/assert kb s c (if (= 'implies (first s)) {:direction :forward} {})))
-          hs  (volatile! [(v/assert kb (list 'genlCx CxB CxA) 'CxUniverse {:strength :monotonic})
-                          (as (list tt Zed) CxA)])
-          qqh (volatile! nil)]
-      (doseq [op ops]
-        (let [h (case op
-                  :pp      (as (list pp Zed) CxA)
-                  :qq      (vreset! qqh (as (list qq Zed) CxB))
-                  :g       (as (guard-rule kind pp qq rr) CxA)
-                  :h       (as (list 'implies (list 'and (list pp '?x) (list tt '?x)) (list rr '?x)) CxA)
-                  :g2      (as (list 'implies (list 'and (list pp '?x) (list 'unknown (list uu '?x)))
-                                     (list rr '?x))
-                               CxA)
-                  :uu      (as (list uu Zed) CxB)
-                  :premise (as (list rr Zed) CxA)
-                  :retract-qq (do (v/retract! kb @qqh) nil))]
-          (when h (vswap! hs conj h))))
-      (let [f       (v/handle-of kb (list rr Zed) CxA)
-            defeats (fn [c] (count (filter #(= (list 'defeat (list 'sentexHandle f)) (:sentence %))
-                                           (v/sentexes-matching kb (list 'defeat '?h) c))))
-            r       [(v/believed? kb f CxA) (v/believed? kb f CxB) (defeats CxA) (defeats CxB)]]
-        (doseq [h (rseq @hs)] (when (v/sentex kb h) (v/retract! kb h)))
-        r))))
+  "Build the lattice above in `kb` with the steps `ops` in order (`:pp`, `:qq`, `:qq-a`
+  for (qq Zed) in CxA, `:g`, `:h`, `:uu`, `:g2`, `:premise`, `:retract-qq`), read `(read
+  F CxA CxB)`, by default `[CxA believes F, CxB believes F, the defeats of F stored at
+  CxA, and at CxB]`, and retract what it asserted."
+  ([kb kind ops] (guard-reading kb kind ops nil))
+  ([kb kind ops read]
+   (tu/with-terms [pp qq rr tt uu Zed CxA CxB]
+     (let [as  (fn [s c] (v/assert kb s c (if (= 'implies (first s)) {:direction :forward} {})))
+           hs  (volatile! [(v/assert kb (list 'genlCx CxB CxA) 'CxUniverse {:strength :monotonic})
+                           (as (list tt Zed) CxA)])
+           qqh (volatile! nil)]
+       (doseq [op ops]
+         (let [h (case op
+                   :pp      (as (list pp Zed) CxA)
+                   :qq      (vreset! qqh (as (list qq Zed) CxB))
+                   :qq-a    (vreset! qqh (as (list qq Zed) CxA))
+                   :g       (as (guard-rule kind pp qq rr) CxA)
+                   :h       (as (list 'implies (list 'and (list pp '?x) (list tt '?x)) (list rr '?x)) CxA)
+                   :g2      (as (list 'implies (list 'and (list pp '?x) (list 'unknown (list uu '?x)))
+                                      (list rr '?x))
+                                CxA)
+                   :uu      (as (list uu Zed) CxB)
+                   :premise (as (list rr Zed) CxA)
+                   :retract-qq (do (v/retract! kb @qqh) nil))]
+           (when h (vswap! hs conj h))))
+       (let [f       (v/handle-of kb (list rr Zed) CxA)
+             defeats (fn [c] (count (filter #(= (list 'defeat (list 'sentexHandle f)) (:sentence %))
+                                            (v/sentexes-matching kb (list 'defeat '?h) c))))
+             r       (if read
+                       (read f CxA CxB)
+                       [(v/believed? kb f CxA) (v/believed? kb f CxB) (defeats CxA) (defeats CxB)])]
+         (doseq [h (rseq @hs)] (when (v/sentex kb h) (v/retract! kb h)))
+         r)))))
 
 (tu/deftest-kb a-guard-below-the-placement-places-a-defeat-and-a-second-justification-keeps-f
   (doseq [kind [:except :unknown]]
@@ -1360,6 +1384,35 @@
       (is (= #{[true true 0 1]}
              (into #{} (map #(guard-reading kb kind %)) (oi/permutations [:pp :qq :g :h])))
           "H's justification is not covered at CxB"))))
+
+(defn- verdicts-by-rule
+  "The verdicts `ctx` reads on F's justifications, keyed `:g` for the guarded rule's
+  firing and `:h` for the other's."
+  [kb f ctx]
+  (into {} (map (fn [[jid r]]
+                  [(if (= 1 (count (:antecedents (v/justification kb jid)))) :g :h) r]))
+        (v/justification-verdicts kb f ctx)))
+
+(tu/deftest-kb the-verdicts-name-the-justification-a-guard-defeat-covers-at-each-reader
+  (doseq [kind [:except :unknown]]
+    (testing kind
+      (is (= [{:g :supports :h :supports} {:g :guard :h :supports} #{}]
+             (guard-reading kb kind [:pp :qq :g :h]
+                            (fn [f a b] [(verdicts-by-rule kb f a) (verdicts-by-rule kb f b)
+                                         (into #{} (filter (set (keys (v/justification-verdicts kb f a))))
+                                               (v/blocked-justifications kb))])))
+          "CxB's guard covers G's firing there alone, and the network blocks neither firing")
+      (is (= [true #{:guard :supports}]
+             (guard-reading kb kind [:pp :qq-a :g :h]
+                            (fn [f _ _] (let [t (v/why kb f)]
+                                          [(:believed? t) (set (map :verdict (:support t)))]))))
+          "with the blocker in F's own context, why names the covered firing"))))
+
+(tu/deftest-kb why-not-reads-a-guard-covered-firing-as-no-support
+  (is (= [:unsupported [:guard]]
+         (guard-reading kb :unknown [:pp :qq-a :g]
+                        (fn [f _ _] (let [r (v/why-not kb f)]
+                                      [(:reason r) (mapv :verdict (:support r))]))))))
 
 (tu/deftest-kb a-second-guarded-justification-keeps-f-until-its-guard-holds-too
   (doseq [kind [:except :unknown]]

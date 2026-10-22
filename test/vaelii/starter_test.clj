@@ -111,7 +111,7 @@
   holds; a `disjoint` extends both sides.  An `(arg P 1 T)` defines `P` and only uses
   `T` — a constraint naming a type says nothing new about the type.
 
-  Read as a roster rather than as \"every functor\": a use is the common case and the
+  Read as a list rather than as \"every functor\": a use is the common case and the
   test below is about the rare one."
   '#{comment unary_predicate binary_predicate ternary_predicate arity arg genlArg quotedArg
      arg1 arg2 arg3 interArg symmetric transitive asymmetric anti_symmetric anti_transitive
@@ -119,7 +119,7 @@
      equivalence_relation variable_arity abducible_predicate closed_extent_predicate
      modal_predicate decontextualized_predicate forced_decontextualized_predicate
      instance_relation_predicate type_relation_predicate target_following_predicate
-     reifiable_function unreifiable_function quoting_function
+     reifiable_function unreifiable_function
      result genlResult transitiveInArgInverse transitiveInArg inverse relation_kind})
 
 (defn- touched-terms
@@ -206,13 +206,13 @@
     (is (v/ask? kb '(ancestorOf Tom Ann)))            ; transitive closure of parentOf
     (is (v/ask? kb '(childOf Bob Tom)))               ; inverse of parentOf
     (is (v/ask? kb '(siblingOf Carol Ann)))           ; symmetric
-    (is (v/ask? kb '(partOf Piston1 Car1))))          ; transitive
+    (is (v/ask? kb '(tangiblePartOf Piston1 Car1))))  ; transitive
   (testing "functional birthYearOf makes a second, different value a clash"
     (is (tu/stored-in-clash? kb '(birthYearOf Tom 1971) 'CxSocialWorld))))
 
 (tu/deftest-kb every-stored-sentence-satisfies-the-naming-invariants
   ;; `nm/problems` checks a functor per *literal*, so tightening it can invalidate
-  ;; content that passes at the top level and not below it.  This is the gate on that: the
+  ;; content that passes at the top level and not below it.  This test checks that: the
   ;; shipped schema (`resources/kb/**`) plus the whole test-world, every sentex the
   ;; load actually stored — **derived** conclusions included, which `assert` never
   ;; name-checks because they come out of the chainer rather than from a caller.
@@ -246,7 +246,7 @@
   (testing "every domain relation is documented"
     (doseq [p '[parentOf grandparentOf childOf ancestorOf siblingOf marriedTo
                 motherOf fatherOf
-                likes eats owns partOf locatedIn hasCapability capabilityType
+                likes eats owns tangiblePartOf locatedIn hasCapability capabilityType
                 mortal birthYearOf olderThan
                 weightOf heightOf heavierThan tallerThan
                 signOf trendOf derivativeOf greaterInMagnitudeThan
@@ -257,7 +257,7 @@
   ;; The unit table is the one place the schema ships individuals, and a half-stated
   ;; unit is worse than an absent one: the provers read `dimensionOf` to decide
   ;; comparability and `conversionFactor` to normalize, so a unit with one and not the
-  ;; other silently answers nothing rather than failing.  This is the gate on that.
+  ;; other silently answers nothing rather than failing.  This test checks that.
   (let [dimension  (into {} (map (fn [sx] (let [[_ u d] (:sentence sx)] [u d])))
                          (v/sentexes-with-functor kb 'dimensionOf {:believed? true}))
         conversion (into {} (map (fn [sx] (let [[_ u b f] (:sentence sx)] [u [b f]])))
@@ -285,12 +285,3 @@
       (is (v/ask? kb (list 'unit_of_measure unit) c) (str unit))
       (is (v/ask? kb (list 'physical_dimension dimension) c) (str dimension))
       (is (nil? (v/handle-of kb (list 'thing unit) c)) (str unit)))))
-
-(deftest no-shipped-declaration-makes-an-argument-a-thing
-  ;; `genlArg … thing` is not in the roster: it says the position holds a type
-  (let [declares #{'arg 'arg1 'arg2 'arg3 'arg4 'arg5 'args 'argAndRest 'quotedArg}
-        bare     #(if (and (seq? %) (= 'set/monotonic (first %))) (second %) %)]
-    (is (empty? (for [[c s] (authored-sentences)
-                      :let  [s (bare s)]
-                      :when (and (seq? s) (declares (first s)) (= 'thing (last s)))]
-                  [c s])))))

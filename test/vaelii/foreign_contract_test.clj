@@ -6,7 +6,7 @@
   A foreign reader is a bridge to knowledge that predates this build, and every one of
   them is finished the day its corpus has been converted once into the format we write.
   So none of them ships here: this engine reads its own dump format, and a bridge is a
-  **separate artifact** that declares itself on the classpath.  Two halves to pin, and
+  **separate artifact** that declares itself on the classpath.  Two halves to test, and
   this namespace is the one that can only be tested from a build with no plugin in it:
 
     * nothing in this tree names a reader, carries one, or declares a format — so the
@@ -133,7 +133,7 @@
   ;; A resolved `:engine-dump` reader whose map omits a documented field is refused with
   ;; `:no-foreign-reader` at the engine's own call site — the graceful treatment
   ;; `frame-decoder` already gives `:decode-frame` — rather than dereferenced as nil into
-  ;; an NPE several frames into the import.  `:versions` gates the version check and
+  ;; an NPE several frames into the import.  `:versions` feeds the version check and
   ;; `:replay-belief!` reads the belief stream; both go through `dump-reader-field`.
   (let [field #'io-import/dump-reader-field]
     (try
@@ -236,7 +236,7 @@
           ;; `let`, not `when-let`: `is` answers nil when nothing throws, and a
           ;; `when-let` would then drop the two assertions below along with the one
           ;; that failed — an assertion count that moves with the outcome, which is
-          ;; the one thing a suite-wide count gate cannot read.  `(ex-data nil)` is
+          ;; the one thing a suite-wide count check cannot read.  `(ex-data nil)` is
           ;; nil, so both fail cleanly instead of disappearing.
           (let [e (is (thrown? clojure.lang.ExceptionInfo (foreign/formats)))]
             (is (= :bad-foreign-manifest (:type (ex-data e))))

@@ -108,7 +108,7 @@ by no more than the shorter of them. An unconstrained pair gets that row.
 The relation set comes from the *tightened* network, so a composed relation answers as an
 asserted one does: `(during A B)` and `(during B D)` put A inside D, and the overlap of A
 and D is all of A. The interval network also reads the metric narrowing beside its stored
-facts ([stp.md](stp.md)), so a pair pinned only by endpoint measures arrives already
+facts ([stp.md](stp.md)), so a pair determined only by endpoint measures arrives already
 narrowed. An **inconsistent** network yields an empty relation set and no answer, as the
 qualitative prover gives none.
 
@@ -117,7 +117,7 @@ qualitative prover gives none.
 When the KB places the two intervals' endpoints relative to each other, through
 `(startOf I P)` / `(endOf I P)` and the `temporalDistance` constraints,
 `stp/overlap-window-with-support` bounds the shared stretch ([stp.md](stp.md), "Sharpening
-an overlap"). `sharpen-overlap` **intersects** that window with the qualitative bound. Both
+an overlap"). `sharpen-overlap` **intersects** that overlap window with the qualitative bound. Both
 are sound, so the intersection is:
 
 ```clojure
@@ -135,12 +135,12 @@ Four properties hold:
 * **The metric layer only narrows.** A KB stating no `temporalDistance`, or none reaching
   these two intervals, or one whose network is unsatisfiable, gets the qualitative answer
   unchanged. Naming an interval's endpoints is not a constraint.
-* **Dimensions must match.** The window is read in only when its dimension and base unit
+* **Dimensions must match.** The overlap window is read in only when its dimension and base unit
   are the lengths'. Gaps in metres never narrow a duration.
-* **A sharpened range renders as a range.** A window that halves the ceiling without
-  pinning the figure gives a `(QuantityIntervalFn …)`.
-* **The window narrows a bound; it is not one.** The qualitative bound comes from the two
-  stored lengths, so a KB that pins every gap between all four endpoints still gets no
+* **A sharpened range renders as a range.** An overlap window that halves the ceiling
+  without fixing the figure gives a `(QuantityIntervalFn …)`.
+* **The overlap window narrows a bound; it is not one.** The qualitative bound comes from the two
+  stored lengths, so a KB that fixes every gap between all four endpoints still gets no
   `overlapDuration` answer while either interval has no `(length I M)`.
 
 Two bounds with no value in common mean the KB says two incompatible things about one
@@ -157,8 +157,8 @@ withdraws the conclusion ([inference.md](inference.md), "What a computed answer 
 - **`totalDuration`** rests on every component's `length` facts and the unit rows each
   converted through.
 - **`overlapDuration`** rests on those, on the Allen network's support for the pair
-  (`interval/allen-support`, empty for an unconstrained pair), and on the metric window's
-  support wherever a window of the lengths' dimension was intersected in. A KB with no
+  (`interval/allen-support`, empty for an unconstrained pair), and on the metric overlap window's
+  support wherever an overlap window of the lengths' dimension was intersected in. A KB with no
   `temporalDistance` gets a conclusion resting on nothing metric.
 - **The check arm** adds the stated measure's own unit-table rows, since the check
   compares after normalizing it.

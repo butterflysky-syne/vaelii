@@ -120,9 +120,16 @@ printf '%s\n' "${namespaces[@]}" \
       { light = 1
         for (b = 2; b <= of; b++) if (load[b] < load[light]) light = b
         load[light] += $1 + 0; count[light]++
-        if (light == shard) print $2
+        if (light == shard) mine[++m] = $2
       }
       END {
+        # The shard runs its namespaces lightest, heaviest, second lightest, second
+        # heaviest, and so on, so the runtime is spread evenly over the run.
+        hi = 1
+        for (lo = m; lo >= hi; lo--) {
+          print mine[lo]
+          if (hi < lo) print mine[hi++]
+        }
         for (b = 1; b <= of; b++) all += load[b]
         msg = sprintf("shard %d of %d: %d of %d namespaces, %.0fs of %.0fs predicted, from %s",
                       shard, of, count[shard] + 0, NR, load[shard] + 0, all, weights)

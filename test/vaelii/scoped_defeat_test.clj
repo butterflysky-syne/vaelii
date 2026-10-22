@@ -23,6 +23,13 @@
 (defn- types! [kb & ts]
   (doseq [t ts] (v/assert kb (list 'genl t 'thing) 'CxUniverse)))
 
+(defn- verdicts-agree!
+  "Check the justification verdicts against belief over every sentex stored in `ctxs`, at
+  each of them (`tu/verdict-violations`)."
+  [kb ctxs]
+  (is (= [] (tu/verdict-violations
+             kb (into [] (comp (mapcat #(v/sentexes-in-context kb %)) (map :id)) ctxs) ctxs))))
+
 (defn- status
   "`belief-status`' `:withdrawn?` and `:believed?` for `h` at `c`, with the contexts of the
   placed defeats of `h` in force there under `:defeat-vantages`."
@@ -403,7 +410,7 @@
       (is (= (first answers) answer) (str "order " (pr-str order) " read differently")))))
 
 (deftest a-disagreement-is-the-same-whatever-order-it-arrives-in
-  ;; The invariant the roster owes: belief is computed from current state, so building the
+  ;; The order-independence invariant: belief is computed from current state, so building the
   ;; same lattice with the vantages declared in either order gives one answer.
   (let [world (fn [order]
                 (tu/with-neutral-kb [kb tu/fresh]
@@ -692,7 +699,7 @@
 (deftest lifting-the-denial-returns-every-reader-to-reaching
   ;;   The lattice above, with the denial retracted.  The scoped closures are memoized
   ;;   under a key carrying the change clock and the reading, so the retraction that
-  ;;   empties the scoped-defeat roster retires every closure memoized while the defeat
+  ;;   empties the scoped-defeat entries retires every closure memoized while the defeat
   ;;   stood.
   (tu/with-neutral-kb [kb tu/fresh]
     (tu/with-terms [CxA CxB chi_t dog_t cat_t largerThan Rex]
@@ -721,21 +728,21 @@
 
 (deftest a-denial-of-a-genlcx-edge-leaves-the-context-below-it-seeing-over-it
   ;;   CxUniverse  (genlCx CxB CxE), the edge under test
-  ;;     ├─ CxE    (marker Pin) monotonic, and where the edge is written
+  ;;     ├─ CxE    (marker Marked) monotonic, and where the edge is written
   ;;     └─ CxB    (not (genlCx CxB CxE)) monotonic   ← the vantage
-  ;; The genlCx twin of the `genl` case, with the opposite outcome: `genlCx` is on the
-  ;; engine's baseline roster, so the denial is held OUT on this bare KB and no vantage
-  ;; disbelieves the edge.  The KB holds no shipped ontology, so the CxUniverse mark is
+  ;; The genlCx twin of the `genl` case, with the opposite outcome: `genlCx` is in the
+  ;; baseline forced-monotonic set, so the denial loses to the edge on this bare KB and no
+  ;; vantage disbelieves the edge.  The KB holds no shipped ontology, so the CxUniverse mark is
   ;; asserted: `genlCx` is forced-decontextualized and stores in CxUniverse, while the
   ;; `not` denial stays in CxB.
   (doseq [edge-first? [true false]]
     (testing (if edge-first? "the edge arrives first" "the denial arrives first")
       (tu/with-neutral-kb [kb tu/fresh]
-        (tu/with-terms [CxB CxE marker_t Pin]
+        (tu/with-terms [CxB CxE marker_t Marked]
           (types! kb marker_t)
           (v/assert kb '(forced_decontextualized_predicate genlCx) 'CxUniverse)
           (doseq [c [CxB CxE]] (v/assert kb (list 'genlCx c 'CxUniverse) 'CxUniverse))
-          (v/assert kb (list marker_t Pin) CxE {:strength :monotonic})
+          (v/assert kb (list marker_t Marked) CxE {:strength :monotonic})
           (let [edge!   #(v/assert kb (list 'genlCx CxB CxE) CxE)
                 denial! #(v/assert kb (list 'not (list 'genlCx CxB CxE)) CxB
                                    {:strength :monotonic})
@@ -746,13 +753,13 @@
                      (mapv :context (v/sentexes-matching kb (list 'genlCx CxB CxE)))))
               (is (some? h))
               (is (true? (v/in? kb h))) "and it stands in the network")
-            (testing "the denial is stored in CxB and held OUT, and both contexts believe the edge"
+            (testing "the denial is stored in CxB and loses to the edge, and both contexts believe it"
               (is (false? (v/in? kb (v/handle-of kb (list 'not (list 'genlCx CxB CxE)) CxB))))
               (is (true? (v/believed? kb h CxB)))
               (is (true? (v/believed? kb h 'CxUniverse))))
             (testing "so CxB sees the context the edge put above it"
               (is (v/sees? kb CxB CxE))
-              (is (v/ask? kb (list marker_t Pin) CxB)))))))))
+              (is (v/ask? kb (list marker_t Marked) CxB)))))))))
 
 (deftest a-definitional-clash-is-decided-on-the-hierarchy-its-vantage-reads
   ;;   CxUniverse  (genl chi thing) (genl dog thing) (genl cat thing)  (disjoint dog cat)
@@ -902,7 +909,8 @@
 
 (defn- release-reading
   "Per reader, `[(chi Kit) (cat Kit) chi-disjoint-from-cat]`."
-  [kb {:keys [CxB CxC chi_t cat_t Kit]}]
+  [kb {:keys [CxA CxB CxC CxD chi_t cat_t Kit]}]
+  (verdicts-agree! kb [CxA CxB CxC CxD])
   (into {} (for [[r cx] [[:CxB CxB] [:CxC CxC]]]
              [r [(v/ask? kb (list chi_t Kit) cx) (v/ask? kb (list cat_t Kit) cx)
                  (v/disjoint? kb chi_t cat_t cx)]])))
@@ -975,6 +983,7 @@
                                :disjoint (v/assert kb (list 'disjoint dog cat) 'CxUniverse))]))
             l  (hs :cat)]
         (v/assert kb (list 'except (list 'sentexHandle (hs winner))) CxR)
+        (verdicts-agree! kb [CxD CxR])
         [(v/believed? kb l CxD) (v/believed? kb l CxR)
          (count (v/sentexes-matching kb (list 'defeat (list 'sentexHandle l)) CxD))]))))
 
@@ -1076,6 +1085,7 @@
                    :t1 t1 :t2 t2 :Pip Pip}
             steps (deep-steps kb ts)]
         (doseq [k order] ((steps k)))
+        (verdicts-agree! kb [CxA CxB CxDecl CxW CxX CxV CxY])
         (deep-reading kb ts)))))
 
 (def ^:private deep-decided
@@ -1230,6 +1240,7 @@
                    :nearP nearP :Aa Aa :Bb Bb :Cc Cc}
             steps (merge (chain-steps kb ts) (overrides kb ts))]
         (doseq [k order] ((steps k)))
+        (verdicts-agree! kb [CxA CxB CxC CxAB CxBC CxAC CxW])
         (chain-reading kb ts)))))
 
 (def ^:private chain-decided
@@ -1325,6 +1336,7 @@
         (v/assert kb (list 'genl ant_t insect_t) (cx edges-in) G)
         (if claim-first? (do (claim) (write-s)) (do (write-s) (claim)))
         (when (= :last detour) (direct))
+        (verdicts-agree! kb (vals cx))
         (into {} (for [r (distinct [stored-in :CxW :CxV])]
                    [r [(v/ask? kb s (cx r)) (v/ask? kb q (cx r))
                        (boolean (seq (v/contradictions kb (cx r))))]]))))))

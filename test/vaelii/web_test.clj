@@ -2,7 +2,8 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.web-test
   "Exercises the web handlers as pure request -> response (no live server)."
-  (:require [clojure.edn :as edn]
+  (:require [cheshire.core :as json]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
@@ -10,6 +11,7 @@
             [vaelii.browser.access :as acc]
             [vaelii.browser.catalog :as cat]
             [vaelii.browser.jobs :as jobs]
+            [vaelii.browser.removed :as removed]
             [vaelii.browser.sandbox :as sandbox]
             [vaelii.browser.svg :as svg]
             [vaelii.browser.web :as web]
@@ -34,8 +36,8 @@
       ;; then derives them mid-test, where the neutrality fixture reads their arrival as a
       ;; leak.  The incompleteness is real and is witnessed for its own sake by
       ;; `order_independence_test/a-rule-over-a-growing-prover-extent-is-order-independent`;
-      ;; pinning here is what stops one baseline's gap being reported as this namespace's
-      ;; bug.  It pins the LOAD rather than the test because `/chain` runs on a job thread
+      ;; forcing the ranking here is what stops one baseline's gap being reported as this
+      ;; namespace's bug.  It forces the LOAD rather than the test because `/chain` runs on a job thread
       ;; a `binding` does not reach.
       (-> kb tu/load-starter! world/load-into)
       (binding [tu/*kb* kb, *app* (web/app kb)] (f))
@@ -68,14 +70,14 @@
 
 (def ^:private htmx {"hx-request" "true"})
 
-(deftest the-view-holds-the-type-set-by-reference-and-reads-it-only-when-a-page-asks
-  ;; `view` is built for every route.  The type set colours a term and counts the types,
+(deftest the-render-env-holds-the-type-set-by-reference-and-reads-it-only-when-a-page-asks
+  ;; `render-env` is built for every route.  The type set colours a term and counts the types,
   ;; so a page that does neither — the jobs screen, a fragment continuation — must not
   ;; pay for it, and a page that does must not copy it: on an imported ontology the copy
   ;; was ~125k `conj`s per request, and over `--attach` a 125k-symbol transfer per page.
-  (let [vw (web/view tu/*kb* {})]
-    (is (not (realized? (:types vw))) "nothing is read until a page asks")
-    (is (identical? (v/types tu/*kb*) @(:types vw)) "and what is read is the taxonomy's own set"))
+  (let [env (web/render-env tu/*kb* {})]
+    (is (not (realized? (:types env))) "nothing is read until a page asks")
+    (is (identical? (v/types tu/*kb*) @(:types env)) "and what is read is the taxonomy's own set"))
   (with-redefs [acc/types (fn [& _] (throw (ex-info "the type set was read" {})))]
     (is (= 200 (:status (GET "/jobs"))) "a page that colours no term never reads it")))
 
@@ -261,16 +263,16 @@
           (is (contains? (set (:terms (:disjoint-maximal d))) nat))
           (is (contains? (set (:terms (:disjoint d))) nat)))))))
 
-(tu/deftest-kb the-disjointness-list-holds-the-pairs-a-roster-separates
-  ;; a `separating` roster stores no `(disjoint …)` sentence for its parts, and separates
+(tu/deftest-kb the-disjointness-list-holds-the-pairs-a-separating-declaration-separates
+  ;; a `separating` declaration stores no `(disjoint …)` sentence for its parts, and separates
   ;; them as a disjoint_metatype separates its members — by being consulted — so the list
   ;; computes its pairs as it computes a metatype's
-  (tu/with-terms [roster_whole roster_left roster_right]
-    (v/assert kb (list 'separating roster_whole roster_left roster_right) 'CxUniverse
+  (tu/with-terms [parts_whole parts_left parts_right]
+    (v/assert kb (list 'separating parts_whole parts_left parts_right) 'CxUniverse
               {:chain? false})
     (let [pairs (set (#'web/disjoint-pairs kb))]
-      (is (contains? pairs (#'web/disjoint-pair roster_left roster_right)))
-      (is (not-any? #(some #{roster_whole} %) pairs) "the whole is separated from nothing"))))
+      (is (contains? pairs (#'web/disjoint-pair parts_left parts_right)))
+      (is (not-any? #(some #{parts_whole} %) pairs) "the whole is separated from nothing"))))
 
 (tu/deftest-kb a-term-past-the-probed-argument-positions-is-in-a-remainder-group
   ;; the page probes argument positions 1 to 12; a fact naming the term only at 13 has no
@@ -331,7 +333,7 @@
 
 (defn- segment
   "The slice of `body` starting at `marker`, clipped to the body — a section, without a
-  substring that runs off the end when the page is shorter than the window."
+  substring that runs off the end when the page ends fewer than `n` characters past `marker`."
   [body marker n]
   (when-let [i (str/index-of body marker)]
     (subs body i (min (count body) (+ i n)))))
@@ -354,7 +356,7 @@
                      CxBiggest {:chain? false})
       ;; `web/commas` renders a count in the DEFAULT locale, and a thousands separator
       ;; is a comma, a period or a non-breaking space depending on which one that is.
-      ;; The expectation is built with the same `format` call rather than by pinning
+      ;; The expectation is built with the same `format` call rather than by forcing
       ;; `Locale/US`, which would be a JVM-global write for the length of a render.
       (let [cap  (ns-resolve 'vaelii.browser.web 'lattice-cap)
             shown (format "%,d" (long n))
@@ -401,8 +403,8 @@
       (v/assert kb (list 'not (list wobbles x)) CxDilemma))
     (is (<= 2 (count (v/contradictions kb))) "the KB holds more dilemmas than the cap below")
     (let [cap  (ns-resolve 'vaelii.browser.web 'ledger-cap)
-          body (with-redefs-fn {cap 1} #(:body (GET "/stats")))
-          seg  (segment body "<h3>Contradictions" 2000)]   ; the section, not the stat card
+          body (with-redefs-fn {cap 1} #(:body (GET "/stats" "nogoods=1")))
+          seg  (segment body "<h3>Contradictions" 2000)]
       (is (= 1 (count (re-seq #"⇄" seg))) "one row, not the whole disagreement")
       (is (re-find #"/stats/rows\?section=contradictions&amp;offset=1" seg)
           "and a sentinel htmx fires on scroll")
@@ -411,6 +413,30 @@
           (is (= 200 (:status r)))
           (is (not (re-find #"<html" (:body r))))
           (is (re-find #"⇄" (:body r))))))))
+
+(tu/deftest-kb a-stats-page-load-reads-no-belief
+  ;; A `(contradicts …)` is stored where the settle placed it, so the card counts them in
+  ;; one index read.  Reading each one at its context is a belief read per placement,
+  ;; so tens of thousands of them hold a page load for minutes, and every reload starts
+  ;; another.  So the lists wait for the reader to ask.
+  (tu/with-terms [wobbles CxDilemma]
+    (v/assert kb (list wobbles 'TmpWobNg) CxDilemma)
+    (v/assert kb (list 'not (list wobbles 'TmpWobNg)) CxDilemma)
+    (let [placed (v/count-with-functor kb 'contradicts)
+          read!  (fn [& _] (throw (ex-info "a page load read the clashes" {})))]
+      (is (pos? placed) "the dilemma is placed")
+      (testing "the card is the stored count, and the lists are an offer"
+        (let [r (with-redefs [acc/contradictions read! acc/conflicts read!] (GET "/stats"))]
+          (is (= 200 (:status r)))
+          (is (re-find (re-pattern (str "stat-n\">" placed "<[^>]*><span class=\"stat-l\">Placed nogoods"))
+                       (:body r)))
+          (is (re-find #"href=\"/stats\?nogoods=1\"" (:body r)))
+          (is (not (re-find #"<h3>Contradictions" (:body r))))))
+      (testing "asking reads them and replaces the offer"
+        (let [body (:body (GET "/stats" "nogoods=1"))]
+          (is (re-find #"<h3>Contradictions" body))
+          (is (re-find #"⇄" body))
+          (is (not (re-find #"href=\"/stats\?nogoods=1\"" body))))))))
 
 (tu/deftest-kb the-contexts-table-is-capped-and-continues-on-scroll
   (tu/with-terms [heldBy]
@@ -580,7 +606,7 @@
     (is (re-find #"No terms match" (:body (GET "/find" "q=zzzznope"))))))
 
 (deftest find-is-case-insensitive-for-a-literal-query
-  ;; #76: term-hits pinned :case-sensitive? true, so a lowercase query matched no
+  ;; #76: term-hits fixed :case-sensitive? true, so a lowercase query matched no
   ;; camelCase term even though find-terms defaults to case-insensitive.  A literal
   ;; query now matches a term of any case; a regex query still honours case in its
   ;; pattern unless it carries (?i).
@@ -669,13 +695,16 @@
   ;; ascending; then what a rule concludes about the term; then what a rule requires of
   ;; it; then the deeper nestings; then the extents, however small they happen to be here.
   (let [labels (group-labels (:body (GET "/term" "q=dog")))]
-    (is (= ["Argument position 1" "Argument position 2" "Predicate extent"] labels))
+    ;; `dog` is also mentioned inside a quoted example, (positiveExample folk_species
+    ;; (Quote (folk_species dog))), which the page lists among the deeper nestings
+    (is (= ["Argument position 1" "Argument position 2" "Nested elsewhere" "Predicate extent"]
+           labels))
     (is (= (count labels) (count (distinct labels))) "one heading per group"))
   (testing "a rule's two halves are two groups, the conclusion first"
     ;; `parentOf` is concluded about by one rule and read by others — what a rule *says*
     ;; about a term outranks what it needs of it
     (is (= ["Argument position 1" "Rule conclusion" "Rule condition"
-            "Predicate extent"]
+            "Nested elsewhere" "Predicate extent"]
            (group-labels (:body (GET "/term" "q=parentOf"))))))
   (testing "a term only ever read by a rule gets the condition group and not the other"
     (let [labels (group-labels (:body (GET "/term" "q=weightOf")))]
@@ -688,7 +717,7 @@
   (testing "and the editor opens on the group the page renders first"
     ;; `term-main-handles` is the head of the most direct group, which is now the
     ;; arg-1 declarations rather than the extent
-    (let [hs (#'web/term-main-handles (web/view tu/*kb* {}) 'dog)]
+    (let [hs (#'web/term-main-handles (web/render-env tu/*kb* {}) 'dog)]
       (is (seq hs))
       (is (= '(comment dog) (take 2 (:sentence (v/sentex tu/*kb* (first hs)))))))))
 
@@ -741,11 +770,11 @@
   (for [[_ x1 x2 y1 y2] (re-seq #"<line marker-end=\"[^\"]*\"(?: marker-start=\"[^\"]*\")? x1=\"(-?\d+)\" x2=\"(-?\d+)\" y1=\"(-?\d+)\" y2=\"(-?\d+)\"" (or svg ""))]
     (mapv #(Long/parseLong %) [x1 y1 x2 y2])))
 
-(deftest the-taxonomy-view-draws-where-a-term-sits
+(deftest the-taxonomy-graph-draws-where-a-term-sits
   (let [body (:body (GET "/term" "q=animal"))
         svg  (svg-of body)]
     (is (some? svg) "a term with subsumption structure gets a picture")
-    (testing "the term itself is the centre and is never capped out of its own view"
+    (testing "the term itself is the centre and is never capped out of its own graph"
       (is (re-find #"class=\"g-node t-type g-centre\"" svg))
       (is (contains? (drawn-terms svg) "animal")))
     (testing "a supertype above it and a subtype below it are both drawn"
@@ -764,25 +793,89 @@
       (is (re-find #"Sentexes by index" body))
       (is (re-find #"Argument position 1" body)))))
 
-(tu/deftest-kb the-taxonomy-view-draws-a-genl-edge-a-roster-installs
+(tu/deftest-kb the-taxonomy-picture-draws-a-genl-edge-a-cover-installs
   ;; `(separating whole a b)` states `(genl a whole)` and `(genl b whole)` as covering
-  ;; does: the edges are in the closure, supported by the roster sentex, and no `genl`
-  ;; sentence is stored for either.  A direct parent the roster installs is a direct
+  ;; does: the edges are in the closure, supported by the declaration's sentex, and no `genl`
+  ;; sentence is stored for either.  A direct parent the declaration installs is a direct
   ;; parent, so the picture draws it in both directions as it draws a stated edge
-  (tu/with-terms [roster_whole roster_left roster_right]
-    (v/assert kb (list 'separating roster_whole roster_left roster_right) 'CxUniverse
+  (tu/with-terms [parts_whole parts_left parts_right]
+    (v/assert kb (list 'separating parts_whole parts_left parts_right) 'CxUniverse
               {:chain? false})
-    (is (empty? (v/find-sentexes kb {:pattern (list 'genl roster_left roster_whole)}))
+    (is (empty? (v/find-sentexes kb {:pattern (list 'genl parts_left parts_whole)}))
         "no genl sentence is stored for the part")
     (testing "a part's picture draws the whole above it"
-      (let [svg (svg-of (:body (GET "/term" (str "q=" roster_left))))]
+      (let [svg (svg-of (:body (GET "/term" (str "q=" parts_left))))]
         (is (some? svg))
-        (is (contains? (drawn-terms svg) (str roster_whole)))
+        (is (contains? (drawn-terms svg) (str parts_whole)))
         (is (re-find #"class=\"g-edge g-genl\"" svg))))
     (testing "and the whole's picture draws both parts below it"
-      (let [ts (drawn-terms (svg-of (:body (GET "/term" (str "q=" roster_whole)))))]
-        (is (contains? ts (str roster_left)))
-        (is (contains? ts (str roster_right)))))))
+      (let [ts (drawn-terms (svg-of (:body (GET "/term" (str "q=" parts_whole)))))]
+        (is (contains? ts (str parts_left)))
+        (is (contains? ts (str parts_right)))))))
+
+(defn- frames
+  "Every cover group frame, as `{:x :w :label}`, in drawing order: the frame boxes and
+  their labels are drawn in one order."
+  [svg]
+  (map (fn [[_ w x] [_ label]] {:x (Long/parseLong x) :w (Long/parseLong w) :label label})
+       (re-seq #"<rect class=\"g-frame\" height=\"\d+\" rx=\"\d+\" width=\"(\d+)\" x=\"(-?\d+)\"" (or svg ""))
+       (re-seq #"<text class=\"g-frame-label\"[^>]*>([^<]*)</text>" (or svg ""))))
+
+(defn- node-xs
+  "Each drawn term's box as `[left right]`, by the node's title."
+  [svg]
+  (into {}
+        (map (fn [[_ w x t]] (let [x (Long/parseLong x)] [t [x (+ x (Long/parseLong w))]])))
+        (re-seq #"<rect class=\"g-box\" height=\"\d+\" rx=\"\d+\" width=\"(\d+)\" x=\"(-?\d+)\" y=\"-?\d+\"></rect><text[^>]*>[^<]*</text><title>([^<]*)</title>"
+                (or svg ""))))
+
+(tu/deftest-kb the-taxonomy-picture-frames-a-type-s-subtypes-by-the-covers-over-it
+  ;; two partitions sharing `grp_p`, a covering, and one subtype only a `genl` states
+  (tu/with-terms [grp_whole grp_p grp_q grp_r grp_s grp_t grp_u]
+    (v/assert kb (list 'partition grp_whole grp_p grp_q) 'CxUniverse {:chain? false})
+    (v/assert kb (list 'partition grp_whole grp_p grp_r) 'CxUniverse {:chain? false})
+    (v/assert kb (list 'covering grp_whole grp_s grp_t) 'CxUniverse {:chain? false})
+    (v/assert kb (list 'genl grp_u grp_whole) 'CxUniverse {:chain? false})
+    (let [body (:body (GET "/term" (str "q=" grp_whole)))
+          svg  (svg-of body)
+          fs   (vec (frames svg))
+          xs   (node-xs svg)
+          in?  (fn [{:keys [x w]} t] (let [[l r] (xs (str t))] (<= x l r (+ x w))))]
+      (testing "three frames, each label naming its kind and what the kind claims"
+        (is (= ["partition 1: covers, disjoint" "partition 2: covers, disjoint" "covering: covers"]
+               (map :label fs))))
+      (testing "a part two partitions name is drawn once, under the first, and the second says so"
+        (is (= 1 (count (re-seq (re-pattern (str "<title>" grp_p "</title>")) svg))))
+        (is (in? (fs 0) grp_p))
+        (is (in? (fs 0) grp_q))
+        (is (in? (fs 1) grp_r))
+        (is (str/includes? body (str "partition 2 also names " grp_p " (drawn under partition 1)"))))
+      (testing "the covering's parts sit in its frame"
+        (is (in? (fs 2) grp_s))
+        (is (in? (fs 2) grp_t)))
+      (testing "a subtype no cover names is drawn in no frame"
+        (is (contains? xs (str grp_u)))
+        (is (not-any? #(in? % grp_u) fs))))))
+
+(tu/deftest-kb the-taxonomy-graph-strokes-genl-and-disjoint-edges-apart
+  (tu/with-terms [tone_a tone_b tone_c]
+    (v/assert kb (list 'genl tone_a tone_b) 'CxUniverse {:chain? false})
+    (v/assert kb (list 'disjoint tone_a tone_c) 'CxUniverse {:chain? false})
+    (let [svg (svg-of (:body (GET "/term" (str "q=" tone_a))))]
+      (is (re-find #"<g class=\"g-edge g-genl\"><line marker-end=\"url\(#g-arrow-sub\)\"" svg))
+      (is (re-find #"<g class=\"g-edge g-rel g-rel-disjoint\"><line marker-end=\"url\(#g-arrow-disjoint\)\"" svg))
+      (is (re-find #"class=\"g-edge-label\"[^>]*>disjoint<" svg) "the label stays"))))
+
+(deftest the-edge-stroke-colours-are-defined-in-both-modes
+  (let [css    (slurp (io/resource web/stylesheet-resource))
+        blocks (re-seq #"(?s):root(?:\[data-theme=\"light\"\]|:not\(\[data-theme\]\))?\s*\{[^}]*\}" css)
+        has    (fn [token] (count (filter #(re-find (re-pattern (str token ":\\s*#[0-9a-f]{6}")) %) blocks)))]
+    (testing "the dark base and the two light blocks each set both tokens"
+      (is (= 3 (has "--g-sub")))
+      (is (= 3 (has "--g-disjoint"))))
+    (testing "and the edge rules read them"
+      (is (re-find #"\.g-edge\.g-genl line, \.g-edge\.g-genlCx line \{ stroke: var\(--g-sub\)" css))
+      (is (re-find #"\.g-edge\.g-rel-disjoint line \{ stroke: var\(--g-disjoint\)" css)))))
 
 (deftest a-context-page-draws-the-relation-a-context-has
   ;; `genl` says nothing about contexts, so the picture is the only thing on the page that
@@ -794,7 +887,7 @@
     (is (not (re-find #"class=\"g-edge g-genl\"" svg)))
     (is (contains? (drawn-terms svg) "CxWell"))))
 
-(tu/deftest-kb the-radial-view-is-for-a-term-with-relations-and-no-taxonomy
+(tu/deftest-kb the-radial-graph-is-for-a-term-with-relations-and-no-taxonomy
   (tu/with-terms [likesThing TmpA TmpB TmpC CxEgo]
     (v/assert kb (list likesThing TmpA TmpB) CxEgo {:chain? false})
     (v/assert kb (list likesThing TmpB TmpC) CxEgo {:chain? false})
@@ -849,7 +942,7 @@
 ;; ---- what a term is, the page shows rather than restates ----------------
 ;;
 ;; A term page used to open with three prose lines — Supertypes, Subtypes, Disjoint with
-;; — each a window onto a `describe` reading.  They are gone: a supertype line renders
+;; — each a rendering of a `describe` reading.  They are gone: a supertype line renders
 ;; `genl` sentexes the argument groups already list, and the one reading of a taxonomy a
 ;; reader cannot get from those rows is *position*, which is the picture.  `describe`
 ;; still answers all six readings for a caller that wants them (`describe_test`).
@@ -914,7 +1007,7 @@
       (is (str/starts-with? text "<span class=\"sx t-str\">&quot;<span class=\"str-text\">"))
       (is (str/ends-with? text "</span>&quot;</span>")))
     (testing "a formula renders as a sentence, its parens coloured by depth"
-      (is (str/includes? text "<span class=\"rb1\">(</span><a class=\"sx t-pred\" href=\"/term?q=measureInUnit\">")))
+      (is (str/includes? text "<span class=\"rb1\">(</span><a class=\"sx t-pred t-pred-n\" href=\"/term?q=measureInUnit\">")))
     (testing "a variable takes the variable colour"
       (is (str/includes? text "<span class=\"t-var\">?magnitude</span>")))
     (testing "a word spelled as a stored term links as that term, and English stays text"
@@ -1009,13 +1102,13 @@
   ;; where a subterm ends.  Every subterm is already coloured by its role, so the
   ;; structure was the one thing on the page with no colour at all — and vaelii.com's
   ;; stylesheet has been drawing these nine for a page the engine did not emit.
-  (let [out (str (#'web/render-form (web/view tu/*kb* {}) '(arg parentOf 1 (FooFn bar))))]
+  (let [out (str (#'web/render-form (web/render-env tu/*kb* {}) '(arg parentOf 1 (FooFn bar))))]
     (is (= 2 (count (re-seq #"\"rb1\"" out))) "the outer pair, both halves one colour")
     (is (= 2 (count (re-seq #"\"rb2\"" out))) "the nested pair, a colour along")
     (is (not (re-find #"\"rb3\"" out)) "and no third depth to colour"))
   (testing "the scale wraps rather than running out"
     (let [deep (reduce (fn [f _] (list 'f f)) 'x (range 10))
-          out  (str (#'web/render-form (web/view tu/*kb* {}) deep))]
+          out  (str (#'web/render-form (web/render-env tu/*kb* {}) deep))]
       (is (re-find #"\"rb9\"" out))
       (is (= 4 (count (re-seq #"\"rb1\"" out))) "depth 0 and depth 9 share a colour")))
   (testing "a rule's parens count along the same scale"
@@ -1097,22 +1190,22 @@
   (tu/with-terms [wingsOf Pip CxHide]
     (let [h    (v/assert kb (list wingsOf Pip) CxHide)
           _    (v/assert kb (list 'except (list 'sentexHandle h)) CxHide)
-          view (web/view kb {})
-          out  (str (#'web/render-form view (list 'except (list 'sentexHandle h))))]
+          env (web/render-env kb {})
+          out  (str (#'web/render-form env (list 'except (list 'sentexHandle h))))]
       (is (re-find (re-pattern (name wingsOf)) out)
           "the sentence the handle names, not the integer")
       (is (re-find (re-pattern (str "/sentex/" h)) out) "linked to the sentex it names")
       (is (not (re-find (re-pattern (str ">" h "<")) out))
           "and the bare handle is not what is printed"))
     (testing "a handle whose record is gone still says so"
-      (is (re-find #"gone" (str (#'web/render-form (web/view kb {}) '(except (sentexHandle 999999)))))))
+      (is (re-find #"gone" (str (#'web/render-form (web/render-env kb {}) '(except (sentexHandle 999999)))))))
     (testing "a sentence naming a handle that reaches back to it renders the back-edge"
       ;; nothing the assert path stores can be one — a handle predates the sentex naming
       ;; it — so the cycle is injected at the read the expansion makes
       (let [self {:id 7 :sentence '(except (sentexHandle 7)) :context 'CxUniverse
                   :strength :monotonic}]
         (with-redefs [acc/sentex (fn [& _] self)]
-          (is (re-find #"\(above\)" (str (#'web/render-form (web/view kb {}) '(except (sentexHandle 7)))))))))))
+          (is (re-find #"\(above\)" (str (#'web/render-form (web/render-env kb {}) '(except (sentexHandle 7)))))))))))
 
 (tu/deftest-kb a-compound-type-node-colours-as-a-type-not-a-number
   ;; An imported ontology names a type it has no atomic name for with a function term, so a
@@ -1128,15 +1221,26 @@
         (is (not (re-find #"<h2>Term <a class=\"sx t-num\"" body)))))))
 
 (tu/deftest-kb a-relation-that-is-a-genl-node-colours-as-a-predicate
-  ;; `(genl predicateTypeByArity relationTypeByArity)` makes both nodes of the genl
-  ;; hierarchy; the stored arity of two colours each, and the snake_case temporary shows
-  ;; the spelling decides nothing.
-  (is (re-find #"<h2>Term <a class=\"sx t-pred\"" (:body (GET "/term" "q=predicateTypeByArity"))))
+  ;; `(genl performedBy doneBy)` makes both nodes of the genl hierarchy; the stored
+  ;; arity of two colours each, and the snake_case temporary shows the spelling decides
+  ;; nothing.
+  (is (re-find #"<h2>Term <a class=\"sx t-pred\"" (:body (GET "/term" "q=performedBy"))))
   (tu/with-terms [near_rel close_rel]
     (v/assert kb (list 'symmetric near_rel) 'CxUniverse {:chain? false})
     (v/assert kb (list 'symmetric close_rel) 'CxUniverse {:chain? false})
     (v/assert kb (list 'genl near_rel close_rel) 'CxUniverse {:chain? false})
     (is (re-find #"<h2>Term <a class=\"sx t-pred\"" (:body (GET "/term" (str "q=" near_rel)))))))
+
+(tu/deftest-kb a-predicate-of-three-or-more-places-takes-the-wider-predicate-colour
+  (tu/with-terms [pairOf tripleOf]
+    (v/assert kb (list 'arity pairOf 2) 'CxUniverse)
+    (v/assert kb (list 'arity tripleOf 3) 'CxUniverse)
+    (is (re-find #"<h2>Term <a class=\"sx t-pred\"" (:body (GET "/term" (str "q=" pairOf)))))
+    (is (re-find #"<h2>Term <a class=\"sx t-pred t-pred-n\"" (:body (GET "/term" (str "q=" tripleOf)))))))
+
+(deftest a-logical-connective-takes-the-connective-colour
+  (doseq [c '[and or not implies]]
+    (is (re-find #"<h2>Term <a class=\"sx t-conn\"" (:body (GET "/term" (str "q=" c)))) (str c))))
 
 (tu/deftest-kb a-hub-draws-its-cap-and-says-what-it-left-out
   (tu/with-terms [hub_type]
@@ -1150,7 +1254,7 @@
         (is (= 8 (count (filter #(str/includes? % "_kid") (drawn-terms svg))))))
       (testing "and the caption says so, with the count it read"
         (is (re-find #"showing 8 of 400 direct subtypes" body)))
-      (testing "the centre is still in its own view"
+      (testing "the centre is still in its own graph"
         (is (contains? (drawn-terms svg) (str hub_type)))))))
 
 (def ^:private capped-kids
@@ -1182,7 +1286,7 @@
 
 (deftest mammal-s-subtype-row-is-its-first-eight-children-in-sort-order
   ;; `mammal` has twelve direct `genl` children in the shipped ontology, so its row is
-  ;; capped.  The row is pinned exactly: the first eight in sort order, not whichever
+  ;; capped.  The row is asserted exactly: the first eight in sort order, not whichever
   ;; eight the index returned first.
   (let [grow (ns-resolve 'vaelii.browser.web 'grow)
         {:keys [rows direct]} (grow tu/*kb* 'genl :down 1 'mammal 1)]
@@ -1237,7 +1341,7 @@
 
 (def ^:private graph-read-budget
   "What the picture may cost a term page, in facade reads.  Twelve expansions — six a side
-  — and the radial view spends at most twelve.  Stated here and asserted below, because a graph that renders without a click may
+  — and the radial graph spends at most twelve.  Stated here and asserted below, because a graph that renders without a click may
   never be the reason a term page is slow."
   24)
 
@@ -1272,15 +1376,15 @@
 (deftest the-term-graph-samples-a-wide-term-the-same-way-whatever-was-asserted-first
   ;; The picture draws eight of a wide term's neighbours, and which eight is a question the
   ;; page has to answer the same way twice.  The groups it reads them off come from a *set*
-  ;; of handles, so a window taken as they arrive is a sample by hash of the handle values —
+  ;; of handles, so a prefix taken as they arrive is a sample by hash of the handle values —
   ;; the same knowledge, asserted after a different amount of other knowledge, then draws a
   ;; different picture and captions it identically.  Ordered by handle it is the term's
-  ;; earliest mentions, which is the same window either way.
+  ;; earliest mentions, which is the same prefix either way.
   (let [n     60                                    ; wider than graph-flank-scan, so it cuts
         hub   'HubTerm
         build (fn [kb pad]
                 ;; the padding shifts every later handle; the hub's own facts still land in
-                ;; the same order relative to one another, which is what the window reads
+                ;; the same order relative to one another, which is what the prefix reads
                 (when (pos? pad)
                   (v/assert-many kb (for [i (range pad)]
                                       (list 'padOf (symbol (str "Pad" i))
@@ -1298,7 +1402,7 @@
         a     (drawn 0)
         b     (drawn 137)]
     (is (contains? a (str hub)) "the wide term got a picture")
-    (is (< 1 (count a) n) "and it really is a sample — the window cut")
+    (is (< 1 (count a) n) "and it really is a sample — the prefix cut")
     (is (= a b) "the same neighbours drawn, whatever else was asserted first")
     (testing "and the caption says what the sample is rather than only how big it is"
       (tu/with-cleared-kb [kb tu/isolated-fresh]
@@ -1332,7 +1436,7 @@
                 (or svg ""))))
 
 (defn- grown
-  "One side of the taxonomy view of `term`, as `[term from]` pairs per row."
+  "One side of the taxonomy graph of `term`, as `[term from]` pairs per row."
   [dir hops term]
   (let [grow (ns-resolve 'vaelii.browser.web 'grow)]
     (mapv (fn [row] (into #{} (map (juxt :term :from)) row))
@@ -1383,7 +1487,7 @@
       (is (= #{[met_left met_far]} row1))
       (is (= #{[met_both met_left]} row2)))))
 
-(tu/deftest-kb one-side-of-the-taxonomy-view-gives-the-subsumption-edges-it-drew-as-pairs
+(tu/deftest-kb one-side-of-the-taxonomy-graph-gives-the-subsumption-edges-it-drew-as-pairs
   (tu/with-terms [near_sub near_mid near_top]
     (v/assert kb (list 'genl near_mid near_top) 'CxUniverse)
     (v/assert kb (list 'genl near_sub near_mid) 'CxUniverse)
@@ -1398,7 +1502,7 @@
       (is (= #{[near_mid near_top] [near_sub near_mid]} down)))))
 
 (defn- grown-contexts
-  "One side of the taxonomy view of context `c`, as `[context from]` pairs per row."
+  "One side of the taxonomy graph of context `c`, as `[context from]` pairs per row."
   [dir hops c]
   (let [grow (ns-resolve 'vaelii.browser.web 'grow)]
     (mapv (fn [row] (into #{} (map (juxt :term :from)) row))
@@ -1635,7 +1739,7 @@
             (is (empty? (visible-nats (:body r))) (str uri " leaked a reified constant"))))))))
 
 (tu/deftest-kb one-read-per-reified-term-however-often-it-is-rendered
-  ;; The map is `(termOfUnit K ?e)`, one probe per constant — there is no batched read for
+  ;; The map is `(natFormula K ?e)`, one probe per constant — there is no batched read for
   ;; it — so the per-request cache is the whole budget.  A page listing a reified NAT in a dozen
   ;; rows must not be a dozen round-trips under `--attach`.
   (with-nat-kb kb
@@ -1667,7 +1771,7 @@
 (tu/deftest-kb a-self-referential-map-costs-the-expansion-and-not-the-page
   (with-nat-kb kb
     (fn [{:keys [k colorOf FruitFn]}]
-      ;; `(termOfUnit K (FruitFn K))` — the write path cannot build it (inner NATs mint
+      ;; `(natFormula K (FruitFn K))` — the write path cannot build it (inner NATs mint
       ;; first), a restored dump can, and an unguarded walk over it is a stack overflow
       (with-redefs [acc/term-expression (fn [_ t] (when (= t k) (list FruitFn k)))]
         (let [r (GET "/term" (str "q=" colorOf))]
@@ -1709,7 +1813,7 @@
           _    (v/assert kb (list 'not (list flies Tweety)) CxNest {:strength :monotonic})
           body (:body (GET "/term" (str "q=" flies)))
           row  #(re-find (re-pattern (str "(?s)<li[^>]*data-h=\"" % "\"[^>]*>.*?</li>")) body)
-          meta #(str (#'web/render-form (web/view kb {}) (list 'except (list 'sentexHandle %))))]
+          meta #(str (#'web/render-form (web/render-env kb {}) (list 'except (list 'sentexHandle %))))]
       (is (re-find #"class=\"sx-out\"" (str (row out))))
       (is (re-find #"class=\"sx-in\"" (str (row in))))
       (is (not (re-find #"sx-out" (str (row in)))))
@@ -1717,16 +1821,13 @@
         (is (re-find #"\"sx-out\"" (meta out)))
         (is (re-find #"\"sx-in\"" (meta in)))))))
 
-(tu/deftest-kb the-sentex-page-of-an-inert-denial-names-the-literal-and-its-roster-declaration
+(tu/deftest-kb the-sentex-page-of-a-defeated-denial-of-a-forced-monotonic-literal-names-the-literal
   (tu/with-terms [dog_kind cat_kind]
     (let [s    (list 'disjoint dog_kind cat_kind)
           h    (v/assert kb s 'CxUniverse)
-          d    (v/assert kb (list 'not s) 'CxUniverse)
-          decl (v/handle-of kb '(forced_monotonic_predicate disjoint) 'CxUniverse)
+          d    (v/assert kb (list 'not s) 'CxUniverse {:strength :monotonic})
           body (:body (GET (str "/sentex/" d)))]
-      (is (re-find (re-pattern (str "(?s)It denies .*?/sentex/" h "\".*?which this context believes")) body))
-      (is (str/includes? body "is on the forced-monotonic roster, which every KB holds."))
-      (is (re-find (re-pattern (str "declared by .*?/sentex/" decl "\"")) body))
+      (is (re-find (re-pattern (str "(?s)Defeated.*?contradicted by .*?/sentex/" h "\"")) body))
       (testing "the badge stands before the sentence, not in the heading"
         (is (re-find #"<h2[^>]*>Sentex <span class=\"muted\">#" body))
         (is (re-find (re-pattern (str "(?s)<p class=\"sx-item\"><a class=\"badge-link\" href=\"/sentex/" d "\""))
@@ -1734,8 +1835,8 @@
 
 (tu/deftest-kb a-ground-compound-term-opens-with-a-link-to-its-term-page
   (tu/with-terms [likes Ann]
-    (let [view (web/view kb {})
-          html #(str (#'web/render-form view %))]
+    (let [env (web/render-env kb {})
+          html #(str (#'web/render-form env %))]
       (is (str/includes? (html (list likes Ann '(FruitFn Apple)))
                          (str "[:a {:class \"rb2\", :href \"/term?q="
                               (#'web/url-enc (pr-str '(FruitFn Apple))) "\"")))
@@ -1754,13 +1855,45 @@
       (is (re-find (re-pattern (str "data-href=\"/sentex/" a "\"")) body) "with its remove button")
       (is (= "" (:body (GET "/history/literals" "handles=12,x"))) "a list that does not read"))))
 
+(tu/deftest-kb the-history-keeps-only-what-the-active-kb-holds
+  (tu/with-terms [likes Ann Bob]
+    (let [a     (v/assert kb (list likes Ann Bob) 'CxUniverse)
+          gone  999999999
+          r     (GET "/history/known"
+                  (str "t=" Ann "&t=NoSuchTermAnywhere&t=%28&handles=" a "," gone))
+          known (json/parse-string (:body r))]
+      (is (= "application/json" (get-in r [:headers "content-type"])))
+      (is (true? (get known "complete")))
+      (is (= [(str Ann)] (get known "terms"))
+          "a term no stored sentex mentions, and a q that does not read, are left out")
+      (is (= [a] (get known "handles")) "a handle naming no stored sentex is left out")
+      (is (= {"complete" true "terms" [] "handles" []}
+             (json/parse-string (:body (GET "/history/known" "handles=x"))))
+          "nothing the request carries reads, so nothing is kept"))))
+
+(tu/deftest-kb the-history-is-not-judged-against-a-kb-still-loading
+  ;; a KB part-way through a load holds a prefix, so an entry it lacks may simply not
+  ;; have arrived yet; one that has finished storing and lacks only belief holds them all
+  (tu/with-terms [likes Ann Bob]
+    (v/assert kb (list likes Ann Bob) 'CxUniverse)
+    (let [ask #(json/parse-string (:body (GET "/history/known" "t=NoSuchTermAnywhere")))]
+      (with-redefs [cat/active-caveat (constantly {:status :loading :belief? false})]
+        (is (= {"complete" false} (ask)) "a load still running is not judged"))
+      (with-redefs [cat/active-caveat (constantly {:status :stopped :belief? false})]
+        (is (= {"complete" false} (ask)) "nor is one stopped part-way"))
+      (with-redefs [cat/active-caveat (constantly {:status :done :belief? false})]
+        (is (= {"complete" true "terms" [] "handles" []} (ask))
+            "a KB that has stored everything is judged, belief or not")))))
+
 (tu/deftest-kb an-inert-tuple-a-separation-caused-names-the-separation-on-the-sentex-and-term-pages
-  ;; `(disjoint gladdenOf saddenOf)` mints `(genl gladdenOf thing)` through CxUniverse's
-  ;; `(genlArg disjoint 1 thing)`, and `(unary_predicate thing)` then holds the tuple inert.
-  ;; The mint is the entailing reading's, so the test pins it: under the constraint-only
-  ;; reading the tuple stays believed and no page names the separation.
+  ;; `(disjoint gladdenOf saddenOf)` mints `(genl gladdenOf feeling)` through
+  ;; `(genlArg disjoint 1 feeling)`, which also entails `(unary_predicate feeling)`, and
+  ;; that length then holds the tuple inert.  The mint is the entailing reading's, so the
+  ;; test forces it: under the constraint-only reading the tuple stays believed and no
+  ;; page names the separation.
   (tu/with-entailing
-    (tu/with-terms [gladdenOf saddenOf Cal Dee]
+    (tu/with-terms [gladdenOf saddenOf feeling Cal Dee]
+      (v/assert kb (list 'genlArg 'disjoint 1 feeling) 'CxUniverse)
       (let [fact (v/assert kb (list gladdenOf Cal Dee) 'CxUniverse)
             sep  (v/assert kb (list 'disjoint gladdenOf saddenOf) 'CxUniverse)
             ref  (re-pattern (str "through .*?/sentex/" sep "\\b"))]
@@ -2129,7 +2262,7 @@
       (is (not (re-find #"(?i)<!DOCTYPE" (:body part))) uri))))
 
 (deftest a-boosted-navigation-lands-at-the-top-of-the-document
-  ;; A boosted swap whose target is not the body scrolls that target into view, and the
+  ;; A boosted swap whose target is not the body scrolls that target into the viewport, and the
   ;; target here is `#main` — so without a landing point every navigation would arrive
   ;; with the header scrolled off the top of a page nobody had scrolled.
   (let [body (:body (GET "/term" "q=dog"))]
@@ -2266,8 +2399,8 @@
         (is (re-find (re-pattern (str n " stored")) first-body)
             "the O(1) count reports the whole extent, however long it is")
         (is (= 60 (rows first-body)) "and the first page is the cap, not the extent")
-        ;; The walk ends one of two ways and the assertion count is a gate, so each arm
-        ;; states the three things ITS side is owed and neither stands aside.  40 pages is
+        ;; The walk ends one of two ways and the runners compare the assertion count
+        ;; across configurations, so each arm states the three things ITS side is owed and neither stands aside.  40 pages is
         ;; the extent's own shape and the bound is five times it, so a walk that reaches
         ;; the bound is a sentinel cycling rather than one advancing.
         (loop [[uri qs] (next-url first-body), seen (handles first-body), pages 1]
@@ -2305,7 +2438,7 @@
     (is (not (re-find #"<li" (:body (GET "/find/rows" "q=parent&offset=9999")))))))
 
 (deftest an-offset-nobody-could-scroll-to-is-an-empty-page-and-not-an-overflow
-  ;; a cursor is arithmetic — `/find/rows` asks the roster for offset + cap + 1 names — so
+  ;; a cursor is arithmetic — `/find/rows` asks the term-name set for offset + cap + 1 names — so
   ;; an unbounded offset in a hand-edited URL overflows the addition rather than running
   ;; off the end of the list.  One ceiling in `->offset` covers every continuation route
   (doseq [[uri qs] [["/find/rows"   "q=parent&offset=9223372036854775807"]
@@ -2473,7 +2606,7 @@
     (is (re-find #"\Qt==='light'||t==='dark'\E" body))
     (is (not (re-find #"&lt;/script" body)))))
 
-(deftest the-theme-script-pins-only-a-value-the-stylesheet-answers-to
+(deftest the-theme-script-stores-only-a-value-the-stylesheet-answers-to
   ;; The media query is scoped by `:not([data-theme])`, so *any* attribute value
   ;; satisfies it away — write one no rule matches and the page sits on the light
   ;; base, deaf to the OS.  The script therefore checks what it read rather than
@@ -2505,7 +2638,7 @@
 
 ;; ---- the write route refuses a cross-origin caller ---------------------
 ;; POST /edit writes to the KB and nothing authenticates it, so the origin the
-;; browser stamps on the request is what separates our own page from any other tab.
+;; browser sets on the request is what separates our own page from any other tab.
 
 (tu/deftest-kb a-same-origin-post-edits-the-kb
   (tu/with-terms [likesOf Alice Bob Carol CxEdit]
@@ -2543,7 +2676,7 @@
 ;; Nothing authenticates this server either, so an anonymous caller streaming a body is
 ;; heap it would otherwise spend — and `wrap-params`, which is what reads a form here,
 ;; slurps whatever arrives with no ceiling of its own.  `guard/wrap-body-limit` sits
-;; outside it (`vaelii.guard-test` pins the reading; this is the browser's 413).  Driven
+;; outside it (`vaelii.guard-test` asserts the reading; this is the browser's 413).  Driven
 ;; with a **real encoded body** rather than a `:params` map, since a limit on the body is
 ;; invisible to a request that has none.
 
@@ -2751,34 +2884,30 @@
       (is (re-find #"<details" (:body r)))
       (is (re-find #"<summary" (:body r))))))
 
-(tu/deftest-kb an-exception-blocked-justification-is-not-labelled-supporting
-  ;; A conclusion IN via one *valid* rule and one *exception-blocked* rule whose arguments
-  ;; are all IN.  The block is genuine — the bird justification is placed first (before any
-  ;; exception) and blocked later, so it is a blocked justification in the network, not a
-  ;; refused firing (`kb.clj :refused`).  The proof tree must call the bird rule blocked and
-  ;; count only the bat rule as supporting; belief in the arguments alone would call both
-  ;; supporting and read "2 of 2".
+(tu/deftest-kb a-blocked-justification-is-not-labelled-supporting
+  ;; A conclusion IN via one *valid* rule and one *blocked* rule whose arguments are all
+  ;; IN.  The bird rule's negative antecedent is read under a closed-extent grant, and the
+  ;; bird justification is placed first and blocked when `(penguin Opus)` arrives, so it
+  ;; is a blocked justification in the network, not a refused firing.  The proof tree must
+  ;; call the bird rule blocked and count only the bat rule as supporting; belief in the
+  ;; arguments alone would call both supporting and read "2 of 2".
   (let [CxFly (tu/tmp-ctx "Fly")
         bird (tu/tmp-type) penguin (tu/tmp-type) bat (tu/tmp-type)
-        flies (tu/tmp-pred) Opus (tu/tmp-ind)]
+        flies (tu/tmp-pred) Opus (tu/tmp-ind)
+        bird-sentence (list 'set/defaultRule (list 'set/forwardRule (list 'implies (list 'and (list bird '?x) (list 'not (list penguin '?x))) (list flies '?x))))]
     (v/assert kb (list 'genlCx CxFly 'CxWell) 'CxUniverse {:strength :monotonic})
-    ;; bird => flies, then a bird fact: the justification for (flies Opus) is placed here,
-    ;; before the exception exists
-    (v/assert kb (list 'set/defaultRule (list 'set/forwardRule (list 'implies (list bird '?x) (list flies '?x)))) CxFly)
+    (v/assert kb (list 'closed_extent_predicate penguin) CxFly)
+    (v/assert kb bird-sentence CxFly)
     (v/assert kb (list bird Opus) CxFly)
-    ;; bat => flies, and a bat fact: a second, un-excepted support that keeps (flies Opus) IN
+    ;; bat => flies, and a bat fact: a second, unblocked support that keeps (flies Opus) IN
     (v/assert kb (list 'set/defaultRule (list 'set/forwardRule (list 'implies (list bat '?x) (list flies '?x)))) CxFly)
     (v/assert kb (list bat Opus) CxFly)
-    ;; except the bird rule for penguins, and make Opus one: this blocks the *already-placed*
-    ;; bird justification while the bat one keeps the conclusion believed
-    (v/assert kb (list 'exceptWhen (list penguin '?x)
-                       (list 'set/defaultRule (list 'set/forwardRule (list 'implies (list bird '?x) (list flies '?x)))))
-              CxFly)
-    ;; known-true, so the block is a JTMS block: a `:default` blocker stores a guard defeat
-    (v/assert kb (list penguin Opus) CxFly {:strength :monotonic})
+    ;; this blocks the *already-placed* bird justification while the bat one keeps the
+    ;; conclusion believed
+    (v/assert kb (list penguin Opus) CxFly)
     (let [h         (v/handle-of kb (list flies Opus) CxFly)
           sup       (v/supporting-justifications kb h)
-          bird-rule (v/handle-of kb (list 'set/defaultRule (list 'set/forwardRule (list 'implies (list bird '?x) (list flies '?x)))) CxFly)]
+          bird-rule (v/handle-of kb bird-sentence CxFly)]
       (testing "the scenario is the one under test: IN, two supports, one of them blocked"
         (is (v/in? kb h) "(flies Opus) is believed — carried by the bat rule")
         (is (= 2 (count sup)) "two justifications conclude it: the bird rule and the bat rule")
@@ -2791,15 +2920,35 @@
           (is (not (str/includes? body "2 of 2 justifications currently support this"))))
         (testing "exactly one justification is labelled supporting — the blocked one is not"
           (is (= 1 (count (re-seq #">supporting</span>" body)))))
-        (testing "the blocked justification's own page says the exception blocks it, not that an argument is OUT"
+        (testing "the blocked justification's own page says the network blocks it, not that an argument is OUT"
           (let [jblk (first (filter #(contains? blk (:id %)) sup))
                 jok  (first (remove #(contains? blk (:id %)) sup))
                 bblk (:body (GET (str "/justification/" (:id jblk))))
                 bok  (:body (GET (str "/justification/" (:id jok))))]
             (is (str/includes? bblk "not supporting"))
-            (is (str/includes? bblk "exception holds"))
+            (is (str/includes? bblk "network blocks this justification"))
             (is (not (str/includes? bblk "arguments are OUT")))
             (is (str/includes? bok "supports its conclusion"))))))))
+
+(tu/deftest-kb a-guard-covered-justification-is-not-labelled-supporting
+  ;; The same shape with a `:default` blocker: the bird firing is stored with a guard
+  ;; defeat at its own context and the network blocks nothing, so only the verdict at
+  ;; CxFly (`v/justification-verdicts`) tells the two justifications apart
+  (tu/with-terms [bird penguin bat flies Opus CxFly]
+    (let [rule #(list 'set/defaultRule (list 'set/forwardRule (list 'implies (list % '?x) (list flies '?x))))]
+      (v/assert kb (rule bird) CxFly)
+      (v/assert kb (rule bat) CxFly)
+      (v/assert kb (list 'exceptWhen (list penguin '?x) (rule bird)) CxFly)
+      (doseq [s [(list bird Opus) (list bat Opus) (list penguin Opus)]] (v/assert kb s CxFly))
+      (let [h    (v/handle-of kb (list flies Opus) CxFly)
+            vs   (v/justification-verdicts kb h CxFly)
+            body (:body (GET (str "/why/" h)))
+            jblk (key (first (filter #(= :guard (val %)) vs)))]
+        (is (= #{:guard :supports} (set (vals vs))))
+        (is (empty? (v/blocked-justifications kb)))
+        (is (str/includes? body "1 of 2 justifications currently support this"))
+        (is (= 1 (count (re-seq #">supporting</span>" body))))
+        (is (str/includes? (:body (GET (str "/justification/" jblk))) "guard defeat"))))))
 
 (tu/deftest-kb an-attached-browser-reads-the-blocked-set-over-the-wire
   ;; The same scenario as above, rendered by a browser **attached** to a daemon rather than
@@ -2811,14 +2960,12 @@
         bird (tu/tmp-type) penguin (tu/tmp-type) bat (tu/tmp-type)
         flies (tu/tmp-pred) Opus (tu/tmp-ind)]
     (v/assert kb (list 'genlCx CxFly 'CxWell) 'CxUniverse {:strength :monotonic})
-    (v/assert kb (list 'set/defaultRule (list 'set/forwardRule (list 'implies (list bird '?x) (list flies '?x)))) CxFly)
+    (v/assert kb (list 'closed_extent_predicate penguin) CxFly)
+    (v/assert kb (list 'set/defaultRule (list 'set/forwardRule (list 'implies (list 'and (list bird '?x) (list 'not (list penguin '?x))) (list flies '?x)))) CxFly)
     (v/assert kb (list bird Opus) CxFly)
     (v/assert kb (list 'set/defaultRule (list 'set/forwardRule (list 'implies (list bat '?x) (list flies '?x)))) CxFly)
     (v/assert kb (list bat Opus) CxFly)
-    (v/assert kb (list 'exceptWhen (list penguin '?x)
-                       (list 'set/defaultRule (list 'set/forwardRule (list 'implies (list bird '?x) (list flies '?x)))))
-              CxFly)
-    (v/assert kb (list penguin Opus) CxFly {:strength :monotonic})
+    (v/assert kb (list penguin Opus) CxFly)
     (let [h      (v/handle-of kb (list flies Opus) CxFly)
           server (serve/start kb {:port 0 :token nil})]
       (is (= 2 (count (v/supporting-justifications kb h))))
@@ -3024,14 +3171,77 @@
         (is (re-find #"Retracted" (:body r)))
         (is (nil? (v/sentex kb fb)))))))
 
+;; ---- the removed list, and putting a removal back --------------------------
+
+(def ^:private same-origin {"host" "localhost:3000" "origin" "http://localhost:3000"})
+
+(defn- noted-with
+  "The removal noted for the test KB whose sentence mentions `term`."
+  [kb term]
+  (some #(when (str/includes? (:sentence %) (name term)) %)
+        (removed/entries (#'web/kb-name kb))))
+
+(tu/deftest-kb a-retraction-is-noted-and-put-back-from-the-removed-list
+  (tu/with-terms [aP X CxRemoved]
+    (let [fa (v/assert kb (list aP X) CxRemoved {:strength :monotonic})]
+      (POST "/retract" {"handles" (str fa)} same-origin)
+      (is (nil? (v/sentex kb fa)))
+      (let [e (noted-with kb X)]
+        (is (some? e) "the retraction noted what it took")
+        (is (= (pr-str CxRemoved) (:context e)))
+        (is (= :monotonic (:strength e)))
+        (is (= :retract (:via e)))
+        (is (re-find (re-pattern (name X)) (:body (GET "/removed"))) "the page lists it")
+        (let [r (POST "/removed/restore" {"id" (:id e)} same-origin)
+              h (v/handle-of kb (list aP X) CxRemoved)]
+          (is (= 200 (:status r)))
+          (is (re-find #"Put back in" (:body r)))
+          (is (some? h) "the sentence is stored again")
+          (is (= :monotonic (:strength (v/sentex kb h))) "with the strength it had")
+          (is (nil? (noted-with kb X)) "and is off the list"))))))
+
+(tu/deftest-kb a-removal-put-back-twice-is-refused-the-second-time
+  (tu/with-terms [aP X CxRemoved]
+    (let [fa (v/assert kb (list aP X) CxRemoved)]
+      (POST "/retract" {"handles" (str fa)} same-origin)
+      (let [id (:id (noted-with kb X))]
+        (POST "/removed/restore" {"id" id} same-origin)
+        (is (re-find #"not on the list any more"
+                     (:body (POST "/removed/restore" {"id" id} same-origin))))))))
+
+(tu/deftest-kb an-edit-notes-the-sentences-it-replaced
+  (tu/with-terms [aP X Y CxRemoved]
+    (let [fa (v/assert kb (list aP X) CxRemoved)]
+      (POST "/edit" {"handles" (str fa) "text" (edit-text CxRemoved (list aP Y))} same-origin)
+      (is (nil? (v/sentex kb fa)))
+      (is (= :edit (:via (noted-with kb X)))))))
+
+(tu/deftest-kb copy-seeds-the-assert-form-with-a-stored-sentex
+  (tu/with-terms [aP X CxRemoved]
+    (let [fa   (v/assert kb (list aP X) CxRemoved {:strength :monotonic})
+          body (:body (GET "/assert" (str "copy=" fa)))]
+      (is (re-find (re-pattern (str ">\\(" (name aP) " " (name X) "\\)</textarea>")) body))
+      (is (re-find (re-pattern (str "value=\"" (name CxRemoved) "\"")) body))
+      (is (re-find #"<input checked=\"checked\" id=\"assert-mono\"" body))))
+  (testing "a handle that does not read is a 400"
+    (is (= 400 (:status (GET "/assert" "copy=x"))))))
+
+(tu/deftest-kb a-sentex-offers-copy-edit-and-remove
+  (tu/with-terms [aP X CxRemoved]
+    (let [fa (v/assert kb (list aP X) CxRemoved)]
+      (doseq [body [(:body (GET (str "/sentex/" fa)))
+                    (:body (GET "/sentex-actions" (str "h=" fa)))]]
+        (is (str/includes? body (str "href=\"/assert?copy=" fa "\"")))
+        (is (str/includes? body (str "hx-get=\"/edit?handles=" fa "\"")))
+        (is (str/includes? body (str "hx-get=\"/retract?handles=" fa "\"")))))
+    (is (= 400 (:status (GET "/sentex-actions" "h=x"))))))
+
 ;; ---- a selected row that stays ------------------------------------------
 ;;
 ;; `retract!` takes a handle's premise mark and sweeps what then has no witness, so a
 ;; handle that is derived stays stored and believed however it is selected.  Every answer
 ;; the page gives about such a handle — the confirmation, the retract POST, the editor's
 ;; lookahead and its Save — says it stays, and no row of a stored sentence is swapped out.
-
-(def ^:private same-origin {"host" "localhost:3000" "origin" "http://localhost:3000"})
 
 (defn- row-swap
   "The out-of-band `style` swap addressing `h`'s rows in `body`, or nil."
@@ -3272,7 +3482,7 @@
 (deftest an-address-bind-requires-the-token-and-then-presents-it
   ;; The browser has the daemon's problem and the same answer: `/edit` writes belief and
   ;; two routes (`/kbs/export`, `/kbs/load`) write the host filesystem, so naming an address requires `VAELII_API_TOKEN` — refused at start,
-  ;; `guard/require-token!`, which `vaelii.guard-test` pins on its own.  What is the
+  ;; `guard/require-token!`, which `vaelii.guard-test` asserts on its own.  What is the
   ;; browser's alone is the second half: with the token set, a public bind serves behind
   ;; it, and the loopback default is untouched.
   (let [served (fn [host token]
@@ -3357,7 +3567,7 @@
   ;; The Available list is built from `catalog/sources`, whose search-path probe caps
   ;; at `max-discovered`.  A cap nobody is told about reads as "this machine has no
   ;; other KBs" — the one answer a KB list must not give by accident — so the note is
-  ;; the half worth pinning, and the page rendering at all is the half that was
+  ;; the half this asserts, and the page rendering at all is the half that was
   ;; previously untested.
   (testing "the page renders, with a card per source"
     (let [r (GET "/kbs")]
@@ -3417,26 +3627,49 @@
     (let [r (post-op (web/app (acc/remote "127.0.0.1" 1)) :term-count [])]
       (is (= [404 :not-found false] ((juxt :status :type :ok) r)))
       (is (str/includes? (:error r) "--attach"))))
-  (testing "a KB a job is writing refuses every op, since the job does not take the monitor"
+  (testing "a KB a job is writing refuses every KB op, since the job does not take the monitor"
     (with-redefs [cat/write-blocked? (constantly true)]
       (is (= [409 :still-loading] ((juxt :status :type) (post-op *app* :term-count []))))))
   (testing "a KB being exported refuses every op"
     (with-redefs [cat/exporting-kb? (constantly true)]
       (is (= [409 :still-exporting] ((juxt :status :type) (post-op *app* :term-count [])))))))
 
+(deftest the-browser-answers-its-catalog-and-jobs-over-the-protocol
+  ;; `:kbs` and `:jobs` are the process's own state, which a daemon serving one KB has
+  ;; none of: what a client polls while a load runs, from the endpoint it queries on
+  (cat/register! "wt-op-catalog" "Listed over the protocol" tu/*kb*)
+  (try
+    (testing ":kbs answers each entry with its status and the live stored count, and no KB"
+      (let [{:keys [status ok result]} (post-op *app* :kbs [])
+            entry (first (filter #(= "wt-op-catalog" (:key %)) (:entries result)))]
+        (is (= [200 true] [status ok]))
+        (is (pos? (get-in result [:heap :max])))
+        (is (= (v/sentex-count tu/*kb*) (:sentexes entry)))
+        (is (not (contains? entry :kb)))))
+    (testing ":jobs answers the registry"
+      (is (= [200 true []] ((juxt :status :ok :result) (post-op *app* :jobs [])))))
+    (testing "both answer while a job writes the active KB, when every KB op is refused"
+      (with-redefs [cat/write-blocked? (constantly true)]
+        (is (= 200 (:status (post-op *app* :kbs []))))
+        (is (= 200 (:status (post-op *app* :jobs []))))))
+    (testing "neither takes args, and the unknown-op list names both"
+      (is (= [400 :bad-args] ((juxt :status :type) (post-op *app* :kbs [1]))))
+      (is (every? (set (:ops (post-op *app* :no-such-op []))) [:kbs :jobs :term-count])))
+    (finally (cat/reset-registry!))))
+
 (deftest a-changed-kb-file-syncs-the-loaded-kbs-on-the-next-request
-  (let [stamps (atom {"core.txt" 1})
+  (let [mtimes (atom {"core.txt" 1})
         calls  (atom [])
         busy?  (atom false)]
-    (with-redefs [web/kb-file-stamps (fn [] @stamps)
+    (with-redefs [web/kb-file-mtimes (fn [] @mtimes)
                   cat/held-premises   (constantly nil)
                   cat/sync-loaded!   (fn []
-                                       (swap! calls conj @stamps)
+                                       (swap! calls conj @mtimes)
                                        (when @busy? (throw (ex-info "busy" {:type :job-busy})))
                                        :job)]
       (let [h (#'web/kb-file-syncing (constantly {:status 200}))]
         (h {})
-        (swap! stamps assoc "core.txt" 2)
+        (swap! mtimes assoc "core.txt" 2)
         (reset! busy? true)
         (h {})
         (reset! busy? false)
@@ -3446,12 +3679,12 @@
           (is (= [{"core.txt" 2} {"core.txt" 2}] @calls)))))))
 
 (deftest a-write-to-the-starter-is-written-back-after-a-non-get-request
-  (let [stamps  (atom {"core.txt" 1})
+  (let [mtimes  (atom {"core.txt" 1})
         held    (atom 0)
         backs   (atom [])
         writer  (atom nil)
         status  (atom :running)]
-    (with-redefs [web/kb-file-stamps (fn [] @stamps)
+    (with-redefs [web/kb-file-mtimes (fn [] @mtimes)
                   cat/sync-loaded!   (constantly :sync-job)
                   cat/held-premises   (fn [k] (is (= "starter" k)) (swap! held inc))
                   cat/write-back!    (fn [_ base] (swap! backs conj base) [(+ 10 base) nil])
@@ -3469,7 +3702,7 @@
         (h put)
         (testing "the first request reads the starter, and each non-GET one compares with the last reading"
           (is (= [1 11] @backs)))
-        (swap! stamps assoc "core.txt" 2)
+        (swap! mtimes assoc "core.txt" 2)
         (h put)
         (h put)
         (testing "nothing is compared while the file sync runs"
@@ -3478,3 +3711,138 @@
         (h put)
         (testing "a finished sync takes a fresh reading, which the next comparison starts from"
           (is (= [1 11 2] @backs)))))))
+
+;; ---- the term bar: rename, copy, remove -----------------------------------
+
+(defn- term-op [params] (POST "/term-op" params same-origin))
+
+(tu/deftest-kb a-term-page-carries-the-term-bar-and-its-panel-writes-nothing
+  (tu/with-terms [aP X CxTermOp]
+    (let [h    (v/assert kb (list aP X) CxTermOp)
+          page (:body (GET "/term" (str "q=" X)))]
+      (doseq [op ["rename" "copy" "remove"]]
+        (is (str/includes? page (str "/term-op?op=" op "&amp;q=" X))))
+      (is (re-find #">Rename</button>" page) "the button names the operation, no ellipsis")
+      (is (not (re-find #"or merge" page)))
+      (let [panel (:body (GET "/term-op" (str "op=remove&q=" X)))]
+        (is (re-find #"1 asserted sentex " panel))
+        (is (re-find #"Remove 1<" panel))
+        (is (re-find #"hx-confirm=\"Remove [^\"]*1 asserted sentex will be retracted" panel)
+            "a remove asks once more in a browser dialog"))
+      (is (re-find #"hx-confirm=\"Rename" (:body (GET "/term-op" (str "op=rename&q=" X)))))
+      (is (not (re-find #"hx-confirm" (:body (GET "/term-op" (str "op=copy&q=" X)))))
+          "a copy removes nothing, so its own button is enough")
+      (is (some? (v/sentex kb h)) "the panel is a read"))))
+
+(defn- name-status [op term to]
+  (:body (GET "/term-op/name" (str "op=" op "&q=" term "&to=" to))))
+
+(tu/deftest-kb the-new-name-is-checked-as-it-is-typed
+  (tu/with-terms [aP X Y CxTermOp]
+    (let [h (v/assert kb (list aP X) CxTermOp)
+          z (tu/tmp-ind "Fresh")]
+      (v/assert kb (list aP Y) CxTermOp)
+      (is (re-find #"is a new term" (name-status "rename" X z)))
+      (is (re-find #"exists, so this merges" (name-status "rename" X Y)))
+      (is (re-find #"Compatible" (name-status "rename" X Y)))
+      (is (re-find #"exists: the copies join" (name-status "copy" X Y)))
+      (is (re-find #"keeps its role" (name-status "rename" X "lowercasename")))
+      (is (re-find #"its own name" (name-status "rename" X X)))
+      (is (re-find #"Not a term name" (name-status "rename" X "%28")))
+      (is (= "" (name-status "rename" X "")))
+      (is (= 400 (:status (GET "/term-op/name" (str "op=remove&q=" X "&to=" Y)))))
+      (is (some? (v/sentex kb h)) "the check is a read"))))
+
+(tu/deftest-kb two-disjoint-types-are-not-compatible-to-merge
+  (tu/with-terms [a_t b_t CxTermOp]
+    (doseq [s [(list 'genl a_t 'thing) (list 'genl b_t 'thing) (list 'disjoint a_t b_t)]]
+      (v/assert kb s CxTermOp))
+    (let [b (name-status "rename" a_t b_t)]
+      (is (re-find #"Not compatible" b))
+      (is (re-find #"are disjoint" b)))))
+
+(tu/deftest-kb renaming-a-term-rewrites-every-asserted-sentex-that-mentions-it
+  (tu/with-terms [aP bP X Y CxTermOp]
+    (let [z  (tu/tmp-ind "Renamed")
+          h1 (v/assert kb (list aP X) CxTermOp {:strength :monotonic})
+          h2 (v/assert kb (list bP Y X) CxTermOp)
+          r  (term-op {"op" "rename" "q" (str X) "to" (str z)})]
+      (is (= 200 (:status r)))
+      (is (re-find #"2 of 2 asserted sentexes rewritten" (:body r)))
+      (is (nil? (v/sentex kb h1)))
+      (is (nil? (v/sentex kb h2)))
+      (let [n1 (v/handle-of kb (list aP z) CxTermOp)]
+        (is (some? n1))
+        (is (= :monotonic (:strength (v/sentex kb n1))) "the strength is carried"))
+      (is (some? (v/handle-of kb (list bP Y z) CxTermOp))))))
+
+(tu/deftest-kb renaming-into-an-existing-term-merges-the-two
+  (tu/with-terms [aP X Y CxTermOp]
+    (v/assert kb (list aP X) CxTermOp)
+    (let [hy (v/assert kb (list aP Y) CxTermOp)]
+      (term-op {"op" "rename" "q" (str X) "to" (str Y)})
+      (is (nil? (v/handle-of kb (list aP X) CxTermOp)))
+      (is (= hy (v/handle-of kb (list aP Y) CxTermOp)) "the shared sentence is the one Y had"))))
+
+(tu/deftest-kb copying-a-term-leaves-the-original
+  (tu/with-terms [aP X CxTermOp]
+    (let [z (tu/tmp-ind "Copied")
+          h (v/assert kb (list aP X) CxTermOp)]
+      (term-op {"op" "copy" "q" (str X) "to" (str z)})
+      (is (some? (v/sentex kb h)))
+      (is (some? (v/handle-of kb (list aP z) CxTermOp))))))
+
+(tu/deftest-kb removing-a-term-retracts-its-sentexes-and-notes-them
+  (tu/with-terms [aP bP X CxTermOp]
+    (let [h1 (v/assert kb (list aP X) CxTermOp)
+          h2 (v/assert kb (list bP X X) CxTermOp)
+          r  (term-op {"op" "remove" "q" (str X)})]
+      (is (re-find #"2 of 2 asserted sentexes removed" (:body r)))
+      (is (nil? (v/sentex kb h1)))
+      (is (nil? (v/sentex kb h2)))
+      (is (= :term (:via (noted-with kb X)))))))
+
+(tu/deftest-kb a-new-name-spelled-for-another-role-is-refused
+  (tu/with-terms [aP X CxTermOp]
+    (let [h (v/assert kb (list aP X) CxTermOp)]
+      (is (= 400 (:status (term-op {"op" "rename" "q" (str X) "to" "lowercasename"}))))
+      (is (= 400 (:status (term-op {"op" "rename" "q" (str X) "to" (str X)}))))
+      (is (= 400 (:status (term-op {"op" "explode" "q" (str X)}))))
+      (is (some? (v/sentex kb h)) "nothing was written"))))
+
+;; ---- a page load that reads long ----------------------------------------
+
+(deftest a-long-page-load-is-answered-with-a-waiting-page-and-listed-on-jobs
+  (let [old     (System/getProperty "vaelii.browser.detach-ms")
+        release (promise)
+        calls   (atom 0)
+        detach! #(System/setProperty "vaelii.browser.detach-ms" (str %))]
+    (try
+      (with-redefs [web/stats-page (fn [& _]
+                                     (swap! calls inc)
+                                     @release
+                                     {:status 200 :headers {} :body "stats done"})]
+        (detach! 30)
+        (let [r      (GET "/stats")
+              cookie {"cookie" (some-> (get-in r [:headers "Set-Cookie"]) str
+                                       (str/split #";") first)}
+              id     (second (re-find #"/inflight/poll\?id=([0-9a-f-]+)" (:body r)))
+              poll   #(GET "/inflight/poll" (str "id=" id))]
+          (detach! 5000)
+          (is (str/includes? (:body r) "Still reading"))
+          (is (some? id))
+          (is (= 204 (:status (poll))) "nothing while it reads")
+          (is (str/includes? (:body (GET "/jobs")) "Pages still reading"))
+          (deliver release true)
+          (loop [n 0]
+            (when (and (= 204 (:status (poll))) (< n 300))
+              (Thread/sleep 10)
+              (recur (inc n))))
+          (is (= "true" (get-in (poll) [:headers "HX-Refresh"])) "a reload once it is done")
+          (is (= "stats done" (:body (GET "/stats" nil cookie))))
+          (is (= 1 @calls) "answered from the finished read, not read again")))
+      (finally
+        (deliver release true)
+        (if old
+          (System/setProperty "vaelii.browser.detach-ms" old)
+          (System/clearProperty "vaelii.browser.detach-ms"))))))

@@ -22,7 +22,7 @@
   sentences derive different things in different orders, which is the one thing belief
   may not depend on (docs/nmtms.md).
 
-  The deliberately-global reads are pinned here too, at the end — a reader finding
+  The deliberately-global reads are asserted here too, at the end — a reader finding
   `genl?` refusing a cycle across invisible contexts should find it *stated* rather
   than have to decide whether it is a bug."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
@@ -328,7 +328,7 @@
   ;; This arm's job stops at the mergeable case (docs/equality.md, `mergeable-values?`) —
   ;; two *numbers* under a `functional` slot are the hard clash no equality can resolve,
   ;; and issue #43 leaves what happens there a deliberate open design question, not a
-  ;; bug.  What this pins is only that adding `equate-under-context-edge` did not change
+  ;; bug.  This test asserts only that adding `equate-under-context-edge` did not change
   ;; that path: a genlCx edge completing an unmergeable clash still neither throws nor
   ;; does nothing — CxUbBelow is the vantage and weighs the pair, and two `:default`
   ;; numbers tie, so both stand and `contradictions` names them.
@@ -477,7 +477,7 @@
       (is (empty? (head-move-misreads kb shape orders)) (str shape " in " (count orders) " orders")))))
 
 (deftest a-reader-below-a-denial-of-the-rewrite-reads-the-fact-under-the-kb-s-head-in-a-bare-kb
-  ;; no upper layer: the engine's baseline roster holds the `:default` `rewriteOf` `:monotonic`
+  ;; no upper layer: the baseline forced-monotonic set holds the `:default` `rewriteOf` `:monotonic`
   ;; and its denial OUT, so no reader's round defeats the merge's election
   (tu/with-neutral-kb [kb tu/isolated-fresh]
     (tu/with-terms [dog_ Pa Qb CxBase CxMid CxSub]
@@ -555,8 +555,8 @@
 (tu/deftest-kb a-derived-declaration-installs-live-not-only-on-recover
   ;; `recover` replays every stored sentex of the functor, so a declaration that
   ;; reaches the cache only there makes a restart change the answer
-  ;; reachable only from a roster antecedent, since `disjoint` is on the forced-monotonic
-  ;; roster (docs/nmtms.md)
+  ;; reachable only from a forced-monotonic antecedent, since `disjoint` is forced-monotonic
+  ;; (docs/nmtms.md)
   (tu/with-terms [q1_t q2_t sepOf14]
     (v/assert kb (list 'genl q1_t 'thing) 'CxUniverse)
     (v/assert kb (list 'genl q2_t 'thing) 'CxUniverse)
@@ -569,7 +569,7 @@
 ;; ---- what is global, and stated to be ----------------------------------
 ;;
 ;; Not leaks: each is a property of a structure the whole KB shares, and narrowing it
-;; would break something worse than it fixes.  Pinned so the next reader does not have
+;; would break something worse than it fixes.  Asserted so the next reader does not have
 ;; to guess (docs/taxonomy.md, docs/contexts.md).
 
 (tu/deftest-kb the-genl-cycle-check-is-global-on-purpose
@@ -725,7 +725,7 @@
   ;; The two families disagree, and the disagreement is theirs rather than ist's:
   ;; `sentexes-matching` is an exact-context retrieval, while the reasoning entry points answer
   ;; from everything the context inherits.  `(ist A S)` means "in A" under both readings
-  ;; — a fact A inherits *is* true in A — so it is pinned rather than reconciled.
+  ;; — a fact A inherits *is* true in A — so the difference is asserted rather than reconciled.
   (tu/with-terms [seenP20 Near Far CxA CxB]
     (siblings! kb CxA CxB)
     (v/assert kb (list seenP20 Near) CxA)

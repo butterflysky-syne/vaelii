@@ -1,10 +1,10 @@
 # The predAll quantifier family
 
 - **Covers:** the eight `pred*` relations that quantify one argument position of a binary
-  predicate and fix the other, in three semantic classes — the *Instance* pair that stamps
-  a rule, the *Exists* four that derive nothing, and the *Specified* pair that audits; the
-  `indeterminate_term` determinacy category behind the audit; the identity exemption that
-  category carries; and the entry points that run the audit.
+  predicate and fix the other, in three semantic classes — the *Instance* pair that
+  generates a rule, the *Exists* four that derive nothing, and the *Specified* pair that
+  audits; the `indeterminate_term` determinacy category behind the audit; the identity
+  exemption that category carries; and the entry points that run the audit.
 - **Not here:** the generator mechanism the *Instance* pair is built on →
   [generators.md](generators.md); the equality closure and the unique-name assumption the
   exemption is carved out of → [equality.md](equality.md); a skolem constant and how one is
@@ -22,9 +22,9 @@ while `predInstanceAll` fixes position 1 and quantifies position 2.
 
 | | fixed second argument | collection second argument |
 |---|---|---|
-| **universal first** | `predAllInstance` (stamps a rule) | `predAllExists` (inert) · `predAllSpecified` (audit) |
+| **universal first** | `predAllInstance` (generates a rule) | `predAllExists` (inert) · `predAllSpecified` (audit) |
 | **existential first** | `predExistsInstance` (inert) | `predExistsAll` (inert, universal second) |
-| **fixed first** | — | `predInstanceAll` (stamps a rule) · `predInstanceExists` (inert) |
+| **fixed first** | — | `predInstanceAll` (generates a rule) · `predInstanceExists` (inert) |
 | **audited first** | — | `predSpecifiedAll` (audit) |
 
 Where a cell quantifies both positions, the universal outscopes the existential.
@@ -38,7 +38,7 @@ The three classes differ in what the engine does with a declaration, and the dif
 the whole design. *Instance* declarations produce inference. *Exists* declarations produce
 none. *Specified* declarations produce a report a caller asks for.
 
-## Instance: the declaration stamps a rule
+## Instance: the declaration generates a rule
 
 `predAllInstance` and `predInstanceAll` are **rule generators**
 ([generators.md](generators.md)). The `core.txt` declaration beside each one is a rule whose
@@ -50,14 +50,14 @@ consequent is a rule:
 ```
 
 Asserting `(predAllInstance sign negative_integer "negative")` grounds `?pred`, `?indep`
-and `?fixed`, and the firing stamps the concrete rule `(implies (negative_integer ?x)
+and `?fixed`, and the firing generates the concrete rule `(implies (negative_integer ?x)
 (sign ?x "negative"))`. Every rule the index keys therefore carries a concrete functor,
 which is what a generator buys over a rule with a variable in its consequent
 ([indexing.md](indexing.md)).
 
 Descent to the members is ordinary chain inference from there. A member asserted later
-fires the stamped rule, the conclusion carries a justification, and retracting the
-membership retracts the conclusion. Backward, the stamped rule's antecedent is discharged
+fires the generated rule, the conclusion carries a justification, and retracting the
+membership retracts the conclusion. Backward, the generated rule's antecedent is discharged
 inside a `query` or `prove` proof, so `(sign -212 "negative")` is provable from the bare
 literal `-212` — the membership `(negative_integer -212)` comes from the evaluative
 `defnSufficient` prover ([defns.md](defns.md)). `ask` answers the same goal false, because
@@ -67,7 +67,7 @@ no member of the prover registry expands a rule ([levels.md](levels.md)).
 
 The four relations with `exist` in the name are **inferentially inert**. Each declaration
 is stored and queryable like any other fact, and the engine derives nothing from it: no
-stamped rule, no skolemized witness, no materialized membership.
+generated rule, no skolemized witness, no materialized membership.
 
 Each cell instead sanctions a **placeholder functor** an author may use to name the
 required filler — `PredAllExistsFn`, `PredExistsAllFn`, `PredExistsInstanceFn` and
@@ -90,10 +90,10 @@ which take the function's arguments and the placeholder last.
 
 Inertness is also what makes all four cells expressible. `predExistsInstance` and
 `predInstanceExists` are pure existentials with no universal to range over, so a generator
-has no collection to range a stamped rule over and fails range restriction there. The
+has no collection to range a generated rule over and fails range restriction there. The
 alternative — a plain rule with a variable functor in its consequent — files under the
 concluding-rule catch-all and makes the query planner see a candidate rule for every
-predicate in the KB. A declaration that stamps nothing has neither problem.
+predicate in the KB. A declaration that generates nothing has neither problem.
 
 ## Specified: an integrity audit a caller runs
 
@@ -181,15 +181,15 @@ both the audit and the prover below call it, so the two cannot disagree about a 
 
 ## The identity exemption
 
-The unique-name assumption is **suspended** for an unpinned indeterminate term. Distinct
+The unique-name assumption is **suspended** for an unmerged indeterminate term. Distinct
 symbols normally denote distinct individuals, and `(different X Y)` is provable exactly
 when the arguments lie in no shared equivalence class ([equality.md](equality.md)). An
-indeterminate term stands for some object without pinning down which, so it is not provably
+indeterminate term stands for some object without determining which, so it is not provably
 different from anything:
 
 ```clojure
 (v/ask? kb (list 'different skolem-constant 'Alice) 'CxUniverse)   ; => false
-(v/assert kb (list 'rewriteOf 'Real skolem-constant) 'CxUniverse)  ; pin it
+(v/assert kb (list 'rewriteOf 'Real skolem-constant) 'CxUniverse)  ; identify it
 (v/ask? kb (list 'different skolem-constant 'Alice) 'CxUniverse)   ; => true
 ```
 
@@ -200,7 +200,7 @@ rather than a mark of its own.
 Two consequences follow. A `different` goal with an indeterminate argument is
 unprovable as a whole, even where two of its other arguments are determinate and distinct.
 And `same-class?` is no longer the complement of a provable `different`: both read false of
-an unpinned indeterminate term, so a caller wanting *provably different* asks `different`
+an unmerged indeterminate term, so a caller wanting *provably different* asks `different`
 and reads that answer.
 
 ## Stratification

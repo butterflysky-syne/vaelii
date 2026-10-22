@@ -146,6 +146,11 @@
     (:skip false nil) false
     v))
 
+(def ^:private sync-option
+  {:key :sync? :type :flag :label "Sync the shipped contexts into it (writes; slow on a large KB)"
+   :default false
+   :help "off leaves the KB as it was written; on brings its CxUniverse and kb/middle contexts to what this engine ships, one edit and one settle over the whole KB, which on a corpus of millions of sentexes can outlast the session and leaves a store's images stale"})
+
 (def ^:private dump-options
   [{:key :belief? :type :choice
     :label "Belief and the taxonomy"
@@ -153,7 +158,8 @@
     :choices [[:rebuild "Rebuild now (slow — a JTMS node per sentex)"]
               [:stored  "Store it, rebuild later"]
               [:skip    "Skip it (records and index only)"]]
-    :help "\"rebuild now\" is the finished KB. \"store it\" reads and stores every justification and premise mark but leaves the TMS and the genl/genlCx closures empty, so the KB is findable and countable now and can be recovered later without re-reading the dump. \"skip it\" never reads the justification stream, and for a dump in a foreign dialect that is permanent — nothing a later recover could rebuild belief from is stored"}])
+    :help "\"rebuild now\" is the finished KB. \"store it\" reads and stores every justification and premise mark but leaves the TMS and the genl/genlCx closures empty, so the KB is findable and countable now and can be recovered later without re-reading the dump. \"skip it\" never reads the justification stream, and for a dump in a foreign dialect that is permanent — nothing a later recover could rebuild belief from is stored"}
+   sync-option])
 
 (defn request-paths?
   "May a request name a directory for this process to write (`VAELII_REQUEST_PATHS`,
@@ -174,7 +180,8 @@
 
 (def ^:private store-options
   [{:key :recover? :type :flag :label "Recover belief and the taxonomy on open (slow)" :default false
-    :help "off opens the records and index as they stand: no genl/genlCx closure, and belief-filtered queries answer nothing"}])
+    :help "off opens the records and index as they stand: no genl/genlCx closure, and belief-filtered queries answer nothing"}
+   sync-option])
 
 ;; ---- discovery -----------------------------------------------------------
 
@@ -204,21 +211,26 @@
   "The kind of KB in directory `d`, or nil.  Reads the marker each writer leaves: a
   corpus's `meta.edn` carries the context order it was written in, a dump's carries a
   `:format-version`, and a vaelii store is a `records/` directory the record writer has
-  stamped with its own `format.edn`.
+  written with its own `format.edn`.
 
   **The records half is the whole marker**, and requiring an `index/` beside it hid
   exactly the stores worth finding.  Only `:disk-log` keeps a durable index on disk;
   `:disk-columnar`, `:disk-dense` and `:disk-memory` derive theirs and write no `index/`
   at all — so a large store classified as nothing and could not be
   offered.  Those are the backends a corpus past a few million records is loaded into,
-  `:disk-log`'s index being a map held in RAM whatever else is on disk."
+  `:disk-log`'s index being a map held in RAM whatever else is on disk.
+
+  A KB whose records are on a server (`:pg-disk-log`, `:pg-snapshot`) has no `records/`
+  here; its marker is `index/records.edn`, the records identity naming that server, which
+  is also what `open-kb` reopens it from."
   [^File d]
   (when (.isDirectory d)
     (let [m (readable-edn (file-at d "meta.edn"))]
       (cond
         (and (map? m) (:context-order m))                                :corpus
         (and (map? m) (or (:format-version m) (:variant m)))             :dump
-        (some? (readable-edn (file-at (file-at d "records") "format.edn"))) :store))))
+        (some? (readable-edn (file-at (file-at d "records") "format.edn"))) :store
+        (some? (readable-edn (file-at (file-at d "index") "records.edn")))  :store))))
 
 (defn- corpus-scale
   "How big a found corpus says it is — from the report its writer left beside it, which
@@ -498,7 +510,7 @@
   "Apply `f` to entry `key` — **and only while the registry still holds it**.  Nothing here
   creates an entry (`load-source` and `register!` both do that with their own `assoc-in`),
   so an update reaching a dropped key would not fail: it would *recreate* the entry as a
-  fragment with no `:key` and no `:started`, which `view` subtracts from.  Reachable
+  fragment with no `:key` and no `:started`, which `public-entry` subtracts from.  Reachable
   because a load's own thread writes here as it unwinds, and `unload!` may have dropped
   the entry in between."
   [key f]
@@ -525,7 +537,7 @@
   [key]
   (with-job (get-in @state [:entries key])))
 
-(defn- view
+(defn- public-entry
   "An entry as something safe to render or send: the KB dropped, elapsed time filled in.
 
   `:kb?` survives the dropping because it is what decides whether an entry can be read
@@ -539,17 +551,17 @@
                  :kb?        (some? (:kb e)))))))
 
 (defn entries
-  "Every entry, in load order, as views."
+  "Every entry, in load order, as public entries."
   []
   (let [{:keys [entries order]} @state]
-    (into [] (keep #(view (get entries %))) order)))
+    (into [] (keep #(public-entry (get entries %))) order)))
 
 (defn active
   "The key of the active entry, or nil."
   []
   (:active @state))
 
-(defn active-entry [] (view (entry (active))))
+(defn active-entry [] (public-entry (entry (active))))
 
 (defn in-process?
   "Does entry `key` hold a KB in *this* JVM?  A KB is a map with a record store in it; an
@@ -575,7 +587,7 @@
 (defn install-memory-guard!
   "Attach the cache memory-pressure guard, feeding it this catalog's live KBs so the trim
   reaches their per-KB caches (`vaelii.core/install-memory-guard!`).  The browser
-  calls this at startup; the guard holds no roster of open KBs of its own, since the engine
+  calls this at startup; the guard holds no list of open KBs of its own, since the engine
   does not."
   []
   (v/install-memory-guard! {:kbs live-kbs}))
@@ -659,10 +671,16 @@
   [kb]
   (when (:records kb)
     (try
-      {:contexts (count (v/contexts kb))
-       :sentexes (v/sentex-count kb)
-       :types    (count (v/types kb))
-       :terms    (v/term-count kb)}
+      (let [owed        (v/owed-releases kb)
+            unsupported (v/unsupported kb)]
+        (cond-> {:contexts (count (v/contexts kb))
+                 :sentexes (v/sentex-count kb)
+                 :types    (count (v/types kb))
+                 :terms    (v/term-count kb)}
+          ;; the withheld mints an open or a bulk load left undrawn (`v/release-withheld!`)
+          (pos? owed) (assoc :owed-releases owed)
+          ;; the records the open found nothing supporting (`v/remove-unsupported!`)
+          (pos? (:n unsupported)) (assoc :unsupported unsupported)))
       (catch Exception e
         {:error (.getMessage e)}))))
 
@@ -688,7 +706,7 @@
   leaner figure is used, so a corpus of fat sentences reads low.
 
   The `:tms` figure is the **dense** network's, since that is the default (the reference
-  map costs ~467 B/sentex — ~3.8× more — and is now the pinned baseline).  It is a second
+  map costs ~467 B/sentex — ~3.8× more — and is the comparison baseline).  It is a second
   shape term: the dense JTMS is `18 B/node + 166 B/justification` (bench-scale, item 09),
   so per *stored* sentex it is 18 + (j/n)·166 — ~101 at a moderate j/n≈0.5, the basis the
   467 was taken on.  A justification-heavy KB (j/n≈1) reads low here for the same reason a
@@ -833,6 +851,23 @@
   [options key]
   (:default (first (filter #(= key (:key %)) options))))
 
+(defn- noting-log-fn
+  "A Trove `*log-fn*` that files each `:info`-or-louder message's text as the job's
+  progress `:note`, then hands the call on to `prior` (nil when nothing was installed).
+  A store's open reports nothing through `:on-progress`, but a large one logs each
+  recover step and each image install, and those lines are what the card can show.
+
+  Never throws: a log site is not a cancellation point, and `progress!` throwing there
+  would unwind an open from inside the engine's own bookkeeping.  A cancel asked during
+  the open is honoured at the load's next progress report instead."
+  [progress! prior]
+  (fn [ns coords level id payload_]
+    (when (#{:info :warn :error :fatal :report} level)
+      (when-let [msg (:msg (force payload_))]
+        (try (progress! {:phase :open :note msg})
+             (catch Exception _ nil))))
+    (when prior (prior ns coords level id payload_))))
+
 (defn- run-load
   "Load `source` into a fresh KB under `params`, reporting through `progress!`.  Returns
   the loader's summary.
@@ -874,28 +909,31 @@
       :dump     (v/import! (open!) path {:belief?     (belief-mode (:belief? params))
                                          :on-progress progress!})
       ;; a store is already a KB — opening it *is* the load.  Opening is not quick at
-      ;; scale (the record log is scanned and the index rebuilt) and it reports nothing
-      ;; while it runs, so say what is happening before going in.  The backend is read off
+      ;; scale (the record log is scanned and the index rebuilt) and it takes no
+      ;; `:on-progress`, so say what is happening before going in, and file each line the
+      ;; engine logs while it runs as the card's note (`noting-log-fn`).  The backend is read off
       ;; the store's own layout, never assumed: opening a `:disk-columnar` store as
       ;; `:disk-log` surfaces no records at all (docs/storage.md).
       ;;
-      ;; `:recover? :trust` is taken under `VAELII_DEV` only.  It installs and keeps an
-      ;; image an earlier engine build wrote, writable at once, and this build's code moves
-      ;; belief wherever a settle reaches — at a development prompt the engine changes all
-      ;; day, and a recover or a rebuild per change is the hour the image exists to save.
-      ;; A served browser takes `:auto` instead: it waits for the recover, so the KB it
-      ;; makes active holds belief this build derived (docs/storage.md, "Trusting an
-      ;; image").
+      ;; The open takes `open-kb`'s default, `:recover? :trust`: an image an earlier engine
+      ;; build wrote is installed and kept, writable at once, and this build's code moves
+      ;; belief wherever a settle reaches.  A recover per engine change is the hour the
+      ;; image exists to save; `lein cli upgrade` is where a store pays it on purpose
+      ;; (docs/storage.md, "Trusting an image").  A recovered `:snapshot` store opens with
+      ;; an operation log, so a process killed with no close (SIGKILL, which runs no
+      ;; shutdown hook) reopens by replaying its writes over the images rather than by
+      ;; rebuilding them (docs/storage.md, "The operation log").
       :store    (let [backend  (v/store-backend path)
                       recover? (boolean (:recover? params))
                       _  (progress! {:phase :open :done 0
                                      :note (if recover?
                                              "opening the store and recovering belief and the taxonomy"
                                              "opening the store — records only, recover to build belief")})
-                      kb (v/open-kb {:backend backend :dir path
-                                     :recover? (cond (not recover?)                false
-                                                     (v/switch-value "VAELII_DEV") :trust
-                                                     :else                         :auto)})]
+                      kb (binding [trove/*log-fn* (noting-log-fn progress! trove/*log-fn*)]
+                           (v/open-kb (cond-> {:backend backend :dir path}
+                                        (not recover?) (assoc :recover? false)
+                                        (and recover? (#{:disk-snapshot :pg-snapshot} backend))
+                                        (assoc :oplog? true))))]
                   (note-kb! kb {:backend backend :dir path :attached? true})
                   (check-readable! kb path)
                   {})
@@ -903,18 +941,38 @@
                            " :starter, :generated, :corpus, :dump or :store")
                       {:type :unknown-source :kind kind})))))
 
+(defn- sync-op-note
+  "One change of a step-by-step sync as a job's progress note."
+  [{:keys [op context form]}]
+  (let [f (pr-str form)]
+    (str (name op) " " (if (< 120 (count f)) (str (subs f 0 119) "…") f) " in " context)))
+
 (defn- sync-now!
-  "Sync `kb`'s shipped contexts (`sync/sync!`), file the report on entry `key` as
-  `:sync` and log it.  Returns the report.
+  "Sync `kb`'s shipped contexts, file the report on entry `key` as `:sync` and log it.
+  Returns the report.
+
+  Given a job's `progress!`, one change at a time (`sync/sync-each!`): the plan's size
+  first, then each change and how far along it is, and a cancel lands between two
+  changes.  Without one, the one batch (`sync/sync!`), which on a small KB is the cheaper.
 
   A sync that throws is filed and logged as `{:error message}` rather than rethrown: the
   KB loaded, and shipped contexts this engine could not bring current is a fact to report about
-  it, not a reason to refuse the load.  `ships` is `sync/premises`, read once by a
-  caller that syncs more than one KB."
-  ([key kb] (sync-now! key kb nil))
-  ([key kb ships]
-   (let [report (try (if ships (sync/sync! kb ships) (sync/sync! kb))
-                     (catch Exception e {:error (or (ex-message e) (str (class e)))}))]
+  it, not a reason to refuse the load.  A cancel is the exception, and is rethrown.  `ships`
+  is `sync/premises`, read once by a caller that syncs more than one KB."
+  ([key kb] (sync-now! key kb nil nil))
+  ([key kb ships] (sync-now! key kb ships nil))
+  ([key kb ships progress!]
+   (let [ships  (or ships (sync/premises))
+         report (try (if progress!
+                       (sync/sync-each! kb ships
+                                        (fn [{:keys [done total op]}]
+                                          (progress! (cond-> {:phase :sync :done done :total total}
+                                                       op (assoc :note (sync-op-note op))))))
+                       (sync/sync! kb ships))
+                     (catch Exception e
+                       (if (jobs/cancelled? e)
+                         (throw e)
+                         {:error (or (ex-message e) (str (class e)))})))]
      (put-entry! key #(assoc % :sync report))
      (trove/log! {:level (if (or (:error report) (seq (:refused report))) :warn :info)
                   :id    ::shipped-synced
@@ -954,7 +1012,7 @@
                                            :kind   :sync
                                            :writes kb
                                            :entry  key}
-                                          (fn [_] (sync-now! key kb)))
+                                          (fn [progress!] (sync-now! key kb nil progress!)))
                              (catch clojure.lang.ExceptionInfo e
                                (if (= :job-busy (:type (ex-data e))) ::busy (throw e)))))
                  (Thread/sleep 2000)
@@ -963,20 +1021,31 @@
     (.setDaemon true)
     (.start)))
 
+(defn- follows-shipped?
+  "Does entry `e` follow the shipped files?  A KB built from this engine's own files
+  does.  A loaded store or dump does only when its load asked for it (`:sync?`): a sync
+  is an `edit!` and a settle over the whole KB, which on a corpus of millions of
+  sentexes outlasts the session, and every record it writes before it is stopped stays
+  in the store and leaves its images stale."
+  [e]
+  (or (not (#{:store :dump} (get-in e [:source :kind])))
+      (true? (get-in e [:params :sync?]))))
+
 (defn- sync-shipped
   "Bring a loaded store's or dump's shipped contexts up to this engine's
-  (`vaelii.host.sync`): inline when `kb` accepts writes, which a served browser's
-  recover leaves it doing, and after the rebuild when belief is being rebuilt behind an
-  image.  A store opened without a recover accepts no writes and is left as it is.  The
-  other source kinds are built from this engine's own files and are already in sync.
-  Returns the report, `{:deferred true}`, or nil."
-  [key {:keys [kind]} progress!]
-  (when-let [kb (and (#{:store :dump} kind) (:kb (entry key)))]
+  (`vaelii.host.sync`) when its load asked for it (`:sync?`, `follows-shipped?`): inline
+  when `kb` accepts writes, which a served browser's recover leaves it doing, and after
+  the rebuild when belief is being rebuilt behind an image.  A store opened without a
+  recover accepts no writes and is left as it is.  The other source kinds are built from
+  this engine's own files and are already in sync.  Returns the report,
+  `{:deferred true}`, or nil."
+  [key {:keys [kind]} params progress!]
+  (when-let [kb (and (#{:store :dump} kind) (:sync? params) (:kb (entry key)))]
     (let [hz (v/write-hazards kb)]
       (cond
         (empty? hz)
-        (do (progress! {:phase :sync :done 0 :note "syncing the shipped contexts"})
-            (sync-now! key kb))
+        (do (progress! {:phase :sync :done 0 :note "planning the sync of the shipped contexts"})
+            (sync-now! key kb nil progress!))
 
         (:stale-belief hz)
         (do (sync-after-rebuild! key kb)
@@ -986,11 +1055,13 @@
   "Sync the shipped contexts of every entry that holds a KB in this process and accepts
   writes, as one `:sync` job: the shipped files are read once (`sync/premises`), and
   each entry's report is filed on it as `:sync` (`sync-now!`).  What the development
-  browser runs when a shipped KB file changes on disk (`vaelii.browser.web`).  Returns the
-  job id, or nil when no entry qualifies.  Throws `{:type :job-busy}` while another job
-  holds this process's writer."
+  browser runs when a shipped KB file changes on disk (`vaelii.browser.web`).  A store or
+  dump loaded without `:sync?` is not one of them (`follows-shipped?`).  Returns the job
+  id, or nil when no entry qualifies.  Throws `{:type :job-busy}` while another job holds
+  this process's writer."
   []
-  (let [ks (filterv #(and (in-process? %) (empty? (v/write-hazards (:kb (entry %)))))
+  (let [ks (filterv #(and (in-process? %) (follows-shipped? (entry %))
+                          (empty? (v/write-hazards (:kb (entry %)))))
                     (:order @state))]
     (when (seq ks)
       (jobs/submit {:label  "Sync the shipped contexts of every loaded KB"
@@ -1000,6 +1071,33 @@
                      (let [ships (sync/premises)]
                        {:synced (into {} (for [k ks :let [kb (:kb (entry k))] :when kb]
                                            [k (sync-now! k kb ships)]))}))))))
+
+(defn sync-entry!
+  "Sync the shipped contexts of entry `key` as a `:sync` job, whatever its load asked,
+  one change at a time with each reported, filing the report on it as `:sync`
+  (`sync-now!`), and return the job id.  How a store
+  or dump loaded without `:sync?` is brought current on purpose.  Throws
+  `:unknown-source` when no entry `key` holds a KB in this process, `:unrecovered-kb` when
+  that KB accepts no writes (`v/write-hazards`), and `{:type :job-busy}` while another job
+  holds this process's writer."
+  [key]
+  (let [kb (and (in-process? key) (:kb (entry key)))]
+    (when-not kb
+      (throw (ex-info (str "no KB in this process is filed as " (pr-str key))
+                      {:type :unknown-source :key key})))
+    (when-let [hz (not-empty (v/write-hazards kb))]
+      (let [msg (str "sync-entry! into " key ", which accepts no writes: "
+                     (pr-str (sort (keys hz))) " (v/write-hazards)")]
+        (throw (ex-info msg {:type      :unrecovered-kb
+                             :hazards   (vec (sort (keys hz)))
+                             :operation 'sync-entry!
+                             :repair    (if (:no-index hz) 'reindex 'recover)
+                             :message   msg}))))
+    (jobs/submit {:label  (str "Sync the shipped contexts of " key)
+                  :kind   :sync
+                  :writes kb
+                  :entry  key}
+                 (fn [progress!] (sync-now! key kb nil progress!)))))
 
 (defn held-premises
   "`sync/held` of entry `key`'s KB, or nil unless that KB is in this process and
@@ -1081,7 +1179,7 @@
                           {:type :too-many-kbs :max max-entries :entries held}))))
       ;; The status and progress here are what an entry reads for the moment between being
       ;; registered and its job's id landing on it — `with-job` prefers the job the instant
-      ;; there is one.  Not redundant: a caller rendering an entry in that window would
+      ;; there is one.  Not redundant: a caller rendering an entry in that interval would
       ;; otherwise be handed a nil status, and the page names it.
       (swap! state (fn [s]
                      (-> s
@@ -1114,7 +1212,7 @@
                             summary  (run-load src params progress! note-kb!)
                             ;; while the entry still reads `:running`, so the browser's
                             ;; writes wait for it (`write-blocked?`)
-                            _        (sync-shipped key src progress!)]
+                            _        (sync-shipped key src params progress!)]
                         ;; a cancelled or failed load leaves whatever had landed in its
                         ;; stores; `unload!` is what takes those down
                         ;; `:progress` settles with the status, as it does on the job
@@ -1438,7 +1536,7 @@
                        (or (zero? (long n)) (:believes? st)))
             settled? (and (not= ::unreadable n) (= :done (:status e)))
             ;; Which repair a beliefless KB needs, and the store is the only thing that
-            ;; knows.  `recover` reads the premise roster and the justifications out of
+            ;; knows.  `recover` reads the premise set and the justifications out of
             ;; the record store, so a store holding either has everything it needs and
             ;; wants a `recover`; one holding neither cannot be recovered into belief at
             ;; all and has to be loaded again.  Two different instructions, and telling

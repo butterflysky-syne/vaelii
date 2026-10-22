@@ -325,6 +325,22 @@
     [:retract '(genl snake reptile) 'CxClashBase]
     [:assert '(plant CI5) 'CxClashBase {}]]))
 
+;; ---- a length arriving after the declaration that minted under it ---------
+;;
+;; The declaration entails `(unary_predicate kindC)` and mints `(kindC CI0)`.  A
+;; `(binary_predicate kindC)` arriving after it withdraws the entailment and the minted
+;; membership breaks the length and is held inert; arriving before it, the declaration
+;; waits and mints neither.  The binding leaving re-asks the declaration in every order.
+
+(deftest a-length-arriving-after-a-minting-declaration-reads-as-one-arriving-before-it
+  (tu/with-entailing
+    (let [decl   [:assert '(arg usesKindC 1 kindC) 'CxClashBase {}]
+          fact   [:assert '(usesKindC CI0 CI1) 'CxClashBase {}]
+          bind   [:assert '(binary_predicate kindC) 'CxClashBase {:strength :monotonic}]
+          unbind [:retract '(binary_predicate kindC) 'CxClashBase]]
+      (doseq [ops [[decl fact bind unbind] [bind decl fact unbind] [decl bind fact unbind]]]
+        (directed-stream ops)))))
+
 ;; ---- a genl edge under a standing pair -----------------------------------
 ;;
 ;; Four shapes of a `genl` edge moving under a pair, one test each.

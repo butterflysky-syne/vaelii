@@ -85,15 +85,25 @@
   --err-ink:    #e06c6c;
 
   /* the term roles, off the spectrum below, so light mode's darker steps carry over:
-     pale amber for a type (a unary predicate), yellow-orange for a predicate of two or
-     more places, blue for a context, violet for an individual, and the title ink for a
+     pale amber for a type (a unary predicate), yellow-orange for a binary predicate,
+     red-orange (halfway from that to red) for a predicate of three or more places,
+     green for a logical connective (`and`, `or`, `not`, `implies`), blue for a context, violet for an individual, and the title ink for a
      literal (a number or a string) and for the `in` before a context */
   --t-type:    color-mix(in srgb, var(--rb3) 60%, var(--title));
   --t-ind:     var(--rb8);
   --t-pred:    color-mix(in srgb, var(--rb2) 55%, var(--rb3));
+  --t-pred-n:  color-mix(in srgb, var(--rb1) 50%, var(--t-pred));
+  --t-conn:    var(--rb4);
   --t-context: var(--rb7);
   --t-num:     var(--title);
   --t-var:     #6b7183;
+
+  /* the concept graph's two edge strokes: blue for a subsumption arrow (`genl`, `genlCx`)
+     and amber for a `disjoint` edge.  The amber is the lighter of the two in both modes
+     and the pair sits on the blue-yellow axis, so it separates under protanopia and
+     deuteranopia (OKLab ΔE 27 here, 27.6 in light mode, by the dataviz validator) */
+  --g-sub:      #3f7fd9;
+  --g-disjoint: #c08a00;
 
   /* derived from --accent (+ mode), so a palette change ripples automatically: the
      wordmark and the selected-card tint/edge follow the hue. */
@@ -135,8 +145,8 @@
 
 /* ---- light mode ------------------------------------------------------ */
 /* The @media form needs no JS: with no `data-theme` the page follows the OS.  The
-   [data-theme="light"] form is the explicit choice the header's theme dot pins — the
-   same variables, so a pinned theme can never disagree with the OS-following one.  The
+   [data-theme="light"] form is the explicit choice the header's theme dot stores — the
+   same variables, so a chosen theme can never disagree with the OS-following one.  The
    accent pair flips to its light side here, and --on-accent with it: a light-mode accent
    is deep, so the text on a filled one is white rather than near-black.  sel-bg /
    sel-edge re-derive on their own, since they mix with --card. */
@@ -147,7 +157,7 @@
     --code-bg:#ecece4; --field-bg:#fff; --field-edge:#c9c9bf;
     --btn-bg:#ecece4; --btn-hover:#e0e0d6; --shadow:rgba(0,0,0,.18);
     --belief-bg:#faf7f2; --err-bg:#fdeceb; --err-ink:#c0392b;
-    --t-var:#8b8f99;
+    --t-var:#8b8f99; --g-sub:#1661c0; --g-disjoint:#b97800;
     --rb1:#c21527; --rb2:#d32704; --rb3:#d69900; --rb4:#6da72f; --rb5:#2daa8a;
     --rb6:#1893be; --rb7:#1661c0; --rb8:#4b20b6; --rb9:#b91d75;
     --accent: var(--lt-accent); --accent-2: var(--lt-accent-2);
@@ -161,7 +171,7 @@
   --code-bg:#ecece4; --field-bg:#fff; --field-edge:#c9c9bf;
   --btn-bg:#ecece4; --btn-hover:#e0e0d6; --shadow:rgba(0,0,0,.18);
   --belief-bg:#faf7f2; --err-bg:#fdeceb; --err-ink:#c0392b;
-  --t-var:#8b8f99;
+  --t-var:#8b8f99; --g-sub:#1661c0; --g-disjoint:#b97800;
   --rb1:#c21527; --rb2:#d32704; --rb3:#d69900; --rb4:#6da72f; --rb5:#2daa8a;
   --rb6:#1893be; --rb7:#1661c0; --rb8:#4b20b6; --rb9:#b91d75;
   --accent: var(--lt-accent); --accent-2: var(--lt-accent-2);
@@ -213,7 +223,7 @@ input, textarea, select, button { color: var(--ink); }
 /* One control shape for the whole page: a square frame around a label, filled only when
    the control is the one that writes.  Every page used to restate this rule; they do not
    any more, so a new control takes the page's shape by being a <button>. */
-button, .kb-actions .button {
+button, .kb-actions .button, .editor-actions .button, .sx-actions .button {
   font: inherit;
   font-size: .9em;
   padding: .1em .7em;
@@ -224,7 +234,8 @@ button, .kb-actions .button {
   white-space: nowrap;
   text-decoration: none;
 }
-button:hover, .kb-actions .button:hover { background: var(--btn-hover); border-color: var(--accent); }
+button:hover, .kb-actions .button:hover, .editor-actions .button:hover,
+.sx-actions .button:hover { background: var(--btn-hover); border-color: var(--accent); }
 button[disabled] { opacity: .45; cursor: not-allowed; }
 button[disabled]:hover { background: var(--btn-bg); border-color: var(--field-edge); }
 /* the one that writes wears the accent as an outline, and fills on hover */
@@ -494,6 +505,7 @@ header.site {
 .tag-premise     { background: #6a4bbd; }  /* asserted, not derived             */
 .tag-superseded  { background: #b5651d; }  /* displaced by an equality merge    */
 .tag-defeated    { background: #c0392b; }  /* forced OUT by contradiction       */
+.tag-excepted    { background: #8a6d00; }  /* blocked by the rule's exceptWhen  */
 .tag-unsupported { background: #999;    }  /* no believed justification         */
 .tag-not-stored  { background: #999;    }
 .tag-out         { background: #bbb;    }  /* generic not-believed marker        */
@@ -543,6 +555,8 @@ header.site {
 a.t-type    { --sx-c: var(--t-type); }                   /* dog, physical_object */
 a.t-ind     { --sx-c: var(--t-ind); }                    /* Muffet, Tom          */
 a.t-pred    { --sx-c: var(--t-pred); }                   /* parentOf, genl       */
+a.t-pred-n  { --sx-c: var(--t-pred-n); }                 /* arg, genlArg         */
+a.t-conn    { --sx-c: var(--t-conn); }                   /* and, implies, not    */
 a.t-context { --sx-c: var(--t-context); }                /* CxUniverse           */
 a.t-num     { --sx-c: var(--t-num); }                    /* 1970                 */
 .t-str      { --sx-c: var(--t-num); }                    /* "a string"           */
@@ -550,7 +564,7 @@ a.t-num     { --sx-c: var(--t-num); }                    /* 1970                
 .t-var      { --sx-c: var(--t-var); }                    /* ?x — not a link      */
 /* every sentence part above, and a depth paren (`.rb1`…), is its colour at `--lit` */
 :is(.rb1, .rb2, .rb3, .rb4, .rb5, .rb6, .rb7, .rb8, .rb9, a.t-type, a.t-ind, a.t-pred,
-    a.t-context, a.t-num, .t-str, .cx-in, .t-var) {
+    a.t-conn, a.t-context, a.t-num, .t-str, .cx-in, .t-var) {
   color: color-mix(in srgb, var(--sx-c) var(--lit, 100%), var(--bg));
 }
 /* a string's text is English, so it takes --prose between quotes that keep --mono; a
@@ -719,8 +733,12 @@ button.sx-edit::after  { content: "]"; }
 button.sx-edit:focus-visible { opacity: 1; }
 button.sx-edit:hover { color: var(--accent); }
 
+/* an extension's actions beside a term page's heading: heading-sized text would make them
+   read as part of the term's name, so they sit at body size and weight, after it */
+.ext-term-actions { font-size: .6em; font-weight: normal; margin-left: .6em; }
 
-/* the editor panel — a framed box pinned to the bottom of the viewport, over whatever
+
+/* the editor panel — a framed box fixed to the bottom of the viewport, over whatever
    page the row was on */
 .editor {
   position: fixed;
@@ -839,6 +857,24 @@ button.sx-edit:hover { color: var(--accent); }
 h2 button.sx-edit { opacity: .55; font-size: .7em; }
 h2 button.sx-edit:hover { opacity: 1; }
 .editor-actions { display: flex; gap: .5rem; }
+
+/* a sentex's actions: a row on its page, a column in the menu a badge's right-click
+   opens at the pointer (vaelii.js) */
+.sx-actions { display: flex; gap: .5rem; margin: .2rem 0 .8rem; }
+#sx-menu {
+  position: fixed;
+  z-index: 60;
+  padding: .3rem;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  box-shadow: 0 6px 20px var(--shadow);
+}
+#sx-menu .sx-actions { flex-direction: column; gap: .25rem; margin: 0; }
+#sx-menu button { text-align: left; }
+/* the removed list: each entry's sentence as the editor prints it */
+.removed-list { list-style: none; padding: 0; }
+.removed-list li { margin: 0 0 1rem; }
+.removed-sentence { margin: .2rem 0 .4rem; white-space: pre-wrap; }
 .edit-errors {
   margin: .2rem 0 .6rem;
   padding: .4rem .8rem;
@@ -888,7 +924,7 @@ h2 button.sx-edit:hover { opacity: 1; }
 }
 
 /* the continuation row that ends a capped list: it fetches the next page when scrolled
-   into view, and is clickable for a reader who would rather ask */
+   into the viewport, and is clickable for a reader who would rather ask */
 li.more, div.more {
   list-style: none;
   cursor: pointer;
@@ -1302,6 +1338,8 @@ ul.why > li .tag       { white-space: nowrap; }
 .g-node.t-type    { color: var(--t-type); }
 .g-node.t-ind     { color: var(--t-ind); }
 .g-node.t-pred    { color: var(--t-pred); }
+.g-node.t-pred-n  { color: var(--t-pred-n); }
+.g-node.t-conn    { color: var(--t-conn); }
 .g-node.t-context { color: var(--t-context); }
 .g-node.t-num     { color: var(--t-num); }
 .g-node.t-var     { color: var(--t-var); }
@@ -1311,6 +1349,18 @@ a:hover > .g-node .g-box { fill: var(--btn-hover); }
 
 .g-edge line { stroke: var(--muted); stroke-width: 1.2; fill: none; }
 .g-edge.g-genlCx line { stroke-dasharray: 5 3; }
+.g-edge.g-genl line, .g-edge.g-genlCx line { stroke: var(--g-sub); }
+.g-edge.g-rel-disjoint line { stroke: var(--g-disjoint); }
 .g-arrowhead { fill: var(--muted); }
+.g-arrowhead.g-sub      { fill: var(--g-sub); }
+.g-arrowhead.g-disjoint { fill: var(--g-disjoint); }
+/* a cover group under the centre: a frame behind its subtypes, the kind in its foot */
+.g-frame { fill: none; stroke: var(--muted); stroke-width: 1; }
+/* the label sits under the boxes, where edges from the row below cross it: a ground-
+   coloured halo keeps the text readable over a line */
+.g-frame-label { font-size: var(--g-edge); fill: var(--muted);
+                 font-family: var(--mono); font-size-adjust: var(--x-height);
+                 paint-order: stroke; stroke: var(--bg); stroke-width: 3px;
+                 stroke-linejoin: round; }
 .g-edge-label { font-size: var(--g-edge); fill: var(--muted);
                 font-family: var(--mono); font-size-adjust: var(--x-height); }

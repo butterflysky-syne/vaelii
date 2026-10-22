@@ -28,7 +28,7 @@
     Each has to licence the permutation alone, withdraw it alone, and survive `recover`
     alone.  The CxUniverse bridges between the marks carry the directions that are not a
     backward cycle — two `set/inertRule`s for the equivalence, `set/forwardOnlyRule` for
-    the arity bridge to `symmetric` — and a row below pins each one."
+    the arity bridge to `symmetric` — and a row below asserts each one."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.sentex :as sx]
@@ -267,17 +267,26 @@
 ;; ---- the bridges ---------------------------------------------------------
 
 (tu/deftest-kb a-symmetric-predicate-is-commutative-and-a-commutative-binary-is-symmetric
-  ;; Pinned to the entailing reading: `(arg arity 1 fixed_arity)` refuses `(arity P n)` for
+  ;; Forced to the entailing reading: `(arg arity 1 fixed_arity)` refuses `(arity P n)` for
   ;; a P nothing else classifies under the constraint-only reading.
   (tu/with-entailing
     (tu/with-terms [sibOf comm2]
       (v/assert kb (list 'symmetric sibOf) U)
       (is (v/ask? kb (list 'commutative sibOf) U)
           "(genl symmetric commutative) classifies every symmetric predicate")
+      (v/assert kb (list 'predicate comm2) U)
       (v/assert kb (list 'commutative comm2) U)
       (v/assert kb (list 'arity comm2 2) U)
       (is (v/ask? kb (list 'symmetric comm2) U)
           "and the bridge rule reads the arity back the other way"))
+    (testing "a commutative binary function is not symmetric, which classifies predicates only"
+      (tu/with-terms [commFn2]
+        (v/assert kb (list 'function commFn2) U)
+        (v/assert kb (list 'commutative commFn2) U)
+        (v/assert kb (list 'arity commFn2 2) U)
+        (is (nil? (v/handle-of kb (list 'symmetric commFn2) U))
+            "the bridge concludes no symmetric for the clash with function to defeat")
+        (is (v/ask? kb (list 'function commFn2) U))))
     (testing "commutative at another arity implies neither symmetric nor arity 2"
       (tu/with-terms [comm3]
         (v/assert kb (list 'commutative comm3) U)
@@ -316,11 +325,11 @@
   ;; The two directions of the equivalence are **inert** — each mark installs its group
   ;; at its own arm, so neither has to derive the other.  The arity bridge is
   ;; **forward-only** — it does derive, and only its backward direction is the cycle.
-  ;; Either one written as `set/forwardRule` returns the stall, which is what this pins.
+  ;; Either one written as `set/forwardRule` returns the stall, which is what this asserts.
   (doseq [[rule want]
           [['(implies (and (commutative ?p)) (commutativeInArgAndRest ?p 1))      #{}]
            ['(implies (and (commutativeInArgAndRest ?p 1)) (commutative ?p))      #{}]
-           ['(implies (and (commutative ?p) (arity ?p 2)) (symmetric ?p)) #{:forward}]]]
+           ['(implies (and (commutative ?p) (predicate ?p) (arity ?p 2)) (symmetric ?p)) #{:forward}]]]
     (let [h (v/handle-of kb rule 'CxUniverse)]
       (is (some? h) (str "the bridge is still written down: " (pr-str rule)))
       (is (= want (:engines (v/sentex kb h)))

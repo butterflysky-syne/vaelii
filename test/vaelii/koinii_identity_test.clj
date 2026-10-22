@@ -8,7 +8,6 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.koinii.identity :as id]
             [vaelii.test-util :as tu])
   (:import (clojure.lang ExceptionInfo)))
@@ -17,7 +16,7 @@
   "A fresh vocabulary KB with the koinii registry vocabulary loaded."
   []
   (tu/load-dumped! (tu/fresh) :koinii/registry
-                   #(doto % (core-context/load-into) (id/load-registry))))
+                   #(doto % (tu/load-core!) (id/load-registry))))
 
 (use-fixtures :each (tu/neutral-fresh registry-kb))
 
@@ -109,7 +108,7 @@
         (is (= 'AgentAtlas (:creator prov)))
         (is (true? (:authenticated? prov)))
         (is (= "atlas-daemon" (:source prov)) "the source hint rides the open provenance map")))
-    (testing "a client cannot stamp AgentAtlas without the credential — refused at the extension poinface"
+    (testing "a client cannot record AgentAtlas as creator without the credential — refused at the extension poinface"
       (is (thrown-with-msg? ExceptionInfo #"identity unverified"
                             (id/authenticate {:claimed-id 'AgentAtlas :credential "forged"}
                                              {:policy :proof-tier :verify-fn verify}))))

@@ -10,7 +10,7 @@
 
   * **`arity` reaches back.**  A tuple of a length its predicate's binding breaks is a
     one-member nogood each reader decides, whichever of the two arrived first.  The
-    binding is on the forced-monotonic roster, so the nogood never takes it OUT.
+    binding is forced-monotonic, so the nogood never takes it OUT.
 
   * **`interArg` exists.**  It was a plausible-looking declaration that stored fine and
     did nothing.  The conditional argument constraint reads open-world *twice, in opposite
@@ -80,7 +80,7 @@
     (is (not (v/ask? kb (list firstOf A B C) 'CxUniverse)))))
 
 (deftest a-monotonic-tuple-breaking-a-binding-is-inert-and-the-binding-stays-in
-  ;; The binding is on the forced-monotonic roster, and the tuple breaking it is in the
+  ;; The binding is forced-monotonic, and the tuple breaking it is in the
   ;; `:out` forced set at `:monotonic` as at `:default`.  No dilemma opens, and `conflicts`
   ;; reports the tuple grounded on the declaration.
   (is (not (contains? checks/arbitrable-kinds :arity)))
@@ -109,19 +109,19 @@
                (list 'genl meat 'thing)
                (list 'genl beef meat)
                (list 'genl grass 'thing)
+               (list 'disjoint grass meat)
                (list 'interArg eats 1 carnivore 2 meat)]]
       (v/assert kb s 'CxUniverse))
     {:carnivore carnivore :meat meat :beef beef :grass grass :eats eats}))
 
-(tu/deftest-kb a-conditional-constraint-refuses-the-violating-fact
-  ;; the constraint-only reading: the refusal is the subject
+(tu/deftest-kb a-conditional-constraint-holds-the-violating-fact-inert
+  ;; the constraint-only reading: the conviction is the subject
   (tu/without-entailing
    (let [{:keys [carnivore grass eats]} (eats-world kb)]
      (tu/with-terms [Rex Hay]
        (v/assert kb (list carnivore Rex) 'CxUniverse)
        (v/assert kb (list grass Hay) 'CxUniverse)
-       (let [e (try (v/assert kb (list eats Rex Hay) 'CxUniverse) nil
-                    (catch clojure.lang.ExceptionInfo x (ex-data x)))]
+       (let [e (tu/write-conviction kb (list eats Rex Hay) 'CxUniverse)]
          (is (= :inter-arg-type (:type e)))
          (is (= Hay (:arg e)))
          (is (= Rex (:trigger e)))
@@ -148,9 +148,9 @@
       (is (v/assert kb (list eats Nobody Straw) 'CxUniverse)))))
 
 (tu/deftest-kb an-untyped-target-is-excused-by-open-world
-  ;; The other half.  The target is convicted by *absence* of a path to the constraint
-  ;; type — but an argument with no place in the hierarchy at all may simply be waiting
-  ;; for the edges that place it, exactly as `args-problem` allows.
+  ;; The other half.  The target is convicted only by a type the taxonomy separates from
+  ;; the constraint type, so an argument with no place in the hierarchy is admitted, as
+  ;; `args-problem` admits it.
   (let [{:keys [carnivore eats]} (eats-world kb)]
     (tu/with-terms [Rex Mystery]
       (v/assert kb (list carnivore Rex) 'CxUniverse)
@@ -171,10 +171,9 @@
     (is (v/assert kb (list eatsOf Rex Hay) CxSide))))
 
 (tu/deftest-kb a-conditional-constraint-does-not-reach-back-over-stored-content
-  ;; Deliberate, and the argument is `arg`'s verbatim: the conviction rests on the
-  ;; absence of a path to the target type, so there is nothing to weigh and no policy
-  ;; question anybody has answered about whether pre-existing silence is a violation.
-  ;; Answering it inside a sweep would turn an open-world check into a closed-world one.
+  ;; `assert` of the declaration stores it over the stored fact. Hay has no type the
+  ;; taxonomy separates from meat_t, so neither the write nor `try-assert` has a
+  ;; conflict to report.
   (tu/with-terms [carnivore_t meat_t grass_t eatsOf Rex Hay]
     (doseq [s [(list 'genl carnivore_t 'thing) (list 'genl meat_t 'thing)
                (list 'genl grass_t 'thing)
@@ -280,7 +279,7 @@
    ;; a way around the check.
    (tu/with-terms [carnivore_t meat_t grass_t eatsOf feedsOf Rex Hay]
      (doseq [s [(list 'genl carnivore_t 'thing) (list 'genl meat_t 'thing)
-                (list 'genl grass_t 'thing)
+                (list 'genl grass_t 'thing) (list 'disjoint grass_t meat_t)
                 (list 'interArg eatsOf 1 carnivore_t 2 meat_t)
                 (list carnivore_t Rex) (list grass_t Hay)
                 (list 'set/forwardRule (vr/rule-sentence [(list feedsOf '?a '?b)]

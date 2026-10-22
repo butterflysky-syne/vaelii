@@ -37,6 +37,7 @@
             [vaelii.core :as v]
             [vaelii.impl.decide :as decide]
             [vaelii.impl.journal :as journal]
+            [vaelii.impl.jtms :as jtms]
             [vaelii.impl.memory :as mem]
             [vaelii.impl.nat :as nat]
             [vaelii.impl.protocols :as p]
@@ -53,7 +54,7 @@
 
   This is what an ordering test containing a **removal** needs and a flat permutation
   cannot express.  A `retract!` names a handle its own assertion allocated, so it may
-  not precede it — and tying the pair into a single op would remove the very window
+  not precede it — and tying the pair into a single op would remove the very race window
   such a test is about, the third op arriving *between* them.  Stated as a chain, the
   constraint is declared once and every legal ordering follows from it.
 
@@ -110,10 +111,16 @@
   (list 'set/defaultRule (list 'set/forwardRule (list 'implies (cons 'and antes) conseq))))
 
 (defn- run-ops
-  "Apply `ops` to a freshly cleared KB and return `observe`'s reading of it."
+  "Apply `ops` to a freshly cleared KB and return `observe`'s reading of it, after
+  checking the justification verdicts against belief over the handles the ops left IN, at
+  each of their contexts (`tu/verdict-violations`)."
   [ops observe]
-  (let [kb (tu/fresh)]
+  (let [kb     (tu/fresh)
+        tms    (reasoning/tms kb)
+        before (set (jtms/in-datums tms))]
     (doseq [op ops] (op kb))
+    (let [hs (into [] (remove before) (jtms/in-datums tms))]
+      (is (= [] (tu/verdict-violations kb hs (into #{} (keep #(:context (v/sentex kb %))) hs)))))
     (observe kb)))
 
 (defn- outcome-census
@@ -296,7 +303,7 @@
   ;; Two exceptWhens on the *same* rule (block-if-either), asserted separately, amend
   ;; the one rule.  Every ordering of the two exceptions, the two triggers, and the
   ;; plain fact must ground each excepted bird and let the plain one fly.  6 items would
-  ;; be 720 orderings; a diverse handful pins the interesting ones (exceptions before
+  ;; be 720 orderings; a diverse handful covers the interesting ones (exceptions before
   ;; and after their triggers, interleaved) without the runtime.
   (doseq [order [[:r1 :r2 :fp :tp :fo :to :fr]
                  [:fp :fo :fr :tp :to :r1 :r2]
@@ -407,8 +414,8 @@
   ;; `special/transitive-seeds` (docs/inference.md); the sibling below,
   ;; `a-rule-joined-to-a-growing-transitive-extent-…`, is the two-agent shape that
   ;; isolated the defect, and this one walks a three-link chain instead.  Both ran
-  ;; order-dependent before the seeding and neither needs the cost ranking pinned to
-  ;; hold, which is the point: completeness here is the chainer's, not the estimator's.
+  ;; order-dependent before the seeding and neither needs the cost ranking forced on
+  ;; to hold, which is the point: completeness here is the chainer's, not the estimator's.
   (let [ops [#(v/assert % '(transitive causes) 'CxUniverse {:strength :monotonic})
              #(v/assert-rule % '[(does ?a ?act) (causes ?act ?e)]
                              '(responsibleFor ?a ?e) 'CxUniverse {:direction :forward})
@@ -498,7 +505,7 @@
   ;; same two shapes over the stored sentences; this reads the backward entry point and the
   ;; clash report beside them, which is what a stored-sentence reading cannot see.
   ;;
-  ;; `one-outcome!`, not `one-outcome-necessarily!`: the `:merged` field pins the merge, so
+  ;; `one-outcome!`, not `one-outcome-necessarily!`: the `:merged` field asserts the merge, so
   ;; the merge and the skip are each necessary, but the rule and the mark stay redundant for
   ;; the blocked absence — dropping either leaves `:seen` empty — so a leave-one-out check
   ;; cannot hold.  The block's positive necessity, the same subject seen *without* the skip,
@@ -539,7 +546,7 @@
   ;; it must not — where a silently-false exception merely fails to guard.  This one did
   ;; not vary with the ordering at all: it drew the conclusion in all 24.
   ;;
-  ;; `one-outcome!`, not `one-outcome-necessarily!`: the `:merged` field pins the merge, so
+  ;; `one-outcome!`, not `one-outcome-necessarily!`: the `:merged` field asserts the merge, so
   ;; the merge and the `nskip` fact are each necessary, but the rule and the `nmark` fact
   ;; stay redundant for the sound absence — dropping either keeps it absent — so a
   ;; leave-one-out check cannot hold.  The check that the rule fires when it soundly may is
@@ -856,7 +863,7 @@
   "What a KB told some of vaelii#100's forms holds and answers about `(SkillFn Rex)`."
   [kb]
   {:rows     (sort-by pr-str (map :sentence (v/sentexes-with-functor kb 'hasCapability)))
-   :minted   (count (v/sentexes-matching kb '(termOfUnit ?k (SkillFn Rex)) 'CxUniverse))
+   :minted   (count (v/sentexes-matching kb '(natFormula ?k (SkillFn Rex)) 'CxUniverse))
    :compound (v/ask? kb skill-use 'CxUniverse)
    :genl     (v/ask? kb '(genl (SkillFn Rex) capability) 'CxUniverse)})
 
@@ -883,13 +890,13 @@
   (let [ops    [(assert-op '(reifiable_function OuterFn))
                 (assert-op '(reifiable_function InnerFn))
                 (assert-op '(likes Rex (OuterFn (InnerFn Rex))))]
-        reading (fn [kb] {:maps  (sort-by pr-str (map :sentence (v/sentexes-with-functor kb 'termOfUnit)))
+        reading (fn [kb] {:maps  (sort-by pr-str (map :sentence (v/sentexes-with-functor kb 'natFormula)))
                           :likes (mapv :sentence (v/sentexes-with-functor kb 'likes))
                           :ask   (v/ask? kb '(likes Rex (OuterFn (InnerFn Rex))) 'CxUniverse)})
         inner  (nat/constant-for nat/nat-namespace '(InnerFn Rex))
         outer  (nat/constant-for nat/nat-namespace (list 'OuterFn inner))
         result (one-outcome! "a nested pair" ops reading)]
-    (is (= {:maps  [(list 'termOfUnit inner '(InnerFn Rex)) (list 'termOfUnit outer (list 'OuterFn inner))]
+    (is (= {:maps  [(list 'natFormula inner '(InnerFn Rex)) (list 'natFormula outer (list 'OuterFn inner))]
             :likes [(list 'likes 'Rex outer)]
             :ask   true}
            (update result :maps (partial sort-by #(str (nth % 2)))))))
@@ -948,7 +955,7 @@
   ;; told it reads, the mint and the result type included.
   (let [reading (fn [kb]
                   (into {} (for [r '[CxUniverse CxSkillD]]
-                             [r {:minted   (count (v/sentexes-matching kb '(termOfUnit ?k (SkillFn Rex)) r))
+                             [r {:minted   (count (v/sentexes-matching kb '(natFormula ?k (SkillFn Rex)) r))
                                  :compound (v/ask? kb skill-use r)
                                  :genl     (v/ask? kb '(genl (SkillFn Rex) capability) r)}])))
         result  (one-outcome! "a declaration denied below the use"
@@ -1155,7 +1162,7 @@
   ;;
   ;; `one-outcome-under!` rather than `one-outcome!`, because these ops do not permute
   ;; freely: a lift cannot precede the defeat it lifts, and tying the two together as one
-  ;; op would remove the very window this is about — the partner arriving *between* them.
+  ;; op would remove the very race window this is about — the partner arriving *between* them.
   ;; So the three ordered steps are one chain and the two free ops are chains of one, and
   ;; every interleaving of the three follows.  Twenty orderings, and the ones where the
   ;; partner lands in the middle are the defect.
@@ -1180,7 +1187,7 @@
 (deftest an-un-merge-that-owes-a-derivation-is-order-independent
   ;; The same claim as the test above through the **equality** entry point, which reaches it by
   ;; a different route and has to: a merge displaces a spelling with no relabel behind
-  ;; it, so the flip is in none of the window sets a revival is read off.  While the
+  ;; it, so the flip is in none of the touched sets a revival is read off.  While the
   ;; merge stands the twin joins in the displaced spelling's place, so a partner arriving
   ;; then concludes at the twin — and un-merging sweeps the twin and gives the original
   ;; back, leaving the conclusion to be derived again at the surviving spelling or not at
@@ -1247,14 +1254,14 @@
 
 (defn- void-mark
   "The op storing the rule that concludes `decl` from `(rv_src P)`, and `(rv_src P)`:
-  `rv_src` is off the roster, so the firing is held void and the mark OUT."
+  `rv_src` is not forced-monotonic, so the firing is held void and the mark OUT."
   [decl]
   #(do (v/assert-rule % '[(rv_src ?p)] (list* (first decl) '?p (nnext decl)) 'CxUniverse
                       {:direction :forward})
        (v/assert % (list 'rv_src (second decl)) 'CxUniverse)))
 
 (defn- release-mark
-  "The op declaring `rv_src` on the roster, which releases `void-mark`'s firing."
+  "The op declaring `rv_src` forced-monotonic, which releases `void-mark`'s firing."
   [kb]
   (v/assert kb '(forced_monotonic_predicate rv_src) 'CxUniverse))
 
@@ -1263,17 +1270,17 @@
   ;; arriving while the mark is OUT meets neither: the taxonomy does not hold the mark,
   ;; and the mark's arrival is already over.  The settle that revives the mark runs the
   ;; mark's arrival sweeps for it (`special/revived-declaration-sweeps`).  Each row's KB
-  ;; declares no other merge or lift mark, so the sweeps' gate on the taxonomy's marks
+  ;; declares no other merge or lift mark, so the sweeps' presence check on the taxonomy's marks
   ;; passes only when the taxonomy holds the revived mark.
   ;;
-  ;; A denial of a roster mark is inert, so a `:release` row's mark revives through a
-  ;; void firing.  `rv_src` is off the roster, so the rule's firing on `(rv_src P)`
-  ;; concludes the mark held void, and the roster declaration of `rv_src` releases the
+  ;; A denial of a forced-monotonic mark loses to the mark, so a `:release` row's mark revives through a
+  ;; void firing.  `rv_src` is not forced-monotonic, so the rule's firing on `(rv_src P)`
+  ;; concludes the mark held void, and the forced-monotonic declaration of `rv_src` releases the
   ;; firing inside that write's settle.  The void mark's arrival derives no equality, so
   ;; an ordering that stores both converse facts first restates them at the release as
   ;; one that stores a fact later does.  The rule with its source fact, the declaration
   ;; and each fact are four chains of one: twenty-four orderings.  The
-  ;; `decontextualized_predicate` mark is off the roster, so its row revives by a
+  ;; `decontextualized_predicate` mark is not forced-monotonic, so its row revives by a
   ;; known-true denial and the denial's retraction.  The mark, its denial and the
   ;; retraction are one chain, since the retraction names the denial's handle, and the
   ;; fact is a chain of one: five orderings.
@@ -1312,12 +1319,12 @@
   (tu/clear-kb! (tu/test-kb)))
 
 (deftest an-equality-believed-after-its-firing-was-held-void-restates-in-every-order
-  ;; `eqAlias` is off the roster, so a firing of the alias rule concludes the equality
-  ;; from a non-roster ground and is held void: the conclusion is stored OUT.  An
+  ;; `eqAlias` is not forced-monotonic, so a firing of the alias rule concludes the equality
+  ;; from a ground that is not forced-monotonic and is held void: the conclusion is stored OUT.  An
   ;; ordering with the void firing first makes the equality believed by a relabel, not
-  ;; by its arrival, through one of three routes, one row each: a roster declaration of
+  ;; by its arrival, through one of three routes, one row each: a forced-monotonic declaration of
   ;; `eqAlias` releases the void firing; a valid firing of the same conclusion, from the
-  ;; roster predicate `eqTwin`, comes in a later write; or it comes in the write that
+  ;; forced-monotonic predicate `eqTwin`, comes in a later write; or it comes in the write that
   ;; made the void firing, when `eqTwin` also concludes `eqAlias`.  `sameAs` elects
   ;; `EqHi` and `rewriteOf` elects `EqLo`; `equals` merges as `sameAs` does.  The third
   ;; row samples its 120 orderings.  Each ordering's reading is also the one `recover`
@@ -1343,7 +1350,7 @@
         facts   #(do (v/assert % '(eqCares EqHi EqTom) U)
                      (v/assert % '(eqCares EqLo EqAnn) U))]
     (doseq [[label rels ops cap]
-            [["a roster declaration releasing the void firing" '[sameAs rewriteOf]
+            [["a forced-monotonic declaration releasing the void firing" '[sameAs rewriteOf]
               (fn [rel] [(alias rel) facts (fact '(eqAlias EqLo EqHi))
                          (fact '(forced_monotonic_predicate eqAlias))])]
              ["a valid firing in a later write" '[sameAs rewriteOf]
@@ -1392,8 +1399,8 @@
 
 (deftest a-revived-genl-edge-offers-its-subtree-to-the-converse-candidates
   ;; A converse pair under the `anti_symmetric` mark on `aoSup`, its `:default` member
-  ;; OUT at the reader.  `aoLink` is off the roster, so the rule's firing on `(aoLink
-  ;; aoSub aoSup)` concludes `(genl aoSub aoSup)` held void, and the roster declaration
+  ;; OUT at the reader.  `aoLink` is not forced-monotonic, so the rule's firing on `(aoLink
+  ;; aoSub aoSup)` concludes `(genl aoSub aoSup)` held void, and the forced-monotonic declaration
   ;; of `aoLink` releases it: the edge comes IN by a relabel, not by its arrival.  An
   ;; ordering that stores the pair before the mark and the mark while the edge is void
   ;; finds the pair at neither arrival: the first row's tuples meet no converse mark, the
@@ -1421,8 +1428,8 @@
   (tu/clear-kb! (tu/test-kb)))
 
 (deftest a-genl-edge-a-released-firing-concludes-merges-what-its-arrival-merges
-  ;; `aoLink` is off the roster, so the firing concluding `(genl aoSub aoSup)` is held
-  ;; void until the roster declaration of `aoLink` releases it, inside that write's
+  ;; `aoLink` is not forced-monotonic, so the firing concluding `(genl aoSub aoSup)` is held
+  ;; void until the forced-monotonic declaration of `aoLink` releases it, inside that write's
   ;; settle.  An ordering with the facts and the mark stored first merges `FoA` and `FoB`
   ;; only if the revived edge's sweep reads a taxonomy holding the edge.
   (let [U 'CxUniverse]
@@ -1454,7 +1461,7 @@
   ;; moves that without the equality or the mark changing label.  While the except stands
   ;; every fact reads as spelled, whether it arrived before the except or after; once the
   ;; except is retracted every fact reads under the normal form, whether it arrived before
-  ;; the equality, inside the except's window or after (`special/except-move-sweeps`).
+  ;; the equality, while the except stands or after (`special/except-move-sweeps`).
   ;; The equality, its except and the except's retraction are one chain, each fact a chain
   ;; of one.
   (let [U 'CxUniverse
@@ -1875,7 +1882,7 @@
   ;; `special/visibility-seeds` enumerates from `:rule-antecedents`, so a rule taking
   ;; `(vs_dog_t ?x)` sends it to the facts filed under `vs_dog_t` — and the fact that
   ;; answers that antecedent is filed under `vs_terrier_t`, matchable only down the
-  ;; `genl` spec fan (`roster-antecedent-functors` is what walks it).  Four sentences: the
+  ;; `genl` spec fan (`rule-key-functors` is what walks it).  Four sentences: the
   ;; `(genlCx CxSLow CxSMid)` edge arriving last has to re-join the rule over a fact one
   ;; type below the antecedent it names.  Every one of the four is necessary — the edge for
   ;; visibility, the `genl` edge for the spec fan, the fact, and the rule — so this runs
@@ -1892,7 +1899,7 @@
 
 (deftest a-negated-antecedent-firing-across-a-context-edge-is-order-independent
   ;; The negated-antecedent twin of the visibility case, and the same gap on the other
-  ;; branch: `special/visibility-seeds` looked a negated antecedent's roster key
+  ;; branch: `special/visibility-seeds` looked a negated antecedent's rule key
   ;; `[:not v_neg_p]` up in the predicate extent, which nothing is written under, so a
   ;; genlCx edge arriving after the negative fact never re-joined the rule.  These three
   ;; sentences must derive `(v_neg_seen_p VA)` in every arrival order, not only the ones
@@ -2033,7 +2040,7 @@
 
 (deftest a-late-edge-hands-a-rule-a-subtype-fact-the-sub-sees-through-another-edge
   ;; The chain again, with the fact one type below the antecedent the rule names, so the
-  ;; seed is found down `roster-antecedent-functors`' spec fan and not under the
+  ;; seed is found down `rule-key-functors`' spec fan and not under the
   ;; antecedent's own functor.
   (let [ops [#(v/assert % '(genlCx CxVtA CxVtP) 'CxUniverse)
              #(v/assert % '(genlCx CxVtA CxVtB) 'CxUniverse)
@@ -2251,7 +2258,7 @@
 (defn- one-outcome-edge-last!
   "`one-outcome!`'s reading, restricted to the orderings that put `edge-op` **last**
   after every permutation of `free-ops` — the shape `one-outcome!` cannot express, since
-  its chains interleave freely rather than pinning one op to the tail of every walk.
+  its chains interleave freely rather than fixing one op at the tail of every walk.
   Built from the namespace's own `permutations` and `outcome-census` rather than a new
   helper of its own, since one caller does not earn a third combinator beside
   `one-outcome!` / `one-outcome-under!`."
@@ -2339,9 +2346,9 @@
 (deftest a-rule-over-a-merged-term-concludes-at-the-elected-spelling-in-every-order
   ;; A merge retires a spelling without moving a label — supersession is deliberately
   ;; not a forced OUT inside the fixpoint, since the twin is justified by the spelling it
-  ;; displaced (docs/equality.md).  So without the gate in `chain/process-datum` a retired
-  ;; spelling reaching the chaining agenda draws a conclusion that stays *believed* under
-  ;; a name no read asks after, where the same three sentences in any other order
+  ;; displaced (docs/equality.md).  So without the retired-spelling check in
+  ;; `chain/process-datum` a retired spelling reaching the chaining agenda draws a
+  ;; conclusion that stays *believed* under a name no read asks after, where the same three sentences in any other order
   ;; conclude once.  The two orderings with both the merge and the rule ahead of the fact
   ;; are the ones that put the fact on the agenda already displaced.
   ;;
@@ -2373,8 +2380,8 @@
 ;; and the `wWireP` fact both sit in CxUniverse and fire there, and a `genlCx` edge is
 ;; read globally (`taxonomy/relation-scope`), so neither CxWMid nor CxWLow reads anything
 ;; out of CxUniverse.  That edge therefore moves no reading, and the necessity check in
-;; `one-outcome-necessarily!` refuses it.  A firing concludes a `genlCx` only from roster
-;; antecedents, so the edge rule's op declares `wWireP` on the roster first.
+;; `one-outcome-necessarily!` refuses it.  A firing concludes a `genlCx` only from
+;; forced-monotonic antecedents, so the edge rule's op declares `wWireP` forced-monotonic first.
 (def ^:private derived-edge-ops
   [#(v/assert % '(w_fact_p WA) 'CxWMid)
    #(v/assert % '(implies (w_fact_p ?x) (w_seen_p ?x)) 'CxWLow {:direction :forward})
@@ -3108,12 +3115,12 @@
   ;; Three stored facts answer one goal, so a cap of one is a choice among them, and the
   ;; choice is the index's: a literal's matches stream in the order the index holds their
   ;; handles, and handles follow arrival order.  Sorting the matches first would realize
-  ;; the literal's whole extent, which is the cost `:max-results` bounds.  So this pins the contract `docs/anytime.md` states
+  ;; the literal's whole extent, which is the cost `:max-results` bounds.  So this asserts the contract `docs/anytime.md` states
   ;; for a capped read ("Which node it stops *on*") on `ask-within` and on `prove-within`
   ;; under both executors: the capped answer is one of the answers, the step reports
   ;; `:capped` with a count of one, and the steps `resume` returns hold every answer
   ;; exactly once — each of those the same in every ordering.  The rule half of the same
-  ;; choice is content-first and pinned above.
+  ;; choice is content-first and asserted above.
   (doseq [engine [:dfs :inference]]
     (binding [v/*query-engine* engine]
       (let [ops     [#(v/assert % '(awp AwA) 'CxUniverse)
@@ -3137,7 +3144,7 @@
                 (str k ": resuming hands back each answer once")))))))
   (tu/clear-kb! (tu/test-kb)))
 
-;; ---- a generator's stamped rules -----------------------------------------
+;; ---- a generator's generated rules -----------------------------------------
 
 (deftest an-arity-declared-after-the-facts-reads-the-same-in-every-order
   ;; The declaration arrives in the reading, after every fact, so each ordering meets a
@@ -3154,7 +3161,7 @@
   (tu/clear-kb! (tu/test-kb)))
 
 (defn- generator!
-  "The miniature generator: the two member types on the roster, and the rule stamping an
+  "The miniature generator: the two member types made forced-monotonic, and the rule writing an
   arity rule per `typeArity` mapping fact."
   [kb]
   (doseq [t '[binary_thing ternary_thing]]
@@ -3162,15 +3169,15 @@
   (v/assert kb '(implies (typeArity ?type ?n) (implies (?type ?relation) (arity ?relation ?n)))
             'CxUniverse {:direction :forward}))
 
-(deftest a-generator-and-its-stamped-rules-are-order-independent
+(deftest a-generator-and-its-generated-rules-are-order-independent
   ;; The shape CxUniverse's arity vocabulary uses (docs/generators.md), stated over a
   ;; miniature so the scenario is the mechanism and not the ontology: one rule whose
   ;; consequent is itself a rule, a mapping fact that fills the hole, and members of the
-  ;; type the hole names.  A stamped rule is minted when its mapping fact arrives and
+  ;; type the hole names.  A generated rule is minted when its mapping fact arrives and
   ;; may therefore arrive after the members it fires on, before them, or between two of
-  ;; them.  120 orderings.  A stamped rule concludes an arity binding, a roster literal,
-  ;; only from roster antecedents, so the generator's op declares the two types on the
-  ;; roster, as the engine's baseline holds CxUniverse's exact-arity classes.
+  ;; them.  120 orderings.  A generated rule concludes an arity binding, a forced-monotonic
+  ;; literal, only from forced-monotonic antecedents, so the generator's op declares the two
+  ;; types forced-monotonic, as the engine's baseline holds CxUniverse's exact-arity classes.
   (let [ops [#(generator! %)
              #(v/assert % '(typeArity binary_thing 2) 'CxUniverse)
              #(v/assert % '(typeArity ternary_thing 3) 'CxUniverse)
@@ -3184,7 +3191,7 @@
                    :crossed (boolean (seq (v/sentexes-matching kb '(arity pairOf 3) 'CxUniverse)))
                    :rows    (count (v/sentexes-matching kb '(arity ?r ?n) 'CxUniverse))
                    :conflicts (count (v/conflicts kb))})
-        result (one-outcome-necessarily! "generator stamping" ops observe)]
+        result (one-outcome-necessarily! "generator generating" ops observe)]
     (testing "and the one reading is one arity per member, from its own type's rule"
       (is (true? (:pair result)))
       (is (true? (:triple result)))
@@ -3194,7 +3201,7 @@
     (tu/clear-kb! (tu/test-kb))))
 
 (deftest withdrawing-a-generators-premise-is-order-independent
-  ;; The withdrawal half.  A stamped rule is justified by the fact that minted it, so
+  ;; The withdrawal half.  A generated rule is justified by the fact that minted it, so
   ;; retracting the fact must take the rule's conclusions with it and leave every other
   ;; type's alone — whenever in the sequence the retraction lands.  The retract names the
   ;; handle its own assert allocated, so the two are one chain; 5!/2! = 60 orderings.
@@ -3215,7 +3222,7 @@
                    :conflicts (count (v/conflicts kb))})
         result (one-outcome-under! "generator withdrawal" chains observe)]
     (testing "the withdrawn fact takes its own conclusion and nothing else"
-      (is (false? (:pair result)) "the stamped rule's conclusion goes with its premise")
+      (is (false? (:pair result)) "the generated rule's conclusion goes with its premise")
       (is (false? (:mapping result)))
       (is (true? (:member result)) "the membership was asserted and stands on its own")
       (is (true? (:triple result)) "the other type's rule is untouched")
@@ -3379,7 +3386,7 @@
 
 (defn- tx-op
   "One write of `wo-op`'s stream, or of the writes that put a taxonomy supporter in the
-  supporter roster (`exc/supporter-roster`) without moving an edge: an `except` of
+  supporter entries (`exc/supporter-entries`) without moving an edge: an `except` of
   a `genlCx` or a `genl` edge, an edge asserted beside a rule that concludes it from a
   nogood candidate, and an `except` of a candidate."
   [^java.util.Random rng]
@@ -3440,8 +3447,8 @@
 
 (deftest the-taxonomy-s-scoped-reads-answer-what-a-fresh-memo-answers-over-a-random-stream
   ;; two seeds of the `^:slow` sweep, so `:default` runs the harness; both read a
-  ;; supporter of each relation through the roster for most of their writes.  The stream
-  ;; moves the roster by writes that move no edge, which the `:filter-active` memo and the
+  ;; supporter of each relation through the supporter entries for most of their writes.  The
+  ;; stream moves the entries by writes that move no edge, which the `:filter-active` memo and the
   ;; closures under a map scope see only through the change clock.
   (is (nil? (tx-stream-mismatch 2 40)))
   (is (nil? (tx-stream-mismatch 11 40)))
@@ -3476,7 +3483,7 @@
 
 (defn- tx-op-moving
   "One write of `tx-op`'s stream, or of the writes that move a scoped read while no edge
-  and no roster entry moves: a second justification joining and leaving a `genl` edge a
+  and no supporter entry moves: a second justification joining and leaving a `genl` edge a
   defeat or an except hides (`(wo_kc WoA)` beside `(wo_kc WoB)`), the same for a `genlCx`
   edge an except hides, a denial placing a defeat of a derived edge's antecedent, and a
   guard defeat of a derived edge with a defeat of its blocker."

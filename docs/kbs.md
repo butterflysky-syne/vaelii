@@ -51,20 +51,14 @@ lein run -m vaelii.web
 The cost is that a checkout is on every command's classpath, so the build stops matching a
 shipped one; [foreign.md](foreign.md) has the trade in full.
 
-**An ad-hoc dependency add** names a published jar for the one command you prefix, without
-a checkout:
+**The `+with-foreign` profile** adds Clojars' latest released reader, without a checkout:
 
 ```sh
-lein update-in :dependencies conj \
-  '[com.vaelii/vaelii-foreign "RELEASE" :exclusions [com.vaelii/vaelii]]' -- run -m vaelii.web
+lein with-profile +with-foreign run -m vaelii.web
 ```
 
-`"RELEASE"` takes Clojars' latest; name a concrete version to pin one. A snapshot you are
-developing is not on Clojars, so `lein install` it from the plugin first (`cd
-../vaelii-foreign && lein install`) and name that version — a stale install does not fail
-loudly, it silently lacks whatever namespaces were added since. `scripts/with-foreign.sh`
-wraps this command, defaulting the task to `browser` and reading `FOREIGN_VERSION` for the
-pin.
+Fixing a version, or naming one `lein install`ed from the plugin, is
+[foreign.md](foreign.md#exercising-one-from-here).
 
 ## cyc-tiny, the Cyc fixture the plugin ships
 
@@ -167,7 +161,7 @@ looks like success.
 Heap is the other thing this corpus is sensitive to, and the numbers sit close together:
 6 GB is not enough for the checked `:ontology` load, and the JVM default on a large
 machine is. Neither `lein browser` nor `lein run -m vaelii.web` sets `-Xmx`, so both
-get that default; a profile that pins a smaller heap wants the `:dir` instead. The
+get that default; a profile that sets a smaller heap wants the `:dir` instead. The
 three `scripts/start-vaelii*.sh` set `-Xmx` from `VAELII_HEAP`, default `40g`, sized for
 a full recover of a store of millions of sentexes, whose TMS and taxonomy grow with it.
 The recover's heap peak is about twice the import's

@@ -128,7 +128,7 @@
     (v/assert kb (list 'genlCx CxSide CxBase) 'CxUniverse)
     (v/assert kb (list 'transitive before) CxBase)
     (v/assert kb (list before A B) CxBase)
-    (v/assert kb (list before B C) CxSide)             ; only the narrower view sees it
+    (v/assert kb (list before B C) CxSide)             ; only CxSide's view sees it
     (is (= #{B} (ancestors-of kb before A CxBase)) "the base sees one hop")
     (is (= #{B C} (ancestors-of kb before A CxSide)) "and the side context sees two")
     (is (= #{B} (ancestors-of kb before A CxBase)) "and asking again does not swap them")))

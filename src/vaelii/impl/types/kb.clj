@@ -26,7 +26,7 @@
 ;; without it a long-running process could not hand a directory to another process, or
 ;; reopen it elsewhere, until the JVM exited.
 ;; `snapshot-dir` is that same directory again, and non-nil only on a KB whose index is
-;; the mapped image — the write entry point's whole gate on the image cadence
+;; the mapped image — the write entry point's whole presence check on the image cadence
 ;; (`create-sentex`).  A separate field rather than a test on `dir`, because `dir` is set
 ;; for every durable-records KB and the cadence is for one of them: reading `dir` there
 ;; put the refresh call, its root-count argument and a `realpath` on the write path of
@@ -38,6 +38,8 @@
 ;; each key absent until something asks.  Reads over that state answer nothing and can be
 ;; re-asked; a write lands content the store keeps, so the write entry points ask
 ;; `write-hazards` below.  An atom because `recover` and `reindex` clear what they build.
+;; It also holds `:unsupported`, the handles the last recover found no premise and no
+;; justification for (`vaelii.impl.recovery/note-unsupported!`), which is no hazard.
 ;; `oplog` is the operation log (`vaelii.impl.oplog`) this KB records its public writes
 ;; into, or nil.  A field, because every public write reads it to decide whether to record.
 ;; `engine-space` is the private in-RAM space the engine allocated for this KB's own

@@ -9,16 +9,15 @@
   function's declarations inside it."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.test-util :as tu]))
 
-(use-fixtures :once (tu/loaded core-context/load-into))
+(use-fixtures :once (tu/loaded tu/load-core!))
 (use-fixtures :each (tu/neutral))
 
 (defn- problem
   "The first problem `check` predicts for `sentence` in `context`, or nil."
   ([kb sentence] (problem kb sentence 'CxUniverse))
-  ([kb sentence context] (first (v/check kb sentence context))))
+  ([kb sentence context] (first (tu/check-or-conviction kb sentence context))))
 
 (defn- refusal
   "The `:type` of that problem, or nil."
@@ -26,9 +25,10 @@
   ([kb sentence context] (:type (problem kb sentence context))))
 
 (defn- ex-type
-  "The `:type` of the ex-info `f` throws, or nil when it returns."
+  "The `:type` a write thunk meets: its refusal, or the argument conviction its fact is
+  held inert under (`tu/write-type`)."
   [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (tu/write-type tu/*kb* f))
 
 (defn- declare-gap-fn!
   "The #78 repro's declarations: an unreifiable unary function whose input must be an
@@ -77,32 +77,36 @@
 (tu/deftest-kb result-typing-and-input-checking-are-separate-readings
   ;; the outer application is typed by its result where it sits; its inputs by its
   ;; function's declarations inside it.  Each convicts on its own grounds.
-  (tu/with-terms [InputGapFn inputGapObserver wantsDog dog]
+  (tu/with-terms [InputGapFn inputGapObserver wantsDog dog cat]
     (declare-gap-fn! kb InputGapFn inputGapObserver)
     (v/assert kb (list 'genl dog 'thing) 'CxUniverse)
+    (v/assert kb (list 'genl cat 'thing) 'CxUniverse)
+    (v/assert kb (list 'disjoint dog cat) 'CxUniverse)
+    (v/assert kb (list 'result InputGapFn cat) 'CxUniverse)
     (v/assert kb (list 'unary_predicate wantsDog) 'CxUniverse)
     (v/assert kb (list 'arg wantsDog 1 dog) 'CxUniverse)
     (testing "well-typed inputs do not rescue an application whose result misses"
       (let [p (problem kb (list wantsDog (list InputGapFn 5)))]
         (is (= :arg-type (:type p)))
         (is (nil? (:application p)) "the result reading's conviction, at the top level")
-        (is (re-find #"results in a thing" (:message p)))))
+        (is (re-find (re-pattern (str "results in a " cat)) (:message p)))))
     (testing "and a result that reaches does not excuse an ill-typed input"
       (is (= (list InputGapFn "x")
              (:application (problem kb (list inputGapObserver (list InputGapFn "x")))))))))
 
 (tu/deftest-kb a-covering-declaration-convicts-an-application-by-its-result
   ;; `args` / `argsGenl` read each position the way `arg` / `genlArg` read one, so an
-  ;; application whose declared result misses the type is convicted and named by it
-  (tu/with-terms [GapFn wantsDog wantsKind dog]
+  ;; application whose declared result is disjoint from the type is convicted and named by it
+  (tu/with-terms [GapFn wantsDog wantsKind dog cat]
     (doseq [s [(list 'unreifiable_function GapFn) (list 'unary_function GapFn)
-               (list 'arg GapFn 1 'integer) (list 'result GapFn 'thing)
-               (list 'genlResult GapFn 'thing) (list 'genl dog 'thing)
+               (list 'arg GapFn 1 'integer) (list 'result GapFn cat)
+               (list 'genlResult GapFn cat) (list 'genl dog 'thing)
+               (list 'genl cat 'thing) (list 'disjoint dog cat)
                (list 'binary_predicate wantsDog) (list 'args wantsDog dog)
                (list 'binary_predicate wantsKind) (list 'argsGenl wantsKind dog)]]
       (v/assert kb s 'CxUniverse))
-    (doseq [[pred type words] [[wantsDog :arg-type #"results in a thing \(args, position 1"]
-                               [wantsKind :arg-genl #"results in a subtype of thing \(argsGenl, position 1"]]]
+    (doseq [[pred type words] [[wantsDog :arg-type (re-pattern (str "results in a " cat " \\(args, position 1"))]
+                               [wantsKind :arg-genl (re-pattern (str "results in a subtype of " cat " \\(argsGenl, position 1"))]]]
       (let [p (problem kb (list pred (list GapFn 5) (list GapFn 6)))]
         (is (= [type 1] [(:type p) (:position p)]))
         (is (re-find words (:message p)))))))
@@ -110,12 +114,13 @@
 (tu/deftest-kb a-nested-symbol-input-is-read-open-world
   ;; the constraint-only reading: the refusal is the subject
   (tu/without-entailing
-   ;; the constraint reading: a symbol with no visible type is no evidence, one whose
-   ;; types visibly miss the declared one is convicted.  No mint is drawn for a nested
+   ;; the constraint reading: a symbol with no visible type is no evidence, one with a
+   ;; type the taxonomy separates from the declared one is convicted.  No mint is drawn for a nested
    ;; input under the assertive reading — a declaration arriving later could not find the
    ;; application to mint over, so the mint would depend on arrival order.
    (tu/with-terms [MotherFn likes animal rock Rex Pebble Unknown]
      (doseq [s [(list 'genl animal 'thing) (list 'genl rock 'thing)
+                (list 'disjoint animal rock)
                 (list 'unreifiable_function MotherFn) (list 'unary_function MotherFn)
                 (list 'arg MotherFn 1 animal)
                 (list 'unary_predicate likes)]]
@@ -126,7 +131,7 @@
        (is (nil? (problem kb (list likes (list MotherFn Rex))))))
      (testing "an untyped input is not evidence"
        (is (nil? (problem kb (list likes (list MotherFn Unknown))))))
-     (testing "an input typed outside the declared type is convicted"
+     (testing "an input of a type disjoint from the declared one is convicted"
        (is (= :arg-type (refusal kb (list likes (list MotherFn Pebble))))))
      (testing "storing the untyped one mints nothing about it"
        (v/assert kb (list likes (list MotherFn Unknown)) 'CxUniverse)
@@ -137,6 +142,7 @@
   (tu/without-entailing
    (tu/with-terms [KindFn NameFn tagged animal dog rock Rex]
      (doseq [s [(list 'genl animal 'thing) (list 'genl dog animal) (list 'genl rock 'thing)
+                (list 'disjoint animal rock)
                 (list 'unreifiable_function KindFn) (list 'unary_function KindFn)
                 (list 'genlArg KindFn 1 animal)
                 (list 'unreifiable_function NameFn) (list 'unary_function NameFn)
@@ -144,7 +150,7 @@
                 (list 'unary_predicate tagged)]]
        (v/assert kb s 'CxUniverse))
      (v/assert kb (list animal Rex) 'CxUniverse)
-     (testing "genlArg: a kind below the declared one passes, one outside it is convicted"
+     (testing "genlArg: a kind below the declared one passes, a disjoint one is convicted"
        (is (nil? (problem kb (list tagged (list KindFn dog)))))
        (is (= :arg-genl (refusal kb (list tagged (list KindFn rock))))))
      (testing "genlArg: an individual can never be a subtype"
@@ -157,20 +163,19 @@
   ;; a position `quotedArg` types holds the term written there, and a quoting function's
   ;; argument is a mention: in both, an application is syntax, and what its function
   ;; declares about the inputs of the applications it is used in does not reach it.
-  (tu/with-terms [InputGapFn inputGapObserver holds Quote]
+  (tu/with-terms [InputGapFn inputGapObserver holds]
     (declare-gap-fn! kb InputGapFn inputGapObserver)
     (v/assert kb (list 'unary_predicate holds) 'CxUniverse)
     (v/assert kb (list 'quotedArg holds 1 'thing) 'CxUniverse)
-    (v/assert kb (list 'unreifiable_function Quote) 'CxUniverse)
-    (v/assert kb (list 'quoting_function Quote) 'CxUniverse)
-    (v/assert kb (list 'unary_function Quote) 'CxUniverse)
+    (v/assert kb (list 'unreifiable_function 'Quote) 'CxUniverse)
+    (v/assert kb (list 'unary_function 'Quote) 'CxUniverse)
     (testing "a quotedArg position is exempt"
       (is (nil? (problem kb (list holds (list InputGapFn "x"))))))
     (testing "so is a quoting function's argument"
-      (is (nil? (problem kb (list inputGapObserver (list Quote (list InputGapFn "x")))))))
+      (is (nil? (problem kb (list inputGapObserver (list 'Quote (list InputGapFn "x")))))))
     (testing "and so is a quoting predicate's"
       (tu/with-terms [K]
-        (is (nil? (problem kb (list 'termOfUnit K (list InputGapFn "x")))))))))
+        (is (nil? (problem kb (list 'natFormula K (list InputGapFn "x")))))))))
 
 (tu/deftest-kb the-inputs-are-read-from-the-asking-contexts-vantage
   (tu/with-terms [InputGapFn inputGapObserver CxSeen CxBelow CxSibling]
@@ -226,7 +231,7 @@
                (list 'unary_predicate inputGapObserver) (list 'arg inputGapObserver 1 'thing)
                (list 'genlCx CxSeen 'CxUniverse)]]
       (v/assert kb s 'CxUniverse))
-    (let [minted (fn [e] (seq (v/sentexes-matching kb (list 'termOfUnit '?k e) 'CxUniverse)))
+    (let [minted (fn [e] (seq (v/sentexes-matching kb (list 'natFormula '?k e) 'CxUniverse)))
           bad    (list inputGapObserver (list ReifGapFn "x"))]
       (testing "check predicts the refusal"
         (is (= :arg-type (refusal kb bad))))

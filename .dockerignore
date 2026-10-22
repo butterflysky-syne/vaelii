@@ -1,6 +1,7 @@
-# The build context is `project.clj`, `src/` and `resources/`; everything below is
-# either rebuilt inside the image or has no business in it.  A KB directory is the
-# ordinary way this file stops mattering and the build context becomes gigabytes.
+# The build context is `project.clj`, `project-env.clj`, `src/` and `resources/`;
+# everything below is either rebuilt inside the image or has no business in it.  A KB
+# directory is the ordinary way this file stops mattering and the build context becomes
+# gigabytes.
 .git/
 .github/
 .claude/

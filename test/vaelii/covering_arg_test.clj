@@ -17,16 +17,17 @@
 (use-fixtures :each (tu/neutral-fresh tu/fresh))
 
 (defn- ex-type
-  "The `:type` on the ex-info a thunk throws, or nil if it does not throw."
+  "The `:type` a write thunk meets: its refusal, or the argument conviction its fact is
+  held inert under (`tu/write-type`)."
   [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (tu/write-type tu/*kb* f))
 
 (defn- check-message
-  "The message of the first check violation `v/check` reports for a sentence, or nil.
-  `v/check` runs the same checks `assert` does without storing, so it reads the message a
-  refusal would carry without the dedup a second identical assert would hit."
+  "The message of the first check violation `v/check` reports for a sentence, or of the
+  argument conviction `assert` holds it inert under (`tu/write-conviction`), or nil."
   [kb sentence context]
-  (:message (first (v/check kb sentence context))))
+  (or (:message (first (v/check kb sentence context)))
+      (:message (tu/write-conviction kb sentence context))))
 
 (defn- variable-relation
   "A variable-arity predicate with an `arityMin` of 2, plus a two-level type hierarchy.
@@ -104,10 +105,11 @@
   (tu/without-entailing
    (let [[rel animal dog other] (variable-relation kb)]
      (v/assert kb (list 'type_relation_predicate rel) 'CxUniverse)
+     (v/assert kb (list 'disjoint other animal) 'CxUniverse)
      (v/assert kb (list 'argsGenl rel animal) 'CxUniverse)
      (testing "a subtype of the type, and the type itself, satisfy the subtype demand"
        (is (v/assert kb (list rel dog animal) 'CxUniverse)))
-     (testing "a type outside the down-closure is convicted"
+     (testing "a type the taxonomy separates from the declared type is convicted"
        (is (= :arg-genl (ex-type #(v/assert kb (list rel dog other) 'CxUniverse)))))
      (testing "an individual can never be a subtype, so it is convicted not excused"
        (is (= :arg-genl (ex-type #(v/assert kb (list rel dog (tu/tmp-ind)) 'CxUniverse))))))))
@@ -117,6 +119,7 @@
   (tu/without-entailing
    (let [[rel animal dog other] (variable-relation kb)
          name (tu/tmp-ind)]
+     (v/assert kb (list 'disjoint other animal) 'CxUniverse)
      (v/assert kb (list 'argAndRestGenl rel 2 animal) 'CxUniverse)
      (testing "the prefix is free and the tail names a kind"
        (is (v/assert kb (list rel name dog dog) 'CxUniverse))
@@ -125,31 +128,33 @@
 ;; ---- conjunction with the singular forms -----------------------------------
 
 (tu/deftest-kb a-covering-and-a-singular-constraint-both-bind-a-position
-  (tu/with-terms [rel animal dog red RedDog PlainRed PlainDog]
+  (tu/with-terms [rel animal dog red stone RedDog PlainRed PlainDog]
     (v/assert kb (list 'genl animal 'thing) 'CxUniverse)
     (v/assert kb (list 'genl dog animal) 'CxUniverse)
     (v/assert kb (list 'genl red 'thing) 'CxUniverse)
+    (v/assert kb (list 'genl stone red) 'CxUniverse)
+    (v/assert kb (list 'disjoint red dog) 'CxUniverse)
+    (v/assert kb (list 'disjoint stone animal) 'CxUniverse)
     (v/assert kb (list 'binary_predicate rel) 'CxUniverse)
     (v/assert kb (list 'variable_arity rel) 'CxUniverse)
     (v/assert kb (list 'arg rel 1 red) 'CxUniverse)       ; position 1 must be red
     (v/assert kb (list 'args rel animal) 'CxUniverse)     ; every position an animal
     (v/assert kb (list red RedDog) 'CxUniverse)
     (v/assert kb (list animal RedDog) 'CxUniverse)        ; both
-    (v/assert kb (list dog PlainDog) 'CxUniverse)         ; an animal, not red
-    (v/assert kb (list red PlainRed) 'CxUniverse)         ; red, not an animal
+    (v/assert kb (list dog PlainDog) 'CxUniverse)         ; a dog, disjoint from red
+    (v/assert kb (list stone PlainRed) 'CxUniverse)       ; red, disjoint from animal
     (testing "a term satisfying both is admitted at position 1"
       (is (v/assert kb (list rel RedDog RedDog) 'CxUniverse)))
-    ;; A symbol argument is convicted only under the constraint-only reading: with the
-    ;; entailment on, a singular `arg` mints the type it demands rather than testing for
-    ;; it (docs/argtypes.md, and `tu/without-entailing`), so the refusal these assert is
-    ;; the constraint-only one.
+    ;; Under the entailing reading `assert` stores a symbol conviction and mints the
+    ;; demanded type (docs/argtypes.md), so the refusals asserted here are the
+    ;; constraint-only ones.
     (tu/without-entailing
      (testing "each still convicts on its own — the singular at position 1"
        (is (= :arg-type (ex-type #(v/assert kb (list rel PlainDog RedDog) 'CxUniverse)))
-           "an animal but not red — the singular arg convicts"))
+           "a dog, disjoint from red — the singular arg convicts"))
      (testing "and the covering across the whole tail"
        (is (= :arg-type (ex-type #(v/assert kb (list rel RedDog PlainRed) 'CxUniverse)))
-           "red but not an animal at position 2 — the covering args convicts")))))
+           "a stone, disjoint from animal, at position 2 — the covering args convicts")))))
 
 (tu/deftest-kb the-entailing-reading-derives-every-tail-membership-in-either-order
   ;; `args` derives `animal` of every symbol in the tail, and `argsGenl` the edge, whether

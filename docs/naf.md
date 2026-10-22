@@ -2,7 +2,7 @@
 
 - **Covers:** closed-world negation as a query operator — `unknown`/`thereExists`/`forall`,
   ground/closed evaluation, and how a rule antecedent stays maintained as belief changes.
-- **Not here:** the rule-level exception this reuses block/sweep/revive from →
+- **Not here:** the rule-level exception this reuses the guard defeat from →
   [exceptions.md](exceptions.md); aggregation, the third member of the same family →
   [aggregate.md](aggregate.md).
 - **Assumes:** belief, justification, prover, `genl` → [glossary.md](glossary.md).
@@ -99,8 +99,8 @@ not conclude for a binding under which `S` is derivable.
 ;; birds walk, unless they are known to fly
 ```
 
-It shares `exceptWhen`'s whole machinery — evaluation point, re-check index, block /
-sweep / revive — differing only in **polarity and combination**:
+It shares `exceptWhen`'s whole machinery — evaluation point, re-check index, guard
+defeat — differing only in **polarity and combination**:
 
 - an `exceptWhen` exception is one condition, block-if-**all**-conjuncts-hold;
 - each `(unknown S)` antecedent is an **independent** condition, block-if-**any**-holds
@@ -258,13 +258,11 @@ and the same exemption at the two taxonomy edge triggers).
 ### Evaluated in the placement context, not the join
 
 The question is asked at the placement context when the firing is made, in the network
-and through the excepts. Where it holds through a blocker resting on `:monotonic` handles
-alone, the firing is refused. Where every blocker it holds through rests on a `:default`
-handle, the firing is stored with a guard defeat at the placement (design ruling 25).
-Where it holds only below the placement, the firing places a guard defeat there, and a
-reader at or below it does not believe the conclusion through that firing (decision 4 of
-[reference.md](reference.md#decisions)). A reader below never revives a firing the
-placement refuses.
+and through the excepts. Where it holds at the placement, the firing is stored with a guard
+defeat at the placement, whether its blockers rest on `:default` or `:monotonic` handles
+(design rulings 25 and 30). Where it holds only below the placement, the firing places a
+guard defeat there, and a reader at or below it does not believe the conclusion through
+that firing (decision 4 of [reference.md](reference.md#decisions)).
 
 An `unknown` antecedent is **not** a join filter. Forward chaining *skips* it in the
 join (it binds nothing and names no fact) and checks it at **derive time, per
@@ -302,19 +300,17 @@ of force at a reader that does not believe or see it. With `(pp ?x) & (unknown (
 `(pp Zed)` in CxA, and `(qq Zed)` in CxB below it, the defeat is stored in CxB: CxA
 believes `(rr Zed)` and CxB does not.
 
-**A `:default` blocker at the placement places a defeat there.** When the condition holds
-at the firing's own placement and each of its solutions placed there rests on a `:default`
-handle, a handle a placed defeat can hide, the firing is stored and its guard defeat is
-placed at the placement by the same reading (`chain/own-guard-block`,
-`chain/guard-solution-placements`). The `exceptWhen`'s own handle is not counted. A
-solution resting on `:monotonic` handles alone, or a condition holding with no solution
-placed there (a prover answer naming no stored fact), refuses the firing, and the refusal
-record keeps it ([exceptions.md](exceptions.md#a-refused-firing-is-remembered-as-bindings)).
-The store is the same in every arrival order, and the walk decides belief: a reader where
-a defeat hides the blocker believes the conclusion. With `(pp Zed)` and `(qq Zed)`
-`:default` in CxA, `(rr Zed)` and its guard defeat are stored in CxA, and a `:monotonic`
-`(not (qq Zed))` in CxA gives `(rr Zed)` back with nothing re-chained
-(`refused_firing_test/a-firing-a-late-blocker-swept-is-released-from-the-refusal-record`).
+**A blocker at the placement places a defeat there.** When the condition holds at the
+firing's own placement, the firing is stored and its guard defeat is placed at the
+placement by the same reading (`chain/guard-solution-placements`), whatever the class of
+the handles its solutions rest on. A condition that holds at the placement with no
+solution placed there (a prover answer naming no stored fact) places the defeat on the
+condition's own handle, when the placement context sees that handle. The store is the
+same in every arrival order, and the walk decides belief: a reader where a defeat hides
+the blocker believes the conclusion. With `(pp Zed)` and `(qq Zed)` `:default` in CxA,
+`(rr Zed)` and its guard defeat are stored in CxA, and a `:monotonic` `(not (qq Zed))` in
+CxA gives `(rr Zed)` back with nothing re-chained
+(`refused_firing_test/a-late-blocker-of-either-class-defeats-the-firing-and-records-nothing`).
 
 **An except or a defeat that takes a blocker's defeat out of force is a supporter.** A
 blocker a placed defeat hides at the firing's placement is believed at a reader whose
@@ -343,11 +339,8 @@ fixpoint, so F stays believed at R through a premise or a second justification n
 blocks there. A guard defeat reads F at its label (the exemption a placed nogood's own
 `defeat` takes), so it does not hide itself. `chain` reads no defeat.
 
-The other direction is absent for a `:monotonic` blocker: one the placement context sees
-and an except below it hides leaves the firing refused, so that reader lacks the conclusion
-the question asked at it would give. A `:default` blocker a reader below does not believe
-leaves the guard defeat at the placement out of force there, and the reader believes the
-conclusion. A guard defeat is placed the same way: at a reader below its placement where
+A blocker a reader below does not believe or see leaves the guard defeat at the placement
+out of force there, and the reader believes the conclusion. A guard defeat is placed the same way: at a reader below its placement where
 an inner `unknown` of the condition fails, it stays in force.
 
 ### Standalone positive `thereExists` desugars
@@ -412,7 +405,7 @@ an open `(not (accountOn Alice ?host))` is not closed.
 
 The per-argument grant is scoped and belief-following exactly as the whole-predicate grant
 is. Its arms mark `P` under the taxonomy prop `:closed-extent-arg`, read from the asking
-context, as the gate; the prover then reads the grant's position and value back from the
+context, as the presence check; the prover then reads the grant's position and value back from the
 believed grants visible there. A position past the goal's arity matches no goal.
 
 `closedExtentForArg1`, `closedExtentForArg2` and `closedExtentForArg3` are binary
@@ -434,8 +427,8 @@ Without the grant that `(not (month_of_year ?m))` is an ordinary literal, satisf
 stored negative. Under it the literal is negation as failure, and it takes `unknown`'s
 whole path: **withheld from the join** (`planned-join`, beside the post-join literals),
 decided at **derive time in the placement context** (`chain/closed-extent-blocks?`),
-recorded in the refusal record under the `:naf` reason, and swept and revived by the
-ordinary block / sweep / revive.
+recorded in the refusal record under the `:naf` reason, and swept by the settle and
+released from the record when the extent changes.
 
 Three details make that sound:
 
@@ -602,11 +595,12 @@ defeated `S` — closed-world negation reads current belief, not mere storage.
 - Blocking produces **no nogood**: a blocked conclusion does not exist, so nothing is
   contradictory and nothing is arbitrated. `unknown` is undercutting, like
   `exceptWhen` — not a rebuttal.
-- A blocked conclusion has no handle, so the sentence arity `why-not (kb sentence
-  context)` is the only one that can be asked of it. It reports `:excepted` for an
-  `exceptWhen` block and `:closed-extent` for a positive goal under a visible grant; a
-  conclusion an `(unknown S)` antecedent blocked reads `:not-stored`, nothing having
-  been placed.
+- A conclusion blocked through `:monotonic` facts has no handle, so the sentence arity
+  `why-not (kb sentence context)` is the only one that can be asked of it. It reports
+  `:excepted` for an `exceptWhen` block and `:closed-extent` for a positive goal under a
+  visible grant; a conclusion an `(unknown S)` antecedent blocked reads `:not-stored`,
+  nothing having been placed. A conclusion stored with a guard defeat reads `:excepted`
+  through both arities.
 
 ## Deferred antecedents in every chainer
 
@@ -616,7 +610,7 @@ The last two discharge an antecedent by fact matching and rule expansion, which 
 own proves nothing for a *deferred* antecedent — `unknown`, `different`, `evaluate`.
 `res/solve-deferred` closes that: `resolution` sits below the prover registry (`provers`
 requires `resolution`), so it cannot name `solve-goal` at compile time and reaches it
-through `wiring/solve-goal` — one of the three calls [`vaelii.impl.wiring`](namespaces.md)
+through `wiring/solve-goal` — one of the five targets [`vaelii.impl.wiring`](namespaces.md)
 collects, because `unknown` runs the registry back over its own argument and so is mutually
 recursive with the chainer asking for it. Resolved once into a `delay` rather than carried
 on a thread binding, because `query` is lazy and a deferred literal reached mid-stream
@@ -671,18 +665,16 @@ implementations.
   `UnknownProver`, `ThereExistsProver` and `exception-holds?` alike, so the goal, the
   antecedent and the exception cannot drift about what a conjunction means.
 - **Forward chaining**: `unknown` skipped in the join and decided at derive time per
-  placement context (`chain/own-guard-block`), alongside the exception: refused when a
-  solution rests on `:monotonic` handles alone, stored with a guard `defeat` at the
-  placement when every solution rests on a `:default` handle, and given a guard `defeat`
-  below the placement where the query holds only there (`chain/place-guard-defeats!`).
-- **Belief maintenance**: `justification-excepted?` blocks on a NAF antecedent too;
+  placement context (`chain/guard-solution-placements`), alongside the exception: stored
+  with a guard `defeat` at the placement when the query holds there, and given a guard
+  `defeat` below the placement where the query holds only there
+  (`chain/place-guard-defeats!`).
+- **Belief maintenance**: `justification-excepted?` blocks on a closed-extent antecedent;
   `index-rule-sentex` / `disintegrate-sentex!` post the NAF predicates in the re-check
   index (`rules/recheck-predicates`); `settle` narrows NAF firings the same way it
-  narrows exception firings. Sweep and revival are the ordinary paths — including the
-  refusal record ([exceptions.md](exceptions.md), "A refused firing is remembered as
-  bindings"), which covers a firing an `unknown` blocked at derive time exactly as it
-  covers one an exception blocked: both are re-askable from the bindings alone, and
-  both are entries in the same record.
+  narrows exception firings. A guard defeat's justification goes OUT when its blocker
+  does, and a closed-extent refusal sits in the refusal record ([exceptions.md](exceptions.md),
+  "A refused firing is remembered as bindings"), re-askable from the bindings alone.
 - **Stratification**: `checks/negative-predicates` and `check-stratified` treat an
   `unknown` antecedent's predicate as a negative edge, so a cycle through it — by rule
   or by `genl` edge — is refused.  A closed-extent negative antecedent adds one too, and
@@ -692,7 +684,7 @@ implementations.
   / `closed-extent-predicates-of`, the structural half), `special` (the
   `closed_extent_predicate` entry and `index-closed-extent-rules`) and `chain`
   (`closed-extent-blocks?`, the withheld join literal, the `:closed-extent` slot on the
-  rule view).
+  rule fields, `chain/rule-fields-of`).
 - **Every chainer**: `res/solve-deferred` (the registry reached through
   `wiring/solve-goal`) lets `res/prove` and the
   node engine evaluate a deferred antecedent, so every chainer agrees about `unknown`,

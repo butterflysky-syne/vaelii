@@ -40,7 +40,8 @@
             [taoensso.nippy :as nippy]
             [taoensso.trove :as trove]
             [vaelii.impl.config :as config]
-            [vaelii.impl.io.thaw :as safe])
+            [vaelii.impl.io.thaw :as safe]
+            [vaelii.impl.progress :as progress])
   (:import [java.io ByteArrayInputStream DataInputStream DataOutputStream File
             RandomAccessFile FileInputStream FileOutputStream
             BufferedInputStream BufferedOutputStream]
@@ -120,12 +121,12 @@
                            {:type :malformed-manifest :file (.getPath f)} e))))))
 
 (defn assert-format!
-  "Gate the store directory `root` on its `format.edn` sentinel: a known version is
-  ok, an unknown one throws, and a missing sentinel is stamped with the current
+  "Check the store directory `root` against its `format.edn` sentinel: a known version
+  is ok, an unknown one throws, and a missing sentinel is written with the current
   version (a pre-sentinel directory is by definition today's layout).
 
-  **A damaged sentinel is refused, not rewritten.**  A directory whose stamp was cut
-  mid-write is one whose *records* were being written at the same moment, and stamping
+  **A damaged sentinel is refused, not rewritten.**  A directory whose sentinel was cut
+  mid-write is one whose *records* were being written at the same moment, and writing
   over it would adopt whatever is beside it as today's layout — the one reading that is
   certainly wrong.  `:unreadable-store` names the file rather than the version, since
   there is no version to name.  A sentinel past `manifest-bytes` is refused as
@@ -140,7 +141,7 @@
         (when (= ::unreadable m)
           (throw (ex-info (str "the durable-store sentinel " (.getPath file)
                                " is not readable EDN — the directory was written by"
-                               " something else, or its stamp was cut mid-write")
+                               " something else, or its sentinel was cut mid-write")
                           {:type :unreadable-store :file (.getPath file) :root (str root)})))
         (let [v (:format-version m)]
           (when-not (contains? supported-format-versions v)
@@ -153,24 +154,24 @@
 (def ^:private index-layout-file "layout.edn")
 
 (defn index-layout-decision
-  "Gate an index directory `root` on its `layout.edn` sentinel against `current`
-  (`kv/index-layout-version`), as one of three answers: `:current` when the stamp
-  matches, `:stale` when it does not — an absent stamp over a `populated?` log
+  "Check an index directory `root`'s `layout.edn` sentinel against `current`
+  (`kv/index-layout-version`), as one of three answers: `:current` when the layout version
+  matches, `:stale` when it does not — an absent sentinel over a `populated?` log
   included, which is what an index written before the sentinel existed looks like —
-  and `:unstamped` for a fresh, empty directory, which needs the stamp but no
+  and `:unwritten` for a fresh, empty directory, which needs the sentinel but no
   rebuild.  A stale log replays cleanly and then misses every read whose key shape
   moved, so `:stale` is the caller's cue to clear the index, rebuild it from the
-  records, and then `stamp-index-layout!`.
+  records, and then `write-index-layout!`.
 
-  **This reads and never writes.** A base mounted under `:base` opts is gated by the
-  same call and may not be written to, so the stamp `:unstamped` calls for is the
-  caller's to make — `stamp-index-layout!` for a KB that owns the directory, nothing
+  **This reads and never writes.** A base mounted under `:base` opts is checked by
+  the same call and may not be written to, so the caller writes the sentinel
+  `:unwritten` calls for — `write-index-layout!` for a KB that owns the directory, nothing
   at all for a read-only mount.
 
-  **A damaged stamp is `:stale`**, not a refusal, and so is one past `manifest-bytes`.
+  **A damaged sentinel is `:stale`**, not a refusal, and so is one past `manifest-bytes`.
   The question this answers is \"can I prove these entries were keyed the way this build
-  keys them\", and a stamp cut mid-write proves nothing — so the answer is the one an
-  unprovable stamp already gets, and the index is rebuilt from the records, which are
+  keys them\", and a sentinel cut mid-write proves nothing — so the answer is the one an
+  unprovable sentinel already gets, and the index is rebuilt from the records, which are
   the ground truth either way.  That is the opposite of `assert-format!`'s reading of
   the same damage, because an index is a cache and records are not."
   [root current populated?]
@@ -179,23 +180,23 @@
       (if (= current (:index-layout (try (read-edn-manifest file) (catch Exception _ nil))))
         :current
         :stale)
-      (if populated? :stale :unstamped))))
+      (if populated? :stale :unwritten))))
 
 ;; A rebuild's *first* write, not its last: `index-layout-decision` reads an absent
-;; stamp over an empty index as `:unstamped`, so a crash between the clear and the
+;; sentinel over an empty index as `:unwritten`, so a crash between the clear and the
 ;; rebuild's first frame would otherwise leave a directory that opens clean — an empty
 ;; index over full records, answering nothing.  Marking the directory before the clear
-;; makes that window read as `:stale` instead, and `stamp-index-layout!` is what clears
+;; makes that crash window read as `:stale` instead, and `write-index-layout!` is what clears
 ;; the mark.  Any value that is not `current` would do; naming the state says why it is
 ;; there when somebody reads the file after a crash.
 (defn mark-index-rebuilding!
-  "Stamp `root`'s `layout.edn` as mid-rebuild, so an open that lands before
-  `stamp-index-layout!` reads `:stale` and rebuilds again."
+  "Write `root`'s `layout.edn` as mid-rebuild, so an open that lands before
+  `write-index-layout!` reads `:stale` and rebuilds again."
   [root]
   (spit (str root "/" index-layout-file) (pr-str {:index-layout ::rebuilding}))
   nil)
 
-(defn stamp-index-layout!
+(defn write-index-layout!
   "Write `root`'s `layout.edn` naming `current` — the commit mark of a layout
   rebuild (`index-layout-decision`)."
   [root current]
@@ -206,24 +207,24 @@
 
 (defn records-identity
   "The record store `root`'s index was last built against, or nil when the directory has
-  never been stamped.  Read through `read-edn-manifest`, so a stamp past the bound or cut
+  never been recorded.  Read through `read-edn-manifest`, so a file past the bound or cut
   mid-form is refused by name."
   [root]
   (let [file (File. ^String (str root) ^String records-identity-file)]
     (when (.exists file)
       (:records (read-edn-manifest file)))))
 
-(defn stamp-records-identity!
+(defn write-records-identity!
   "Record which store `root`'s index describes.
 
-  A `:disk-log` index over `:disk` records needs no such stamp: the two share the directory,
+  A `:disk-log` index over `:disk` records needs no such record: the two share the directory,
   so the files cannot describe anything else.  An index over records on a **server** can —
   the directory says nothing about which database, and the coverage check that would catch
   a mismatch compares record *counts*, which two unrelated databases match easily.  What
   gets through is worse than an empty index: reads answer out of another store's handles,
   and a re-assert of a sentence this store does hold mints a second handle for it."
   [root identity]
-  ;; the stamp is written on the *first* open, which is before anything else has had cause
+  ;; the identity is written on the *first* open, which is before anything else has had cause
   ;; to make the directory
   (.mkdirs (File. ^String (str root)))
   (spit (str root "/" records-identity-file) (pr-str {:records identity}))
@@ -667,41 +668,46 @@
   `on-slot` that itself seeks `idx-raf` cannot derail the scan.
 
   The flags ride along because this walk is the only one an open makes: whatever a slot
-  can answer without reading its record has to be answered here or not at all."
-  [^RandomAccessFile idx-raf on-slot]
-  (let [total       (.length idx-raf)
-        chunk-slots 4096
-        chunk-bytes (* slot-bytes chunk-slots)
-        buf         (byte-array chunk-bytes)]
-    (loop [base-id 0 pos 0]
-      (when (< pos total)
-        (.seek idx-raf pos)
-        (let [to-read (int (min chunk-bytes (- total pos)))
-              n       (.read idx-raf buf 0 to-read)]
-          (when (pos? n)
-            (let [bb (java.nio.ByteBuffer/wrap buf 0 n)]
-              (loop [i 0 off 0]
-                (when (<= (+ off slot-bytes) n)
-                  (let [offset (.getLong bb off)
-                        length (.getLong bb (int (+ off 8)))]
-                    (when (and (not= offset empty-offset)
-                               (not= offset tombstone-offset)
-                               (not (and (zero? offset) (zero? length))))
-                      (on-slot (+ base-id i) offset length
-                               (long (bit-and 0xffffffff (.getInt bb (int (+ off 16)))))))
-                    (recur (inc i) (long (+ off slot-bytes)))))))
-            ;; Advance by the WHOLE SLOTS consumed, never by `n`.  The inner loop
-            ;; refuses a partial trailing slot, so a read that is not a multiple of
-            ;; `slot-bytes` leaves a remainder — and stepping `pos` past it while
-            ;; stepping `base-id` by the slot count alone would start the next chunk
-            ;; mid-slot and misattribute every id from there on, silently.  `read` may
-            ;; return short at any point; today's chunk size only makes that rare.  A
-            ;; read too short to hold one slot ends the walk, which is what the inner
-            ;; loop already says about a partial slot at the end of the file.
-            (let [used (* slot-bytes (quot n slot-bytes))]
-              (when (pos? used)
-                (recur (long (+ base-id (quot n slot-bytes)))
-                       (long (+ pos used)))))))))))
+  can answer without reading its record has to be answered here or not at all.
+
+  `r`, when non-nil, is a `vaelii.impl.progress` reporter ticked with the slots each
+  chunk covers, live or not."
+  ([idx-raf on-slot] (scan-idx! idx-raf on-slot nil))
+  ([^RandomAccessFile idx-raf on-slot r]
+   (let [total       (.length idx-raf)
+         chunk-slots 4096
+         chunk-bytes (* slot-bytes chunk-slots)
+         buf         (byte-array chunk-bytes)]
+     (loop [base-id 0 pos 0]
+       (when (< pos total)
+         (.seek idx-raf pos)
+         (let [to-read (int (min chunk-bytes (- total pos)))
+               n       (.read idx-raf buf 0 to-read)]
+           (when (pos? n)
+             (let [bb (java.nio.ByteBuffer/wrap buf 0 n)]
+               (loop [i 0 off 0]
+                 (when (<= (+ off slot-bytes) n)
+                   (let [offset (.getLong bb off)
+                         length (.getLong bb (int (+ off 8)))]
+                     (when (and (not= offset empty-offset)
+                                (not= offset tombstone-offset)
+                                (not (and (zero? offset) (zero? length))))
+                       (on-slot (+ base-id i) offset length
+                                (long (bit-and 0xffffffff (.getInt bb (int (+ off 16)))))))
+                     (recur (inc i) (long (+ off slot-bytes)))))))
+             (when r (progress/tick! r (quot n slot-bytes)))
+             ;; Advance by the WHOLE SLOTS consumed, never by `n`.  The inner loop
+             ;; refuses a partial trailing slot, so a read that is not a multiple of
+             ;; `slot-bytes` leaves a remainder — and stepping `pos` past it while
+             ;; stepping `base-id` by the slot count alone would start the next chunk
+             ;; mid-slot and misattribute every id from there on, silently.  `read` may
+             ;; return short at any point; today's chunk size only makes that rare.  A
+             ;; read too short to hold one slot ends the walk, which is what the inner
+             ;; loop already says about a partial slot at the end of the file.
+             (let [used (* slot-bytes (quot n slot-bytes))]
+               (when (pos? used)
+                 (recur (long (+ base-id (quot n slot-bytes)))
+                        (long (+ pos used))))))))))))
 
 (defn read-nippy-file
   "Read a whole-file nippy value, returning `default` when the file is missing,
@@ -843,9 +849,9 @@
   written — and on a filesystem that zero-fills past a tear, stepping over zeros four
   bytes at a time would walk to EOF and pronounce the whole torn tail intact.
 
-  The prefixes are read through a **window** rather than one `seek`+`readInt` apiece: a
+  The prefixes are read through a **read buffer** rather than one `seek`+`readInt` apiece: a
   `RandomAccessFile` is unbuffered, so per-frame reads make this syscall-bound (measured
-  at 5.8M frames: 5.4s that way, 23ms this way). The window is filled by *positional*
+  at 5.8M frames: 5.4s that way, 23ms this way). The buffer is filled by *positional*
   channel reads, which name the offset and never touch the shared file pointer — so this
   neither disturbs a concurrent append nor needs the kind lock."
   ^long [^RandomAccessFile log-raf]
@@ -857,7 +863,7 @@
       (cond
         (> (+ pos 4) len) pos
 
-        ;; the next prefix is not wholly inside the window — refill from `pos`
+        ;; the next prefix is not wholly inside the read buffer — refill from `pos`
         (or (neg? base) (< pos base) (> (+ pos 4) (+ base (long limit))))
         (let [_ (.clear buf)
               n (.read ch buf pos)]
@@ -891,9 +897,13 @@
   says the JVM could not finish the thaw, not that the frame is bad.
 
   A caller that wants only the truncation offset wants `log-tail-offset`, which reads the
-  length prefixes and skips the decoding entirely."
-  (^long [log-raf f] (scan-log log-raf nil f))
-  (^long [^RandomAccessFile log-raf path f]
+  length prefixes and skips the decoding entirely.
+
+  `r`, when non-nil, is a `vaelii.impl.progress` reporter ticked with the bytes each
+  frame takes, its length prefix included."
+  (^long [log-raf f] (scan-log log-raf nil f nil))
+  (^long [log-raf path f] (scan-log log-raf path f nil))
+  (^long [^RandomAccessFile log-raf path f r]
    (let [len (.length log-raf)]
      (loop [pos 0 idx 0]
        (if-let [n (frame-length-at log-raf pos len)]
@@ -921,7 +931,9 @@
                                                     ") — read as a torn tail")})
                              nil))]
            (if got
-             (do (f idx (first got)) (recur frame-end (inc idx)))
+             (do (f idx (first got))
+                 (when r (progress/tick! r (- frame-end pos)))
+                 (recur frame-end (inc idx)))
              pos))
          pos)))))
 
@@ -1093,8 +1105,9 @@
   ones.  Emptiness is not absence: a `tokens.log` a crash tore to zero bytes leaves the
   sentexes log's tokenized frames citing ids no dictionary holds, and opening the (empty)
   dictionary is what turns each such frame into a typed `:damaged-dictionary` tombstone on
-  `rebuild-premises!`'s walk.  Gating the open on a non-empty length instead left
-  `open-record-store` with a nil dictionary and the tokenized decoder dereferencing it."
+  `rebuild-premises!`'s walk.  Opening the dictionary only at a non-empty length would
+  leave `open-record-store` with a nil dictionary and the tokenized decoder dereferencing
+  it."
   [root]
   (.exists (File. (str root) "tokens.log")))
 

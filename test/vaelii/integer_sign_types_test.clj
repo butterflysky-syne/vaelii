@@ -105,8 +105,9 @@
         (v/assert kb (list 'unary_predicate takesValue) U)
         (v/assert kb (list slot takesValue 1 type) U)
         (is (integer? (v/assert kb (list takesValue member) U)))
-        (is (thrown? clojure.lang.ExceptionInfo
-                     (v/assert kb (list takesValue non-member) U)))))))
+        (is (= ({'arg :arg-type 'quotedArg :quoted-arg-type} slot)
+               (tu/write-type kb #(v/assert kb (list takesValue non-member) U)))
+            "a non-member is held inert")))))
 
 (tu/deftest-kb core-integer-constraints-use-the-tightest-sign-type
   (doseq [[pred slot] positive-position-slots]
@@ -120,27 +121,26 @@
     (is (integer? (v/assert kb (list 'arity nullary 0) U)) "zero is a valid arity")
     (is (integer? (v/assert kb (list nullary) U))
         "a declared nullary predicate can be asserted")
-    (is (thrown? clojure.lang.ExceptionInfo (v/assert kb (list 'arity impossible -1) U))
-        "a negative arity is impossible")))
+    (is (= :arg-type (tu/write-type kb #(v/assert kb (list 'arity impossible -1) U)))
+        "a negative arity is impossible, and the binding is held inert")))
 
-(tu/deftest-kb the-quoted-reading-still-refuses-across-kinds
+(tu/deftest-kb the-quoted-reading-still-convicts-across-kinds
   (tu/with-terms [needsString needsInteger]
     (v/assert kb (list 'unary_predicate needsString) U)
     (v/assert kb (list 'quotedArg needsString 1 'string) U)
     (is (integer? (v/assert kb (list needsString "Bob") U)) "a string satisfies string")
-    (is (thrown? clojure.lang.ExceptionInfo (v/assert kb (list needsString 5) U))
+    (is (= :quoted-arg-type (tu/write-type kb #(v/assert kb (list needsString 5) U)))
         "5 is a number, not a string")
     (v/assert kb (list 'unary_predicate needsInteger) U)
     (v/assert kb (list 'quotedArg needsInteger 1 'integer) U)
     (is (integer? (v/assert kb (list needsInteger -7) U))
         "an unrefined integer position takes either sign")))
 
-(tu/deftest-kb a-refused-sign-refinement-names-the-value-type
+(tu/deftest-kb a-convicted-sign-refinement-names-the-value-type
   (tu/with-terms [tagPositive]
     (v/assert kb (list 'unary_predicate tagPositive) U)
     (v/assert kb (list 'quotedArg tagPositive 1 'positive_integer) U)
-    (let [m (try (v/assert kb (list tagPositive -5) U) nil
-                 (catch clojure.lang.ExceptionInfo e (ex-message e)))]
-      (is (some? m) "the assert is refused")
+    (let [m (:message (tu/write-conviction kb (list tagPositive -5) U))]
+      (is (some? m) "the fact is held inert")
       (is (re-find #"negative_integer" (str m))
           (str "the message names the value's own type, not the bare EDN kind: " m)))))

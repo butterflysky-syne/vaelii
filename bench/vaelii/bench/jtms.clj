@@ -16,7 +16,7 @@
     2. **Within `:nodes`, by field** — built by *stripping* one field from a copy of the
        real state and re-measuring, so each number is what removing that field would
        actually release rather than a sum of estimates.
-    3. **What the JTMS pins of the record store.**  A node names its datum by handle
+    3. **What the JTMS retains of the record store.**  A node names its datum by handle
        alone, so the always-resident network holds no record resident — the property
        record paging (Phase 4) depends on, measured rather than assumed because the
        field that would break it is an easy one to add back.
@@ -140,19 +140,19 @@
 
 (defn- store-independence
   "A node names its datum by handle and holds no reference to the sentex it labels, so
-  the always-resident JTMS pins none of the record store.  That is what makes record
+  the always-resident JTMS retains none of the record store.  That is what makes record
   paging (Phase 4) mean anything: a strong reference from here would hold every record
   in RAM whatever the backend does.  Measured rather than asserted, because the field
   it forbids would be an easy and invisible thing to add back."
   [kb state]
-  (let [pinned (into [] (keep :sentex) (vals (:nodes state)))
+  (let [held   (into [] (keep :sentex) (vals (:nodes state)))
         recs   (retained [@(:state (:records kb))])]
-    (println "\n══ Phase 3.3: what the JTMS pins of the record store ══")
+    (println "\n══ Phase 3.3: what the JTMS retains of the record store ══")
     (println (format "  %,d of %,d nodes hold a record reference; the store is %.1f MB"
-                     (count pinned) (count (:nodes state)) (mb recs)))
-    (println (if (seq pinned)
+                     (count held) (count (:nodes state)) (mb recs)))
+    (println (if (seq held)
                (format "  REGRESSION: the nodes retain %.1f MB of it — record paging is defeated"
-                       (mb (retained pinned)))
+                       (mb (retained held)))
                "  none — the store is free to page, which is the premise Phase 4 rests on"))))
 
 ;; ---- belief-set encodings, at the cardinalities that actually occur ------

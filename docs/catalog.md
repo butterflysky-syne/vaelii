@@ -40,7 +40,7 @@ The first three ship here and are always offered. The last three are **found**, 
 hardcoded: every directory on the search path is probed, and the marker its writer left
 decides what it is — a corpus `meta.edn` carries the context order it was written in, a
 dump's carries a `:format-version`, and a vaelii store is a `records/` directory the
-record writer has stamped with its own `format.edn`. Anything else is not a KB and is
+record writer has written its own `format.edn` into. Anything else is not a KB and is
 passed over, including a directory whose `meta.edn` does not read as EDN.
 
 **The records half is the whole marker.** Requiring an `index/` beside it hid exactly the
@@ -141,7 +141,7 @@ rather than what the load did to it — so a frame is attributed to the load onl
 otherwise have resolved whole.
 
 Three things come back with it. The store holds no dangling justification; the premise
-count agrees with the roster, where before it over-counted by however many marks named a
+count agrees with the premise set, where before it over-counted by however many marks named a
 deleted handle (`mark-premise` silently declines a handle with no record); and no
 provenance entry is written against a missing handle. A store already carrying them is
 repairable in place — delete every justification naming a handle `sentex-ids` does not
@@ -262,10 +262,25 @@ The in-process `load-source`, `load-dir` and `export-entry!` take a `:dir` eithe
 ## A loaded KB states this engine's shipped contexts
 
 A store or a dump holds the starter ontology of the engine that built it, and the engine
-loading it ships its own. So a load of either **syncs the shipped contexts**
-(`vaelii.host.sync/sync!`) before the entry reads `:done`: while the entry is
+loading it ships its own. A load of either that passes **`:sync?`** syncs the shipped
+contexts (`vaelii.host.sync/sync!`) before the entry reads `:done`: while the entry is
 still `:running`, which is what makes the browser's writes wait for it (`write-blocked?`).
 The other source kinds are built from this engine's files and are in sync already.
+
+**A load does not sync unless it asks.** A sync is one `edit!` and one settle over the
+whole KB. On a large store the settle can run past what a load allows, and the records it
+has written when it is stopped stay in the store: they leave the index and reasoning
+images stale, so every open after it rebuilds the index and recovers belief. A load
+without `:sync?` leaves the KB as it was written, and `sync-entry!` syncs one entry as a
+`:sync` job when you choose to.
+
+**A sync job goes one change at a time.** Every sync the browser runs as a job (a load's
+`:sync?`, `sync-entry!`, the sync after a belief rebuild) computes the plan first and then
+makes each change as its own `edit!` (`vaelii.host.sync/sync-each!`). The jobs page shows
+the plan's size, the change being made and how far along it is, and a cancel stops between
+two changes, each of which has settled; a rerun's plan is what is left. A refused addition
+is set aside and retried at the end rather than rolling everything back. `sync-loaded!`, the
+development browser's sync of its small shipped KBs, keeps the one batch.
 
 - **What is shipped** is what `starter/load-into` stores in a scratch in-memory KB, each
   premise attributed to the load that stored it, compared as the form a KB file writes
@@ -303,7 +318,8 @@ fails leaves it unsynced, and the log says so.
 after a file under `resources/kb/upper/` or `resources/kb/middle/` is saved, added or
 removed submits `sync-loaded!`: one `:sync` job that reads the shipped files once and
 syncs every in-process entry that accepts writes, the starter the browser opened on
-included, filing each report as `:sync`. While another job holds the writer the change
+included, filing each report as `:sync`. A store or dump loaded without `:sync?` is not
+one of them. While another job holds the writer the change
 stays pending, and a later request submits it. A served browser never watches the files.
 
 **The starter's edits are written back to the files.** Under `VAELII_DEV`, after each
@@ -319,7 +335,7 @@ the difference becomes line edits to the shipped files (`sync/write-back!`):
   holding that comment, or at the end of core.txt or the middle context's file when no
   file defines the term.
 
-Every other line stays, comments and order included. The edit changes the files' stamps,
+Every other line stays, comments and order included. The edit changes the files' mtimes,
 so the next request syncs the other loaded KBs to them. Only the starter writes back. A
 `genlCx` edge in CxUniverse is not compared, and a retraction no file states (a member of
 the closing `unary_predicate` batch) is logged as skipped and restored by that sync. No
@@ -518,7 +534,7 @@ whose store holds justifications or premise marks has everything `recover` reads
 recovering it is one pass over what is already there — that is what `:belief? :stored`
 loads. A KB holding neither cannot be recovered into belief at all and has to be loaded
 again; for a **foreign** dialect `:belief? false` always leaves it in that state, since
-that path rosters no premise. `active-caveat` probes the store and reports
+that path marks no premise. `active-caveat` probes the store and reports
 `:recoverable?`, and prescribing the reload to the first case would send it back through
 hours of work for nothing.
 

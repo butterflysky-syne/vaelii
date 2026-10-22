@@ -4,7 +4,7 @@
   "Definitional violations (disjointness, functionality, asymmetry, anti-transitivity,
   a refuted cover) as nogoods: stored at the entry point whatever the members' classes,
   the weaker side defeated, an equal defeasible pair a dilemma, an equal known-true pair
-  a conflict (docs/nmtms.md, \"What a refusal may rest on\").  Also pinned: what stays a
+  a conflict (docs/nmtms.md, \"What a refusal may rest on\").  Also asserted: what stays a
   refusal, a malformed sentence and an argument constraint.  `arity`'s refusal is
   `constraint_vocabulary_test`'s."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
@@ -193,12 +193,105 @@
       (is (integer? h))
       (is (= h (v/handle-of kb (list cat_t Rex) 'CxUniverse))))))
 
+;;; ── an argument conflict ──────────────────────────────────────────────
+
+(defn- write-outcome
+  "`:stored` for a believed write, `:inert` for one stored and not believed, or `[type
+  violation]` of what `write` throws."
+  [write kb s c]
+  (try (if (v/believed? kb (write kb s c) c) :stored :inert)
+       (catch clojure.lang.ExceptionInfo e
+         (let [d (ex-data e)] [(:type d) (:violation d)]))))
+
+(deftest try-assert-refuses-an-argument-its-declared-type-is-disjoint-from-under-either-reading
+  ;; per row and reading: what `try-assert` does, then what `assert` does on the same KB.
+  ;; `assert` stores a value outside its declared type and a symbol under the
+  ;; constraint-only reading held inert; an argument with an unknown type is stored by
+  ;; both.  In the `:below` row the declaration is written in a context below the fact's.
+  (doseq [reading [:entailing :constraint-only]
+          row     [:separated :unknown :value :below]]
+    (tu/with-kb [kb]
+      (tu/with-terms [dog_t person_t action_t likes Rex Mary CxDown]
+        ((if (= reading :entailing) #(tu/with-entailing (%)) #(tu/without-entailing (%)))
+         (fn []
+           (doseq [t [dog_t person_t action_t]]
+             (v/assert kb (list 'genl t 'thing) 'CxUniverse))
+           (v/assert kb (list 'genlCx CxDown 'CxUniverse) 'CxUniverse)
+           (v/assert kb (list 'disjoint dog_t person_t) 'CxUniverse)
+           (v/assert kb (list 'arg likes 1 person_t) (if (= row :below) CxDown 'CxUniverse))
+           (v/assert kb (list (if (= row :unknown) action_t dog_t) Rex) 'CxUniverse)
+           (let [s       (list likes (if (= row :value) 5 Rex) Mary)
+                 refused [:definitional-clash :arg-type]]
+             (is (= (case row
+                      :separated [refused (if (= reading :entailing) :stored :inert)]
+                      :unknown   [:stored :stored]
+                      :value     [refused :inert]
+                      :below     [refused :stored])
+                    [(write-outcome v/try-assert kb s 'CxUniverse)
+                     (do (some->> (v/handle-of kb s 'CxUniverse) (v/retract! kb))
+                         (write-outcome v/assert kb s 'CxUniverse))])
+                 (str reading " " row)))))))))
+
+(tu/deftest-kb try-assert-names-the-membership-an-argument-conflict-is-with
+  (tu/with-terms [dog_t person_t likes Rex Mary]
+    (v/assert kb (list 'genl dog_t 'thing) 'CxUniverse)
+    (v/assert kb (list 'genl person_t 'thing) 'CxUniverse)
+    (v/assert kb (list 'disjoint dog_t person_t) 'CxUniverse)
+    (v/assert kb (list 'arg likes 1 person_t) 'CxUniverse)
+    (let [h (v/assert kb (list dog_t Rex) 'CxUniverse)
+          e (try (v/try-assert kb (list likes Rex Mary) 'CxUniverse)
+                 (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+      (is (= [:definitional-clash :arg-type
+              [{:handle h :sentence (list dog_t Rex) :context 'CxUniverse}]
+              {:arg Rex :expected person_t :position 1 :disjoint-with dog_t}]
+             [(:type e) (:violation e) (:clashes-with e)
+              (select-keys (:detail e) [:arg :expected :position :disjoint-with])])))))
+
+(deftest try-assert-refuses-a-declaration-a-stored-tuple-breaks-under-either-reading
+  ;; per row and reading: the tuple is stored first, then `try-assert` of the declaration,
+  ;; then `assert` of it on the same KB
+  (doseq [reading [:entailing :constraint-only]
+          row     [:arg :arg1 :genlArg :interArg :sub-predicate :value :unknown]]
+    (tu/with-kb [kb]
+      (tu/with-terms [dog_t person_t action_t likes adores kindOf Rex Mary]
+        ((if (= reading :entailing) #(tu/with-entailing (%)) #(tu/without-entailing (%)))
+         (fn []
+           (doseq [t [dog_t person_t action_t]]
+             (v/assert kb (list 'genl t 'thing) 'CxUniverse))
+           (v/assert kb (list 'disjoint dog_t person_t) 'CxUniverse)
+           (v/assert kb (list (if (= row :unknown) action_t dog_t) Rex) 'CxUniverse)
+           (v/assert kb (list action_t Mary) 'CxUniverse)
+           (v/assert kb (list 'genl adores likes) 'CxUniverse)
+           (let [tuple (case row
+                         :genlArg       (list kindOf dog_t Mary)
+                         :sub-predicate (list adores Rex Mary)
+                         :value         (list likes 5 Mary)
+                         (list likes Rex Mary))
+                 th    (v/assert kb tuple 'CxUniverse)
+                 decl  (case row
+                         :arg1     (list 'arg1 likes person_t)
+                         :genlArg  (list 'genlArg kindOf 1 person_t)
+                         :interArg (list 'interArg likes 2 action_t 1 person_t)
+                         (list 'arg likes 1 person_t))
+                 e     (try (v/try-assert kb decl 'CxUniverse) :stored
+                            (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+             (testing (str reading " " row)
+               (if (= row :unknown)
+                 (is (= :stored e))
+                 (do (is (= [:definitional-clash
+                             (case row :genlArg :arg-genl :interArg :inter-arg-type :arg-type)
+                             [{:handle th :sentence tuple :context 'CxUniverse}]
+                             1]
+                            [(:type e) (:violation e) (:clashes-with e) (get-in e [:detail :count])]))
+                     (is (nil? (v/handle-of kb decl 'CxUniverse)) "nothing stored")
+                     (is (integer? (v/assert kb decl 'CxUniverse)) "assert stores it")))))))))))
+
 ;;; ── a verdict lives as long as its grounds ────────────────────────────
 
 (tu/deftest-kb retracting-the-separation-revives-the-loser-decided-or-not
   ;; a reader decides the pair from current state on every read, so no verdict taken
-  ;; while the declaration was believed outlives it; a `disjoint` is on the engine's
-  ;; baseline roster, so retraction is what takes it away, and the retraction drops the
+  ;; while the declaration was believed outlives it; a `disjoint` is in the baseline
+  ;; forced-monotonic set, so retraction is what takes it away, and the retraction drops the
   ;; flat-cache entry before the settle runs
   (doseq [dog-strength [:monotonic :default]]
     (testing (str "with the pair " (if (= :monotonic dog-strength) "decided" "a dilemma"))
@@ -260,18 +353,19 @@
                      (v/assert kb (list dog_t '?x) 'CxUniverse)))))))
 
 (tu/deftest-kb an-argument-constraint-is-not-a-nogood
-  ;; convicted by the absence of a path, so there is no pair.  Pinned to the constraint
-  ;; reading; the entailing one mints instead (docs/argtypes.md)
+  ;; the constraint reading has no second sentex to pair the membership with.  Forced to
+  ;; the constraint reading; the entailing one mints instead (docs/argtypes.md)
   (tu/without-entailing
    (tu/with-kb [kb]
      (tu/with-terms [person_t rock_t parentOf Boulder Muffet]
        (v/assert kb (list 'genl person_t 'thing) 'CxUniverse)
        (v/assert kb (list 'genl rock_t 'thing) 'CxUniverse)
+       (v/assert kb (list 'disjoint person_t rock_t) 'CxUniverse)
        (v/assert kb (list 'arg parentOf 1 person_t) 'CxUniverse)
        (v/assert kb (list rock_t Boulder) 'CxUniverse)
-       (is (thrown? clojure.lang.ExceptionInfo
-                    (v/assert kb (list parentOf Boulder Muffet) 'CxUniverse))
-           "refused at the entry point")
+       (is (not (v/believed? kb (v/assert kb (list parentOf Boulder Muffet) 'CxUniverse)
+                             'CxUniverse))
+           "stored and held inert")
        (is (empty? (v/contradictions kb)))))))
 
 ;;; ── the loser has a reason ────────────────────────────────────────────
@@ -468,7 +562,7 @@
             "the constraint that convicted the pair is gone")))))
 
 (tu/deftest-kb an-unrelated-membership-leaves-the-candidates-as-they-were
-  ;; pinned by object identity: a term holding one membership is no candidate, so the
+  ;; asserted by object identity: a term holding one membership is no candidate, so the
   ;; set the last write left is the set the next one reads
   (tu/with-kb [kb]
     (tu/with-terms [dog_t cat_t Muffet Rex]
@@ -498,7 +592,7 @@
 
 (tu/deftest-kb a-carried-report-still-names-a-side-s-second-derivation
   ;; a redundant justification relabels nothing but still notes its conclusion touched;
-  ;; `nmtms_test` pins the same for a rebuttal
+  ;; `nmtms_test` asserts the same for a rebuttal
   (tu/with-kb [kb]
     (tu/with-terms [dog_t cat_t Rex markA markB]
       (v/assert kb (list 'disjoint dog_t cat_t) 'CxUniverse)
@@ -542,14 +636,16 @@
 (deftest a-membership-beside-a-denial-of-a-supertype-of-its-type-is-a-nogood-in-every-order
   ;; (dog Rex), dog ⊑ mammal ⊑ animal and (not (animal Rex)) cannot all hold, and no cover
   ;; is stored: a known-true pair is a `:supertype` conflict, and a default membership
-  ;; loses to the known-true denial, taking the reached (animal Rex) with it.
-  (doseq [[member expect] [[:monotonic :conflict] [:default :loses]]
-          order           (permutations [:edge :member :deny])]
+  ;; loses to the known-true denial, taking the reached (animal Rex) with it.  A `:default`
+  ;; mammal ⊑ animal does not contrapose, so Rex is an atypical mammal and no nogood forms.
+  (doseq [[edge member expect] [[:monotonic :monotonic :conflict] [:monotonic :default :loses]
+                                [:default :monotonic :none] [:default :default :none]]
+          order                (permutations [:edge :member :deny])]
     (tu/with-kb [kb]
       (tu/with-terms [dog mammal animal Rex]
         (let [m      {:strength :monotonic}
               denial (list 'not (list animal Rex))
-              writes {:edge   #(v/assert kb (list 'genl mammal animal) 'CxUniverse m)
+              writes {:edge   #(v/assert kb (list 'genl mammal animal) 'CxUniverse {:strength edge})
                       :member #(v/assert kb (list dog Rex) 'CxUniverse {:strength member})
                       :deny   #(v/assert kb denial 'CxUniverse m)}]
           (v/assert kb (list 'genl dog mammal) 'CxUniverse m)
@@ -557,12 +653,52 @@
           (let [hs   #{(v/handle-of kb (list dog Rex) 'CxUniverse)
                        (v/handle-of kb denial 'CxUniverse)}
                 mine (fn [rs] (filterv #(= hs (:nogood %)) rs))]
-            (testing [member order]
+            (testing [edge member order]
               (case expect
                 :conflict (is (= [:supertype] (mapv :kind (mine (v/conflicts kb)))))
                 :loses    (is (= [false false true]
                                  (mapv #(v/ask? kb % 'CxUniverse)
-                                       [(list dog Rex) (list animal Rex) denial])))))))))))
+                                       [(list dog Rex) (list animal Rex) denial])))
+                :none     (is (= [[] [] true true]
+                                 [(mine (v/conflicts kb)) (mine (v/contradictions kb))
+                                  (v/ask? kb (list dog Rex) 'CxUniverse)
+                                  (v/ask? kb denial 'CxUniverse)]))))))))))
+
+(deftest a-denial-of-a-supertype-of-a-part-refutes-a-cover-through-a-monotonic-edge-only-in-every-order
+  ;; (covering w p1 p2), p1 ⊑ q1, (w X), (not (q1 X)) and (not (p2 X)): a :monotonic edge
+  ;; makes (not (q1 X)) deny p1, so the default (w X) loses; a :default edge leaves room
+  ;; for an atypical p1 outside q1, and no nogood forms
+  (doseq [edge  [:monotonic :default]
+          order (permutations [:cover :edge :member :deny])]
+    (tu/with-kb [kb]
+      (tu/with-terms [w p1 p2 q1 X]
+        (let [m      {:strength :monotonic}
+              member (list w X)
+              writes {:cover  #(v/assert kb (list 'covering w p1 p2) 'CxUniverse m)
+                      :edge   #(v/assert kb (list 'genl p1 q1) 'CxUniverse {:strength edge})
+                      :member #(v/assert kb member 'CxUniverse {:strength :default})
+                      :deny   #(do (v/assert kb (list 'not (list q1 X)) 'CxUniverse m)
+                                   (v/assert kb (list 'not (list p2 X)) 'CxUniverse m))}]
+          (doseq [o order] ((writes o)))
+          (testing [edge order]
+            (is (= (= :default edge) (v/ask? kb member 'CxUniverse)))))))))
+
+(tu/deftest-kb a-supertype-nogood-is-placed-where-its-edge-holds-at-monotonic
+  ;; dog ⊑ animal at :default in CxUniverse and at :monotonic in CxSide: the default
+  ;; (dog Rex) loses to the known-true denial in CxSide alone, and only while the
+  ;; monotonic supporter stands
+  (tu/with-terms [dog animal Rex CxSide]
+    (let [member (list dog Rex)
+          held   (fn [] (mapv #(v/ask? kb member %) [CxSide 'CxUniverse]))]
+      (v/assert kb (list 'genlCx CxSide 'CxUniverse) 'CxUniverse)
+      (v/assert kb (list 'genl dog animal) 'CxUniverse {:strength :default})
+      (v/assert kb member 'CxUniverse {:strength :default})
+      (v/assert kb (list 'not (list animal Rex)) 'CxUniverse {:strength :monotonic})
+      (is (= [true true] (held)) "a :default edge places no nogood")
+      (let [h (v/assert kb (list 'genl dog animal) CxSide {:strength :monotonic})]
+        (is (= [false true] (held)) "the monotonic supporter places it in CxSide")
+        (v/retract! kb h)
+        (is (= [true true] (held)) "and its retraction removes it")))))
 
 ;;; ── recomputed, never accumulated ─────────────────────────────────────
 
@@ -1242,7 +1378,8 @@
   ;; The index keeps the related `disjoint`s under the `genl` generation and the cover
   ;; pairs at the store and removal choke points, so an edge or a cover leaving takes its
   ;; report with it, and a context that does not see the edge reads no clash.  The KB
-  ;; loads no roster, so the declarations are asserted `:monotonic` as CxUniverse forces them.
+  ;; loads no forced-monotonic declaration, so the declarations are asserted `:monotonic` as
+  ;; CxUniverse forces them.
   (tu/with-terms [animal_w dog_w cat_w CxRelSide]
     (let [clashes #(into #{} (map (fn [r] (into #{} (map :sentence) (:sides r)))) (v/conflicts kb))
           decl    (list 'disjoint dog_w animal_w)
@@ -1381,7 +1518,7 @@
 
 (tu/deftest-kb a-disjoint-over-related-types-is-placed-as-a-contradicts
   ;; the declaration is its nogood's one member and the edge its ground; the declaration is
-  ;; on the forced-monotonic roster, so nothing is defeated
+  ;; in the forced-monotonic set, so nothing is defeated
   (tu/with-terms [animal_w dog_w CxRelSide]
     (v/assert kb (list 'genl animal_w 'thing) 'CxUniverse)
     (v/assert kb (list 'genlCx CxRelSide 'CxUniverse) 'CxUniverse)

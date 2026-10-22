@@ -53,9 +53,10 @@
       rebuilds the index from the records on open.  `:disk-memory` and `:disk-dense` write
       the same files and read back correctly as `:disk-columnar`;
     * `index/kv.log` with no `records/` → `:pg-disk-log`, a local index over records on a
-      server, which `open-kb` refuses until the caller names the server (`:pg`);
+      server;
     * `index/trie.csr` with no `records/` → `:pg-snapshot`, the images of a KB whose
-      records are on a server, refused the same way.
+      records are on a server.  Either reopens from the directory alone: `open-kb` reads
+      the server off the index's records identity when no `:pg` is given.
 
   An open under the wrong backend returns an empty KB and throws nothing: a
   `:disk-snapshot` or `:disk-columnar` store opened as `:disk-log` finds no index log, so
@@ -195,7 +196,7 @@
 
   A derived index is not one of the components above — nothing here opens it, and it has
   no file handle to close — but the *image* of it is written to this directory and has to
-  be written by whoever last held it, while the records it is stamped against are still
+  be written by whoever last held it, while the records it is validated against are still
   open.  So it hangs off the directory's registry entry and runs at the front of
   `close-dir!`, and on JVM shutdown through the durability daemon.
 
@@ -207,7 +208,7 @@
       (when-not (get-in @stores [cdir :snapshot])
         (let [id (dur/register! {:fsync (fn [_] nil)      ; an image is not a WAL — no tick
                                  :close save-fn
-                                 ;; the image is stamped against this directory's
+                                 ;; the image is validated against this directory's
                                  ;; records, so on the JVM-shutdown path it has to be
                                  ;; written before they close (`dur/close-phases`)
                                  :phase :image
@@ -239,8 +240,8 @@
 (defn register-reasoning-image!
   "Register `save-fn` (a thunk) as `dir`'s reasoning image writer, run at the front of
   `close-dir!` beside the index image's and on JVM shutdown in the same `:image` phase —
-  the reasoning image is stamped against these records too, so it is written while they are
-  open.
+  the reasoning image is validated against these records too, so it is written while they
+  are open.
 
   **The latest registration replaces the one before it**, where the index image's first
   registration stands.  The index is shared by every KB over a directory, and belief is
@@ -277,7 +278,7 @@
 
   **Called on the writer's thread, from the write entry point** (`kb/create-sentex`), because
   that is the only thread allowed to touch the columnar index (`disk/index_snapshot.clj`,
-  \"the cadence\").  So the gate is asked per write, and what it costs matters
+  \"the cadence\").  So the drift check runs per write, and what it costs matters
   rather than guessing at: one read of the registry here, which is where a directory with
   no image writer registered stops — and then, for one that has, `due?`'s two property
   reads, the canonical path its state is keyed by, one map read and a clock.  The caller
@@ -301,11 +302,12 @@
     (when (snap/due? cdir roots-now)
       ;; the clock is restarted *before* the attempt, not after a success.  A directory
       ;; that cannot be written to is still drifted when this returns, so a cadence
-      ;; stamped only by `note-image!` would find the refresh due again on the very next
-      ;; assert: an image-sized write per write, each one failing.  Stamping the attempt
-      ;; puts a broken directory back on the ordinary interval — it retries, once a floor,
-      ;; and a fixed disk resumes without an open.  It adds no work on the happy path,
-      ;; where `save!` overwrites this with the real baseline a moment later.
+      ;; reset only by `note-image!` would find the refresh due again on the very next
+      ;; assert: an image-sized write per write, each one failing.  Resetting the cadence
+      ;; at the attempt puts a broken directory back on the ordinary interval — it
+      ;; retries, once a floor, and a fixed disk resumes without an open.  It adds no work
+      ;; on the happy path, where `save!` overwrites this with the real baseline a moment
+      ;; later.
       (snap/note-attempt! cdir)
       (try (save-fn)
            (catch Throwable t
@@ -393,7 +395,7 @@
          ;; release.
          (when records (drs/abort-compaction! records))
          (dur/await-compaction-quiescent! (vals dur-ids))
-         ;; The image after the join and before the closes: it is stamped against the
+         ;; The image after the join and before the closes: it is validated against the
          ;; records, so it has to be written while they are still open *and* while nothing
          ;; is rewriting the offsets underneath it — and a failure to write one must not
          ;; stop the close.

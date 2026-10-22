@@ -3,10 +3,10 @@
 (ns vaelii.firing-cost-test
   "What one forward firing costs the index **at the trigger position**, as counted reads.
 
-  Three counted gates stood beside this one and none of them was about a firing.
+  Three counted tests stand beside this one and none of them is about a firing.
   `assert_cost_test` prices the *assert* path and reaches chaining only through one
   workload whose rule has a single antecedent — so `chain/*matcher*` was never on its
-  path at all, which is how the join went four years without a pin.  `join_lead_cost_test`
+  path at all, which is how the join went four years without a test.  `join_lead_cost_test`
   and `lead_side_cost_test` hold *shapes* — flat against growing — and a shape says
   nothing about the constant beside it.  A read added to `fire-rules-for`, to
   `complete-antecedents`, or to `derive-conclusion` lands in none of the three.
@@ -23,7 +23,7 @@
     trie's 48,003 for the same 2,000 conclusions.
   - **`:fanned-join`** — the same join over a functor with four sub-predicates, where the
     lead **is** the cheaper read and is taken.  The pair is what separates \"the lead is
-    off\" from \"the lead is off everywhere\": a gate that lost the fanned case would pass
+    off\" from \"the lead is off everywhere\": a test that lost the fanned case would pass
     with the argument lead deleted.
   - **`:symmetric-trigger`** — a firing whose trigger antecedent is symmetric, reached
     **only** through the datum's mirror.  `chain/symmetric-mirror` reads the fact's own
@@ -38,8 +38,8 @@
 
   `assert_cost_test`'s reasons, unchanged: an integer the engine computes rather than a
   measurement of the machine — no warm-up, no tolerance, identical on a loaded box — and
-  exact rather than a ceiling, so a legitimate improvement fails this gate and is re-pinned
-  by the commit that earns it, carrying its own size as data.
+  exact rather than a ceiling, so a legitimate improvement fails this test, and the commit
+  that earns it rewrites the number and carries its own size as data.
 
   ## What it does not catch
 
@@ -48,7 +48,7 @@
   - **A more expensive version of the same read.**  One `sentexes-with-arg` counts once
     whether it returns four handles or four million; `lein perf` holds that.
   - **Anything that scales.**  A cost growing with the KB is a ratio's subject, and
-    `join_lead_cost_test` is the shape gate for these same calls.
+    `join_lead_cost_test` is the shape test for these same calls.
   - **A configuration other than the shipped one**, and a backend other than `:memory`."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
@@ -67,7 +67,7 @@
   100)
 
 (def ^:private firing-space
-  "The KB every workload runs on: in-RAM, its own space, the reference TMS.  Pinned for
+  "The KB every workload runs on: in-RAM, its own space, the reference TMS.  Fixed for
   `assert_cost_test`'s reasons — the **backend**, because the columnar store keeps its own
   tallies and a budget is a claim about one index; the **TMS**, because a budget is a claim
   about one configuration and `VAELII_TEST_TMS=dense` is a different one."
@@ -158,19 +158,20 @@
 
 ;; ---- the budgets ---------------------------------------------------------
 ;;
-;; Measured, not designed, at `n` = 100 firings.  A family is **absent rather than pinned
+;; Measured, not designed, at `n` = 100 firings.  A family is **absent rather than held
 ;; at 0**, which is the stronger claim: a family the workload never reads is a key the
 ;; tally never emits, so one read of it fails the budget.
 ;;
 ;; Measured under the shipped default (`with-entailing` in `measure`), so `:predicate-extent`
-;; carries the entailment's per-firing `interArg` gate read — 100 reads over the 100 firings,
-;; where a `VAELII_ASSERTIVE_ARG_TYPES=0` run spends the constraint check's instead.  Pinned on
+;; carries the entailment's per-firing `interArg` presence-check read — 100 reads over the
+;; 100 firings, where a `VAELII_ASSERTIVE_ARG_TYPES=0` run spends the constraint check's
+;; instead.  Forced on
 ;; so the number is the same whatever the root is set to.  It also carries the
-;; preservation gate, six count reads per firing: the re-join, the re-check trigger and the
+;; preservation check, six count reads per firing: the re-join, the re-check trigger and the
 ;; settle each ask `inherit/declarations-exist?` of the conclusion.  A conclusion that is a
 ;; membership adds four, the taxonomy's census for one scoped `genl` read (`tax/visible-ctxs`).
 ;;
-;; `:trie-counts` carries the `except` and `defeat` gates, four or five count reads per
+;; `:trie-counts` carries the `except` and `defeat` presence checks, four or five count reads per
 ;; firing on the trie's `[except]` and `[defeat]` nodes (`exc/placed-reads?`,
 ;; `exc/except-hidden-fn`), where a KB storing neither reads 0 from each.  The negation
 ;; family adds no trie count per firing: the index write reads the conclusion's
@@ -190,7 +191,7 @@
   [{:name :single-antecedent
     :build single-antecedent
     ;; the conclusion is a second membership of the datum's term, which the membership
-    ;; candidates read the term's unary roster for once (`membership/note-membership!`)
+    ;; candidates read the term's unary predicate set for once (`membership/note-membership!`)
     :reads {:arity-binding 2 :argument-root 100 :argument-slot 100 :exception-index 200
             :predicate-extent 1201 :rule-index 300 :tax-support 100 :trie-counts 500}}
 
@@ -215,7 +216,7 @@
 
 (defn- measure
   "Build one workload, then chain its trigger set under the instrument.  The corpus is
-  laid down outside the reading and inside the pinned configuration: a taxonomy built
+  laid down outside the reading and inside the fixed configuration: a taxonomy built
   under one reader and priced under another would be a workload nobody runs."
   [build]
   (tu/with-shipped-config
@@ -251,10 +252,10 @@
                  "times, so its budget is about something else now"))
         (is (= reads (:reads got))
             (format (str "%s: the firing read budget moved.\n%s\n"
-                         "  If this change is intended, re-pin the number — the diff is "
+                         "  If this change is intended, update the expected number — the diff is "
                          "the change's own per-firing index cost.\n"
                          "  If it is not, a constant was added to the trigger path and "
-                         "neither `lein perf` nor the two shape gates can see it.")
+                         "neither `lein perf` nor the two shape tests can see it.")
                     (clojure.core/name name) (delta-report reads (:reads got))))))))
 
 (deftest the-mirror-is-what-fires-the-symmetric-rule

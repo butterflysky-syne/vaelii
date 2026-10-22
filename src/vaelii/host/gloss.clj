@@ -6,7 +6,7 @@
 
   The read path is the one with no verifier.  Nothing in the engine can say that an
   English sentence describing `(genl penguin bird)` is wrong, so a fluent gloss is a way
-  to teach a reader something false through their only window onto the formal content —
+  to teach a reader something false through their only access to the formal content —
   which makes reading the more dangerous direction here, not the safer one.  The defence
   is to not write prose at all where the KB has already written it.
 

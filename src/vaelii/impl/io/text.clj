@@ -75,6 +75,7 @@
             [vaelii.impl.kb :as kb]
             [vaelii.impl.naming :as nm]
             [vaelii.impl.opts :as opts]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.rules :as rules]
             [vaelii.impl.sentex :as sx]
@@ -254,8 +255,8 @@
 
   A KB file's order is its *terms'*, not its dependencies' — blocks run in natural sort
   order, which is the whole point of grouping term-centrically — so a file cannot also
-  be dependency-ordered.  `(transitiveInArgInverse largerThan 1 partOf)` sits under `largerThan`
-  and `(transitive partOf)` under `partOf`, and `l` sorts before `p`.  Several checks
+  be dependency-ordered.  `(transitiveInArgInverse largerThan 1 tangiblePartOf)` sits under `largerThan`
+  and `(transitive tangiblePartOf)` under `tangiblePartOf`, and `l` sorts before `t`.  Several checks
   read the store (a preservation's transitivity, an `arg` clash, a disjointness), so
   without this a term-centric file is refused for where its author filed a sentence.
   **A whole directory is one pass**, for the same reason one level up: the file names
@@ -275,16 +276,21 @@
                     (if (:inert o)
                       (assert-inert! sentence context)
                       (assert! sentence context o))))
-        attempt (fn [es]
-                  (reduce (fn [acc e]
-                            (try (apply! e) acc
-                                 (catch clojure.lang.ExceptionInfo _ (conj acc e))))
-                          [] es))]
-    (loop [pending (attempt entries)]
+        attempt (fn [round es]
+                  (with-open [r (progress/start ::load-entries
+                                                (str "load: assert the entries (round " round ")")
+                                                (count es))]
+                    (reduce (fn [acc e]
+                              (let [acc (try (apply! e) acc
+                                             (catch clojure.lang.ExceptionInfo _ (conj acc e)))]
+                                (progress/tick! r)
+                                acc))
+                            [] es)))]
+    (loop [round 1, pending (attempt 1 entries)]
       (when (seq pending)
-        (let [remaining (attempt pending)]
+        (let [remaining (attempt (inc round) pending)]
           (if (< (count remaining) (count pending))
-            (recur remaining)
+            (recur (inc round) remaining)
             (run! apply! remaining))))))
   (count entries))
 
@@ -347,23 +353,31 @@
 
 (defn- premise-records
   "Every live premise of `kb`, as records.  A premise **is** a sentex whose `:strength`
-  is non-nil, and `p/premise-ids` is the roster of them."
+  is non-nil, and `p/premise-ids` is the set of them."
   [kb]
-  (let [recs (:records kb)]
-    (into [] (keep #(p/get-sentex recs %)) (p/premise-ids recs))))
+  (let [recs (:records kb)
+        ids  (p/premise-ids recs)]
+    (with-open [r (progress/start ::premise-records "text export: read the premise records"
+                                  (count ids))]
+      (into [] (keep (fn [h] (progress/tick! r) (p/get-sentex recs h))) ids))))
 
 (defn- inert-records
   "Every inert sentex of `kb` (`assert-inert`), as records: a stored sentex that is no
   premise and that the TMS holds no node for.  A derived sentex has a node, so the two
   read apart only over a built network.  Over an unbuilt one (`kb/write-hazards` names
-  `:no-belief` or `:stale-belief`) a record outside the premise roster is either, and
+  `:no-belief` or `:stale-belief`) a record outside the premise set is either, and
   this refuses `:unrecovered-kb` rather than write a derived sentex as inert."
   [kb]
   (let [recs     (:records kb)
         tms      (reasoning/tms kb)
         premises (p/premise-ids recs)
-        ids      (into [] (remove #(or (contains? premises %) (jtms/known-datum? tms %)))
-                       (p/sentex-ids recs))
+        all      (p/sentex-ids recs)
+        ids      (with-open [r (progress/start ::inert-ids "text export: find the inert sentexes"
+                                               (count all))]
+                   (into [] (remove (fn [h]
+                                      (progress/tick! r)
+                                      (or (contains? premises h) (jtms/known-datum? tms h))))
+                         all))
         hz       (when (seq ids) (kb/write-hazards kb))]
     (when (or (:no-belief hz) (:stale-belief hz))
       (let [msg (str "export-text! over a KB whose belief is not built: " (count ids)
@@ -372,7 +386,9 @@
                      "  Call (recover kb) and export then.")]
         (throw (ex-info msg {:type :unrecovered-kb :hazards (vec (sort (keys hz)))
                              :operation "export-text!" :repair 'recover :message msg}))))
-    (into [] (keep #(p/get-sentex recs %)) ids)))
+    (with-open [r (progress/start ::inert-records "text export: read the inert records"
+                                  (count ids))]
+      (into [] (keep (fn [h] (progress/tick! r) (p/get-sentex recs h))) ids))))
 
 (defn premise-entries
   "`[entries skipped]` for `records` of `kb`, premises and inert sentexes: each as the form
@@ -406,28 +422,31 @@
                                 (filter #(some? (:strength %)))
                                 (map (juxt :id identity)))
                        records)]
-    (reduce
-     (fn [[written skipped] sx]
-       (let [keep! (fn [form hs] [(conj written {:context (:context sx) :form form :handles hs})
-                                  skipped])
-             drop! (fn [] [written (conj skipped sx)])]
-         (cond
-           (meta? sx)
-           (if-let [rule (by-rule (sx/exceptWhen-rule-handle (:sentence sx)))]
-             (keep! (exception-form sx rule) [(:id sx) (:id rule)])
-             (drop!))
+    (with-open [r (progress/start ::premise-entries "text: build the text forms"
+                                  (when (counted? records) (count records)))]
+      (reduce
+       (fn [[written skipped] sx]
+         (progress/tick! r)
+         (let [keep! (fn [form hs] [(conj written {:context (:context sx) :form form :handles hs})
+                                    skipped])
+               drop! (fn [] [written (conj skipped sx)])]
+           (cond
+             (meta? sx)
+             (if-let [rule (by-rule (sx/exceptWhen-rule-handle (:sentence sx)))]
+               (keep! (exception-form sx rule) [(:id sx) (:id rule)])
+               (drop!))
 
-           (names-a-handle? (:sentence sx)) (drop!)
+             (names-a-handle? (:sentence sx)) (drop!)
 
-           ;; an excepted rule rides its own wrapper, unless the wrapper would state a
-           ;; weaker class than the rule stands at
-           (and (by-rule (:id sx)) (not= :monotonic (:strength sx))) [written skipped]
+             ;; an excepted rule rides its own wrapper, unless the wrapper would state a
+             ;; weaker class than the rule stands at
+             (and (by-rule (:id sx)) (not= :monotonic (:strength sx))) [written skipped]
 
-           (nil? (:strength sx)) (keep! (list inert-wrapper (authored sx)) [(:id sx)])
+             (nil? (:strength sx)) (keep! (list inert-wrapper (authored sx)) [(:id sx)])
 
-           :else (keep! (with-strength (authored sx) (:strength sx)) [(:id sx)]))))
-     [[] []]
-     records)))
+             :else (keep! (with-strength (authored sx) (:strength sx)) [(:id sx)]))))
+       [[] []]
+       records))))
 
 (defn- context-forms
   "`[{context [form …]} skipped]` for `kb` — the text of every premise and inert sentex,
@@ -507,12 +526,15 @@
          ^File d       (ensure-empty-dir! dir)
          [written skipped] (context-forms kb)
          contexts      (sort (selected-contexts kb written o))
-         files         (mapv (fn [context]
-                               (let [f (io/file d (str context ".txt"))]
-                                 (with-open [w (io/writer f)]
-                                   (.write w ^String (file-text context (written context))))
-                                 (.getName f)))
-                             contexts)]
+         files         (with-open [r (progress/start ::write-kb "text export: write the context files"
+                                                     (count contexts))]
+                         (mapv (fn [context]
+                                 (let [f (io/file d (str context ".txt"))]
+                                   (with-open [w (io/writer f)]
+                                     (.write w ^String (file-text context (written context))))
+                                   (progress/tick! r)
+                                   (.getName f)))
+                               contexts))]
      {:contexts   (count files)
       :sentences  (transduce (map #(count (written %))) + 0 contexts)
       :skipped    (count skipped)

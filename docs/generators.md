@@ -3,7 +3,7 @@
 - **Covers:** the generator form, the hole/own-variable scoping rule, nesting and what
   the extra level buys, what a firing mints, how a mint is retracted, and the things a
   generator is refused for.
-- **Not here:** the direction wrappers a stamped rule carries →
+- **Not here:** the direction wrappers a generated rule carries →
   [inference.md](inference.md); why a *variable-predicate* rule is refused →
   [indexing.md](indexing.md); skolemizing a head existential →
   [skolem.md](skolem.md); the shipped quantifier family two of whose cells are
@@ -39,10 +39,10 @@ marks them apart** — the split is computed:
 
 | | which variables | what happens to them |
 |---|---|---|
-| **holes** | those an *enclosing* level's antecedents also mention | bound by that level's join, ground in what it stamps |
-| **the stamped rule's own** | everything else | survive as variables; they belong to the rule being stamped |
+| **holes** | those an *enclosing* level's antecedents also mention | bound by that level's join, ground in what it generates |
+| **the generated rule's own** | everything else | survive as variables; they belong to the rule being generated |
 
-In the example `?outcome` and `?emotion` are holes; `?a` and `?p` are the stamped
+In the example `?outcome` and `?emotion` are holes; `?a` and `?p` are the generated
 rule's own. Sharing a variable name with the antecedents *is* how an author says "fill
 this in", so there is nothing to declare and no second spelling that could disagree
 with the first.
@@ -56,14 +56,14 @@ Two consequences follow, and both are easy to trip over:
   functor no enclosing level binds is refused (`:not-indexable`) — nothing will ever bind
   it.
 - **Range restriction moves one level in.** The generator's own is vacuous: its
-  consequent is a rule rather than a conclusion, and the stamped rule's free variables
-  are unbound on purpose. The *stamped* rule's is what is checked, with the holes
+  consequent is a rule rather than a conclusion, and the generated rule's free variables
+  are unbound on purpose. The *generated* rule's is what is checked, with the holes
   counted as bound. So `(implies (marker ?p) (implies (?p ?x) (dst ?x ?loose)))` is
   refused for `?loose`, at the generator, before any firing.
 
 ## Nesting
 
-A stamped rule may itself be a generator, and then the mint stamps in turn. The nesting
+A generated rule may itself be a generator, and then the mint generates in turn. The nesting
 is **not capped**, because the scoping rule composes without needing anything added to
 it: a variable belongs to the **outermost** level whose antecedents mention it, which is
 the level whose firing grounds it. One reading of the sentence decides every level, and
@@ -90,14 +90,14 @@ once. So these two say the same join and only one of them can be stored:
 ```
 
 The second is a type-level/instance-level bridge stated once rather than once per pair.
-`(typeVersion hasCapability capabilityType)` stamps a generator:
+`(typeVersion hasCapability capabilityType)` generates a generator:
 
 ```clojure
 (implies (capabilityType ?type ?cap)
          (implies (?type ?instance) (hasCapability ?instance ?cap)))
 ```
 
-`(capabilityType bird flying)` stamps that generator's rule:
+`(capabilityType bird flying)` generates that generator's rule:
 
 ```clojure
 (implies (bird ?instance) (hasCapability ?instance flying))
@@ -111,9 +111,9 @@ is filed at every depth.
 **Every level owes what a generator owes**, because every level reaches the store as a
 rule in its own right and the mint reads the same check list the assert entry point does. A
 `set/backwardRule` around a middle level is `:not-indexable` at the sentence rather than
-one firing later; an `exceptWhen` on any stamped level is `:not-well-formed`; and a level
+one firing later; an `exceptWhen` on any generated level is `:not-well-formed`; and a level
 that fills **no hole an enclosing level has not already filled** is
-`:not-range-restricted` — it would stamp the same rule at every firing, which is a rule
+`:not-range-restricted` — it would generate the same rule at every firing, which is a rule
 its author could have written.
 
 **A top-level rule antecedent is not covered by any of this.** Nothing encloses it, so a
@@ -121,16 +121,18 @@ variable functor there is what it always was: a key no fact and no goal can spel
 ([indexing.md](indexing.md)). The nesting rule admits a variable functor exactly where a
 level further out fills it.
 
-## The stamped rule's direction
+## The generated rule's direction
 
 The wrapper rides **inside** the consequent, where substitution never touches it, and
 sets the direction of the rule that gets stored: `set/forwardRule`,
-`set/backwardRule`, `set/inertRule`. `set/defaultRule` rides there too and makes the
-stamped rule defeasible rather than setting its direction. That is the only place
-either can be written for a rule nobody types out. A stamped rule with no direction
-wrapper is **backward** like any other bare rule, so a generator whose stamped rule is
-meant to materialize facts writes `set/forwardRule` inside the consequent — the shipped
-`relationTypeByArity` and `predAllInstance` generators do exactly that.
+`set/forwardOnlyRule`, `set/backwardRule`, `set/inertRule`. `set/defaultRule` rides there too and makes the
+generated rule defeasible rather than setting its direction. That is the only place
+either can be written for a rule nobody types out. A generated rule with no direction
+wrapper is **backward** like any other bare rule, so a generator whose generated rule is
+meant to materialize facts writes `set/forwardRule` or `set/forwardOnlyRule` inside the
+consequent — the shipped `predAllInstance` generator writes the first, and
+`relationTypeByArity` the second, since the converse it generates beside it is backward
+and the two would otherwise be a backward cycle.
 
 The **generator itself defaults to forward**, even bare. Its conclusion is a rule, and no
 backward goal asks for one — `res/concluding-rule-handles` reads a goal's predicate, and a
@@ -138,7 +140,7 @@ generator's consequent predicate is `implies`, which nothing queries — so the 
 default an ordinary rule takes would leave the generator firing in neither engine. A
 `set/backwardRule` generator is refused rather than stored claiming a capability it
 cannot exercise. `set/inertRule` stays legal, since it claims nothing. Under nesting the
-same holds of each level that stamps: only the **innermost** rule's wrapper is a free
+same holds of each level that generates: only the **innermost** rule's wrapper is a free
 choice, and it is the one that sets the direction of the rule that concludes a fact.
 
 ## A mint is derived content
@@ -155,10 +157,10 @@ un-believes the mint, and the mint stops firing. Nothing has to hunt it down:
 
 ```clojure
 (v/retract! kb pairing-handle)   ; (outcomeEmotion succeededAt Joy)
-;; the stamped rule is no longer believed, and neither is anything it concluded
+;; the generated rule is no longer believed, and neither is anything it concluded
 ```
 
-Dedup is the ordinary sentex dedup, so two generators that stamp the same rule share
+Dedup is the ordinary sentex dedup, so two generators that generate the same rule share
 one handle and collect a justification each — and the rule survives until the last of
 them goes.
 
@@ -173,13 +175,13 @@ The mint goes through the same check list the assert entry point runs
 (`checks/check-rule!`, read by both entry points so neither can drift): range restriction,
 indexability, naming, stratification, no imperative, disjunction shape, NAF closure,
 the argument constraints the rule's own variables carry, and the generator's own three. A
-stamped rule concluding a conjunction is polycanonicalized into one rule per conjunct,
+generated rule concluding a conjunction is polycanonicalized into one rule per conjunct,
 and one whose antecedent disjoins into one rule per alternative, exactly as an asserted
 one is. The expansion happens at the **mint**, not at the generator's own assert: the
 holes are ground by then, so the alternatives stored are the alternatives of the rule
-that was stamped ([canonicalization.md](canonicalization.md)). A ground application of
-a reifiable function in the stamped rule is reified to its constant first, as `assert`
-reifies one in a rule it stores, so the stamped rule's literals are spelled the way the
+that was generated ([canonicalization.md](canonicalization.md)). A ground application of
+a reifiable function in the generated rule is reified to its constant first, as `assert`
+reifies one in a rule it stores, so the generated rule's literals are spelled the way the
 facts they match are stored ([nat.md](nat.md), "Derivation path").
 
 That the list is one list is what makes nesting safe rather than merely legal: a middle
@@ -196,46 +198,46 @@ set depend on which rule fired first. The drop lands in the violation ledger
 
 | written | refused as |
 |---|---|
-| an `exceptWhen` on a stamped rule, at any level | `:not-well-formed` |
-| `set/backwardRule` on a level that stamps | `:not-indexable` |
-| a stamped variable functor no enclosing level binds | `:not-indexable` |
-| a level sharing no *new* variable with the rule it stamps | `:not-range-restricted` |
+| an `exceptWhen` on a generated rule, at any level | `:not-well-formed` |
+| `set/backwardRule` on a level that generates | `:not-indexable` |
+| a generated variable functor no enclosing level binds | `:not-indexable` |
+| a level sharing no *new* variable with the rule it generates | `:not-range-restricted` |
 | the innermost rule not range-restricted | `:not-range-restricted` |
 | a generator cycle | `:not-stratified` |
 
-**An `exceptWhen` on a stamped rule** is refused because an exception is not a rule
+**An `exceptWhen` on a generated rule** is refused because an exception is not a rule
 field: it is a separate meta-sentex keyed by the rule's handle, split off and stored by
 the assert path, which a firing does not run. The mint would be a rule whose guard had
 evaporated in silence, firing on exactly the bindings its author wrote it not to — so
 it is refused rather than dropped. Two things do work: an `(unknown …)` antecedent
-*inside* the stamped rule, which lives in the rule sentence and so survives
-substitution; and an `exceptWhen` on the **outermost** rule, which says when not to
-stamp.
+*inside* the generated rule, which lives in the rule sentence and so survives
+substitution; and an `exceptWhen` on the **outermost** rule, which states when the
+generator does not fire.
 
-**A level sharing no new variable** is the per-level form of "every firing stamps the
+**A level sharing no new variable** is the per-level form of "every firing generates the
 same rule", and under nesting it is a mistake an outer fill *creates*: in
 `(implies (aa ?x) (implies (bb ?x) (implies (cc ?x) (dd ?x))))` the middle level's only
-shared variable is `?x`, which the first level has already ground, so the rule it stamps
+shared variable is `?x`, which the first level has already ground, so the rule it generates
 is fixed before it is stored. Share a variable the levels above it do not.
 
-A head existential *inside* the stamped rule is fine, and skolemizes one firing later,
-keyed on the stamped rule's own content — the generator's firing deliberately does not
-skolemize, since the stamped rule's free variables are its own ([skolem.md](skolem.md)).
+A head existential *inside* the generated rule is fine, and skolemizes one firing later,
+keyed on the generated rule's own content — the generator's firing deliberately does not
+skolemize, since the generated rule's free variables are its own ([skolem.md](skolem.md)).
 
-**What bounds a generator is the cycle check, not the depth.** A nested generator stamps
-one level further and stops; a cycle stamps forever. That is why the refusal is on the
+**What bounds a generator is the cycle check, not the depth.** A nested generator generates
+one level further and stops; a cycle generates forever. That is why the refusal is on the
 cycle and the nesting is left to the author.
 
 **A generator cycle** is a generator whose **innermost** conclusion is a predicate some
-generator reads in an antecedent it stamps from — itself included. The innermost, because
+generator reads in an antecedent it generates from — itself included. The innermost, because
 that is the only level that concludes a fact: the levels above it conclude rules, filed
 under `implies`, which no fact carries and no goal asks for. It is refused outright
 rather than depth-capped
 ([why](defenses.md#a-generator-cycle-is-refused-not-depth-capped)) — the call
 [exceptions.md](exceptions.md) makes for a cycle through negation, for the same reason.
 The check runs in both directions at every
-generator's assert — the arriving one may stamp what a stored one reads, or read what a
-stored one stamps — because checking only one would admit the cycle whenever the two
+generator's assert — the arriving one may generate what a stored one reads, or read what a
+stored one generates — because checking only one would admit the cycle whenever the two
 were asserted in the other order.
 
 ## What this is not
@@ -268,7 +270,7 @@ rule remains the `(sentexHandle H)` meta-sentex layer
   `range-problems`, and the level-aware `variable-functor-literals`.
 - `vaelii.impl.sentex` — `connective-problems`, whose consequent arm reads a rule in
   consequent position as the next level and recurses.
-- `vaelii.impl.naming` — `applied-literals`, which tags a stamped rule's literals
+- `vaelii.impl.naming` — `applied-literals`, which tags a generated rule's literals
   `:generated-antecedent` / `:generated-consequent` — at every depth — so the index
   check can tell them from the author's own.
 - `vaelii.impl.checks` — `check-rule!` (the list both entry points read), `check-generator!`

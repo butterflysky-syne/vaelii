@@ -99,7 +99,8 @@
   (the solve limit, `config/asp-solve-limit`; the time limit, `config/asp-time-limit`;
   or a signal) and `:unknown` carry **no** witness, and every reader here maps an atom's
   absence to *defeated* or *not kept* — so read as an answer, an empty result defeats
-  every contested assumption and labels every choice head false.  `answered?` gates each reader.
+  every contested assumption and labels every choice head false.  Each reader runs only when
+  `answered?` holds.
 
   **With a backend present, `edge-solver` decides nothing rather than degrading.**  The
   stub and ASP disagree — measured on two nogoods sharing a member, the stub defeats
@@ -198,7 +199,7 @@
   plain *satisfaction* rather than optimization: with no minimize term clingo stops at
   the first model instead of proving cost-optimality over the choice atoms, which is
   the difference between finishing and not at scale (a 10k-node graph 3-coloring).  A
-  caller turns it off only when the program's hard constraints already pin what must be
+  caller turns it off only when the program's hard constraints already determine what must be
   chosen (e.g. a hard at-least-one), so \"keep as much as possible\" adds nothing."
   ([program] (translate program {}))
   ([{:keys [assumptions contradictions derived derivations] :as program}

@@ -81,7 +81,7 @@
       ;; branch makes the measurement depend on set iteration order, not on laziness
       (v/assert kb (list parentOf Tom (tu/tmp-ind "Kid")) CxSub {:chain? false})
       ;; a BINARY goal, so `match-pattern` short-circuits to `raw-match` and the only
-      ;; fan-out in play is over contexts.  Bind the hierarchical path off: this pins the
+      ;; fan-out in play is over contexts.  Bind the hierarchical path off: this asserts the
       ;; *reference fan-out*'s laziness (level 4's default is the set-algebra path, which
       ;; filters contexts in memory rather than fanning — its own laziness is below).
       (binding [res/*hierarchical-retrieval* false]
@@ -162,7 +162,7 @@
 ;; closures at all.  `lead-candidates` hands the posting back by reference and only
 ;; walks it as results are consumed, so an existence check must not realize the whole
 ;; posting.  This is the laziness that lets it stay the default for existence checks;
-;; the fan-out tests above bind the flag off to pin the reference path instead.
+;; the fan-out tests above bind the flag off to force the reference path instead.
 
 (tu/deftest-kb the-set-algebra-path-walks-its-posting-lazily
   (tu/with-terms [likes Anchor CxStory]
@@ -170,8 +170,8 @@
       (doseq [_ (range 60)]
         (v/assert kb (list likes Anchor (tu/tmp-ind "Kid")) CxStory {:chain? false}))
       ;; jtms/in? runs once per posting entry the keep visits — the per-candidate call site.
-      ;; Pin the flag on: this test is about the set-algebra path (as the fan-out tests
-      ;; above pin it off), independent of the global default.
+      ;; Force the flag on: this test is about the set-algebra path (as the fan-out tests
+      ;; above force it off), independent of the global default.
       (binding [res/*hierarchical-retrieval* true]
         (let [[one all] (calls #'jtms/in?
                                (fn [consume] (consume (v/lookup kb 4 goal CxStory))))]
@@ -362,12 +362,12 @@
       (v/assert kb (list pred o) 'CxUniverse))))
 
 (tu/deftest-kb the-surviving-claims-are-realized-inside-the-memo-that-computed-them
-  (tu/with-terms [partOf needsWork]
+  (tu/with-terms [tangiblePartOf needsWork]
     (let [base   (tu/tmp-ind "Part")
           owners (vec (repeatedly 5 #(tu/tmp-ind "Whole")))
           goal   (list needsWork base)
           drain  #(doall (inherit/surviving kb goal 'CxUniverse))]
-      (preserved-fan! kb partOf needsWork base owners)
+      (preserved-fan! kb tangiblePartOf needsWork base owners)
       (drain)                                   ; warm whatever caches persist between asks
       (let [bare (visible-reads drain)
             held (visible-reads #(inherit/with-memo (drain)))]
@@ -383,12 +383,12 @@
   ;; `solve-with-support`'s open arm is the other escape: `licensed-product` walks a reach
   ;; per claim and `supports-for` opens a memo of its own per tuple, so a seq handed out
   ;; shares nothing between the tuples of one literal.  Same measurement, same claim.
-  (tu/with-terms [partOf needsWork]
+  (tu/with-terms [tangiblePartOf needsWork]
     (let [base   (tu/tmp-ind "Part")
           owners (vec (repeatedly 5 #(tu/tmp-ind "Whole")))
           lit    (list needsWork '?x)
           drain  #(doall (inherit/solve-with-support kb lit '?ctx))]
-      (preserved-fan! kb partOf needsWork base owners)
+      (preserved-fan! kb tangiblePartOf needsWork base owners)
       (drain)
       (let [bare (visible-reads drain)
             held (visible-reads #(inherit/with-memo (drain)))]

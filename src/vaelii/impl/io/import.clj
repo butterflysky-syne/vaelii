@@ -17,8 +17,8 @@
   otherwise the index is rebuilt, and the summary says which happened and why.
 
   **Framing.**  A chunked stream is a run of `[int32 length][compressed chunk]`, each
-  chunk a compression window over back-to-back nippy frames; a window stream is one
-  compression window over the lot.  Our own dumps **state** which (`:framing`); a
+  chunk a compressed stream over back-to-back nippy frames; a single-stream file is one
+  compressed stream over the lot.  Our own dumps **state** which (`:framing`); a
   foreign dump's is inferred from its own version line.  Both are constant-memory lazy
   seqs.
 
@@ -94,6 +94,7 @@
             [vaelii.impl.naming :as nm]
             [vaelii.impl.observe :as observe]
             [vaelii.impl.opts :as opts]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.reasoning-image :as ri]
             [vaelii.impl.recovery :as recovery]
@@ -131,7 +132,7 @@
 ;; the two halves of the round trip must agree on the layout, so it is stated once.
 
 ;;; ── stream readers ────────────────────────────────────────────────────
-;;; The chunked/window nippy framing itself lives in `vaelii.impl.io.frames`, shared
+;;; The chunked and single-stream nippy framing itself lives in `vaelii.impl.io.frames`, shared
 ;;; with the export writer and the snapshot sink; what stays here is the dump-specific
 ;;; policy of choosing a reader from a dump's own `meta.edn` (`stream-reader-for`).
 
@@ -267,7 +268,7 @@
 (defn- stream-reader-for
   "The reader for a dump's stream files.  One of ours **states** its framing, because a
   version number already means something else here; a foreign dump's is inferred from
-  its own version line — v6+ chunked, v4/v5 single-window.  The inference is for a
+  its own version line — v6+ chunked, v4/v5 single-stream.  The inference is for a
   dump that states *nothing*: a `:framing` this build does not know is a declared
   field of the frozen format holding a value from some other build, and guessing a
   reader for it fails later as a decompression error with no `:type` — so it is
@@ -278,9 +279,9 @@
   [meta]
   (case (:framing meta)
     :chunked frames/read-chunked-seq
-    :window  frames/read-window-seq
+    :window  frames/read-single-stream-seq
     nil      (if (>= (long (:format-version meta 0)) 6)
-               frames/read-chunked-seq frames/read-window-seq)
+               frames/read-chunked-seq frames/read-single-stream-seq)
     (throw (ex-info (str "unknown dump :framing " (pr-str (:framing meta))
                          " — this build reads :chunked and :window")
                     {:type :unknown-framing :framing (:framing meta)}))))
@@ -307,7 +308,7 @@
                               :msg (str "import-dump could not close a stream the foreign"
                                         " reader opened: " (.getMessage t))}))))))))
 
-;;; ── meta + gates ──────────────────────────────────────────────────────
+;;; ── meta + checks ─────────────────────────────────────────────────────
 
 (defn read-meta
   "Read a dump's `meta.edn` (the marker + schema) without loading any records — under
@@ -335,7 +336,7 @@
                       {:type :no-foreign-reader :kind :engine-dump :missing field}))))
 
 (defn- assert-supported-version!
-  "Gate the version against the numbering its own dialect uses — the two overlap, so one
+  "Check the version against the numbering its own dialect uses — the two overlap, so one
   set would read our v1 as an unsupported foreign v1.  A foreign dump's numbering belongs
   to its reader, so it is asked (and its absence is what refuses the dump)."
   [meta]
@@ -495,7 +496,7 @@
   `:strength` is the frame's own, unnormalized: the dialects read it differently (in one
   of ours it *is* the premise mark; in a foreign dump its own account of what rests on
   what decides)."
-  [kb frames decode ours? tick!]
+  [kb frames decode ours? tick! total]
   (let [records   (:records kb)
         seen      (volatile! {})         ; [sentence context] -> handle
         sx-meta   (volatile! {})
@@ -508,17 +509,21 @@
         expanded  (volatile! {:frames 0 :records 0})
         extras    (volatile! [])         ; [first-form-handle record] per further form
         fprint    (fp/accumulator)]
-    ;; `:premises? false`: the marks are not the records' own strengths on this path.
-    ;; A dump id that collapses onto a handle already stored keeps the **strongest** of
-    ;; the strengths that landed there (`mark-premises-by-strength`, once the whole
-    ;; stream is read), where the record carries the first frame's — so the mark is an
-    ;; aggregate this write cannot know, and the sink is told not to make it.
+    ;; The sink marks each record that carries a strength, which only ours do, at its
+    ;; first frame's.  A dump id that collapses onto a handle already stored keeps the
+    ;; **strongest** of the strengths that landed there, an aggregate this write cannot
+    ;; know, so `mark-premises-by-strength` re-marks the handles where it differs once
+    ;; the whole stream is read.  Marking here and not there is what keeps a store whose
+    ;; mark is a column from writing every premise row twice, the second write dead on
+    ;; arrival.
     ;;
     ;; The frame stream is closed beside the sink (`frames/closer`): `tick!` throws when a
     ;; caller cancels and a duplicate handle throws below, and a frame seq only closes its
     ;; file when it is consumed to the end or raises the failure itself.
-    (with-open [^java.io.Closeable sink   (cap/sentex-sink records {:premises? false})
-                ^java.io.Closeable _stream (frames/closer frames)]
+    (with-open [^java.io.Closeable sink   (cap/sentex-sink records {:premises? (boolean ours?)})
+                ^java.io.Closeable _stream (frames/closer frames)
+                r                          (progress/start ::store-sentexes
+                                                           "import: store the sentexes" total)]
       (let [store!
             ;; `rec` stored at dump id `did` (ours only), collapsed onto the handle its
             ;; canonical form already holds, or minted, and counted in `:minted` when
@@ -549,6 +554,7 @@
                 h))]
         (doseq [frame frames]
           (tick!)
+          (progress/tick! r)
           (vswap! frames-n inc)
           (let [fm    (as-asserted (decode frame))
                 _     (vswap! naming nm/tally (:sentence fm) (:context fm))
@@ -629,27 +635,31 @@
         merged    (volatile! (transient {}))]
     ;; in the order the sentex pass stored them, so the survivor of a merge is the record
     ;; stored first, as it is for a collapse there
-    (doseq [h handles :let [rec (p/get-sentex records h)] :when rec]
-      (let [resolved (volatile! true)
-            sentence (walk/postwalk
-                      (fn [x]
-                        (if-let [id (sx/handle-id x)]
-                          (if-let [n (get old->new id)]
-                            (sx/sentex-handle n)
-                            (do (vreset! resolved false) x))
-                          x))
-                      (:sentence rec))]
-        (if @resolved
-          (let [built (res/kb-sentex kb sentence (:context rec))
-                k     [(sx/sentence-of built) (:context built)]]
-            (if-let [survivor (get @held k)]
-              (do (p/delete-sentex! records h)
-                  (vswap! merged assoc! h survivor))
-              (do (p/put-sentex records (assoc built :id h :strength (:strength rec)))
-                  (vswap! held assoc! k h)
-                  (vswap! rewritten inc))))
-          (do (p/delete-sentex! records h)
-              (vswap! deleted conj! h)))))
+    (with-open [r (progress/start ::rewrite-embedded-handles
+                                  "import: rewrite the embedded handles"
+                                  (count handles))]
+      (doseq [h handles :let [rec (p/get-sentex records h)] :when rec]
+        (progress/tick! r)
+        (let [resolved (volatile! true)
+              sentence (walk/postwalk
+                        (fn [x]
+                          (if-let [id (sx/handle-id x)]
+                            (if-let [n (get old->new id)]
+                              (sx/sentex-handle n)
+                              (do (vreset! resolved false) x))
+                            x))
+                        (:sentence rec))]
+          (if @resolved
+            (let [built (res/kb-sentex kb sentence (:context rec))
+                  k     [(sx/sentence-of built) (:context built)]]
+              (if-let [survivor (get @held k)]
+                (do (p/delete-sentex! records h)
+                    (vswap! merged assoc! h survivor))
+                (do (p/put-sentex records (assoc built :id h :strength (:strength rec)))
+                    (vswap! held assoc! k h)
+                    (vswap! rewritten inc))))
+            (do (p/delete-sentex! records h)
+                (vswap! deleted conj! h))))))
     (let [gone (persistent! @deleted)]
       {:rewritten @rewritten :dropped (count gone) :deleted gone
        :merged (persistent! @merged)})))
@@ -754,9 +764,12 @@
   middle of a walk, and a frame seq only closes its file when it is consumed to the end
   or raises the failure itself — so the one exit this function is written for is exactly
   the one that would leave the descriptor open."
-  [frames]
-  (with-open [_ (frames/closer frames)]
+  [frames total]
+  (with-open [_ (frames/closer frames)
+              r (progress/start ::check-justifications
+                                "import: check the justifications" total)]
     (doseq [frame frames]
+      (progress/tick! r)
       (when (seq (:out frame))
         (throw (ex-info (str "the dump names a justification with a non-empty :out "
                              (pr-str (vec (:out frame))) " — a justification here has no"
@@ -814,8 +827,8 @@
   not a torn file.
 
   `jprint` is folded with each justification stored (`fingerprint/justification-hash`),
-  the half of a dump reasoning image's records stamp the sentex pass does not take."
-  [kb frames old->new orphaned preserve? tick! jprint]
+  the half of a dump reasoning image's records fingerprint the sentex pass does not take."
+  [kb frames old->new orphaned preserve? tick! jprint total]
   (let [records (:records kb)
         remap   (fn [id] (if (integer? id) (get old->new id) id))
         ;; the ids that failed to resolve, which the drop below reads to see whose fault
@@ -832,9 +845,13 @@
     ;; caller cancels, and a frame seq only closes its file when it is consumed to the end
     ;; or raises the failure itself
     (with-open [^java.io.Closeable sink   (cap/justification-sink records {})
-                ^java.io.Closeable _stream (frames/closer frames)]
+                ^java.io.Closeable _stream (frames/closer frames)
+                r                          (progress/start ::store-justifications
+                                                           "import: store the justifications"
+                                                           total)]
       (doseq [frame frames]
         (tick!)
+        (progress/tick! r)
         (vswap! frames-n inc)
         (let [{:keys [informant antecedents consequence bindings strength subsumptions]} frame
               conseq (get old->new consequence)
@@ -859,19 +876,30 @@
   "Mark the premises of a dump of ours: a premise **is** a sentex whose `:strength` is
   non-nil — the mark rides on the record in both backends, which is why the format needs
   no premise stream.  Aggregated by handle (dedup can merge several dump ids onto one),
-  keeping the strongest.  Returns the count."
+  keeping the strongest.  Returns the count.
+
+  Only a handle whose aggregate differs from what its record was written with is marked
+  here; the sink marked the rest as it wrote them (`import-sentexes!`).  A handle's record
+  was written by the frame whose dump id it is, since ours keeps its ids, so that frame's
+  entry in `sx-meta` names the strength the record carries.  A handle no entry of its own
+  points at was written by a frame that collapsed elsewhere or by none, and is marked."
   [kb sx-meta]
   (let [records   (:records kb)
         by-handle (reduce (fn [acc [_ {:keys [handle strength]}]]
                             (if strength
                               (update acc handle st/max (strength-class strength))
                               acc))
-                          {} sx-meta)]
+                          {} sx-meta)
+        written   (fn [h]
+                    (let [{:keys [handle strength]} (get sx-meta h)]
+                      (when (and strength (= h handle)) (strength-class strength))))
+        stale     (into {} (remove (fn [[h s]] (= s (written h)))) by-handle)]
     ;; through `cap/mark-premises`, which on a store that can mark many at once is a
     ;; statement rather than a write per handle.  The aggregate is why this is a *batch*
     ;; and not something the record write could have carried: which strength a handle
-    ;; ends at is not known until the whole stream is read.
-    (cap/mark-premises records by-handle)
+    ;; ends at is not known until the whole stream is read.  A dump with no collapse
+    ;; leaves nothing stale, and makes no batch write.
+    (when (seq stale) (cap/mark-premises records stale))
     (count by-handle)))
 
 (defn- mark-expanded-premises
@@ -905,7 +933,7 @@
   writes under whatever handle it is given, so a frame can name either kind, and one
   this map cannot resolve is dropped rather than written under a number now holding
   something else."
-  [kb dir compression read-fn handles]
+  [kb dir compression read-fn handles total]
   (let [^java.io.File f (io/file dir frames/provenance-file)]
     (if-not (.exists f)
       0
@@ -918,8 +946,11 @@
             ;; closed on the way out whether the stream ran to its end or a write threw
             ;; part-way through it, by a closer that holds the file and not the frames
             fs      (read-fn f compression)]
-        (with-open [_ (frames/closer fs)]
+        (with-open [_ (frames/closer fs)
+                    r (progress/start ::store-provenance
+                                      "import: store the provenance" total)]
           (doseq [chunk (partition-all provenance-chunk fs)]
+            (progress/tick! r (count chunk))
             (let [entries (into []
                                 (comp (filter #(and (sequential? %) (= 2 (count %))))
                                       (keep (fn [[did prov]]
@@ -1004,7 +1035,8 @@
                    (:index kb)
                    (sequence (comp (map #(do (vswap! read-n inc) %))
                                    (remove #(and records-only? (kv/justification-family-entry? %))))
-                             stream))
+                             stream)
+                   expected)
                 n (if records-only? @read-n n)]
             (when-not (= (long n) (long expected))
               (trove/log! {:level :warn :id ::index-short
@@ -1031,7 +1063,7 @@
   (let [[verdict reason] (index-decision index-meta fingerprint preserved?)
         rebuild (fn [r]
                   (trove/log! {:level :info :id ::index-rebuilt
-                               :msg  (str "index rebuilt rather than replayed: " (name r))
+                               :msg  (str "import: index rebuilt rather than replayed: " (name r))
                                :data {:reason r}})
                   (on-progress {:phase :reindex :done 0 :total nil})
                   (reindex/reindex kb)                    ; clears the index itself
@@ -1043,7 +1075,7 @@
                                   records-only?)]
           (rebuild r)
           (do (trove/log! {:level :info :id ::index-replayed
-                           :msg  (str "index replayed: " (:entry-count index-meta) " entries")})
+                           :msg  (format "import: index replayed, %,d entries" (long (:entry-count index-meta)))})
               {:index :replayed :entries (:entry-count index-meta)})))
       (rebuild reason))))
 
@@ -1115,14 +1147,19 @@
     ;; throws out of the middle of the walk, and a frame seq only closes its file when it
     ;; is consumed to the end or raises the failure itself
     (with-open [^java.io.Closeable sink   (cap/sentex-sink records {:premises? true})
-                ^java.io.Closeable _stream (frames/closer frames)]
+                ^java.io.Closeable _stream (frames/closer frames)
+                r                          (progress/start ::bulk-store-sentexes
+                                                           (if index?
+                                                             "import: store and index the sentexes"
+                                                             "import: store the sentexes")
+                                                           total)]
       (mem/with-bulk-writes (:backend index)
         (let [;; through a `sentex-sink`, which on every store the engine ships is
               ;; `put-sentex` and the premise mark — the loop this was — and on a store
               ;; that bulk-loads is its bulk path.  The handle is decided *here* either
               ;; way, which is what lets the index build below stay inline: a sink is
               ;; told the handle rather than asked for it.  `:premises? true`, since the
-              ;; stores keep the premise set as its own roster and `recover` walks it —
+              ;; stores keep the premise set as a handle set of its own and `recover` walks it —
               ;; the record already holds the strength, so the mark is the set-add and
               ;; never a second record write.  `frame?` is false for an expanded frame's
               ;; further forms, which have no dump id and are not counted in `:minted`.
@@ -1147,10 +1184,9 @@
                     (when (reindex/index-one! index rec h) (vswap! rules inc))
                     (when (rules/rule? rec) (vswap! rules inc)))
                   (when (zero? (mod (long c) (long report-every)))
-                    (on-progress {:phase :sentexes :done c :total total})
-                    (trove/log! {:level :info :id ::store-progress
-                                 :msg (str "  loaded " c " sentexes…")}))))]
+                    (on-progress {:phase :sentexes :done c :total total}))))]
           (doseq [frame frames]
+            (progress/tick! r)
             (vswap! seen-n inc)
             (let [fm   (as-asserted (decode frame))
                   _    (vswap! naming nm/tally (:sentence fm) (:context fm))
@@ -1193,11 +1229,11 @@
 
   **The premise marks are kept for a dump of ours, and only for one of ours** — the whole
   of the difference, and the reason `:belief? :stored` exists.  Each record of ours is
-  born with its dump strength and rostered in `premise-ids`, which adds no work per frame
+  born with its dump strength and listed in `premise-ids`, which adds no work per frame
   and is what a later `recover` rebuilds belief from.  A **foreign** frame's `:strength`
   is not the premise mark — that dialect's own account of what rests on what decides, and
-  only its `replay-belief!` reads it — so `preserve?` gates the strength as well as the
-  handle, and a foreign records-only import rosters no premise at all.  A later `recover`
+  only its `replay-belief!` reads it — so `preserve?` decides the strength as well as the
+  handle, and a foreign records-only import records no premise at all.  A later `recover`
   over that store therefore believes **nothing**, and no re-import of the same dump on
   this path will change that.  A foreign corpus that may want belief later wants
   `:stored`, which reads the deduction stream and lands the marks.
@@ -1224,8 +1260,8 @@
                      ;; posted from the stored declarations once every record is in
                      (do (special/post-taxonomy-supporters! kb) {:index :inline}))]
     (trove/log! {:level :info :id ::records-loaded
-                 :msg (str "loaded " (:sentexes result) " sentexes (no belief), index "
-                           (name (:index idx)))})
+                 :msg (format "import: loaded %,d sentexes (no belief), index %s"
+                              (long (:sentexes result)) (name (:index idx)))})
     ;; the other entry point, reported rather than enforced: a corpus the public entry point disagrees
     ;; with is loadable and worth loading, and the operator who chose this path is the
     ;; one who should hear the number — now, not from a failed experiment later
@@ -1352,17 +1388,19 @@
   Returns what the summary reads."
   [kb dir meta compression read-fn decode ours? tick jprint]
   (let [replay-belief! (when-not ours? (dump-reader-field :replay-belief!))
-        ;; the last gate that can be decided from the dump alone, and so the last one that
+        ;; the last check that can be decided from the dump alone, and so the last one that
         ;; can be decided before the first write: a `:out` frame refused from inside the
         ;; justification loop refused a KB that was already holding every sentex the dump
         ;; had (`assert-no-naf-justifications!`)
         _ (when ours?
             (assert-no-naf-justifications!
-             (read-fn (io/file dir frames/justification-file) compression)))
+             (read-fn (io/file dir frames/justification-file) compression)
+             (:justification-count meta)))
         {:keys [sx-meta embedding collapsed minted expanded expansions fingerprint naming
                 frames refused]}
         (import-sentexes! kb (read-fn (io/file dir frames/sentex-file) compression)
-                          decode ours? (tick :sentexes (:sentex-count meta)))
+                          decode ours? (tick :sentexes (:sentex-count meta))
+                          (:sentex-count meta))
         _ (check-frame-count! :sentexes frames (:sentex-count meta))
         _ (when-let [line (nm/tally-line naming)]
             (trove/log! {:level :warn :id ::naming-disagreement
@@ -1397,7 +1435,7 @@
                  kb (read-fn (io/file dir frames/justification-file) compression) old->new
                  orphaned kept?
                  (tick :justifications (:justification-count meta))
-                 jprint)
+                 jprint (:justification-count meta))
                 ;; the same witness the sentex stream gets, and the stream that most needs
                 ;; it: a torn justification file is indistinguishable from a clean EOF, and
                 ;; what it loses is belief — a KB that recovers to fewer conclusions than it
@@ -1407,7 +1445,8 @@
              ;; both kinds' handles, since a provenance frame can name either and the two
              ;; draw from one counter, so nothing collides
              :provenance (import-provenance-frames!
-                          kb dir compression read-fn (merge old->new ids))
+                          kb dir compression read-fn (merge old->new ids)
+                          (:provenance-count meta))
              :dropped    dropped
              :dropped-orphaned dropped-orphaned})
           ;; a foreign dialect's account, read by its own reader
@@ -1437,7 +1476,7 @@
 (defn- dump-belief!
   "The belief half of a `{:belief? true}` import: install the dump's reasoning image in place
   of `recover` when the import kept every handle (`kept?`) and the dump carries one, and
-  recover otherwise.  The image's records stamp is checked against `sentex-fp` and
+  recover otherwise.  The image's records fingerprint is checked against `sentex-fp` and
   `jprint`, the fingerprints this import took of the sentexes and the justifications it
   landed.  Returns `recovery/recover-with-image`'s map, or `{:reasoning :recovered :reason
   r}` with `r` `:absent` (no image in the dump) or `:handles-remapped`."
@@ -1463,7 +1502,7 @@
   justifications + premise marks, the index rebuilt (`reindex`), belief recovered
   (`recover`).  A dump carrying a reasoning image (`export!`'s `:belief?`) is installed in
   place of the recover when the import kept every handle and the records it landed, the
-  source identity and the belief policies all equal the image's stamp; the summary's
+  source identity and the belief policies all equal the image's manifest; the summary's
   `:reasoning-image` says which happened (`{:reasoning :installed}` or `{:reasoning
   :recovered :reason r}`).
 
@@ -1482,7 +1521,7 @@
   fails to finish at corpus scale — so a corpus that cannot afford `recover` today should
   not have to discard its justifications forever to say so.  And for a **foreign** dialect
   the records-only path is not a deferral at all: `preserve?` is `(ours? meta)`, so no
-  strength is carried onto a record and no premise is rostered, and a later `recover` over
+  strength is carried onto a record and no premise is marked, and a later `recover` over
   that store rebuilds belief from nothing.  `:stored` is the only way a foreign corpus can
   be loaded now and believed later.
 
@@ -1491,7 +1530,7 @@
   ([docs/web.md](../../../../docs/web.md), *Reading a KB that is not finished*).  The
   difference is not in what it answers, it is in what it can become.
 
-  Reads `meta.edn` first and dispatches on it: the version is gated against its own
+  Reads `meta.edn` first and dispatches on it: the version is checked against its own
   dialect's numbering, the destination must be empty, and only the `:records` /
   `:records+index` variants are read.  `:pg-memory` and an unknown variant throw.
 
@@ -1507,7 +1546,7 @@
 
   **A dump refused for its own content leaves the store as it found it**, so the retry
   needs no `clear!`.  Two mechanisms hold this.  The refusals that `meta.edn`, the reader
-  map and a pre-pass decide land before the first write: the version gate, the empty
+  map and a pre-pass decide land before the first write: the version check, the empty
   destination, the variant, a foreign reader with no `:replay-belief!`, and a non-empty
   `:out` on a justification frame (`assert-no-naf-justifications!`).  The refusals a
   frame decides in the middle of the sentex stream (`content-refusals`: a handle named
@@ -1607,8 +1646,8 @@
                                                   (ours? meta) report-every on-progress))]
               (check-frame-count! :sentexes (:frames summary) (:sentex-count meta))
               (trove/log! {:level :info :id ::import-complete
-                           :msg  (str "import-dump (records-only) complete: "
-                                      (:sentexes summary) " sentexes indexed, no belief")
+                           :msg  (format "import: done, %,d sentexes indexed, no belief"
+                                         (long (:sentexes summary)))
                            :data summary})
               summary)
             (let [ours?  (ours? meta)
@@ -1656,9 +1695,9 @@
                                 :refused            refused}
                                idx)]
                   (trove/log! {:level :info :id ::import-complete
-                               :msg   (str "import-dump complete: " (:sentexes summary)
-                                           " sentexes, " (:justifications summary)
-                                           " justifications, index " (name (:index summary))
+                               :msg   (str (format "import: done, %,d sentexes, %,d justifications, index "
+                                                   (long (:sentexes summary)) (long (:justifications summary)))
+                                           (name (:index summary))
                                            (when-not (true? belief?)
                                              " — belief stored and NOT settled; run recover"))
                                :data  summary})

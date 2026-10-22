@@ -20,7 +20,6 @@
             [clojure.spec.test.alpha :as stest]
             [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.impl.spec :as vspec]
             [vaelii.test-util :as tu]))
 
@@ -36,7 +35,7 @@
        (catch Throwable t (class t))))
 
 (defmacro ^:private instrumented
-  "Run `body` with the whole public roster instrumented, unstrumenting whatever happens."
+  "Run `body` with every spec'd public fn instrumented, unstrumenting whatever happens."
   [& body]
   `(do (stest/instrument vspec/public-syms)
        (try ~@body
@@ -68,8 +67,8 @@
        (testing "and none of the refusals stored anything"
          (is (nil? (v/handle-of kb (list dog Rex) CxSpec))))))))
 
-(deftest the-opts-taking-publics-outside-the-roster-are-the-named-ones
-  ;; The roster's coverage claim, held to the API rather than to itself.  `public-syms`
+(deftest the-opts-taking-publics-outside-the-spec-list-are-the-named-ones
+  ;; The spec list's coverage claim, held to the API rather than to itself.  `public-syms`
   ;; is what a caller instruments, so what it omits is precisely what instrumentation
   ;; will not check — and an omission is legitimate (nobody owes every entry point a
   ;; spec) only while it is *stated*.  `vaelii.impl.spec`'s docstring names this set;
@@ -86,13 +85,14 @@
                       (comp (filter (comp opts? val)) (map key) (remove specced))
                       (ns-publics 'vaelii.core))]
     (is (= '#{abduce add-evaluatable argue assert-many bulk-assert-facts! check clear-caches
-              compare-tacticians edit-with-consequences! export! export-text! fork import!
+              compare-tacticians conflicts contradictions edit-with-consequences! export!
+              export-text! fork import!
               kb-quality load-foreign! preview query-status search-tree}
            gap)
         "the opts-taking publics `public-syms` does not reach — named in its docstring")))
 
 (deftest every-public-sym-resolves
-  ;; a symbol in the roster that names no var is a stale spec — instrument would
+  ;; a symbol in the spec list that names no var is a stale spec — instrument would
   ;; silently skip it, so the coverage claim would be a lie
   (doseq [sym vspec/public-syms]
     (is (some? (resolve sym)) (str sym " does not resolve to a var"))))
@@ -132,7 +132,7 @@
          (v/context-up kb CxSpec) (v/sees? kb CxSpec CxSpec)
          (is (boolean? (v/isa? kb Muffet dog CxSpec)))
          (v/types-of kb Muffet CxSpec)
-         ;; every kind, not a representative one: the spec gates the `kind` argument,
+         ;; every kind, not a representative one: the spec checks the `kind` argument,
          ;; so a kind it omits is a documented call that instrumentation refuses —
          ;; and one exercised kind cannot tell you about the other nine.
          (doseq [k [:transitive :symmetric :asymmetric :reflexive :functional
@@ -187,7 +187,7 @@
   ;; context)` is believed (docs/context-nat.md).  A `::context` narrower than
   ;; that entry point refuses under `instrument` a write the engine accepts without it — so an
   ;; instrumented caller could not store into a time-indexed context at all.
-  (tu/with-neutral-kb [kb #(doto (tu/fresh) core-context/load-into)]
+  (tu/with-neutral-kb [kb #(doto (tu/fresh) tu/load-core!)]
     (tu/with-terms [likes Tom Ann]
       (let [cxfn (symbol (str "CxTmpSpec" (System/nanoTime) "Fn"))
             expr (list cxfn 'CxMonad (list 'DatetimeFn "2000"))]
@@ -244,7 +244,7 @@
   (tu/with-neutral-kb [kb tu/fresh]
     (tu/with-terms [dog cat Muffet CxSpec]
       (let [rule (list 'implies (list dog '?x) (list cat '?x))]
-        (testing "a value outside the roster is refused, not silently wrapped as nothing"
+        (testing "a value outside the accepted keys is refused, not silently wrapped as nothing"
           (is (= :unknown-option
                  (rejection #(v/assert kb rule CxSpec {:direction :backwards}))))
           (is (= [:unknown-option]

@@ -1,8 +1,8 @@
 ;; Frozen public API surface — every public var of the six public
-;; namespaces, with its arglists, or a roster var's members.
+;; namespaces, with its arglists, or a keyword-set var's members.
 ;; Regenerate: `lein regen-goldens`, and read vaelii.api-surface-test's
 ;; docstring first — a removed var, a changed arglist or a removed
-;; roster member is breaking.
+;; keyword-set member is breaking.
 {vaelii.cli
  {-main "[[& args]]",
   dispatch "[[kb cmd args opts]]",
@@ -38,17 +38,20 @@
   check-edit "[[conn batch]]",
   clear-caches "[[conn] [conn opts]]",
   client "[[host port] [host port opts]]",
+  common-genls "[[conn types] [conn types context]]",
+  common-specs "[[conn types] [conn types context]]",
   compare-tacticians
   "[[conn goal] [conn goal context] [conn goal context opts]]",
-  conflicts "[[conn]]",
+  conflicts "[[conn] [conn opts]]",
   context-down "[[conn c]]",
   context-up "[[conn c]]",
   contexts "[[conn]]",
   contexts-of "[[conn sentence]]",
-  contradictions "[[conn] [conn context]]",
+  contradictions "[[conn] [conn context] [conn context opts]]",
   count-in-context "[[conn context]]",
   count-with-arg "[[conn pos term]]",
   count-with-functor "[[conn pred]]",
+  covers-of "[[conn whole]]",
   defeat-class "[[conn handle]]",
   dependent-justifications "[[conn handle]]",
   deprecated? "[[conn term] [conn term context]]",
@@ -62,7 +65,7 @@
   edit-with-consequences! "[[conn batch] [conn batch opts]]",
   equiv-class "[[conn term] [conn term context]]",
   escalate
-  "[[conn goal] [conn goal context] [conn goal context floor]]",
+  "[[conn goal] [conn goal context] [conn goal context floor] [conn goal context floor opts]]",
   explain-levels "[[conn goal] [conn goal context]]",
   export! "[[conn dir] [conn dir opts]]",
   exposed-clashes "[[conn]]",
@@ -81,6 +84,7 @@
   inverse-of "[[conn pred] [conn pred context]]",
   isa? "[[conn x t] [conn x t context]]",
   justification "[[conn jid]]",
+  justification-verdicts "[[conn handle context]]",
   kb-diff "[[conn b]]",
   kb-integrity
   "[[conn candidate-terms context] [conn candidate-terms context options]]",
@@ -88,11 +92,14 @@
   last-program "[[conn]]",
   levels "[[conn]]",
   lookup "[[conn level goal] [conn level goal context]]",
+  max-common-specs "[[conn types] [conn types context]]",
   max-context-children "[[conn c]]",
   max-specs "[[conn t] [conn t context]]",
   metatype-members "[[conn m]]",
+  min-common-genls "[[conn types] [conn types context]]",
   min-context-parents "[[conn c]]",
   min-genls "[[conn t] [conn t context]]",
+  owed-releases "[[conn]]",
   poll "[[conn token cursor] [conn token cursor opts]]",
   possible-relations "[[conn calculus context a b]]",
   premise? "[[conn handle]]",
@@ -112,6 +119,7 @@
   query-status "[[conn goal context] [conn goal context opts]]",
   query? "[[conn goal] [conn goal context] [conn goal context opts]]",
   readable-sentence "[[conn sx]]",
+  relation-arity "[[conn term]]",
   relation? "[[conn term] [conn term context]]",
   representative "[[conn term] [conn term context]]",
   retract! "[[conn handle]]",
@@ -131,6 +139,7 @@
   specified-violations
   "[[conn pred indep context] [conn pred indep context arg-pos]]",
   specs "[[conn t] [conn t context]]",
+  stored-first-args "[[conn pred]]",
   subsumption-status "[[conn a b] [conn a b context]]",
   subsumption-statuses "[[conn a b] [conn a b context]]",
   supporting-justifications "[[conn handle]]",
@@ -141,6 +150,7 @@
   "[[conn sentence] [conn sentence context] [conn sentence context opts]]",
   types "[[conn] [conn context]]",
   types-of "[[conn x] [conn x context]]",
+  unsupported "[[conn]]",
   unwatch "[[conn token]]",
   violations "[[conn]]",
   vocabulary-audit "[[conn]]",
@@ -206,20 +216,23 @@
   clear-caches "[[kb] [kb opts]]",
   clear-violations! "[[kb]]",
   close! "[[kb]]",
+  common-genls "[[kb types] [kb types context]]",
+  common-specs "[[kb types] [kb types context]]",
   compare-tacticians
   "[[kb goal] [kb goal context] [kb goal context opts]]",
   compare-tacticians-opt-keys
   [:max-depth :max-ms :node-budget :tacticians],
-  conflicts "[[kb]]",
+  conflicts "[[kb] [kb opts]]",
   context-down "[[kb c]]",
   context-of-agent "[[agent]]",
   context-up "[[kb c]]",
   contexts "[[kb]]",
   contexts-of "[[kb sentence]]",
-  contradictions "[[kb] [kb context]]",
+  contradictions "[[kb] [kb context] [kb context opts]]",
   count-in-context "[[kb context]]",
   count-with-arg "[[kb pos term]]",
   count-with-functor "[[kb pred]]",
+  covers-of "[[kb whole]]",
   default-chain-opts [:max-depth :max-derivations],
   default-describe-limit :var,
   default-nearest-depth :var,
@@ -238,7 +251,9 @@
   edit-batch-keys [:add :remove],
   edit-with-consequences! "[[kb batch] [kb batch opts]]",
   equiv-class "[[kb term] [kb term context]]",
-  escalate "[[kb goal] [kb goal context] [kb goal context floor]]",
+  escalate
+  "[[kb goal] [kb goal context] [kb goal context floor] [kb goal context floor opts]]",
+  escalate-opt-keys [:max-ms],
   explain-levels "[[kb goal] [kb goal context]]",
   export! "[[kb dir] [kb dir opts]]",
   export-text! "[[kb dir] [kb dir opts]]",
@@ -264,6 +279,7 @@
   isa? "[[kb x t] [kb x t context]]",
   ist "[[kb ctx s]]",
   justification "[[kb jid]]",
+  justification-verdicts "[[kb handle context]]",
   kb-diff "[[a b]]",
   kb-integrity
   "[[kb candidate-terms context] [kb candidate-terms context options]]",
@@ -274,13 +290,17 @@
   load-text! "[[kb source]]",
   log-level "[[]]",
   lookup "[[kb level goal] [kb level goal context]]",
+  mark-inert! "[[kb opts]]",
+  max-common-specs "[[kb types] [kb types context]]",
   max-context-children "[[kb c]]",
   max-specs "[[kb t] [kb t context]]",
   metatype-members "[[kb m]]",
+  min-common-genls "[[kb types] [kb types context]]",
   min-context-parents "[[kb c]]",
   min-genls "[[kb t] [kb t context]]",
   negative? "[[sentex]]",
   open-kb "[[] [opts]]",
+  owed-releases "[[kb]]",
   possible-relations "[[kb calculus context a b]]",
   premise? "[[kb handle]]",
   preview "[[kb batch] [kb batch opts]]",
@@ -311,7 +331,10 @@
   register-modal-predicate "[[kb pred] [kb pred context]]",
   reified-term? "[[term]]",
   reindex "[[kb]]",
+  relation-arity "[[kb term]]",
   relation? "[[kb term] [kb term context]]",
+  release-withheld! "[[kb]]",
+  remove-unsupported! "[[kb opts]]",
   representative "[[kb term] [kb term context]]",
   reset-settle-stats! "[[kb]]",
   rests-on "[[j]]",
@@ -343,6 +366,7 @@
   specs "[[kb t] [kb t context]]",
   store-backend "[[dir]]",
   store-state "[[kb] [kb ks]]",
+  stored-first-args "[[kb pred]]",
   subsumption-status "[[kb a b] [kb a b context]]",
   subsumption-statuses "[[kb a b] [kb a b context]]",
   supporting-justifications "[[kb handle]]",
@@ -355,6 +379,7 @@
   "[[kb sentence] [kb sentence context] [kb sentence context opts]]",
   types "[[kb] [kb context]]",
   types-of "[[kb x] [kb x context]]",
+  unsupported "[[kb]]",
   unwatch "[[kb token]]",
   violations "[[kb]]",
   vocabulary-audit "[[kb]]",
@@ -395,6 +420,8 @@
    :check
    :check-edit
    :clear-caches
+   :common-genls
+   :common-specs
    :compare-tacticians
    :conflicts
    :context-down
@@ -405,6 +432,7 @@
    :count-in-context
    :count-with-arg
    :count-with-functor
+   :covers-of
    :defeat-class
    :dependent-justifications
    :deprecated?
@@ -434,17 +462,21 @@
    :inverse-of
    :isa?
    :justification
+   :justification-verdicts
    :kb-diff
    :kb-integrity
    :kb-quality
    :last-program
    :levels
    :lookup
+   :max-common-specs
    :max-context-children
    :max-specs
    :metatype-members
+   :min-common-genls
    :min-context-parents
    :min-genls
+   :owed-releases
    :poll
    :possible-relations
    :premise?
@@ -463,6 +495,7 @@
    :query-status
    :query?
    :readable-sentence
+   :relation-arity
    :relation?
    :representative
    :retract
@@ -480,6 +513,7 @@
    :settle-stats
    :specified-violations
    :specs
+   :stored-first-args
    :subsumption-status
    :subsumption-statuses
    :supporting-justifications
@@ -489,6 +523,7 @@
    :try-assert
    :types
    :types-of
+   :unsupported
    :unwatch
    :violations
    :vocabulary-audit
@@ -521,6 +556,8 @@
    :check
    :check-edit
    :clear-caches
+   :common-genls
+   :common-specs
    :compare-tacticians
    :conflicts
    :context-down
@@ -531,6 +568,7 @@
    :count-in-context
    :count-with-arg
    :count-with-functor
+   :covers-of
    :defeat-class
    :dependent-justifications
    :deprecated?
@@ -560,17 +598,21 @@
    :inverse-of
    :isa?
    :justification
+   :justification-verdicts
    :kb-diff
    :kb-integrity
    :kb-quality
    :last-program
    :levels
    :lookup
+   :max-common-specs
    :max-context-children
    :max-specs
    :metatype-members
+   :min-common-genls
    :min-context-parents
    :min-genls
+   :owed-releases
    :possible-relations
    :premise?
    :preview
@@ -588,6 +630,7 @@
    :query-status
    :query?
    :readable-sentence
+   :relation-arity
    :relation?
    :representative
    :retract
@@ -605,6 +648,7 @@
    :settle-stats
    :specified-violations
    :specs
+   :stored-first-args
    :subsumption-status
    :subsumption-statuses
    :supporting-justifications
@@ -614,6 +658,7 @@
    :try-assert
    :types
    :types-of
+   :unsupported
    :violations
    :vocabulary-audit
    :why
@@ -623,13 +668,13 @@
  vaelii.starter {load-into "[[kb]]"},
  vaelii.web
  {-main "[[& args]]",
-  consequences "[[view heading batch]]",
+  consequences "[[env heading batch]]",
   handler "[[target] [target opts]]",
-  local-kb "[[view]]",
+  local-kb "[[env]]",
   read-form "[[s]]",
   register-extension "[[ext-name ext]]",
-  render-form "[[view form]]",
+  render-form "[[env form]]",
   start "[[target opts]]",
-  stored-sentexes "[[view result]]",
-  term-link "[[view term]]",
+  stored-sentexes "[[env result]]",
+  term-link "[[env term]]",
   unregister-extension "[[ext-name]]"}}

@@ -491,7 +491,7 @@
 
 (tu/deftest-kb recover-rebuilds-a-cyclic-context-potential
   ;; The acyclic recover test above never reaches the cyclic branch of `activate`.  A
-  ;; `genlCx` cycle is refused at assert, and `genlCx` is on the forced-monotonic roster,
+  ;; `genlCx` cycle is refused at assert, and `genlCx` is forced-monotonic,
   ;; so no belief race forms one either: it reaches the taxonomy only from a foreign
   ;; store.  The closing edge is written by a second KB over the same store whose
   ;; taxonomy was never built, so no check reads the other two.  Recovery defers the

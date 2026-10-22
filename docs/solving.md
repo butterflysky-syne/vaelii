@@ -135,7 +135,7 @@ honored per binding, evaluated in `Base`.
 ```
 
 An `assumptionRule`'s antecedents are proved over base belief, so a derived atom does not
-gate a choice: a choice is offered or not by what `Base` holds. A literal over a choice
+decide whether a choice is offered: a choice is offered or not by what `Base` holds. A literal over a choice
 predicate reads the ground choice heads alone, so what `Base` believes of that predicate
 outside an offered choice is not in the program; only a solve rule's head has its base
 instances entered as facts. A program needs a choice to solve: solve rules with no ground
@@ -216,7 +216,7 @@ ASPIF integrity constraint — no violation atom, no minimize term — so a mode
 signed body holds is excluded outright. A soft one takes the weak-constraint path the
 auto-detected clashes take: a violation atom and a minimize term, so violating it costs
 rather than excludes. An adjacency clash is not tradeable, which is what makes `:hard` the
-class a colouring wants — and a program whose hard constraints already pin what must be
+class a colouring wants — and a program whose hard constraints already determine what must be
 chosen is the one `:sat` below is for.
 
 ## `atMost` / `atLeast` — a cardinality bound over the choices
@@ -501,7 +501,7 @@ the way; retracting that context's extent, or naming a different `Into`, clears 
   uniform imperative shape and unused.
 * **`:sat`** is `:one` without the keep-belief objective — plain satisfaction, so clingo
   stops at the first model instead of proving cost-optimality over the choice atoms.
-  Where the hard constraints already pin what must be chosen, "keep as much as possible"
+  Where the hard constraints already determine what must be chosen, "keep as much as possible"
   adds nothing and the optimization is a scaling wall.
 
 The result is `{:base :into :choices [..] :labelings [{:context :true [..] :false [..]}]

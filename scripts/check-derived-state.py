@@ -53,7 +53,7 @@ NOT_DERIVED: dict[tuple[str, str], str] = {
     ("budget.clj", "running"): "a count of the metered reads running",
     ("caches.clj", "derived"): "the derived-state register itself",
     ("caches.clj", "registry"): "the cache register itself",
-    ("caches.clj", "the-profile"): "configuration: the cache scale, pressure and pins",
+    ("caches.clj", "the-profile"): "configuration: the cache scale, pressure and overrides",
     ("caches.clj", "guard"): "the memory-pressure guard's listener state",
     ("caches.clj", "guard-lifecycle"): "a lock",
     ("caches.clj", "tallying"): "instrumentation: the derived-state event instrument's state",
@@ -71,12 +71,13 @@ NOT_DERIVED: dict[tuple[str, str], str] = {
     ("disk/durability.clj", "compaction-stopped"): "storage lifecycle: the stop flag",
     ("disk/durability.clj", "lifecycle"): "a lock",
     ("disk/durability.clj", "quiescence"): "a lock",
+    ("disk/durability.clj", "writes-in-flight"): "storage lifecycle: the public writes running",
+    ("disk/durability.clj", "abort-requested"): "storage lifecycle: a shutdown's stop request",
+    ("progress.clj", "timer"): "the executor that logs the progress lines no tick does",
     ("disk/files.clj", "dir-fsync-warned"): "a one-time warning flag",
     ("disk/index_snapshot.clj", "image-state"): "the write cadence of the index image",
     ("disk/lock.clj", "held"): "the directory locks this process holds",
     ("disk/record_store.clj", "rewrite-barrier"): "a test hook inside compaction",
-    ("except.clj", "route-reach"): "the fact-relation walk `vaelii.impl.inherit` installs",
-    ("except.clj", "firing-reach"): "the backward claim search `vaelii.impl.inherit` installs",
     ("feed.clj", "dispatch"): "the renderer `vaelii.core` installs",
     ("foreign.clj", "registered"): "configuration: the reader formats registered in code",
     ("io/frames.clj", "open-readers"): "resource lifecycle: the frame readers to close",
@@ -95,7 +96,6 @@ NOT_DERIVED: dict[tuple[str, str], str] = {
     ("observe.clj", "neighbour-misses"): "instrumentation: R7's process counters",
     ("observe.clj", "on-add"): "the store observer hooks R9 installs",
     ("observe.clj", "on-remove"): "the store observer hooks R9 installs",
-    ("oplog.clj", "dispatch"): "the oplog's replay table",
     ("profile.clj", "tally"): "instrumentation: the profiler",
     ("rete.clj", "reg-queue"): "the reference queue R9's weak keys are purged through",
     ("settle_phases.clj", "clock"): "instrumentation: the settle phase clock",
@@ -108,7 +108,7 @@ NOT_DERIVED: dict[tuple[str, str], str] = {
 # An entry leaves when its row's content becomes stored sentexes; an entry naming a row
 # that does not declare `:holds-content? true` fails, so the list only shrinks.
 HOLDS_CONTENT: dict[str, str] = {
-    "S5": "refused firings and the `:constraint`, `:lift` and `:mint` entries",
+    "S5": "closed-extent and separation refusals and the `:constraint`, `:lift` and `:mint` entries",
 }
 
 # `row id -> what it indexes`: the rows still holding a belief-free index outside the

@@ -18,36 +18,64 @@
 ;; read it whole, and placed there (`chain/place-inherited!`).  `:inherited` keeps what the
 ;; detector found, `{:by-set {members ngmap} :members #{h}}`, for the reports.
 
+(defn- set-entry
+  "The entry of member set `ms` over the nogood maps `es` found for it: its vantages the
+  union of every map's, its `:sentence` and `:inherited` the least map's by content."
+  [ms es]
+  (let [e (if (next es)
+            (nm/min-by-content-key (juxt #(nm/print-key (:sentence %))
+                                         #(nm/print-key (:inherited %)))
+                                   compare es)
+            (first es))]
+    {:nogood    ms
+     :sentence  (:sentence e)
+     :inherited (:inherited e)
+     :vantages  (into #{} (mapcat :vantages) es)}))
+
+(defn- install!
+  "Hold `by-set` and `members` under `:inherited`, journaling the handles of `moved`, the
+  members that entered or left."
+  [kb by-set members moved]
+  (swap! (reasoning/nogood-candidates kb)
+         (fn [c]
+           (let [c (journal/note c moved)]
+             (if (seq by-set)
+               (assoc c :inherited {:by-set by-set :members members})
+               (dissoc c :inherited))))))
+
 (defn install-inherited!
-  "Keep the nogood maps `ngs` a discovery found under `:inherited`: one entry per member
-  set, its vantages the union of every map's and its `:sentence` and `:inherited` the
-  least map's by content.  Journals only the members that entered or left, so a clash
-  found again moves no candidate.  Returns the member sets the index held before and does
-  not hold now."
+  "Keep the nogood maps `ngs`, every clash a discovery found, under `:inherited` in place
+  of what it held: one entry per member set (`set-entry`).  Journals only the members that
+  entered or left, so a clash found again moves no candidate.  Returns the member sets the
+  index held before and does not hold now."
   [kb ngs]
-  (let [by-set  (into {}
-                      (map (fn [[ms es]]
-                             (let [e (if (next es)
-                                       (nm/min-by-content-key
-                                        (juxt #(nm/print-key (:sentence %))
-                                              #(nm/print-key (:inherited %)))
-                                        compare es)
-                                       (first es))]
-                               [ms {:nogood   ms
-                                    :sentence (:sentence e)
-                                    :inherited (:inherited e)
-                                    :vantages (into #{} (mapcat :vantages) es)}])))
-                      (group-by :nogood ngs))
-        members (into #{} cat (keys by-set))
-        [old _] (swap-vals! (reasoning/nogood-candidates kb)
-                            (fn [c]
-                              (let [was (:members (:inherited c) #{})
-                                    c   (journal/note c (-> #{} (into (remove was) members)
-                                                            (into (remove members) was)))]
-                                (if (seq by-set)
-                                  (assoc c :inherited {:by-set by-set :members members})
-                                  (dissoc c :inherited)))))]
-    (into [] (remove #(contains? by-set %)) (keys (:by-set (:inherited old))))))
+  (let [old     (:inherited @(reasoning/nogood-candidates kb))
+        was     (:members old #{})
+        by-set  (into {} (map (fn [[ms es]] [ms (set-entry ms es)])) (group-by :nogood ngs))
+        members (into #{} cat (keys by-set))]
+    (install! kb by-set members (-> #{} (into (remove was) members) (into (remove members) was)))
+    (into [] (remove #(contains? by-set %)) (keys (:by-set old)))))
+
+(defn update-inherited!
+  "Apply `changes`, `{members [ngmap]}` the clashes a discovery found for each member set
+  it read again, to `:inherited`: a set with maps takes the entry `set-entry` builds, a
+  set with none leaves.  Every other set is kept as held.  `sets-of` answers, for a
+  handle, every member set holding it that a discovery can find, so a member of a set
+  that left stays a member while another set holds it.  Journals only the members that
+  entered or left.  Returns the member sets the index held before and does not hold now."
+  [kb changes sets-of]
+  (let [old     (:inherited @(reasoning/nogood-candidates kb))
+        held    (:by-set old {})
+        was     (:members old #{})
+        by-set  (reduce-kv (fn [m ms es] (if (seq es) (assoc m ms (set-entry ms es)) (dissoc m ms)))
+                           held changes)
+        left    (into [] (filter #(and (contains? held %) (not (contains? by-set %)))) (keys changes))
+        gained  (into #{} (comp (filter #(contains? by-set %)) cat (remove was)) (keys changes))
+        lost    (into #{} (comp cat (filter was)
+                                (remove (fn [h] (some #(contains? by-set %) (sets-of h)))))
+                      left)]
+    (install! kb by-set (reduce disj (into was gained) lost) (into gained lost))
+    left))
 
 (defn inherited-clashes
   "The inherited clashes, `{members {:nogood :sentence :inherited :vantages}}`."

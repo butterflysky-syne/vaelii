@@ -42,8 +42,8 @@
   (median (repeatedly reps #(timed-ms f))))
 
 (defn- sample-fresh
-  "`sample` of `(f kb)` over a KB `setup` builds per call, the build outside the timed
-  window."
+  "`sample` of `(f kb)` over a KB `setup` builds per call, the build outside the
+  timed window."
   [setup f warm reps]
   (let [one #(let [kb (setup)] (timed-ms (fn [] (f kb))))]
     (dotimes [_ warm] (one))

@@ -223,14 +223,14 @@
 
 (deftest scoped-predicate-properties-and-inverse
   (let [t (lattice)]
-    (tax/mark-prop t :transitive 'partOf 1 'CxA)
+    (tax/mark-prop t :transitive 'tangiblePartOf 1 'CxA)
     (tax/add-inverse t 'parentOf 'childOf 2 'CxB)
     (testing "a property holds where its declaration is visible"
-      (is (tax/has-prop? t :transitive 'partOf 'CxA))
-      (is (tax/has-prop? t :transitive 'partOf 'CxW))
-      (is (not (tax/has-prop? t :transitive 'partOf 'CxB)))
-      (is (tax/has-prop? t :transitive 'partOf))
-      (is (tax/has-prop? t :transitive 'partOf '?ctx)))
+      (is (tax/has-prop? t :transitive 'tangiblePartOf 'CxA))
+      (is (tax/has-prop? t :transitive 'tangiblePartOf 'CxW))
+      (is (not (tax/has-prop? t :transitive 'tangiblePartOf 'CxB)))
+      (is (tax/has-prop? t :transitive 'tangiblePartOf))
+      (is (tax/has-prop? t :transitive 'tangiblePartOf '?ctx)))
     (testing "an inverse answers where its declaration is visible"
       (is (= 'childOf (tax/inverse-of t 'parentOf 'CxB)))
       (is (= 'parentOf (tax/inverse-of t 'childOf 'CxW)))
@@ -253,7 +253,7 @@
     (is (tax/disjoint? t 'dog 'cat 'CxA))))
 
 (deftest the-closure-cache-bound-evicts-without-changing-answers
-  ;; the bound is memory insurance, never semantics: pinned at the profile's floor, the
+  ;; the bound is memory insurance, never semantics: set at the profile's floor, the
   ;; cache evicts on nearly every read from alternating readers, every answer stays right,
   ;; and what it holds stays under the bound
   (caches/set-limit :taxonomy-closures 16)
@@ -397,8 +397,7 @@
             (doseq [n nodes]
               (is (= (get (:up ref) n #{n}) (tax/genls t n reader))
                   (str "genls of " n " from " reader))
-              ;; `settle/genl-view` compares the two by count, which is equality only
-              ;; because the scoped closure is inside the global one
+              ;; a reader's scoped closure is a subset of the global one
               (is (set/subset? (tax/genls t n reader) (tax/genls-global t n))
                   (str "genls of " n " from " reader " inside the global closure"))
               (is (= (get (:down ref) n #{n}) (tax/specs t n reader))

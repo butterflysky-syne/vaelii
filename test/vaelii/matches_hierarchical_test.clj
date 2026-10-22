@@ -7,7 +7,7 @@
   `|context-up(c)|` contexts × `|specs(p)|` sub-predicates.  The hierarchical path
   leads with the bound argument's root (one lookup, spanning every functor and
   context) and filters the predicate and context hierarchies in memory.  The claim is
-  it returns the **identical** `[handle bindings]` set.  This pins that against the
+  it returns the **identical** `[handle bindings]` set.  This tests that against the
   nested fan-out (flag off) over patterns generated from the test-world's own facts,
   across concrete and variable contexts, symmetric predicates, negative literals (the
   fallback), and — with a temporary predicate-genl edge — predicate subsumption.
@@ -57,7 +57,7 @@
   `*lead-side*` is not part of `matches-visible`'s cache key — nothing in the engine
   rebinds it, so keying on it would only fragment the cache — which means the second and
   third arms here would be served the first arm's answer and the oracle would be checking
-  a result against itself.  `lead_side_cost_test` pins the same switch off for the cost
+  a result against itself.  `lead_side_cost_test` forces the same switch off for the cost
   half, and for the same reason."
   [f]
   (binding [lc/*enabled* false]
@@ -89,7 +89,7 @@
 (deftest ^:slow hierarchical-equals-nested-fanout
   ;; A sample of the world's facts (each expanded to ~8 patterns) × every context,
   ;; comparing the two retrieval paths.  64 sampled facts rather than the first 200:
-  ;; the exhaustive sweep was ~38s for a per-fact equivalence a spread already pins.
+  ;; the exhaustive sweep was ~38s for a per-fact equivalence a spread already asserts.
   (tu/with-kb [kb]
     (let [pats (mapcat var-patterns (tu/fact-sample kb 64))]
       (is (seq pats))
@@ -148,7 +148,7 @@
 ;; A `not`-headed sentence is rejected by `hierarchical-literal?`, and `matches-hierarchical`
 ;; then calls the same `matches-visible*` the flag-off branch calls — so comparing the two
 ;; flag settings on a negative literal compares one function with itself and holds whatever
-;; the fallback does.  What is worth pinning is the fallback being taken at all, which is a
+;; the fallback does.  This test asserts that the fallback is taken at all, which is a
 ;; claim about the predicate rather than about the two paths agreeing.
 (deftest negative-literal-falls-back
   (tu/with-kb [kb]
@@ -182,14 +182,14 @@
 (tu/deftest-kb small-side-lead-agrees-with-scoped-and-reference
   ;; The one cost decision in `lead-candidates` a flag reaches (`res/*lead-side*`): a
   ;; concrete predicate with a spec closure, a ground argument, and a term holding fewer
-  ;; postings than there are specs — so `:auto` leads from the slot roster
+  ;; postings than there are specs — so `:auto` leads from the slot predicate set
   ;; (`[:argument-slot pos term]`, every functor holding the term), the cold-rebuild small
   ;; side, which the shallow test-world never forces on its own.  Build the
-  ;; deep hierarchy here and pin that :scoped, :auto, :agnostic and the matches-visible
+  ;; deep hierarchy here and assert that :scoped, :auto, :agnostic and the matches-visible
   ;; fan-out return the identical set — through the predicate filter (an unrelated
-  ;; predicate holds the same term at the same position, so the roster lists it and the
+  ;; predicate holds the same term at the same position, so the slot predicate set lists it and the
   ;; lead must keep it out) and the context ancestor set (a sibling-context fact the global
-  ;; roster sees but a scoped read must not).  This is the form a wrong small side would
+  ;; slot predicate set sees but a scoped read must not).  This is the form a wrong small side would
   ;; leak on, where the shallow oracle above would stay green.
   (tu/with-terms [broadRel otherRel A B1 B2 Bother CxSib Bsib]
     (let [subs (vec (repeatedly 8 tu/tmp-pred))]
@@ -228,7 +228,7 @@
   ;; keeps the contexts at the node that the reader's ancestor set holds and reads only
   ;; their leaves.  A matching fact in a context the reader does not see is then no
   ;; candidate, and the answer set is the reference fan-out's on every lead path: one
-  ;; scoped column, two intersected columns, a variable functor's slot-roster union, the
+  ;; scoped column, two intersected columns, a variable functor's slot-set union, the
   ;; predicate extent of a literal with no bound argument, and the trie walk under a
   ;; ground prefix, whose context level keeps the contexts the reader sees.
   (tu/with-terms [rel rel3 A B C Chid Bhid CxHidden]
@@ -254,7 +254,7 @@
         (is (= #{seen hid} (set (p/sentexes-with-args ix rel {1 A} nil)))
             "and the unscoped read every context's")
         (is (= #{} (set (p/sentexes-with-args ix nil {2 Bhid} '#{CxSocialWorld})))
-            "the slot-roster union is scoped the same way")
+            "the slot-set union is scoped the same way")
         (is (= #{seen} (set (p/sentexes-with-args ix rel [] '#{CxSocialWorld CxUniverse})))
             "and so is the predicate extent")
         (is (= #{seen hid} (set (p/sentexes-with-functor ix rel))))

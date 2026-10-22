@@ -56,7 +56,7 @@
   (let [[n s] (net ['A 'B #{:lt} 1] ['B 'C #{:lt} 2])
         r     (qcn/path-consistent-with-support n s '[A B C] point-algebra)]
     (is (= #{:lt} (qcn/constraint (:network r) point-algebra 'A 'C))
-        "nothing asserted A<C; composition pinned it")
+        "nothing asserted A<C; composition determined it")
     (is (= #{1 2} (get (:support r) '[A C])))
     (is (= #{1 2} (get (:support r) '[C A])))))
 

@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.asp-solver-test
-  "The backend facade's routing policy, pinned pure — what AUTO does at the size
+  "The backend facade's routing policy, tested as a pure function — what AUTO does at the size
   cutoff, and what it does when only one backend can run at all — plus the typed
   refusal a missing or a wedged clasp binary earns, and what the in-process backend
   does when a native call fails.  No solve here needs libclingo or a real clasp: the

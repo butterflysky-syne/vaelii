@@ -28,5 +28,6 @@ JVM_OPTS="${JVM_OPTS:-} $(start_jvm_opts)"
 export JVM_OPTS
 
 echo "vaelii: browser, loading $KB" >&2
-exec lein run -m vaelii.web "$@"
+PROFILES="$(start_profiles "$KB")"
+exec lein ${PROFILES:+with-profile "$PROFILES"} run -m vaelii.web "$@"
 }

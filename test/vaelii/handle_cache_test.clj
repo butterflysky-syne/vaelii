@@ -13,7 +13,7 @@
   spelling that resolves through a `symmetric` mirror rather than to itself (not
   cached, since a mirror is only true while a second declaration is).
 
-  The engine-level gate is that engaging it changes nothing a run concludes: a join
+  The engine-level regression test is that engaging it changes nothing a run concludes: a join
   pyramid derives the same content, supported the same way, as it did when every
   lookup read the index."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
@@ -59,10 +59,10 @@
               "and present the moment it is stored, with the cache still bound"))))))
 
 (tu/deftest-kb the-cache-is-scoped-to-one-kb
-  ;; `with-handle-cache` deliberately reuses an outer run's map, and two KBs
-  ;; declaring nothing symmetric once stamped the one shared empty set — a nested
-  ;; run on a second KB (a chaining callback asserting elsewhere) read the first
-  ;; KB's handles and justified against a handle in another store
+  ;; `with-handle-cache` deliberately reuses an outer run's map, and two KBs declaring
+  ;; nothing symmetric would key the one shared empty set without the record store in the
+  ;; key — a nested run on a second KB (a chaining callback asserting elsewhere) would
+  ;; read the first KB's handles and justify against a handle in another store
   (tu/with-terms [holds A CxStory]
     (tu/with-cleared-kb [kb2 #(tu/isolated-fresh)]
       (let [s  (list holds A)
@@ -103,17 +103,17 @@
     (tu/with-terms [nextTo A B CxStory]
       ;; `(nextTo B A)` canonicalizes to itself while nothing is symmetric, and to
       ;; `(nextTo A B)` once the declaration lands — the same raw sentence reaching a
-      ;; different handle, which is exactly what the stamp exists to catch
+      ;; different handle, which is exactly what the cache key exists to catch
       (v/assert kb (list nextTo B A) CxStory {:chain? false})
       (let [asked (list nextTo B A)]
         (observe/with-handle-cache
           (let [before (kb/find-sentex-handle kb asked CxStory)]
             (is (some? before) "cached under the pre-declaration canonicalization")
-            (is (= before (observe/cached-handle (kb/canon-stamp kb) asked CxStory))
+            (is (= before (observe/cached-handle (kb/handle-cache-key kb) asked CxStory))
                 "and served from the cache while that reading holds")
             (v/assert kb (list 'symmetric nextTo) CxStory)
-            (is (nil? (observe/cached-handle (kb/canon-stamp kb) asked CxStory))
-                "the new stamp retires every entry filled under the old one")))
+            (is (nil? (observe/cached-handle (kb/handle-cache-key kb) asked CxStory))
+                "the new cache key retires every entry filled under the old one")))
         ;; and what the index now says is what a cached run says: the sentence stored
         ;; under the old canonicalization is no longer what this spelling asks for.
         ;; That answer is the engine's, not the cache's — the cache only must not
@@ -124,35 +124,35 @@
 
 (deftest handle-cache-nests-without-shadowing
   (testing "an inner scope shares the outer map rather than starting an empty one"
-    (let [stamp #{}]
+    (let [k #{}]
       (observe/with-handle-cache
-        (observe/cache-handle! stamp '(holds A B) 'CxStory 42)
+        (observe/cache-handle! k '(holds A B) 'CxStory 42)
         (observe/with-handle-cache
-          (is (= 42 (observe/cached-handle stamp '(holds A B) 'CxStory)))
-          (observe/cache-handle! stamp '(holds B C) 'CxStory 43))
-        (is (= 43 (observe/cached-handle stamp '(holds B C) 'CxStory))
+          (is (= 42 (observe/cached-handle k '(holds A B) 'CxStory)))
+          (observe/cache-handle! k '(holds B C) 'CxStory 43))
+        (is (= 43 (observe/cached-handle k '(holds B C) 'CxStory))
             "and what the inner scope learned outlives it")))))
 
-(deftest handle-cache-empties-on-a-new-stamp
-  (testing "a fill under a different stamp drops what the old one keyed"
+(deftest handle-cache-empties-on-a-new-cache-key
+  (testing "a fill under a different cache key drops what the old one keyed"
     (let [s1 #{} s2 #{'nextTo}]
       (observe/with-handle-cache
         (observe/cache-handle! s1 '(holds A B) 'CxStory 42)
         (observe/cache-handle! s2 '(holds B C) 'CxStory 43)
         (is (nil? (observe/cached-handle s2 '(holds A B) 'CxStory))
-            "the entry from the old stamp is gone, not merely unreadable")
+            "the entry from the old cache key is gone, not merely unreadable")
         (is (nil? (observe/cached-handle s1 '(holds A B) 'CxStory))
-            "and asking under the old stamp does not resurrect it")
+            "and asking under the old cache key does not resurrect it")
         (is (= 43 (observe/cached-handle s2 '(holds B C) 'CxStory)))))))
 
 (deftest handle-cache-off-by-default
   (testing "unbound, every operation is a no-op and every lookup a miss"
-    (let [stamp #{}]
-      (is (nil? (observe/cached-handle stamp '(holds A B) 'CxStory)))
-      (is (= 7 (observe/cache-handle! stamp '(holds A B) 'CxStory 7))
+    (let [k #{}]
+      (is (nil? (observe/cached-handle k '(holds A B) 'CxStory)))
+      (is (= 7 (observe/cache-handle! k '(holds A B) 'CxStory 7))
           "cache-handle! returns the handle whether or not it stored it")
       (is (nil? (observe/forget-handle! '(holds A B) 'CxStory)))
-      (is (nil? (observe/cached-handle stamp '(holds A B) 'CxStory))))))
+      (is (nil? (observe/cached-handle k '(holds A B) 'CxStory))))))
 
 ;; ---- justification dedup ------------------------------------------------
 
@@ -186,7 +186,7 @@
              (is (not (jtms/has-justification? tms 'rule [11 22] 9921
                                                (k '#{[sort inspace] [kind intime]})))))))))
 
-;; ---- the engine-level gate ----------------------------------------------
+;; ---- the engine-level regression test -----------------------------------
 
 (tu/deftest-kb chaining-a-join-pyramid-keeps-one-justification-per-witness
   (testing "the cache changes neither what is derived nor how it is supported"

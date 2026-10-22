@@ -17,7 +17,7 @@
     itself.
   * **The interactive arm** is the one an engine profile forgets.  Every arm above is
     reasoning, and no reasoning calls `terms`, `find-terms` or `find-sentexes` — so
-    without this one the term roster and the term index read zero, which is indistinguishable from a
+    without this one the term-name set and the term index read zero, which is indistinguishable from a
     family nobody uses and means a family no *reasoner* uses.
   * **The churn arm** retracts a sample and puts it back, which is the only way
     `unindex-sentex!` runs at all.  It prices the retraction tax, which is not the assert
@@ -36,7 +36,7 @@
       lein bench-profile generated [facts] [rules]
       lein bench-profile corpus <dir> [profile] a converted corpus (`:cyc-corpus`)
 
-  A corpus run wants a heap, and `:bench` pins `-Xmx6g`.  An environment `JVM_OPTS` is
+  A corpus run wants a heap, and `:bench` sets `-Xmx6g`.  An environment `JVM_OPTS` is
   placed before the project's own options and loses to it silently, so edit the vector on
   the way past — `with-profile` first, `update-in` second, as `scripts/run-bench-caches.sh`
   documents.  The `corpus` arm reads `:cyc-corpus`, so link the reader first
@@ -131,11 +131,11 @@
                       empty-shape ids)
         {:keys [facts rules negatives arity nesting nested preds args contexts]} t
         total (+ (long facts) (long rules))
-        ;; the token dictionary, exactly: every `[:term-index …]` key, against the roster
+        ;; the token dictionary, exactly: every `[:term-index …]` key, against the set
         ;; of symbols beside it.  One streaming pass over the index; nothing retained.
         term-keys (count (sequence (comp (map first) (filter #(= :term-index (first %))))
                                    (p/index-entries ix)))
-        roster    (reads/stored-term-count-global ix)
+        names     (reads/stored-term-count-global ix)
         forms     (reduce + 0 (map long (mapcat vals (vals nesting))))
         floor0    (exact-floor-0 kb ids 200000)]
     (println (format "  %,d sentexes — %,d facts (%,d negative), %,d rules — read in %.0f ms"
@@ -164,9 +164,9 @@
 
     (println "\n  the token dictionary — is it bound by the vocabulary or by the corpus?")
     (println (format "    term-index keys                 %,10d" term-keys))
-    (println (format "    of them symbols (the roster)    %,10d  (%.1f%%)" roster (pct roster term-keys)))
+    (println (format "    of them symbols (the names)     %,10d  (%.1f%%)" names (pct names term-keys)))
     (println (format "    so compound keys                %,10d  (%.1f%%)"
-                     (- term-keys roster) (pct (- term-keys roster) term-keys)))
+                     (- term-keys names) (pct (- term-keys names) term-keys)))
     (println (format "    keys per sentex                 %14.2f" (/ (double term-keys) (max 1 total))))
     (if floor0
       (println (format "    at *min-indexed-depth* 0        %,10d  (%.2f× the default, %.2f keys/sentex)"
@@ -251,7 +251,7 @@
         ;; the two shapes the secondary roots exist for, as fractions of the whole
         (println (format "    a bound argument after an open one (what the argument roots are for)  %,d  (%.2f%%)"
                          stuck (pct stuck total)))
-        (println (format "    an open functor `(?p …)` (what the argument-slot roster is for)       %,d  (%.2f%%)"
+        (println (format "    an open functor `(?p …)` (what the slot predicate set is for)       %,d  (%.2f%%)"
                          open (pct open total)))
         ;; and the shape nothing is for — the one a path-keyed root would be built for
         (println (format "    an open compound after an open one (what nothing is for)              %,d  (%.2f%%)"
@@ -288,7 +288,7 @@
   lists them.  Iterated in full rather than over what the tally holds, because a family
   nothing read is the finding: a zero is the answer to \"does this KB use it\"."
   [:trie-lookup :trie-counts :context-root :predicate-extent :argument-root :argument-slot
-   :rule-index :exception-index :term-index :term-roster])
+   :rule-index :exception-index :term-index :term-names])
 
 (defn- read-report [snap label]
   (let [rs    (:reads snap)
@@ -326,13 +326,13 @@
     (println (format "\n  %s — %,d index writes" label n))
     (when (pos? n)
       (let [levels (tot :levels) terms (tot :terms) roots (tot :roots)
-            roster (tot :roster) slots (tot :slots)
-            ops    (+ (* 2 levels) terms roots roster slots n)]  ; two ops per trie level, plus the seal
+            names  (tot :term-names) slots (tot :slots)
+            ops    (+ (* 2 levels) terms roots names slots n)]  ; two ops per trie level, plus the seal
         (println "    keys touched per assert, by family:")
         (println (format "      trie levels        %8.2f   (two ops each: a counter and a child edge)" (/ (double levels) n)))
         (println (format "      term index         %8.2f" (/ (double terms) n)))
         (println (format "      secondary roots    %8.2f   (context + functor + one per indexable argument)" (/ (double roots) n)))
-        (println (format "      term roster        %8.2f   (a name's first mention only)" (/ (double roster) n)))
+        (println (format "      term names         %8.2f   (a name's first mention only)" (/ (double names) n)))
         (println (format "      argument slots     %8.2f   (a predicate's first fact at that slot only)" (/ (double slots) n)))
         (println (format "      → batch ops        %8.2f" (/ (double ops) n))))
       (println "    the predicates that cost the most to write:")
@@ -350,18 +350,18 @@
     (println (format "\n  %s — %,d index retractions" label n))
     (when (pos? n)
       (let [levels (tot :levels) terms (tot :terms) roots (tot :roots)
-            roster (tot :roster) slots (tot :slots) dead (tot :dead)
+            names  (tot :term-names) slots (tot :slots) dead (tot :dead)
             ;; batch 1 is one leaf removal and one decrement per level; batch 2 is three
             ;; deletes per dead node plus a detach from its parent, then the flat
             ;; families and the seal.  A ceiling rather than an equality: the trie root
             ;; has no parent to detach from, so a retraction that killed it is one under
-            ops    (+ 1 levels (* 4 dead) terms roots roster slots n)]
+            ops    (+ 1 levels (* 4 dead) terms roots names slots n)]
         (println "    ops touched per retraction, by family:")
         (println (format "      trie levels        %8.2f   (a leaf removal, then one decrement each)" (/ (double levels) n)))
         (println (format "      dead trie nodes    %8.2f   (three deletes and a parent detach each)" (/ (double dead) n)))
         (println (format "      term index         %8.2f" (/ (double terms) n)))
         (println (format "      secondary roots    %8.2f" (/ (double roots) n)))
-        (println (format "      term roster        %8.2f   (a name's last mention only)" (/ (double roster) n)))
+        (println (format "      term names         %8.2f   (a name's last mention only)" (/ (double names) n)))
         (println (format "      argument slots     %8.2f   (a predicate's last fact at that slot only)" (/ (double slots) n)))
         (println (format "      → batch ops       ≤%8.2f" (/ (double ops) n)))
         ;; the quantity a corpus moves without changing what it holds, and the reason
@@ -600,7 +600,7 @@
   "The vocabulary and term reads an **application** makes — the arm every other one here
   is missing, and the reason two families tally zero everywhere else.
 
-  `terms`, `term-count`, `find-terms` and `find-sentexes` are what the term roster and the
+  `terms`, `term-count`, `find-terms` and `find-sentexes` are what the term-name set and the
   term index exist for, and not one of them is called by a load, a forward-chaining run or
   a backward proof.  Without this arm the read tally reports those two families at zero,
   which reads as *nothing uses them* and means *no reasoning uses them* — and a per-KB
@@ -618,7 +618,7 @@
         picks    (stride limit (filterv symbol? vocab))
         pages    (atom 0)
         fetched  (atom 0)]
-    ;; a term picker's search box, prefix and substring, both over the roster
+    ;; a term picker's search box, prefix and substring, both over the term-name set
     (doseq [q (stride 8 picks) :while (< (System/nanoTime) deadline)]
       (let [s (str q)]
         (try (v/find-terms kb (subs s 0 (min 3 (count s))) {:limit 50})

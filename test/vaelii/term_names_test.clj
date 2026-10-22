@@ -1,14 +1,14 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
-(ns vaelii.term-roster-test
-  "The term roster: `terms` / `term-count` / `find-terms` — the KB's vocabulary read
+(ns vaelii.term-names-test
+  "The term-name set: `terms` / `term-count` / `find-terms` — the KB's vocabulary read
   off the index instead of scavenged from the records.
 
-  The oracle is the scan the roster replaces: walk every stored sentex, take its
+  The oracle is the scan the term-name set replaces: walk every stored sentex, take its
   indexable subterms plus its context, keep the symbols.  Whatever that produces, the
-  roster must produce — after a load, after a retraction, after a `reindex`, and after
+  term-name set must produce — after a load, after a retraction, after a `reindex`, and after
   a restart over the same durable store.  Everything here runs on whichever backend the
-  suite is configured for, so the on-disk parity gate covers it too."
+  suite is configured for, so the on-disk parity run covers it too."
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
@@ -20,7 +20,7 @@
 
 (defn- scanned-terms
   "The oracle: every symbol term reachable by walking the records — what a client with
-  no roster has to do (and what a browser search does per keystroke without one)."
+  no term-name set has to do (and what a browser search does per keystroke without one)."
   [kb]
   (into (sorted-set)
         (comp (keep #(p/get-sentex (:records kb) %))
@@ -30,7 +30,7 @@
 
 (defn- context-scanned-terms
   "The same oracle a *public-API-only* client can write: every sentex in every known
-  context.  It can miss a context the taxonomy does not know, so the roster is a
+  context.  It can miss a context the taxonomy does not know, so the term-name set is a
   superset of this, never a subset."
   [kb]
   (into (sorted-set)
@@ -49,7 +49,7 @@
 
 (deftest enumeration-matches-a-full-scan
   (tu/with-neutral-kb [kb starter-kb]
-    (testing "the roster is exactly what a record scan produces"
+    (testing "the term-name set is exactly what a record scan produces"
       (is (= (vec (scanned-terms kb)) (v/terms kb))))
     (testing "and a superset of what a context walk can reach"
       (is (set/subset? (context-scanned-terms kb) (set (v/terms kb)))))
@@ -60,7 +60,7 @@
       (let [ts (v/terms kb)]
         (is (= ts (vec (sort ts))))
         (is (= (count ts) (count (set ts))))))
-    (testing "every rostered term is a symbol — a ground compound is a fragment, not a name"
+    (testing "every listed term is a symbol — a ground compound is a fragment, not a name"
       (is (every? symbol? (v/terms kb))))
     (testing "known vocabulary is in there"
       (is (every? (set (v/terms kb)) '[genl thing CxUniverse arg])))))
@@ -100,7 +100,7 @@
           (is (set/subset? #{likes Ann Bob CxTwo} ts) "the shared names stay")
           (is (not (ts CxOne)) "the emptied context's name goes"))))))
 
-(deftest a-rules-terms-are-rostered
+(deftest a-rules-terms-are-listed
   (tu/with-neutral-kb [kb tu/fresh]
     (tu/with-terms [parentOf ancestorOf CxRule]
       (let [h (v/assert-rule kb [(list parentOf '?x '?y)] (list ancestorOf '?x '?y) CxRule)]
@@ -119,7 +119,7 @@
 
 ;; ---- rebuild + restart --------------------------------------------------
 
-(deftest reindex-reproduces-the-roster
+(deftest reindex-reproduces-the-term-name-set
   (tu/with-neutral-kb [kb starter-kb]
     (tu/with-terms [cat Felix CxHouse]
       (v/assert kb (list cat Felix) CxHouse)
@@ -129,7 +129,7 @@
         (is (= (count before) (v/term-count kb)))
         (is (= (vec (scanned-terms kb)) (v/terms kb)))))))
 
-(deftest the-roster-survives-a-restart
+(deftest the-term-name-set-survives-a-restart
   ;; a second KB over the same durable store, recovered — the index is derived state
   ;; that lives beside the records, so the vocabulary must read the same either side.
   (tu/with-cleared-kb [kb tu/fresh]
@@ -143,7 +143,7 @@
 
 ;; ---- search -------------------------------------------------------------
 
-(deftest find-terms-filters-the-roster
+(deftest find-terms-filters-the-term-name-set
   (tu/with-neutral-kb [kb tu/fresh]
     ;; the generated names share the prefix `tmpparent` and differ at the next
     ;; character, so the sorted answer is [parentOf parentTo] whatever the gensym
@@ -231,7 +231,7 @@
                  (v/find-terms kb "tmp" {:match :substring :limit huge})))))
       (testing "a limit past Long/MAX_VALUE is the typed refusal, not a cast error"
         ;; an arbitrary-precision integer satisfies `integer?` and would reach the `long`
-        ;; the selection narrows through — an untyped `ArithmeticException` no roster of
+        ;; the selection narrows through — an untyped `ArithmeticException` no list of
         ;; refusal types can see, and over the daemon a 500 with nothing to key on
         (doseq [bad [9223372036854775808N (biginteger 9223372036854775808N) (bigint 1e30)]]
           (let [e (is (thrown? clojure.lang.ExceptionInfo
@@ -266,7 +266,7 @@
 (deftest a-regex-scan-over-the-whole-vocabulary-is-bounded-too
   ;; The per-candidate budget catches a pattern that backtracks; this one catches a
   ;; pattern that is merely asked over more vocabulary than one call may read — on the
-  ;; daemon that read is taken holding the single writer.  Pinned low through the var so
+  ;; daemon that read is taken holding the single writer.  Set low through the var so
   ;; the test does not need a six-figure vocabulary; the shipped budget answers the same
   ;; linear pattern over the same terms.
   (tu/with-neutral-kb [kb tu/fresh]

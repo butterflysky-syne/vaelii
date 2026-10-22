@@ -5,19 +5,18 @@
 
   An object `nat/` constant is collected when no sentence names it.  A `cx/` context is a
   *place* as well as a name, so it takes one more source of liveness: what is stored in it.
-  It is collected at the same gate when all three are empty — nothing in its context slot,
+  It is collected by the same rule when all three are empty — nothing in its context slot,
   no stored sentence naming it, no stored `genlCx` edge mentioning it — and the structural
-  `genlCx` edges the producer computes off its own `termOfUnit` map are none of those,
+  `genlCx` edges the producer computes off its own `natFormula` map are none of those,
   since a pair of ordered contexts would otherwise hold each other up forever.
 
-  What the namespace pins, beyond the gate itself: every arrival order of the three
+  Beyond that collection rule, the namespace asserts these: every arrival order of the three
   sources reaches the same end state; a re-mint after a sweep dedups to one constant and
   is indistinguishable from one never swept; a query context and a koinii agent or channel
-  context are `Cx…` names the sweep cannot name at all; a fork sweeps its own view and
+  context are `Cx…` names the sweep cannot name at all; a fork sweeps its own contents and
   leaves the base standing; and a swept context stays swept across a durable reopen."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.impl.disk.backend :as disk-backend]
             [vaelii.impl.naming :as nm]
             [vaelii.impl.nat :as nat]
@@ -28,7 +27,7 @@
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
-(use-fixtures :once (tu/loaded core-context/load-into))
+(use-fixtures :once (tu/loaded tu/load-core!))
 (use-fixtures :each (tu/neutral))
 
 ;; ---- scaffolding ---------------------------------------------------------
@@ -53,9 +52,9 @@
 
 (defn- reified?
   "Does the KB still map `k` to an expression — is it still a context it knows?  The
-  `termOfUnit` is a context NAT's whole bookkeeping, so this is exactly \"not swept\"."
+  `natFormula` is a context NAT's whole bookkeeping, so this is exactly \"not swept\"."
   [kb k]
-  (boolean (seq (v/sentexes-matching kb (list 'termOfUnit k '?e) 'CxUniverse))))
+  (boolean (seq (v/sentexes-matching kb (list 'natFormula k '?e) 'CxUniverse))))
 
 (defn- context-in
   "Mint the reified context for `expr` by storing `sentence` in it, and answer
@@ -64,7 +63,7 @@
   (let [h (v/assert kb sentence expr)]
     [h (:context (v/sentex kb h))]))
 
-;; ---- the gate ------------------------------------------------------------
+;; ---- the regression tests ------------------------------------------------
 
 (tu/deftest-kb the-last-sentex-out-of-the-slot-collects-the-context
   ;; The source a `nat/` constant does not have: nothing names the context, so the term
@@ -118,7 +117,7 @@
     (is (not (reified? kb k)))))
 
 (tu/deftest-kb a-computed-genlcx-edge-does-not-keep-a-context-alive
-  ;; The producer derives `(genlCx month year)` from the two `termOfUnit` maps, so the
+  ;; The producer derives `(genlCx month year)` from the two `natFormula` maps, so the
   ;; edge is a *reading* of the bookkeeping rather than a reference to it.  Counting it
   ;; would make every ordered pair immortal — each end held up by an edge computed from
   ;; the other end — which is the whole reason authorship decides this and shape does not.
@@ -158,7 +157,7 @@
         (is (= [{'?x 'NewYear}] (v/ask kb '(holiday ?x) month)))))))
 
 (tu/deftest-kb collecting-a-context-orphans-the-object-nat-in-its-expression
-  ;; The region grows with the fixpoint, across both kinds: the context's `termOfUnit` is
+  ;; The region grows with the fixpoint, across both kinds: the context's `natFormula` is
   ;; the last sentence naming the object constant standing inside its expression, so the
   ;; round that collects the context makes that constant the next round's candidate.  One
   ;; rule, one teardown, a `cx/` and a `nat/` collected by it.
@@ -171,7 +170,7 @@
       (is (nat/reified-object-symbol? inner) "the dimension argument reified to an object")
       (v/retract! kb h)
       (is (not (reified? kb k)))
-      (is (empty? (v/sentexes-matching kb (list 'termOfUnit inner '?e) 'CxUniverse))
+      (is (empty? (v/sentexes-matching kb (list 'natFormula inner '?e) 'CxUniverse))
           "and the object constant inside the expression went with it"))))
 
 (tu/deftest-kb a-computed-edges-authorship-survives-a-rebuild
@@ -236,7 +235,7 @@
       (let [[_ ky2] (context-in kb '(holiday NewYear) year)
             [_ km2] (context-in kb '(likes Bob Cid) month)]
         (is (= ky ky2) "the same content-named constant, as a deterministic re-mint always is")
-        (is (= 1 (count (v/sentexes-matching kb (list 'termOfUnit '?k year) 'CxUniverse)))
+        (is (= 1 (count (v/sentexes-matching kb (list 'natFormula '?k year) 'CxUniverse)))
             "one constant for the expression — the re-mint dedups, it does not double")
         (is (= km2 (:context (v/sentex kb (v/assert kb '(knows Bob Dee) month))))
             "and the write entry point resolves the compound to that one constant")
@@ -257,7 +256,7 @@
         [h k] (context-in kb '(likes Tom Ann) expr)]
     (is (= [false false false] (mapv nat/reified-context-symbol? (sort nm/query-contexts))))
     (is (= [0 0 0] (mapv #(v/count-in-context kb %) (sort nm/query-contexts))))
-    (is (empty? (mapcat #(v/sentexes-matching kb (list 'termOfUnit % '?e) 'CxUniverse)
+    (is (empty? (mapcat #(v/sentexes-matching kb (list 'natFormula % '?e) 'CxUniverse)
                         nm/query-contexts))
         "no query context is mapped, so none can be orphaned")
     (v/assert kb '(likes Bob Cid) 'CxStory)
@@ -274,7 +273,7 @@
   ;; a second run in one JVM does not open over the first run's records unrecovered.
   (let [kb2 (doto (v/open-kb {:backend :memory :space [::koinii 1] :recover? false})
               (tu/clear-kb!)
-              (core-context/load-into)
+              (tu/load-core!)
               (sa/load-speech-acts))]
     (let [atlas (ch/join (ch/local kb2) 'CxDeploy 'AgentAtlas)
           actx  (:context atlas)
@@ -299,18 +298,18 @@
 
 ;; ---- the fork ------------------------------------------------------------
 
-(deftest a-fork-sweeps-its-own-view-and-never-the-base
+(deftest a-fork-sweeps-its-own-contents-and-never-the-base
   ;; Base immutability is the overlay's first invariant (docs/overlay.md): a retraction in
   ;; a fork tombstones the inherited record rather than deleting it, and the sweep runs
   ;; through the ordinary `retract!` that does so.  So a context the fork empties is
-  ;; collected in the fork's view and stands in the base, which is how an object NAT's
+  ;; collected in the fork's own contents and stands in the base, which is how an object NAT's
   ;; sweep already behaves there.  A `:memory` base on its own space, cleared on open so a
   ;; second run in one JVM starts empty, so the fork is admissible on every run (a
   ;; `:columnar` index has no `KvBackend` to decorate); the fork takes the default, an
   ;; ephemeral space nothing else uses.
   (let [base (doto (v/open-kb {:backend :memory :space [::sweep-base 1] :recover? false})
                (tu/clear-kb!))]
-    (core-context/load-into base)
+    (tu/load-core! base)
     (let [cxfn  (declare-dimension! base)
           expr  (list cxfn 'CxMonad (list 'DatetimeFn "2009"))
           [h k] (context-in base '(likes Tom Ann) expr)
@@ -351,7 +350,7 @@
                   k))]
         (disk-backend/close-dir! dir)
         (let [kb2 (v/open-kb {:backend :disk-log :dir dir :recover? false})]
-          (is (nil? (v/handle-of kb2 (list 'termOfUnit k '(CxTmpDurableFn CxMonad (DatetimeFn "2020")))
+          (is (nil? (v/handle-of kb2 (list 'natFormula k '(CxTmpDurableFn CxMonad (DatetimeFn "2020")))
                                  'CxUniverse))
               "the durable record is gone, not merely disbelieved")
           (v/recover kb2)

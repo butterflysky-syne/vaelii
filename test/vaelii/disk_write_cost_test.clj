@@ -8,7 +8,7 @@
   `lein perf`'s checks are ratios over the in-RAM stores, and `assert_cost_test` opens on
   `:backend :memory` deliberately, because the calls it counts live in `KvIndexStore`.
   Between them the durable path is uncovered in both directions: a ratio cannot see a
-  constant (that file's preamble says why), and neither gate runs a workload that touches
+  constant (that file's preamble says why), and neither check runs a workload that touches
   `vaelii.impl.disk.files` at all.  A syscall per record is exactly a constant, and the
   write path spends them in fixed multiples that the source states as promises —
   `append-bytes!` says two on the hot path, `write-slot!` says one positional write where
@@ -31,7 +31,7 @@
   So `write-fully-at!` is the write syscall count and `append-bytes!` is the length-read
   count, and the two above them say which caller spent them.  Counting the *pair* is what
   makes the shape checkable rather than only the total: a slot written as a seek plus four
-  primitive writes never reaches `write-fully-at!` at all, so it fails this gate by
+  primitive writes never reaches `write-fully-at!` at all, so it fails this test by
   reading **low**, and a second length read to learn a payload the caller was already
   handed fails it by reading high.
 
@@ -42,11 +42,11 @@
   repeats the signature; a varargs one cannot satisfy the `IFn$OOL` the call site
   compiled to.
 
-  ## The KB is pinned, and to its own directory
+  ## The KB is fixed, and to its own directory
 
   `{:backend :disk-log}` whatever `VAELII_TEST_BACKEND` selected, for `assert_cost_test`'s
   reason: the counts are file operations, and the memory stores perform none — inheriting
-  the run's backend would make this gate read zero on six of the eight and pass by
+  the run's backend would make this test read zero on six of the eight and pass by
   measuring nothing.  A private temp directory rather than the suite's disk space, so it
   takes its own writer lock and collides with neither a sharded test JVM nor a concurrent
   backend run; it is closed and deleted on the way out, which is what keeps a test that
@@ -54,7 +54,7 @@
 
   Auto-compaction is paused across each measured region.  Compaction is a background
   thread's rewrite of a whole log, it calls the very functions being counted, and
-  `with-redefs` is process-wide — so a tick landing inside the window would add a reading
+  `with-redefs` is process-wide — so a tick landing inside a measured region would add a reading
   that belongs to no assert.
 
   ## What it does not catch

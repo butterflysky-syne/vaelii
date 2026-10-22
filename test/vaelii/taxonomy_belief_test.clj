@@ -16,7 +16,7 @@
   and a defeated `(inverse P Q)` stops answering the swapped goal at the contexts that
   see the defeat — each reviving when the defeater is retracted. A `disjoint`, a
   `functional` mark, a `genlCx` edge and an equality are on the engine's baseline
-  forced-monotonic roster, so no denial defeats one. The end-to-end half of that is at
+  forced-monotonic set, so no denial defeats one. The end-to-end half of that is at
   the foot of this file."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
@@ -237,7 +237,7 @@
   ;; `:support`.  A supporter retracted while OUT leaves `:handles`, `:handle-edge` and
   ;; `:support`, and `:out` with them, or the set grows by one entry per such retraction
   ;; for the KB's life.  The OUT supporter here is a merge a void firing concludes (its
-  ;; antecedent is off the roster); retracting the trigger sweeps it.
+  ;; antecedent is not forced-monotonic); retracting the trigger sweeps it.
   (tu/with-terms [aliasOf Aa Bb]
     (v/assert-rule kb [(list aliasOf '?x '?y)] '(sameAs ?x ?y) 'CxUniverse {:direction :forward})
     (let [h  (v/assert kb (list aliasOf Aa Bb) 'CxUniverse)

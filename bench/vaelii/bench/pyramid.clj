@@ -4,7 +4,7 @@
   "W4 join-pyramid driver at 1k — a faithful in-repo replica of the field
   benchmark cell (`run-w4`): the 4-rule pyramid a←b1,b2 / b1←c1,c2 / b2←c3,c4 /
   c1←d1,d2 over the seeded base relations, forward-chained to fixpoint
-  (semi-naive), then the full `a` extent read off the stored records and gated
+  (semi-naive), then the full `a` extent read off the stored records and checked
   against the corpus's a_ext.sha1.
 
   Modes:
@@ -208,7 +208,7 @@
                        (reduce (fn [acc be]
                                  (let [r (measured-run be)]
                                    (println (format (str "PYRAMID backend=%s run=%d ms=%.1f cpu-ms=%.1f"
-                                                         " alloc-mb=%.0f heap-used-mb=%d gate=%s")
+                                                         " alloc-mb=%.0f heap-used-mb=%d verified=%s")
                                                     (name be) i (:ms r) (:cpu-ms r)
                                                     (:alloc-mb r) (:heap-mb r) (:pass r)))
                                    (update acc be conj r)))
@@ -223,7 +223,7 @@
                        (name be) (med be :ms) (med be :cpu-ms) (med be :alloc-mb)
                        (med be :heap-mb) (/ (med be :cpu-ms) (med base :cpu-ms)))))
     (when-not (every? :pass (mapcat val runs))
-      (println "  !! a run failed the a_ext gate — its timing is not a reading"))))
+      (println "  !! a run failed the a_ext check — its timing is not a reading"))))
 
 (defn -main [& [mode reps]]
   ;; flags suffix the mode and compose (`time-rete-ref`): `-ref` runs the placement
@@ -254,7 +254,7 @@
               used (quot (- (.totalMemory rt) (.freeMemory rt)) (* 1024 1024))]
           ;; the KB is still reachable here, so post-gc used heap is the fixpoint's
           ;; resident footprint — records, index, TMS — not allocation churn
-          (println (format "PYRAMID run=%d ms=%.1f a-count=%d gate=%s heap-used-mb=%d"
+          (println (format "PYRAMID run=%d ms=%.1f a-count=%d verified=%s heap-used-mb=%d"
                            i ms a-count pass used))
           (identity kb)))
 
@@ -266,20 +266,20 @@
       "verify"
       (let [{:keys [kb pass]} (run-once)]
         (spit reps (content-dump kb))
-        (println (format "PYRAMID verify gate=%s dump=%s" pass reps)))
+        (println (format "PYRAMID verify verified=%s dump=%s" pass reps)))
 
       "profile"
       (let [start (requiring-resolve 'clj-async-profiler.core/start)
             stop  (requiring-resolve 'clj-async-profiler.core/stop)
             warm  (run-once)]
-        (println (format "PYRAMID warmup ms=%.1f gate=%s" (:ms warm) (:pass warm)))
+        (println (format "PYRAMID warmup ms=%.1f verified=%s" (:ms warm) (:pass warm)))
         (let [r (run-once (fn [t]
                             (start {:event :cpu})
                             (let [v (t)]
                               (println "PYRAMID collapsed:"
                                        (str (stop {:generate-flamegraph? false})))
                               v)))]
-          (println (format "PYRAMID profiled ms=%.1f a-count=%d gate=%s"
+          (println (format "PYRAMID profiled ms=%.1f a-count=%d verified=%s"
                            (:ms r) (:a-count r) (:pass r))))))
     (shutdown-agents)
     (System/exit 0)))

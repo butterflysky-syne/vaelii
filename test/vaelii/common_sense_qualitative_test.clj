@@ -134,7 +134,7 @@
 
 (tu/deftest-kb north-of-something-east-of-something-is-northeast-of-it
   ;; Cardinal direction constrains two axes independently, so composing a pure north
-  ;; with a pure east pins both at once — the strongest thing a single direction fact
+  ;; with a pure east determines both at once — the strongest thing a single direction fact
   ;; can say, out of two that each said half of it.
   (tu/with-terms [Village Farm Mill]
     (state! kb (list 'northOf Farm Village) (list 'eastOf Mill Farm))

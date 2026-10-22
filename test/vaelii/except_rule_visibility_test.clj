@@ -16,7 +16,7 @@
     hidden set hides from the asking context, so a goal in the ancestor set cannot rebuild
     through a hidden rule what forward chaining sweeps.
 
-  Each test pins one arm: the sweep of an existing firing, the block of a late one,
+  Each test asserts one arm: the sweep of an existing firing, the block of a late one,
   the revival on retraction, the backward chainer's candidate filter, and the
   dispute-resolution shape (a justified dispute whose defeated side must vanish from
   every read surface, not only from the argue tree).  House rules as everywhere
@@ -35,7 +35,7 @@
 
 ;; ---- 1. sweeping ---------------------------------------------------------
 ;; DECISION (contexts.md, "The removal is total"): a late except sweeps what already
-;; fired.  The fact arm of this is pinned by the except tests; this pins the rule arm —
+;; fired.  The except tests assert the fact arm of this; this asserts the rule arm —
 ;; the conclusion's own handle is never an except target here, so an empty read below
 ;; can only mean belief actually moved, not that a read filter hid it.
 
@@ -104,7 +104,7 @@
 ;; visibility except lands on one side's *rule*.  Defeat must land on support, and
 ;; once it does, every read surface has to agree: the defeated conclusion is gone,
 ;; the survivor stands, and the contradiction is resolved — not just the argue tree,
-;; but belief, the stored matches, and the conflict roster.
+;; but belief, the stored matches, and the conflict list.
 
 (tu/deftest-kb excepting-one-side-of-a-dispute-resolves-it-on-every-read-surface
   (tu/with-terms [quaker republican pacifist Nixon CxDispute]

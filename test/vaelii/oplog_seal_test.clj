@@ -8,10 +8,13 @@
   its records reached the disk, and an unusable log each decline the restore.  A
   `:seal`-class operation seals when it returns, a KB whose network does not cover its
   records cannot be sealed, and closing the directory seals it."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.test :refer [deftest is]]
             [vaelii.core :as v]
+            [vaelii.impl.clashes :as clashes]
             [vaelii.impl.disk.files :as f]
+            [vaelii.impl.kb :as kb]
             [vaelii.impl.oplog :as oplog]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.seal :as seal]
@@ -28,8 +31,8 @@
   (doseq [f (reverse (file-seq (io/file dir)))] (.delete ^File f)))
 
 (defn- copy-dir!
-  "Copy `from` into `to` as the files stand — a crash's view of a directory whose store
-  is still open."
+  "Copy `from` into `to` as the files stand: the contents a crash leaves of a directory
+  whose store is still open."
   [^String from ^String to]
   (let [src (.toPath (io/file from)) dst (.toPath (io/file to))]
     (doseq [^File f (file-seq (io/file from))
@@ -325,6 +328,34 @@
             (finally (v/close! restored) (v/close! rebuilt))))
         (finally (rm-rf! a) (rm-rf! c) (rm-rf! d))))))
 
+(deftest a-restore-replays-a-preview-s-writes-and-rollback-and-none-of-its-reads
+  ;; the preview's frame is replayed so the handles it allocated stay allocated and the
+  ;; records a crash inside it left are taken back; its answer went to the caller, so the
+  ;; replay takes neither the reading before it nor the dilemma reports
+  (tu/with-snapshot-platform
+    (let [a (tmpdir) c (tmpdir) d (tmpdir)]
+      (try
+        (let [lkb (open a {:oplog? true})]
+          (try
+            (write-dilemma! lkb)
+            (is (seq (:contradictions (v/preview lkb {:add [['(not (animal Zeno)) 'CxUniverse]]}))))
+            (v/assert lkb '(animal Thales) 'CxUniverse)
+            (copy-dir! a c)
+            (copy-dir! a d)
+            (finally (v/close! lkb))))
+        (let [reads    (atom {})
+              count!   (fn [k f] (fn [& args] (swap! reads update k (fnil inc 0)) (apply f args)))
+              restored (with-redefs [kb/prior-kb          (count! :prior-kb kb/prior-kb)
+                                     clashes/opened       (count! :opened clashes/opened)]
+                         (open c {:oplog? true}))
+              rebuilt  (open d)]
+          (try
+            (is (= {:restored true :frames 13} (opened restored)))
+            (is (= {} @reads))
+            (is (= (reading rebuilt) (reading restored)))
+            (finally (v/close! restored) (v/close! rebuilt))))
+        (finally (rm-rf! a) (rm-rf! c) (rm-rf! d))))))
+
 (deftest an-open-whose-restore-declines-rebuilds-from-the-records-and-seals
   (tu/with-snapshot-platform
     (let [a (tmpdir) c (tmpdir)]
@@ -360,6 +391,65 @@
             (finally (v/close! kb))))
         (finally (rm-rf! a))))))
 
+(deftest a-write-without-the-log-retires-the-seal
+  ;; the unlogged KB's writes reach the records and no log, so a restore from the seal
+  ;; would answer without them.  A retraction adds no record for `extra-records?` to see,
+  ;; and a non-snapshot disk backend over the same records writes no image.
+  (tu/with-snapshot-platform
+    (doseq [unlogged [nil {:backend :disk-dense} {:backend :disk-columnar}]]
+      (let [a (tmpdir)]
+        (try
+          (let [kb (open a {:oplog? true})]
+            (v/assert kb '(animal Plato) 'CxUniverse)
+            (v/close! kb))
+          (let [g (:generation (seal/read-seal a))]
+            (let [kb (open a unlogged)]
+              (try (v/retract! kb (v/handle-of kb '(animal Plato) 'CxUniverse))
+                   (v/assert kb '(animal Zeno) 'CxUniverse)
+                   (finally (v/close! kb))))
+            (is (nil? (seal/read-seal a)) (pr-str unlogged))
+            (let [kb (open a {:oplog? true})]
+              (try
+                (is (= {:restored false :reason :no-seal} (opened kb)) (pr-str unlogged))
+                (is (= [false true] (mapv #(v/ask? kb (list 'animal %) 'CxUniverse) '[Plato Zeno]))
+                    (pr-str unlogged))
+                (is (< (long g) (long (:generation (seal/read-seal a))))
+                    "the new seal's generation is above the retired one")
+                (finally (v/close! kb)))))
+          (finally (rm-rf! a)))))))
+
+(defn- manifest-source [dir]
+  (:source (edn/read-string (slurp (io/file dir "reasoning" "manifest.edn")))))
+
+(deftest a-restore-under-trust-keeps-an-image-of-other-engine-source
+  (tu/with-snapshot-platform
+    (let [a (tmpdir) c (tmpdir)]
+      (try
+        (v/close! (open a {:oplog? true}))
+        (let [m (io/file a "reasoning" "manifest.edn")]
+          (spit m (pr-str (assoc (edn/read-string (slurp m)) :source "stale"))))
+        (let [lkb (open a {:oplog? true})]
+          (try
+            (is (= {:restored true :frames 0} (opened lkb)) "the default open trusts the image")
+            (write-world! lkb)
+            (copy-dir! a c)
+            (finally (v/close! lkb))))
+        (is (= "stale" (manifest-source a))
+            "the close's seal names the source belief was last derived under in full")
+        (let [kb (open c {:oplog? true})]
+          (try
+            (is (= {:restored true :frames 6} (opened kb)))
+            (is (v/ask? kb '(mortal Zeno) 'CxUniverse))
+            (is (not (v/ask? kb '(mortal Plato) 'CxUniverse)) "the replayed retraction holds")
+            (finally (v/close! kb))))
+        (let [kb (open c {:oplog? true :recover? :auto})]
+          (try
+            (is (= {:restored false :reason [:reasoning :source-differs]} (opened kb)))
+            (is (v/ask? kb '(mortal Zeno) 'CxUniverse))
+            (finally (v/close! kb))))
+        (is (not= "stale" (manifest-source c)) "the :auto open re-derived belief and sealed it")
+        (finally (rm-rf! a) (rm-rf! c))))))
+
 (deftest seal-starts-a-generation-and-declines-while-a-settle-is-pending
   (tu/with-snapshot-platform
     (let [a (tmpdir) b (tmpdir)]
@@ -384,10 +474,14 @@
                (finally (v/close! kb))))
         (finally (rm-rf! a) (rm-rf! b))))))
 
-(deftest oplog-is-read-on-a-disk-snapshot-kb-that-recovers
+(deftest oplog-is-read-on-a-snapshot-kb-that-recovers
+  (is (= :each (kb/oplog-mode {:backend :pg-snapshot :oplog? true})))
+  (is (= :each (kb/oplog-mode {:backend :disk-snapshot :oplog? true :recover? :trust})))
   (doseq [[opts mismatch] [[{:backend :disk-snapshot :oplog? :yes}            :bad-value]
                            [{:backend :disk-log :oplog? true}                 :conflict]
-                           [{:backend :disk-snapshot :oplog? true :recover? false} :conflict]]]
+                           [{:backend :disk-snapshot :oplog? true :recover? false} :conflict]
+                           [{:backend :disk-snapshot :oplog? true :recover? :background}
+                            :conflict]]]
     (let [dir (tmpdir)
           e   (try (v/open-kb (assoc opts :dir dir)) nil
                    (catch clojure.lang.ExceptionInfo e e)

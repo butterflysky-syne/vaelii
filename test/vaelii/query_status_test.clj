@@ -110,7 +110,7 @@
 
 (tu/deftest-kb a-report-answers-exactly-what-query-answers
   ;; The report is `query` with a status stapled on, not a second engine: the same depth
-  ;; resolution, the same roster, the same answer set.  Truncation tracking is a read of
+  ;; resolution, the same rules, the same answer set.  Truncation tracking is a read of
   ;; the search, so it moves no answer.
   (tu/with-terms [canAct eligible baseCan U1 U2 CxE]
     (eligibility-kb kb canAct eligible baseCan U1 CxE)
@@ -168,3 +168,65 @@
       (is (= [largerThan]
              (:unenumerated (v/search-tree kb (list largerThan '?x '?y) CxT
                                            {:max-depth 1})))))))
+
+(tu/deftest-kb compare-tacticians-reads-incomplete-on-every-row-over-an-open-transitive-goal
+  (tu/with-terms [largerThan R0 R1 R2 CxT]
+    (v/assert kb (list 'transitive largerThan) CxT)
+    (v/assert kb (list largerThan R0 R1) CxT)
+    (v/assert kb (list largerThan R1 R2) CxT)
+    (let [rows (v/compare-tacticians kb (list largerThan '?x '?y) CxT {:max-depth 1})]
+      (is (= #{:incomplete} (set (map :status rows))))
+      (is (= #{[largerThan]} (set (map :unenumerated rows))))
+      (is (= 1 (count (set (map :answers rows))))))
+    (testing "one end bound: every row complete"
+      (let [rows (v/compare-tacticians kb (list largerThan R0 '?y) CxT {:max-depth 1})]
+        (is (= #{:complete} (set (map :status rows))))
+        (is (= #{[]} (set (map :unenumerated rows))))))))
+
+;; ---- a both-open transitive goal inside an evaluation ----------------------------
+;; The join plans `(aheadOf ?x ?y)` before `(start ?x)` and `(finish ?y)`, so it is solved
+;; with both ends open and the closure pair (R0 R2) the body needs is missed.  Under
+;; `thereExists` that loses the answer; under `unknown` and `exceptWhen` it admits one the
+;; closure refutes, and the predicate is named in `:unenumerated-in-guards` as well.
+
+(defn- open-pair-kb [kb aheadOf start finish R0 R1 R2 CxT]
+  (v/assert kb (list 'transitive aheadOf) CxT)
+  (v/assert kb (list aheadOf R0 R1) CxT)
+  (v/assert kb (list aheadOf R1 R2) CxT)
+  (v/assert kb (list start R0) CxT)
+  (v/assert kb (list finish R2) CxT)
+  (list 'thereExists '[?x ?y] (list 'and (list aheadOf '?x '?y) (list start '?x) (list finish '?y))))
+
+(defn- unenumerated-keys [r] (select-keys r [:status :unenumerated :unenumerated-in-guards]))
+
+(tu/deftest-kb an-open-transitive-goal-under-there-exists-loses-the-answer-and-reads-incomplete
+  (tu/with-terms [aheadOf start finish R0 R1 R2 CxT]
+    (let [body (open-pair-kb kb aheadOf start finish R0 R1 R2 CxT)
+          want {:status :incomplete :unenumerated [aheadOf] :unenumerated-in-guards []}]
+      (is (= want (unenumerated-keys (v/query-status kb body CxT {:max-depth 1}))))
+      (let [r (v/ask-within kb body CxT {:max-ms 60000})]
+        (is (= [] (:results r)))
+        (is (= want (unenumerated-keys r)))))))
+
+(tu/deftest-kb an-open-transitive-goal-under-unknown-admits-the-answer-and-names-a-guard
+  (tu/with-terms [aheadOf start finish R0 R1 R2 CxT]
+    (let [goal (list 'unknown (open-pair-kb kb aheadOf start finish R0 R1 R2 CxT))
+          want {:status :incomplete :unenumerated [aheadOf] :unenumerated-in-guards [aheadOf]}]
+      (is (= want (unenumerated-keys (v/query-status kb goal CxT {:max-depth 1}))))
+      (let [r (v/ask-within kb goal CxT {:max-ms 60000})]
+        (is (= [{}] (:results r)))
+        (is (= want (unenumerated-keys r)))))))
+
+(tu/deftest-kb an-open-transitive-goal-in-an-exception-admits-the-answer-and-names-a-guard
+  (tu/with-terms [aheadOf start finish mark flagged R0 R1 R2 Z CxT]
+    (let [ex   (open-pair-kb kb aheadOf start finish R0 R1 R2 CxT)
+          goal (list flagged '?z)
+          want {:status :incomplete :unenumerated [aheadOf] :unenumerated-in-guards [aheadOf]}]
+      (v/assert kb (list 'exceptWhen ex (list 'implies (list mark '?z) (list flagged '?z))) CxT
+                {:direction :backward})
+      (v/assert kb (list mark Z) CxT)
+      (let [r (v/query-status kb goal CxT {:max-depth 1})]
+        (is (= [{'?z Z}] (:answers r)))
+        (is (= want (unenumerated-keys r))))
+      (binding [v/*query-engine* :dfs]
+        (is (= want (unenumerated-keys (v/prove-within kb goal CxT {:max-depth 1}))))))))

@@ -105,3 +105,13 @@
         (finally
           (doseq [kb (vals kbs)] (v/close! kb))
           (rm-rf! dir))))))
+
+(deftest no-request-reloads-while-the-reloader-is-busy
+  (let [reloads (atom 0)
+        busy    (atom true)
+        handler (reload/wrap-reload (fn [_] :served) {:dirs [] :busy? #(deref busy)})]
+    (with-redefs [reload/reload-changed! (fn [_ _] (swap! reloads inc))]
+      (is (= [:served :served] [(handler {}) (handler {})]))
+      (reset! busy false)
+      (handler {}))
+    (is (= 1 @reloads) "only the request after busy? turns false reloads")))

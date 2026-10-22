@@ -3,7 +3,7 @@
 (ns vaelii.disk-files-test
   "The disk substrate (`vaelii.impl.disk.files`) tested directly — the frame/slot
   primitives, torn-tail recovery, and the crash-safe compaction recovery branches the
-  full-suite gate never reaches because it never crashes mid-operation."
+  full suite never reaches because it never crashes mid-operation."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.impl.disk.files :as f])
   (:import [java.io File]
@@ -266,7 +266,7 @@
               [["an empty log" (fn [_] nil)]
                ["one frame" (fn [log] (f/append-record! log {:v 1}))]
                ["many frames" (fn [log] (dotimes [i 500] (f/append-record! log {:v i :pad (range 20)})))]
-               ["a frame larger than the read window"
+               ["a frame larger than the read buffer"
                 (fn [log] (f/append-record! log {:big (vec (range 40000))})
                   (f/append-record! log {:v :after}))]]]
         (testing label
@@ -590,7 +590,7 @@
   (with-tmp
     (fn [dir]
       (f/ensure-dir! dir)
-      (f/assert-format! dir)                              ; stamps format.edn
+      (f/assert-format! dir)                              ; writes format.edn
       (is (.exists (File. ^String dir "format.edn")))
       (f/assert-format! dir)                              ; a known version re-opens fine
       (testing "an unknown future version is refused with a clean error"

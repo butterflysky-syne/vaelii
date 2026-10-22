@@ -5,7 +5,7 @@
   unknown datum no-ops instead of materializing a phantom node and fabricating a
   removal count, retraction is idempotent, and every mutation applies atomically —
   a concurrent `swap!` composes with `retract!`/`sweep!` rather than being lost to
-  a deref-then-`reset!` window.
+  a deref-then-`reset!` race window.
 
   The atomicity half runs against **both** networks.  The claim is about the mutation
   rather than about one representation of it, and the two reach it differently — the

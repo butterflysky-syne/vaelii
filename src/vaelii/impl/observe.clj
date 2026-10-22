@@ -45,7 +45,7 @@
   Two atoms written in two steps, which is sound because both ends of the pair belong to
   the writer: `rete/engage!` and `rete/disengage!` are the only callers, and the only
   readers are `notify-add` / `notify-remove` at the store's own choke points and the
-  `installed?` those two callers gate on — all of them on the writing thread, under the
+  `installed?` check those two callers branch on — all of them on the writing thread, under the
   single-writer contract (docs/storage.md).  Nothing beside the writer can land between
   the two."
   [add-fn remove-fn]
@@ -119,17 +119,59 @@
   []
   (.incrementAndGet clock))
 
-;; ---- the published view: a settle's holds ------------------------------------
+;; ---- the write record -------------------------------------------------------------
+;;
+;; A write that owes a report records, at each choke point, what the structure it moves
+;; held before the move, and the report reads the KB as it stood off those values after
+;; the write (`vaelii.impl.kb/prior-kb`, docs/nmtms.md, "The published set").
+
+(def ^:dynamic *write-record*
+  "Nil, or the open write record: an `IdentityHashMap` from each structure a choke point
+  moved since the record opened (a network, a taxonomy atom, the candidate index, a
+  record store, an index backend, a trie) to what that structure held before its first
+  move.  Bound by the write entry points while a report is wanted
+  (`vaelii.impl.settle/write-record`), and emptied by `settle-finish` once it has
+  reported."
+  nil)
+
+(defn record-of
+  "What the open write record keeps for `owner`, made by `(make)` at the first call since
+  the record opened or was emptied, so `make` reads `owner` before its first move; nil
+  when no record is open."
+  [owner make]
+  (when-let [^java.util.IdentityHashMap r *write-record*]
+    (or (.get r owner)
+        (let [v (make)] (.put r owner v) v))))
+
+(defn recorded
+  "What the open write record keeps for `owner`, or nil."
+  [owner]
+  (when-let [^java.util.IdentityHashMap r *write-record*] (.get r owner)))
+
+(defn keep-before!
+  "Record `(read)` under `k` in `owner`'s map of the open write record, a volatile of a
+  map keyed by `=`, unless an earlier move recorded `k`.  A nil value records that `k`
+  held nothing."
+  [owner k read]
+  (when-let [v (record-of owner #(volatile! {}))]
+    (when-not (contains? @v k) (vswap! v assoc k (read)))))
+
+(defn kept
+  "The map `keep-before!` recorded for `owner` in the open write record, or nil."
+  [owner]
+  (some-> (recorded owner) deref))
+
+;; ---- the published state: a settle's holds -----------------------------------
 ;;
 ;; A settle is a sequence of network mutations, and between its first and its last the
 ;; network holds states no settled KB holds: `settle*` lifts every standing defeat and
 ;; re-decides it rounds later.  A settle therefore **holds** the belief it started from
 ;; for every other thread, and publishes what it decided in one step when it ends
 ;; (`vaelii.impl.settle/settle`).  The network records the labels the settle moves as they
-;; were when it began (`vaelii.impl.jtms/hold!`), the scoped rosters keep the value they
+;; were when it began (`vaelii.impl.jtms/hold!`), the held sets keep the value they
 ;; had (`held-atom`), and this registry says which holds are open and which thread owns
 ;; each.  Closing a hold is one swap here, so a reader switches from the held belief to
-;; the published one in one step across the network, the rosters and the clock.
+;; the published one in one step across the network, the held sets and the clock.
 
 (defonce ^{:private true
            :tag AtomicReference
@@ -187,7 +229,7 @@
 (defn open-hold!
   "Open hold `h`: move the change clock, then register `h`, after which every thread that
   owns no hold reads the belief `h` keeps.  The clock moves first so a cache entry a held
-  reader installs under this hold carries a stamp no earlier hold's reader used
+  reader installs under this hold carries a clock value no earlier hold's reader used
   (`change-clock`)."
   [h]
   (note-change)
@@ -211,12 +253,19 @@
   [& body]
   `(if (held-reader?) (binding [*live* true] ~@body) (do ~@body)))
 
+(defn- keep-value!
+  "Record the value `a`, the atom inside the held atom `ha`, holds in the open write
+  record before its first write there."
+  [ha ^clojure.lang.Atom a]
+  (when *write-record*
+    (record-of ha #(.deref a))))
+
 (deftype HeldAtom [^clojure.lang.Atom a ^AtomicReference held]
   ;; `held` is nil, or `{:hold h :value v}`: the value `a` held when hold `h` began.  Every
   ;; write goes to `a`; a deref answers `v` to a thread that reads `h`'s belief.
   ;;
   ;; A deref that answers `a`'s own value reads the registry before and after it, and
-  ;; reads again when a hold opened or closed in between: a settle writes the rosters only
+  ;; reads again when a hold opened or closed in between: a settle writes the held sets only
   ;; while its hold is open, so a value read with no hold open on either side is one no
   ;; settle was deciding.
   clojure.lang.IDeref
@@ -231,18 +280,19 @@
               (:value p)
               (let [v (.deref a)]
                 (if (identical? m (.get holds)) v (recur)))))))))
+  ;; every write first offers the value it replaces to the open write record
   clojure.lang.IAtom2
-  (swap [_ f] (.swap a f))
-  (swap [_ f x] (.swap a f x))
-  (swap [_ f x y] (.swap a f x y))
-  (swap [_ f x y args] (.swap a f x y args))
-  (compareAndSet [_ o n] (.compareAndSet a o n))
-  (reset [_ v] (.reset a v))
-  (swapVals [_ f] (.swapVals a f))
-  (swapVals [_ f x] (.swapVals a f x))
-  (swapVals [_ f x y] (.swapVals a f x y))
-  (swapVals [_ f x y args] (.swapVals a f x y args))
-  (resetVals [_ v] (.resetVals a v)))
+  (swap [this f] (keep-value! this a) (.swap a f))
+  (swap [this f x] (keep-value! this a) (.swap a f x))
+  (swap [this f x y] (keep-value! this a) (.swap a f x y))
+  (swap [this f x y args] (keep-value! this a) (.swap a f x y args))
+  (compareAndSet [this o n] (keep-value! this a) (.compareAndSet a o n))
+  (reset [this v] (keep-value! this a) (.reset a v))
+  (swapVals [this f] (keep-value! this a) (.swapVals a f))
+  (swapVals [this f x] (keep-value! this a) (.swapVals a f x))
+  (swapVals [this f x y] (keep-value! this a) (.swapVals a f x y))
+  (swapVals [this f x y args] (keep-value! this a) (.swapVals a f x y args))
+  (resetVals [this v] (keep-value! this a) (.resetVals a v)))
 
 (defn held-atom
   "An atom holding `v` that keeps its value for a hold's readers (`hold-atom!`)."
@@ -262,13 +312,13 @@
   nil)
 
 (defn change-clock
-  "The current value of the change clock.  A reader stamps what it derived with this
+  "The current value of the change clock.  A reader records what it derived under this
   and re-derives when it has moved.
 
   A thread that reads held belief (`held-reader?`) reads `-1 - clock` instead.  What it
   derives describes the belief the hold keeps, and the writer's entries describe the
   network it is deciding, so the two must never share an entry: every cache compares the
-  stamp it stored with this value, and a negative stamp equals no stamp the writer or a
+  clock value it stored with this value, and a negative value equals no value the writer or a
   reader outside a hold uses.  `open-hold!` moves the clock, so two holds' readers do not
   share one either."
   ^long []
@@ -296,10 +346,10 @@
   through and ask the index.
 
   The key is the sentence **as the caller spelled it**, which is the second thing to
-  invalidate on and the reason every entry carries a `stamp`.  A raw sentence reaches
+  invalidate on and the reason every entry carries a cache key.  A raw sentence reaches
   its handle by way of canonicalization, and canonicalization reads exactly one thing
   off the KB: which predicates are `symmetric` (`resolution/kb-sentex`).  So a cached
-  answer is valid precisely while that set is — hand the set itself in as the stamp and
+  answer is valid precisely while that set is — hand the set itself in as the key and
   the whole map is dropped the moment it is replaced, whether by a declaration arriving,
   one leaving, or one changing belief.  Nothing else in a sentex's key is a function of
   the KB.
@@ -312,73 +362,73 @@
   removed, not a synchronization the caller needs."
   nil)
 
-(def ^:private stamp-key
-  "Where the current stamp lives in the cache map — a keyword, so it cannot collide
-  with a `[sentence context]` key."
-  ::stamp)
+(def ^:private filled-under-key
+  "Where the map holds the cache key it was filled under — a keyword, so it cannot
+  collide with a `[sentence context]` key."
+  ::filled-under)
 
 (def ^:private generation-key
   "Where the cache's **generation** lives: a counter stepped at every wholesale clear,
   so a reader that recorded it can tell whether the entries it saw filled are still
-  the entries the map holds.  Beside the stamp for the same reason the stamp is there —
-  a keyword cannot collide with a `[sentence context]` key."
+  the entries the map holds.  Beside the cache key for the same reason the cache key is
+  there — a keyword cannot collide with a `[sentence context]` key."
   ::generation)
 
 (defn- current-under?
-  "Was the cache `c` filled under `stamp`?  `=`, not `identical?`: the stamp is a
+  "Was the cache `c` filled under `cache-key`?  `=`, not `identical?`: the key is a
   composite (the KB's record store, then the symmetric-predicate set), rebuilt per call
   — the store half compares by identity inside it, which is the isolation the composite
   exists for."
-  [^java.util.Map c stamp]
-  (= stamp (.get c stamp-key)))
+  [^java.util.Map c cache-key]
+  (= cache-key (.get c filled-under-key)))
 
 (defn cached-handle
-  "The cached handle for `sentence` in `context` under `stamp`, or nil — including
-  whenever the cache was filled under a different stamp, which is a miss and not a
+  "The cached handle for `sentence` in `context` under `cache-key`, or nil — including
+  whenever the cache was filled under a different key, which is a miss and not a
   wrong answer."
-  [stamp sentence context]
+  [cache-key sentence context]
   (when-let [^java.util.Map c *handle-cache*]
-    (when (current-under? c stamp)
+    (when (current-under? c cache-key)
       (.get c [sentence context]))))
 
 (defn cache-handle!
-  "Record that `sentence` in `context` is stored at `handle`, valid while `stamp`
-  holds; returns `handle`.  A stamp the cache was not filled under empties it first —
+  "Record that `sentence` in `context` is stored at `handle`, valid while `cache-key`
+  holds; returns `handle`.  A key the cache was not filled under empties it first —
   everything in it was keyed on a canonicalization that has since moved — and steps
   the generation (`cache-generation`).  A no-op when no cache is bound."
-  [stamp sentence context handle]
+  [cache-key sentence context handle]
   (when-let [^java.util.Map c *handle-cache*]
-    (when-not (current-under? c stamp)
+    (when-not (current-under? c cache-key)
       (let [gen (long (or (.get c generation-key) 0))]
         (.clear c)
-        (.put c stamp-key stamp)
+        (.put c filled-under-key cache-key)
         (.put c generation-key (inc gen))))
     (.put c [sentence context] handle))
   handle)
 
 (defn cache-generation
-  "Which filling of the handle cache is current under `stamp` — a counter that steps
+  "Which filling of the handle cache is current under `cache-key` — a counter that steps
   at every wholesale clear — or nil when no cache is bound, or when the cache was
-  filled under another stamp (its entries answer nothing under this one, and the next
-  `cache-handle!` empties it).  A cache nothing has filled yet is claimed for `stamp`
+  filled under another key (its entries answer nothing under this one, and the next
+  `cache-handle!` empties it).  A cache nothing has filled yet is claimed for `cache-key`
   here, at generation 1, so a reader can record the filling *before* the first store
   lands in it.  For a reader whose claim rests on *every* store since some moment
   being in the cache (`kb/find-sentex-handle`'s authority memo): a generation equal to
   the one it recorded says no clear has happened since, and a different one — or nil
   — says the entries it counted on are not there."
-  [stamp]
+  [cache-key]
   (when-let [^java.util.Map c *handle-cache*]
     (cond
-      (current-under? c stamp)    (.get c generation-key)
-      (nil? (.get c stamp-key))   (do (.put c stamp-key stamp)
-                                      (.put c generation-key 1)
-                                      1)
-      :else                       nil)))
+      (current-under? c cache-key)     (.get c generation-key)
+      (nil? (.get c filled-under-key)) (do (.put c filled-under-key cache-key)
+                                           (.put c generation-key 1)
+                                           1)
+      :else                            nil)))
 
 (defn forget-handle!
   "Drop `sentence`/`context` from the cache — the removal choke point's half of the
-  contract above.  Stamp-blind on purpose: a removal falsifies the entry under every
-  stamp, and the choke point should not have to know which one is current."
+  contract above.  It reads no cache key on purpose: a removal falsifies the entry under every
+  key, and the choke point should not have to know which one is current."
   [sentence context]
   (when-let [^java.util.Map c *handle-cache*] (.remove c [sentence context]))
   nil)
@@ -386,7 +436,7 @@
 (defmacro with-handle-cache
   "Run `body` with the stored-handle cache engaged.  An outer cache is reused rather
   than shadowed, so a nested run shares the entries its parent has already paid for —
-  the same composition `with-pin` makes."
+  the same composition `with-held-values` makes."
   [& body]
   `(binding [*handle-cache* (or *handle-cache* (java.util.HashMap.))] ~@body))
 
@@ -395,19 +445,19 @@
   bound, and the same wholesale clearing, the content-keyed caches take."
   256)
 
-(def ^:dynamic *pin*
+(def ^:dynamic *held-values*
   "An atom, or nil.  While one is bound, whatever `cached` derives inside that scope is
   **held fixed** for the rest of it — the clock is not consulted again.
 
   The clock alone is not enough for a caller that *writes while it reads*, and forward
   chaining is exactly that: a rule's join is a lazy seq, and each solution taken off it is
   placed — a store and a justification — before the next is realized.  So a join over one
-  network with the clock as the only stamp would re-derive that network per solution, and
+  network with the clock as the only key would re-derive that network per solution, and
   join half of its bindings against a state the other half never saw.
 
   Holding it fixed is not an approximation of the fixpoint, it *is* the fixpoint: an
   immediate-consequence step is by definition computed from one state, and what a step
-  enables is picked up by the next round rather than mid-step.  So the pin is bound where
+  enables is picked up by the next round rather than mid-step.  So `*held-values*` is bound where
   a step runs — one agenda datum (`chain/process-datum`), one node expansion
   (`inference/step!`) — and never wider than the thing whose answer must come from
   one state.  Outside such a scope there is nothing to hold fixed and the clock answers
@@ -415,7 +465,7 @@
 
   A **backward search** binds it too (`with-search-scope`, from `res/prove-from`), and
   there the argument is the weaker one: a query mutates no belief, so nothing needs
-  holding still for correctness, and what the pin buys is that a consumer placing
+  holding still for correctness, and what the held values buy is that a consumer placing
   conclusions off a lazy seq joins against one state rather than a moving one.  A
   lazily-driven search therefore scopes it per segment rather than per query, which is
   sound for exactly that reason — see `res/prove-seq`."
@@ -425,7 +475,7 @@
   "The value of `k` in the resident `cache` — an atom of `{k {:value v :clock n}}` — with
   `build` run whenever the change clock has moved since `v` was derived.  `nil` for
   `cache` runs `build` every time, which is what a caller holding no residency does.  A
-  bound `*pin*` overrides both: within its scope the first answer is the answer.
+  bound `*held-values*` overrides both: within its scope the first answer is the answer.
 
   `build` is called with the **stale value** it is replacing, or nil — what this cache
   held before the clock moved.  A caller that can derive its new answer from its old one
@@ -433,9 +483,9 @@
   one that cannot ignores the argument.
 
   The clock is read **before** `build`, and it is that earlier reading the entry is
-  stamped with.  Should anything mutate while a build is in flight, the entry is stamped
-  older than the clock and the next read rebuilds; stamping it afterwards would claim the
-  value describes a state it was never computed from.  (The engine is single-writer, so
+  recorded under.  Should anything mutate while a build is in flight, the entry is recorded
+  older than the clock and the next read rebuilds; reading the clock afterwards would claim
+  the value describes a state it was never computed from.  (The engine is single-writer, so
   this is the argument rather than the scenario.)
 
   Nothing here is content-keyed, and it does not need to be: the expensive *derivations*
@@ -443,10 +493,10 @@
   that value, so two KBs reaching the same network still share one pass.  This layer is
   about not reading the KB again, and reading the KB again is a per-KB question."
   [cache k build]
-  (let [pin *pin*
-        pk  (when pin [cache k])]                ; the atom's identity is the KB's identity
-    (if-let [pinned (and pin (find @pin pk))]
-      (val pinned)
+  (let [held *held-values*
+        pk   (when held [cache k])]              ; the atom's identity is the KB's identity
+    (if-let [found (and held (find @held pk))]
+      (val found)
       (let [v (if (nil? cache)
                 (build nil)
                 (let [now (change-clock)
@@ -461,7 +511,7 @@
                              (caches/limit-of :resident resident-limit)
                              k {:value v :clock now})
                       v))))]
-        (when pin (swap! pin assoc pk v))
+        (when held (swap! held assoc pk v))
         v))))
 
 (defn newly-seen?
@@ -548,15 +598,15 @@
   stale — no invalidation, and no cross-query leakage."
   nil)
 
-(defmacro with-pin
-  "Run `body` with the resident values it reads held fixed — see `*pin*`.  An outer pin is
-  reused rather than shadowed, so a nested step joins against the state its parent is
-  joining against, which is what makes the two binding sites compose."
+(defmacro with-held-values
+  "Run `body` with the resident values it reads held fixed — see `*held-values*`.  An outer
+  binding is reused rather than shadowed, so a nested step joins against the state its
+  parent is joining against, which is what makes the two binding sites compose."
   [& body]
-  `(binding [*pin* (or *pin* (atom {}))] ~@body))
+  `(binding [*held-values* (or *held-values* (atom {}))] ~@body))
 
 (defmacro with-search-scope
-  "Run `body` as one step of a backward search: resident values held fixed (`with-pin`)
+  "Run `body` as one step of a backward search: resident values held fixed (`with-held-values`)
   and one transitive-closure memo (`*reach-memo*`) open for its length.
 
   The two go together because a search step is where both problems appear at once — a
@@ -572,10 +622,10 @@
   lazy consumer can still be handed a seq — see `res/prove-seq`.
 
   **`body` must be eager.**  A lazy seq escaping this scope realizes later with the
-  bindings gone, which for the memo is a silent slowdown and for the pin is a join
-  against a state that moved."
+  bindings gone, which for the memo is a silent slowdown and for the held values is
+  a join against a state that moved."
   [& body]
-  `(with-pin (binding [*reach-memo* (or *reach-memo* (atom {}))] ~@body)))
+  `(with-held-values (binding [*reach-memo* (or *reach-memo* (atom {}))] ~@body)))
 
 ;; ---- what this extension point holds, declared -------------------------------------
 ;;
@@ -594,7 +644,7 @@
   :counters :kb
   :note     (str "What this KB's derived structures cost to read out of the store — a "
                  "qualitative constraint network per calculus and context, the metric "
-                 "problem behind it, and the closures over each. Stamped with the "
+                 "problem behind it, and the closures over each. Keyed by the "
                  "change clock, so one mutation retires every entry; past the limit it "
                  "is cleared wholesale.")
   :read     (fn [kb] {:entries (some-> (reasoning/qcn kb) deref count)})
@@ -634,8 +684,8 @@
   :reset-counters (fn [_] (reset-neighbour-counters))})
 
 (caches/register-cache
- {:cache    :pinned-values
-  :label    "Pinned values"
+ {:cache    :held-values
+  :label    "Held values"
   :scope    :process
   :unit     "resident values"
   :limit    nil
@@ -643,14 +693,14 @@
   :note     (str "The resident values one inference step holds fixed while it writes, "
                  "so a join reads one state rather than a moving one. A step's scope, "
                  "and so uncountable between steps.")
-  :read     (fn [_] {:entries (some-> *pin* deref count)})})
+  :read     (fn [_] {:entries (some-> *held-values* deref count)})})
 
 (caches/register-derived
  {:id :X3 :label "Change clock" :kind :counter :keyed-by :global :reads []
   :holds-content? false
   :retired-by (caches/on-every :G*) :computed :write :imaged? false :var #'clock
   :value (fn [_] (.get clock))
-  :note "bumped by every mutation of any KB in the process; R1, R2 and R3 stamp entries with it"})
+  :note "bumped by every mutation of any KB in the process; R1, R2 and R3 key entries by it"})
 
 (caches/register-derived
  {:id :R3 :label "Resident derived values" :cache :resident :kind :cache :keyed-by :context
@@ -661,17 +711,23 @@
   :live (fn [kb] (let [now (change-clock)]
                    (count (filter #(and (map? %) (== now (long (:clock % -1))))
                                   (vals @(reasoning/qcn kb))))))
-  :note "networks and passes by `[calc ctx]`, each stamped with the change clock and rebuilt from its stale value; `newly-seen?` markers carry no clock"})
+  :note "networks and passes by `[calc ctx]`, each keyed by the change clock and rebuilt from its stale value; `newly-seen?` markers carry no clock"})
 
 (caches/register-derived
  {:id :R7 :label "Search-step memos" :cache :closure-neighbours :kind :pass :keyed-by :node
   :holds-content? false
   :reads [:index :M1] :retired-by {} :computed :pass :imaged? false :var #'*reach-memo*
-  :note "`*reach-memo*` (neighbour sets) and `*pin*` (pinned resident values), bound for one search step or one datum"})
+  :note "`*reach-memo*` (neighbour sets) and `*held-values*` (resident values held fixed), bound for one search step or one datum"})
 
 (caches/register-derived
  {:id :R8 :label "Stored handles" :cache :stored-handles :kind :pass :keyed-by :literal
   :holds-content? false
   :reads [:index :records] :retired-by {:removed :K :respelled :K} :computed :pass
   :imaged? false :var #'*handle-cache*
-  :note "`[sentence ctx]` to handle for one chaining run, and the chain authority memo (`kb/*chain-authoritative-functors*`); a removal forgets its handle and a `canon-stamp` step clears both"})
+  :note "`[sentence ctx]` to handle for one chaining run, and the chain authority memo (`kb/*chain-authoritative-functors*`); a removal forgets its handle and a `handle-cache-key` step clears both"})
+
+(caches/register-derived
+ {:id :R14 :label "Write record" :kind :pass :keyed-by :value :holds-content? false
+  :reads [:records :index :M1 :T1 :J1] :retired-by {} :computed :pass :imaged? false
+  :var #'*write-record*
+  :note "what each structure a write moves held before its first move, bound for one write and read by its report (`kb/prior-kb`)"})

@@ -72,8 +72,8 @@
   "Every category but `:missing-arg`, for a fixture whose bare declarations would
   otherwise report their untyped positions beside the finding under test."
   #{:definition-inconsistencies :all-specified-violations :genl-arg-widening
-    :not-under-thing :implicit-genl :orthogonal-over-separation :twin-genls
-    :derivable-stated-edge :disjoint-could-be-partition})
+    :not-under-thing :implicit-genl :implicit-arity-class :orthogonal-over-separation
+    :twin-genls :derivable-stated-edge :disjoint-could-be-partition})
 
 (defn- content-order
   "Declaration tuples in the content order the specified pass reads them in."
@@ -362,7 +362,7 @@
           (is (contains? report :definition-inconsistencies))
           (is (contains? report :all-specified-violations))))
       ;; Two open reads are declaration censuses rather than domain reads: the sweep's
-      ;; own collection census, and the definition provers' applicability gate
+      ;; own collection census, and the definition provers' applicability check
       ;; (`provers/defn-declaring-colls`), which reads the declaring collections off the
       ;; functor posting, one per declaration, before any taxonomy walk.
       (let [censuses #{'(defnSufficient ?collection ?condition)
@@ -722,21 +722,21 @@
                                               'CxUniverse))))))
 
 (tu/deftest-kb a-type-left-with-two-candidate-parts-is-not-suggested
-  (tu/with-terms [first_part second_part third_part loose_kind narrowed_kind pinned_kind]
+  (tu/with-terms [first_part second_part third_part loose_kind narrowed_kind disjoint_kind]
     (v/assert kb (list 'partition 'thing first_part second_part third_part) 'CxUniverse)
-    (doseq [k [loose_kind narrowed_kind pinned_kind]]
+    (doseq [k [loose_kind narrowed_kind disjoint_kind]]
       (v/assert kb (list 'genl k 'thing) 'CxUniverse))
     (v/assert kb (list 'disjoint narrowed_kind first_part) 'CxUniverse)
-    (v/assert kb (list 'disjoint pinned_kind first_part) 'CxUniverse)
-    (v/assert kb (list 'disjoint pinned_kind second_part) 'CxUniverse)
-    (let [report (v/kb-integrity kb #{loose_kind narrowed_kind pinned_kind first_part}
+    (v/assert kb (list 'disjoint disjoint_kind first_part) 'CxUniverse)
+    (v/assert kb (list 'disjoint disjoint_kind second_part) 'CxUniverse)
+    (let [report (v/kb-integrity kb #{loose_kind narrowed_kind disjoint_kind first_part}
                                  'CxUniverse)]
-      (is (= [{:term pinned_kind :genl third_part}]
+      (is (= [{:term disjoint_kind :genl third_part}]
              (map #(select-keys % [:term :genl]) (:implicit-genl report)))
           "disjoint from no part, or from one part of three, leaves two candidates and
            no suggestion; a part itself is never a suggestion")
-      (is (= [[first_part [(list 'disjoint pinned_kind first_part)]]
-              [second_part [(list 'disjoint pinned_kind second_part)]]]
+      (is (= [[first_part [(list 'disjoint disjoint_kind first_part)]]
+              [second_part [(list 'disjoint disjoint_kind second_part)]]]
              (sort-by (comp nm/print-key first)
                       (map (juxt :part #(mapv (partial apply list) (:grounds %)))
                            (:disjoint-from (first (:implicit-genl report))))))
@@ -767,6 +767,94 @@
               needed (first (filter #(= :gap (:status (run %))) (range 0 2000)))]
           (is (some? needed) "some finite work budget completes the sweep")
           (let [partials (map run (range 0 (or needed 0)))]
+            (is (every? #(and (= :truncated (:status %)) (= :max-work (:reason %)))
+                        partials))
+            (is (some #(= (subvec in-order 0 1) (shown %)) partials)
+                "a budget exhausted between the two terms keeps the first finding")))))))
+
+;; ---- implicit-arity-class ---------------------------------------------------
+
+(def ^:private arity-class-only
+  "The implicit-arity-class pass alone, so a fixture's bare declarations report nothing
+  else beside the finding under test."
+  {:categories #{:implicit-arity-class}})
+
+(tu/deftest-kb a-predicate-with-an-arity-and-no-class-is-suggested-the-class
+  (tu/with-terms [pairOf pairedWith]
+    (v/assert kb '(predicateTypeByArity binary_predicate 2) 'CxUniverse)
+    (v/assert kb (list 'predicate pairOf) 'CxUniverse)
+    (v/assert kb (list 'arity pairOf 2) 'CxUniverse)
+    (v/assert kb (list 'predicate pairedWith) 'CxUniverse)
+    (v/assert kb (list 'arity pairedWith 2) 'CxUniverse)
+    (v/assert kb (list 'binary_predicate pairedWith) 'CxUniverse)
+    (let [before (state-snapshot kb)
+          report (v/kb-integrity kb #{pairOf pairedWith} 'CxUniverse arity-class-only)]
+      (is (= :gap (:status report)))
+      (is (= [{:term pairOf :kind 'predicate :arity 2 :class 'binary_predicate
+               :mapping '(predicateTypeByArity binary_predicate 2)}]
+             (:implicit-arity-class report))
+          "one finding, for the predicate whose class is not stated")
+      (is (= before (state-snapshot kb)) "a suggestion asserts nothing"))
+    (v/assert kb (list 'binary_predicate pairOf) 'CxUniverse)
+    (is (= :audited (:status (v/kb-integrity kb #{pairOf pairedWith} 'CxUniverse
+                                             arity-class-only)))
+        "and none once the class is stated")))
+
+(tu/deftest-kb a-function-is-suggested-its-function-class-and-never-a-predicate-one
+  (tu/with-terms [PairFn pairRel]
+    (v/assert kb '(predicateTypeByArity binary_predicate 2) 'CxUniverse)
+    (v/assert kb '(functionTypeByArity binary_function 2) 'CxUniverse)
+    (v/assert kb (list 'function PairFn) 'CxUniverse)
+    (v/assert kb (list 'arity PairFn 2) 'CxUniverse)
+    (v/assert kb (list 'relation pairRel) 'CxUniverse)
+    (v/assert kb (list 'arity pairRel 2) 'CxUniverse)
+    (is (= [{:term PairFn :kind 'function :arity 2 :class 'binary_function
+             :mapping '(functionTypeByArity binary_function 2)}]
+           (:implicit-arity-class
+            (v/kb-integrity kb #{PairFn pairRel} 'CxUniverse arity-class-only)))
+        "a relation of neither kind is suggested no class")))
+
+(tu/deftest-kb an-arity-no-mapping-names-is-suggested-nothing
+  (tu/with-terms [quadOf]
+    (v/assert kb '(predicateTypeByArity binary_predicate 2) 'CxUniverse)
+    (v/assert kb (list 'predicate quadOf) 'CxUniverse)
+    (v/assert kb (list 'arity quadOf 4) 'CxUniverse)
+    (is (= :audited (:status (v/kb-integrity kb #{quadOf} 'CxUniverse arity-class-only))))))
+
+(tu/deftest-kb implicit-arity-class-findings-respect-context-visibility
+  (tu/with-terms [pairOf CxHidden]
+    (v/assert kb (list 'genlCx CxHidden 'CxUniverse) 'CxUniverse)
+    (v/assert kb (list 'predicate pairOf) 'CxUniverse)
+    (v/assert kb (list 'arity pairOf 2) 'CxUniverse)
+    (v/assert kb '(predicateTypeByArity binary_predicate 2) CxHidden)
+    (is (= :audited (:status (v/kb-integrity kb #{pairOf} 'CxUniverse arity-class-only)))
+        "a mapping asserted below the audit context is not seen from it")
+    (is (= 1 (count (:implicit-arity-class (v/kb-integrity kb #{pairOf} CxHidden
+                                                           arity-class-only)))))))
+
+(tu/deftest-kb implicit-arity-class-findings-truncate-under-every-bound
+  (tu/with-terms [pairOf pairedWith]
+    (v/assert kb '(predicateTypeByArity binary_predicate 2) 'CxUniverse)
+    (doseq [p [pairOf pairedWith]]
+      (v/assert kb (list 'predicate p) 'CxUniverse)
+      (v/assert kb (list 'arity p 2) 'CxUniverse))
+    (let [terms    #{pairOf pairedWith}
+          in-order (mapv (fn [t] {:term t :class 'binary_predicate}) (sort-by nm/print-key terms))
+          shown    #(mapv (fn [f] (select-keys f [:term :class])) (:implicit-arity-class %))
+          run      #(v/kb-integrity kb terms 'CxUniverse (merge arity-class-only %))]
+      (testing "a result cap below the finding count keeps the completed prefix"
+        (let [report (run {:max-results 1})]
+          (is (= [:truncated :max-results] [(:status report) (:reason report)]))
+          (is (= (subvec in-order 0 1) (shown report)))))
+      (testing "an exact result cap is complete"
+        (let [report (run {:max-results 2})]
+          (is (= :gap (:status report)))
+          (is (= in-order (shown report)))))
+      (testing "work exhaustion inside the pass is truncated, never audited, and keeps the
+                findings completed before it"
+        (let [needed (first (filter #(= :gap (:status (run {:max-work %}))) (range 0 2000)))]
+          (is (some? needed) "some finite work budget completes the sweep")
+          (let [partials (map #(run {:max-work %}) (range 0 (or needed 0)))]
             (is (every? #(and (= :truncated (:status %)) (= :max-work (:reason %)))
                         partials))
             (is (some #(= (subvec in-order 0 1) (shown %)) partials)
@@ -815,7 +903,7 @@
 
 (tu/deftest-kb every-form-of-stated-separation-is-reported
   (tu/with-terms [left_kind right_kind upper_left upper_right parent_kind kind_metatype
-                  roster_a roster_b]
+                  sib_a sib_b]
     (testing "an explicit disjoint over the pair"
       (v/assert kb (list 'disjoint left_kind right_kind) 'CxUniverse)
       (v/assert kb (list 'orthogonal left_kind right_kind) 'CxUniverse)
@@ -823,7 +911,7 @@
                #{(set (list 'disjoint left_kind right_kind))}]]
              (shown-orthogonals (v/kb-integrity kb #{} 'CxUniverse)))))
     (v/retract! kb (v/handle-of kb (list 'disjoint left_kind right_kind) 'CxUniverse))
-    (testing "a separating roster naming a supertype of each"
+    (testing "a separating declaration naming a supertype of each"
       (v/assert kb (list 'genl left_kind upper_left) 'CxUniverse)
       (v/assert kb (list 'genl right_kind upper_right) 'CxUniverse)
       (v/assert kb (list 'separating 'thing upper_left upper_right) 'CxUniverse)
@@ -833,11 +921,11 @@
     (v/retract! kb (v/handle-of kb (list 'separating 'thing upper_left upper_right)
                                 'CxUniverse))
     (testing "a sibling_disjoint parent"
-      (v/assert kb (list 'genl roster_a parent_kind) 'CxUniverse)
-      (v/assert kb (list 'genl roster_b parent_kind) 'CxUniverse)
+      (v/assert kb (list 'genl sib_a parent_kind) 'CxUniverse)
+      (v/assert kb (list 'genl sib_b parent_kind) 'CxUniverse)
       (v/assert kb (list 'sibling_disjoint parent_kind) 'CxUniverse)
-      (v/assert kb (list 'orthogonal roster_a roster_b) 'CxUniverse)
-      (is (some #(= [(set (list 'orthogonal roster_a roster_b))
+      (v/assert kb (list 'orthogonal sib_a sib_b) 'CxUniverse)
+      (is (some #(= [(set (list 'orthogonal sib_a sib_b))
                      #{(set (list 'sibling_disjoint parent_kind))}] %)
                 (shown-orthogonals (v/kb-integrity kb #{} 'CxUniverse)))))
     (testing "a disjoint_metatype holding both"
@@ -1299,7 +1387,7 @@
     (is (= #{[(list 'predAllInstance ownedBy pet_kind Somebody) false]
              [(list 'genl fatherX parentX) true]}
            (set (shaped-of kb)))
-        "a generator stamps a default rule, so its shape is an ordinary finding; genl is
+        "a generator generates a default rule, so its shape is an ordinary finding; genl is
          monotonic, so the default subsumption rule with no known exception is reported
          as default-shaped")))
 
@@ -1386,7 +1474,7 @@
     (v/assert kb (list 'binary_predicate ownedBy) 'CxUniverse)
     (v/assert kb (list 'implies (list pet_kind '?x) (list ownedBy Somebody '?x)) 'CxUniverse)
     (is (= [] (rule-macros kb))
-        "predInstanceAll stamps a default rule, so a monotonic one is not its spelling")))
+        "predInstanceAll generates a default rule, so a monotonic one is not its spelling")))
 
 (tu/deftest-kb near-miss-rules-are-not-reported
   (tu/with-terms [empty_kind other_kind needs_care begetsX likesX partX childX parentX

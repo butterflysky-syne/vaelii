@@ -1,20 +1,20 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.generator-test
-  "Rule generators: a rule whose consequent is a rule, whose firing stamps that rule out
+  "Rule generators: a rule whose consequent is a rule, whose firing generates that rule
   with its holes filled (docs/generators.md).
 
-  The scoping rule is the thing to pin, because nothing in the spelling announces it.
+  The scoping rule is the thing to test, because nothing in the spelling announces it.
   A variable the generator's antecedents also mention is a **hole** — bound by the join,
-  ground in the mint.  Every other variable in the stamped rule is the stamped rule's
+  ground in the mint.  Every other variable in the generated rule is the generated rule's
   own and must survive as a variable, or the mint is a rule that matches one tuple
   instead of a pattern.  Half these tests are about that one distinction.
 
   The other half is what a mint *is*: derived content, justified by the firing, so it
   leaves the way any conclusion leaves.  That only works because both chainers ask
-  belief of a rule before using it, so `a-defeated-generator-stops-stamping` and
-  `retracting-the-fill-retracts-the-rule` are as much tests of `res/rule-believed?` as
-  of the generator."
+  belief of a rule before using it, so `retracting-the-fill-retracts-the-rule` and
+  `retracting-an-outer-fill-unwinds-the-whole-chain` are as much tests of
+  `res/rule-believed?` as of the generator."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.reads :as reads]
@@ -28,7 +28,7 @@
   [kb ctx]
   (filter :antecedent (v/sentexes-in-context kb ctx)))
 
-(defn- stamped
+(defn- generated-rules
   "The rules in `ctx` that conclude a fact — every stored rule but the generators."
   [kb ctx]
   (remove vr/generator-sentex? (rule-sentexes kb ctx)))
@@ -40,7 +40,7 @@
 
 ;; ---- the shape works ------------------------------------------------------
 
-(tu/deftest-kb a-generator-stamps-one-rule-per-firing
+(tu/deftest-kb a-generator-stores-one-rule-per-firing
   (tu/with-terms [plan_verb outcomeEmotion planOf feels succeededAt failedAt Joy Regret]
     (v/assert kb (list 'implies
                        (list 'and (list plan_verb '?outcome)
@@ -53,21 +53,21 @@
     (v/assert kb (list plan_verb failedAt) 'CxUniverse)
     (v/assert kb (list outcomeEmotion succeededAt Joy) 'CxUniverse)
     (v/assert kb (list outcomeEmotion failedAt Regret) 'CxUniverse)
-    (testing "one stamped rule per fill, and no more"
-      (is (= 2 (count (stamped kb 'CxUniverse)))))
-    (testing "the hole is ground in the mint and the stamped rule keeps its own variables"
+    (testing "one generated rule per fill, and no more"
+      (is (= 2 (count (generated-rules kb 'CxUniverse)))))
+    (testing "the hole is ground in the mint and the generated rule keeps its own variables"
       (let [s (v/sentence-of (first (filter #(some #{succeededAt}
                                                    (vr/antecedent-keys (:antecedent %)))
-                                            (stamped kb 'CxUniverse))))]
-        (is (some? s) "a rule was stamped for succeededAt")
-        ;; the stamped rule's own `?a` / `?p` survive as variables — canonically
+                                            (generated-rules kb 'CxUniverse))))]
+        (is (some? s) "a rule was generated for succeededAt")
+        ;; the generated rule's own `?a` / `?p` survive as variables — canonically
         ;; renumbered, but variables
         (is (every? #(re-matches #"\?var\d+" (str %))
                     (filter #(and (symbol? %) (.startsWith (str %) "?"))
                             (tree-seq sequential? seq s)))
-            "no stamped variable was frozen into a constant")))))
+            "no generated variable was frozen into a constant")))))
 
-(tu/deftest-kb a-stamped-rule-draws-conclusions
+(tu/deftest-kb a-generated-rule-draws-conclusions
   (tu/with-terms [plan_verb outcomeEmotion planOf feels succeededAt Joy Tom Plan]
     (v/assert kb (list 'implies
                        (list 'and (list plan_verb '?outcome)
@@ -113,7 +113,7 @@
     (is (= #{(:joy a)} (:derived a)) "generator first derives the conclusion")
     (is (= #{(:joy b)} (:derived b)) "facts first derives it too")))
 
-(tu/deftest-kb the-wrapper-on-the-stamped-rule-sets-its-direction
+(tu/deftest-kb the-wrapper-on-the-generated-rule-sets-its-direction
   ;; the answer to "how do I say the generated rule is a default / backward one": the
   ;; wrapper rides inside the consequent, where substitution never touches it
   (tu/with-terms [marker src dst thing]
@@ -122,10 +122,10 @@
                              (list 'implies (list '?p '?x) (list dst '?x))))
               'CxUniverse)
     (v/assert kb (list marker src) 'CxUniverse)
-    (let [minted (first (stamped kb 'CxUniverse))]
-      (is (some? minted) "a rule was stamped")
-      (is (:defeasible minted) "the stamped rule carries the defaultRule the template set")
-      ;; No direction wrapper on the stamped rule, so it takes the mint default: forward
+    (let [minted (first (generated-rules kb 'CxUniverse))]
+      (is (some? minted) "a rule was generated")
+      (is (:defeasible minted) "the generated rule carries the defaultRule the template set")
+      ;; No direction wrapper on the generated rule, so it takes the mint default: forward
       ;; (forward + backward).  A set/backwardRule / set/forwardOnlyRule inside the
       ;; consequent would set it otherwise.
       (is (= #{:forward :backward} (:engines minted))))))
@@ -139,9 +139,9 @@
               'CxUniverse)
     (let [fill (v/assert kb (list marker src) 'CxUniverse)]
       (v/assert kb (list src Fido) 'CxUniverse)
-      (testing "the stamped rule fired"
+      (testing "the generated rule fired"
         (is (seq (v/sentexes-matching kb (list dst Fido) 'CxUniverse))))
-      (let [minted (:id (first (stamped kb 'CxUniverse)))]
+      (let [minted (:id (first (generated-rules kb 'CxUniverse)))]
         (is (some? minted))
         (v/retract! kb fill)
         (testing "the mint is no longer believed"
@@ -164,7 +164,7 @@
         (v/forward-chain kb)
         (is (empty? (v/sentexes-matching kb (list dst Rex) 'CxUniverse)))))))
 
-(tu/deftest-kb one-rule-stamped-two-ways-is-one-handle
+(tu/deftest-kb one-rule-generated-two-ways-is-one-handle
   ;; dedup is the ordinary sentex dedup, so it adds no work: two fills that substitute
   ;; to the same rule share a handle and collect a justification each
   (tu/with-terms [markerA markerB src dst]
@@ -174,9 +174,9 @@
                 'CxUniverse))
     (v/assert kb (list markerA src) 'CxUniverse)
     (v/assert kb (list markerB src) 'CxUniverse)
-    (is (= 1 (count (stamped kb 'CxUniverse)))
-        "the two generators stamped one rule, not two")
-    (let [h (:id (first (stamped kb 'CxUniverse)))]
+    (is (= 1 (count (generated-rules kb 'CxUniverse)))
+        "the two generators generated one rule, not two")
+    (let [h (:id (first (generated-rules kb 'CxUniverse)))]
       (is (<= 2 (count (v/supporting-justifications kb h)))
           "and it rests on both firings"))))
 
@@ -192,7 +192,7 @@
   ;; The per-level form of `a-generator-sharing-no-variable-is-refused`, and under
   ;; nesting it is a mistake the *outer* fill creates: `?x` is a hole of the first
   ;; level, so it is already ground when the second level is stored, and that level
-  ;; stamps the same rule at every firing.  Saying so at the sentence is what keeps it
+  ;; generates the same rule at every firing.  Saying so at the sentence is what keeps it
   ;; out of the ledger, one mint at a time.
   (tu/with-terms [aa bb cc dd]
     (is (= :not-range-restricted
@@ -208,14 +208,14 @@
                                    (list 'implies (list '?p '?x) (list dst '?x)))))))))
 
 (tu/deftest-kb a-generator-sharing-no-variable-is-refused
-  ;; it would stamp the same rule at every firing, which is a rule the author could
+  ;; it would generate the same rule at every firing, which is a rule the author could
   ;; have written
   (tu/with-terms [marker src dst]
     (is (= :not-range-restricted
            (refusal kb (list 'implies (list marker '?p)
                              (list 'implies (list src '?x) (list dst '?x))))))))
 
-(tu/deftest-kb the-stamped-rule-owes-its-own-range-restriction
+(tu/deftest-kb the-generated-rule-owes-its-own-range-restriction
   (tu/with-terms [marker dst]
     (is (= :not-range-restricted
            (refusal kb (list 'implies (list marker '?p)
@@ -239,7 +239,7 @@
              (refusal kb (list 'implies (list marker '?p)
                                (list 'implies (list '?q '?x) (list dst '?x)))))))))
 
-(tu/deftest-kb an-exceptWhen-on-the-stamped-rule-is-refused
+(tu/deftest-kb an-exceptWhen-on-the-generated-rule-is-refused
   ;; it would be dropped in silence — a firing has no way to split an exception into
   ;; the meta-sentex that carries it — and a guard that vanishes is worse than one
   ;; refused
@@ -255,13 +255,15 @@
                                      (list 'implies (list '?p '?x) (list dst '?x)))))))
       (v/assert kb (list blocked src) 'CxUniverse {:strength :monotonic})
       (v/assert kb (list marker src) 'CxUniverse)
-      (is (empty? (stamped kb 'CxUniverse))
-          "the blocked fill stamped nothing")
+      (let [gs (generated-rules kb 'CxUniverse)]
+        (is (= 1 (count gs)))
+        (is (some? (v/handle-of kb (list 'defeat (list 'sentexHandle (:id (first gs)))) 'CxUniverse))
+            "the blocked fill is stored with a guard defeat"))
       (v/assert kb (list src Fido) 'CxUniverse)
       (is (empty? (v/sentexes-matching kb (list dst Fido) 'CxUniverse))))))
 
-(tu/deftest-kb a-default-blocker-of-a-generator-stores-the-stamped-rule-hidden
-  ;; design ruling 25: the stamped rule is stored with a guard defeat resting on the
+(tu/deftest-kb a-default-blocker-of-a-generator-stores-the-generated-rule-hidden
+  ;; design ruling 25: the generated rule is stored with a guard defeat resting on the
   ;; blocker, so neither it nor what it concludes is believed
   (tu/with-terms [marker src dst blocked Fido]
     (v/assert kb (list 'exceptWhen (list blocked '?p)
@@ -270,13 +272,13 @@
     (v/assert kb (list blocked src) 'CxUniverse)
     (v/assert kb (list marker src) 'CxUniverse)
     (v/assert kb (list src Fido) 'CxUniverse)
-    (let [[r] (stamped kb 'CxUniverse)]
+    (let [[r] (generated-rules kb 'CxUniverse)]
       (is (some? r))
       (is (not (v/believed? kb (:id r) 'CxUniverse)))
       (is (empty? (v/sentexes-matching kb (list dst Fido) 'CxUniverse))))))
 
-(tu/deftest-kb a-stamped-existential-head-skolemizes-when-the-stamped-rule-fires
-  ;; the generator's firing does not skolemize; the `exists` inside the stamped rule
+(tu/deftest-kb a-generated-existential-head-skolemizes-when-the-generated-rule-fires
+  ;; the generator's firing does not skolemize; the `exists` inside the generated rule
   ;; skolemizes when that rule fires (docs/generators.md)
   (tu/with-terms [marker src linked Fido]
     (v/assert kb (list 'implies (list marker '?p)
@@ -284,14 +286,14 @@
                              (list 'exists '?y (list linked '?x '?y))))
               'CxUniverse)
     (v/assert kb (list marker src) 'CxUniverse)
-    (is (= 1 (count (stamped kb 'CxUniverse))))
+    (is (= 1 (count (generated-rules kb 'CxUniverse))))
     (v/assert kb (list src Fido) 'CxUniverse)
     (is (seq (v/sentexes-matching kb (list linked Fido '?y) 'CxUniverse))
-        "the stamped rule minted its witness")))
+        "the generated rule minted its witness")))
 
 (tu/deftest-kb a-generator-cycle-is-refused
   (tu/with-terms [mm nn kk pp qq]
-    (testing "one generator stamping what another reads"
+    (testing "one generator generating what another reads"
       (is (= :accepted
              (refusal kb (list 'implies (list mm '?o)
                                (list 'implies (list '?o '?a) (list kk '?a))))))
@@ -313,9 +315,9 @@
 
 (tu/deftest-kb the-cycle-check-sees-a-wrapped-generator-too
   ;; every generator is filed under the one key `implies`, which means peeling the
-  ;; wrapper off the stamped rule first — it is the stamped rule's, not the
+  ;; wrapper off the generated rule first — it is the generated rule's, not the
   ;; generator's.  Without the peel this generator files under `set/defaultRule`, the
-  ;; roster misses it, and the cycle below is admitted.
+  ;; cycle check's list of generators misses it, and the cycle below is admitted.
   (tu/with-terms [mm nn kk pp]
     (is (= :accepted
            (refusal kb (list 'implies (list mm '?o)
@@ -365,14 +367,14 @@
           (is (= thrown (:type (first predicted)))
               "and it is the one assert throws"))))))
 
-;; ---- nesting: a stamped rule may stamp one in turn ------------------------
+;; ---- nesting: a generated rule may generate one in turn ------------------------
 ;; The scoping rule composes, so nothing is capped: a variable belongs to the outermost
 ;; level whose antecedents mention it, and that level's firing grounds it.  What the
 ;; extra level buys is a functor: a predicate bound *further out* is concrete before the
 ;; rule that uses it is stored, so a family of predicates can range over a family of
 ;; types without the index ever seeing a variable in functor position.
 
-(tu/deftest-kb a-generator-may-stamp-a-generator
+(tu/deftest-kb a-generator-may-generate-a-generator
   ;; the type-level/instance-level bridge, stated once instead of once per pair: the
   ;; outer level fills the two predicates, the middle fills the type, and what is stored
   ;; at the bottom is an ordinary rule over concrete functors
@@ -382,15 +384,15 @@
                              (list 'implies (list '?type '?instance)
                                    (list '?ipred '?instance '?cap))))
               'CxUniverse)
-    (testing "the pair fact stamps a generator, not a rule"
+    (testing "the pair fact generates a generator, not a rule"
       (v/assert kb (list typeVersion hasCap capType) 'CxUniverse)
       (is (= 2 (count (generators kb 'CxUniverse))) "the written one and its mint")
-      (is (empty? (stamped kb 'CxUniverse)) "and nothing that concludes a fact yet"))
-    (testing "the type-level fact stamps the rule the mint was for"
+      (is (empty? (generated-rules kb 'CxUniverse)) "and nothing that concludes a fact yet"))
+    (testing "the type-level fact generates the rule the mint was for"
       (v/assert kb (list capType bird flying) 'CxUniverse)
-      (is (= 1 (count (stamped kb 'CxUniverse))))
+      (is (= 1 (count (generated-rules kb 'CxUniverse))))
       (is (= bird (first (vr/antecedent-keys
-                          (:antecedent (first (stamped kb 'CxUniverse))))))
+                          (:antecedent (first (generated-rules kb 'CxUniverse))))))
           "keyed on the type, which was a variable two levels up"))
     (testing "and the instance-level conclusion follows"
       (v/assert kb (list bird Tweety) 'CxUniverse)
@@ -414,7 +416,7 @@
                                            (list '?ipred '?instance '?cap))))))))))
 
 (tu/deftest-kb nesting-is-not-capped
-  ;; three levels, so the middle mint is itself a generator that stamps a generator.
+  ;; three levels, so the middle mint is itself a generator that generates a generator.
   ;; What bounds a generator is the cycle check, not the depth.
   (tu/with-terms [aFor m1 m2 m3 endsAt Zed]
     (v/assert kb (list 'implies (list aFor '?p)
@@ -429,11 +431,11 @@
     (is (v/ask? kb (list endsAt Zed) 'CxUniverse))
     (is (empty? (v/violations kb)) "every level's mint stood on its own")
     (is (= 3 (count (generators kb 'CxUniverse))) "the written generator and two mints")
-    (is (= 1 (count (stamped kb 'CxUniverse))) "and one rule at the bottom")))
+    (is (= 1 (count (generated-rules kb 'CxUniverse))) "and one rule at the bottom")))
 
 (tu/deftest-kb retracting-an-outer-fill-unwinds-the-whole-chain
   ;; a mint is derived content at every level, so one relabel takes the chain: the fill
-  ;; goes, the generator it stamped stops being believed, the rule *that* stamped goes
+  ;; goes, the generator it generated stops being believed, the rule *that* generated goes
   ;; with it, and so does the conclusion
   (tu/with-terms [typeVersion hasCap capType bird flying Tweety]
     (v/assert kb (list 'implies (list typeVersion '?ipred '?tpred)
@@ -514,7 +516,7 @@
     (v/clear-violations! kb)
     ;; a number in the instance-level predicate's place heads a literal no index can key
     (v/assert kb (list typeVersion 7 capType) 'CxUniverse)
-    (is (empty? (stamped kb 'CxUniverse)) "nothing was stored for it")
+    (is (empty? (generated-rules kb 'CxUniverse)) "nothing was stored for it")
     (is (= 1 (count (generators kb 'CxUniverse))) "and no generator was minted either")
     (is (seq (v/violations kb)) "the drop is readable")))
 
@@ -550,11 +552,11 @@
     ;; a fill that is a *number* heads a literal no index can key
     (v/assert kb (list marker 7) 'CxUniverse)
     (testing "nothing was stored for it"
-      (is (empty? (stamped kb 'CxUniverse))))
+      (is (empty? (generated-rules kb 'CxUniverse))))
     (testing "and the drop is readable"
       (is (seq (v/violations kb))))))
 
-(tu/deftest-kb a-stamped-conjunctive-consequent-is-polycanonicalized
+(tu/deftest-kb a-generated-conjunctive-consequent-is-polycanonicalized
   ;; the same split an asserted rule gets: one rule per conjunct, each keyed by its own
   ;; consequent predicate, or `reads/as-stored-rules-by-consequent-in` could not answer
   ;; for either
@@ -564,11 +566,11 @@
                              (list 'and (list dstA '?x) (list dstB '?x))))
               'CxUniverse)
     (v/assert kb (list marker src) 'CxUniverse)
-    (is (= 2 (count (stamped kb 'CxUniverse)))
-        "one stamped rule per conjunct")
+    (is (= 2 (count (generated-rules kb 'CxUniverse)))
+        "one generated rule per conjunct")
     (is (= #{dstA dstB}
            (into #{} (map #(vr/consequent-key (:consequent %)))
-                 (stamped kb 'CxUniverse))))))
+                 (generated-rules kb 'CxUniverse))))))
 
 (tu/deftest-kb a-mint-is-reachable-by-the-index-both-ways
   ;; the whole point of minting rather than interpreting: what gets stored is an
@@ -578,28 +580,28 @@
                        (list 'implies (list '?p '?x) (list dst '?x)))
               'CxUniverse)
     (v/assert kb (list marker src) 'CxUniverse)
-    (let [h (:id (first (stamped kb 'CxUniverse)))]
-      (testing "posted under the stamped antecedent, not under a variable"
+    (let [h (:id (first (generated-rules kb 'CxUniverse)))]
+      (testing "posted under the generated antecedent, not under a variable"
         (is (contains? (set (reads/as-stored-rules-by-antecedent-global (:index kb) src)) h)))
-      (testing "and under the stamped consequent"
+      (testing "and under the generated consequent"
         (is (contains? (set (reads/as-stored-rules-by-consequent-global (:index kb) dst)) h))))
     (testing "so a backward goal reaches it too"
       (v/assert kb (list src Fido) 'CxUniverse)
       (is (v/provable? kb (list dst Fido) 'CxUniverse)))))
 
-(tu/deftest-kb asserting-a-stamped-rule-gives-it-a-ground-of-its-own
-  ;; A stamped rule is a *conclusion*: it rests on the generator's justification and
+(tu/deftest-kb asserting-a-generated-rule-gives-it-a-ground-of-its-own
+  ;; A generated rule is a *conclusion*: it rests on the generator's justification and
   ;; goes when the generator does.  Asserting the same rule is a second and independent
   ;; ground for it, and the rule entry point marks the premise for it as the fact entry point does —
-  ;; so the rule outlives the generator that first stamped it, and carries the class
+  ;; so the rule outlives the generator that first generated it, and carries the class
   ;; the assertion stated rather than none.
   (tu/with-terms [marker src dst Fido]
     (let [gh (v/assert kb (list 'implies (list marker '?p)
                                 (list 'implies (list '?p '?x) (list dst '?x)))
                        'CxUniverse)]
       (v/assert kb (list marker src) 'CxUniverse)
-      (let [sx (first (stamped kb 'CxUniverse))]
-        (is (some? sx) "the generator stamped a rule")
+      (let [sx (first (generated-rules kb 'CxUniverse))]
+        (is (some? sx) "the generator generated a rule")
         (is (false? (v/premise? kb (:id sx))) "a conclusion, resting on the generator")
         (let [h (v/assert kb (v/sentence-of sx) 'CxUniverse {:strength :monotonic})]
           (is (= (:id sx) h) "one rule, one handle — the assertion is not a second sentex")

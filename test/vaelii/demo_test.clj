@@ -4,19 +4,12 @@
   "The non-monotonicity walkthrough — `/demo`, the page whose only claim is that this is
   the engine and not a story about one.
 
-  Two halves.  The **engine** half pins the three transitions the page narrates, because
+  Two halves.  The **engine** half asserts the three transitions the page narrates, because
   the page is worth nothing if they do not hold: a conclusion nobody asserted, that same
-  conclusion *deleted* by learning one more true thing, and that same conclusion
-  re-derived at a **different handle** when the new thing is taken back.  The **browser**
-  half checks the page says all three out loud, offers the step the KB is actually up to,
-  and links records rather than describing them.
-
-  The handle changing is the required assertion.  `exceptWhen` blocks rather than
-  rebuts, so a blocked justification is invalid, groundability goes with it, and the
-  dependency-directed sweep deletes the conclusion — revival is a re-derivation, not a
-  flag being flipped.  A test that only checked belief flipping back would pass against
-  an implementation that hid the sentex and un-hid it, which is exactly the thing the
-  page promises it is not doing."
+  conclusion hidden by a guard defeat once the KB learns one more true thing, and that
+  same conclusion believed again at the **same handle** when the new thing is taken back.
+  The **browser** half checks the page says all three out loud, offers the step the KB is
+  actually up to, and links records rather than describing them."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.browser.sandbox :as sandbox]
@@ -48,10 +41,12 @@
           (is (not (v/premise? kb h1)) "derived, not something the reader wrote")
           (is (seq (:support (v/why kb h1))) "and it has a proof"))
 
-        (v/assert kb penguin sbx {:strength :monotonic})
-        (testing "step 2 — one more true thing, and the conclusion is *gone*"
-          (is (nil? (v/handle-of kb flies sbx)) "not merely OUT — there is no handle")
-          (is (nil? (v/sentex kb h1)) "the record itself was swept")
+        (v/assert kb penguin sbx)
+        (testing "step 2 — one more true thing, and the conclusion is not believed"
+          (is (= h1 (v/handle-of kb flies sbx)) "the record stays stored")
+          (is (not (v/ask? kb flies sbx)))
+          (is (some? (v/handle-of kb (list 'defeat (list 'sentexHandle h1)) sbx))
+              "and a guard defeat hides it")
           (is (not (v/ask? kb travel sbx))
               "and the hierarchy answer goes with it — flying gone means travelling unanswerable")
           (let [{:keys [reason rule exception]} (v/why-not kb flies sbx)]
@@ -63,11 +58,9 @@
 
         (v/retract! kb (v/handle-of kb penguin sbx))
         (let [h2 (v/handle-of kb flies sbx)]
-          (testing "step 3 — it comes back, and it is not the same record"
-            (is (nat-int? h2))
+          (testing "step 3 — it comes back as the same record"
             (is (v/in? kb h2))
-            (is (not= h1 h2) "revival is a re-derivation; a flipped flag would reuse the handle")
-            (is (nil? (v/sentex kb h1)) "and step 1's handle still resolves to nothing")
+            (is (= h1 h2) "the defeat's support left, and nothing was re-derived")
             (is (v/ask? kb travel sbx) "and the hierarchy answer returns — travelling answerable again"))
           (testing "the proof is identical, which is the other half of the point"
             (let [rule-of #(-> (v/why kb %) :support first :rule)
@@ -150,20 +143,18 @@
             (is (str/includes? b2 "<b>Not believed</b>"))
             (is (str/includes? b2 "states its own exception"))
             (is (str/includes? b2 "(penguin Pingu)"))
-            (is (str/includes? b2 "sweep deleted"))
+            (is (str/includes? b2 "guard defeat"))
             (is (= h1 (carried b2)) "still carrying step 1's handle, which is the point"))
 
           (let [b3 (step app cookie "restore" b2)
                 h2 (v/handle-of kb flies sandbox)]
-            (testing "step 3 shows it back, and names the two handles side by side"
+            (testing "step 3 shows it back, and names the handle at both steps"
               (is (str/includes? b3 "<b>Believed</b>"))
-              (is (str/includes? b3 "re-derivation"))
-              (is (not= h1 h2))
-              (is (str/includes? b3 (str "Step 1 concluded <code>#" h1 "</code>"))
-                  "the swept handle is named")
-              (is (str/includes? b3 (str "this is <code>#" h2 "</code>"))
-                  "beside the one that replaced it"))
-            (testing "and it links the new record, never the swept one, as the live link"
+              (is (str/includes? b3 "same record"))
+              (is (= h1 h2))
+              (is (str/includes? b3 (str "Step 1 concluded <code>#" h1 "</code>")))
+              (is (str/includes? b3 (str "this is <code>#" h2 "</code>"))))
+            (testing "and it links the record"
               (is (str/includes? b3 (str "href=\"/sentex/" h2 "\"")))
               (is (str/includes? b3 (str "href=\"/why/" h2 "\"")))))))
       (finally (sandbox/reset! kb sandbox)))))
@@ -194,7 +185,7 @@
       (try
         (v/assert kb bird sbx)
         (is (v/ask? kb travel sbx) "step 1: flying earned → travelling answerable via hierarchy")
-        (v/assert kb penguin sbx {:strength :monotonic})
+        (v/assert kb penguin sbx)
         (is (not (v/ask? kb travel sbx)) "step 2: flying defeated → travelling unanswerable")
         (v/retract! kb (v/handle-of kb penguin sbx))
         (is (v/ask? kb travel sbx) "step 3: flying restored → travelling answerable again")

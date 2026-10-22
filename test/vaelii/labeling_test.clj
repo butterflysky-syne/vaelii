@@ -201,7 +201,7 @@
   ;; missing even when it is inherited; level 7 expands rules but drops an answer belief
   ;; holds defeated (`res/defeated-answer?`), so it agrees with level 3 about which side
   ;; of the clash survives and differs only in reach. Level 3 is the belief-filtered
-  ;; view of stored facts, which is what "is this world consistent" means.
+  ;; reading of stored facts, which is what "is this world consistent" means.
   (tu/with-neutral-kb [kb tu/fresh]
     (let [{:keys [pred individual background]} (dilemma kb)
           ctx (tu/tmp-ctx "Labeling")]
@@ -265,7 +265,7 @@
   ;;
   ;; Built as a Program rather than through a KB because the engine only makes P/¬P
   ;; pairs today, so a shared member is not reachable from `assert` — which is exactly
-  ;; why this needs pinning now rather than when it first becomes reachable.
+  ;; why this needs a test now rather than when it first becomes reachable.
   (when asp?
     (let [content {1 {:sentence '(aaa) :context 'C}   ; shared, sorts first
                    2 {:sentence '(bbb) :context 'C}

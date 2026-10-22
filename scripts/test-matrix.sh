@@ -13,7 +13,7 @@
 # RUN WHAT THE CHANGE OWES, NOT EVERYTHING.  `--owed` reads the changed files and runs
 # the configurations that could disagree about them, printing the classification as it
 # goes; `scripts/lib/suite-configs.sh` carries the map and the reason each row is what
-# it is.  A bare run is the ROUTINE roster — fourteen of the sixteen, the two
+# it is.  A bare run is the ROUTINE configuration set — fourteen of the sixteen, the two
 # durable-records-with-a-derived-index pairs that are a third copy of one claim sitting
 # out — and `full` is the sixteen, which is what a release runs and what a change to
 # the record/index boundary itself owes.  Every run names what did not run, on the header
@@ -75,14 +75,14 @@
 # not the whole of why.  A namespace is compiled at boot, but `reload_test` reloads
 # nearly the whole engine from disk when it runs, so an edit made before then reaches
 # every test after it; and a test that reads a file at RUN time sees it too:
-# `config_surface_test` slurps `docs/operations.md` while its own roster is already
+# `config_surface_test` slurps `docs/operations.md` while its own switch table is already
 # compiled, so editing that doc mid-matrix moved one run's failure count and not
 # another's.  The failing set stayed identical, which is the property that matters, and
 # the count is what somebody reads first.  The dirty-by-the-end line says this happened;
 # it cannot say what it cost.
 #
 # Usage:
-#   ./scripts/test-matrix.sh                  # the routine roster, :default
+#   ./scripts/test-matrix.sh                  # the routine configuration set, :default
 #   ./scripts/test-matrix.sh --owed           # only what the changed files owe
 #   ./scripts/test-matrix.sh --owed -n        # ...and print that set without running it
 #   ./scripts/test-matrix.sh --owed=<ref>     # ...measuring the change from <ref> instead
@@ -115,7 +115,7 @@
 #   TEST_MATRIX_SEED  the shuffle seed (default: a fresh one, reported per run), the
 #                     counterpart of `test-shuffle.sh`'s TEST_SHUFFLE_SEED.  A seed
 #                     replays an order within one script and not across the two: the
-#                     rosters differ, and `test-shuffle.sh` pins memory first.
+#                     configuration sets differ, and `test-shuffle.sh` runs memory first.
 #                     `--ordered` ignores the seed.
 #   MATRIX_JVM_OPTS   extra JVM_OPTS for every run.  Empty by default.  On a loaded box
 #                     `-XX:ActiveProcessorCount=2` is the one worth trying — each JVM
@@ -191,7 +191,7 @@ esac
 # the default slot count, shared with test-parallel.sh so the rule cannot drift
 # shellcheck source=scripts/lib/slots.sh
 . scripts/lib/slots.sh
-# one row in `logs/runs.tsv` per matrix: the revision, the clock, the roster and the
+# one row in `logs/runs.tsv` per matrix: the revision, the clock, the configuration set and the
 # verdict.  `summary.tsv` beside each run holds the per-configuration detail; this is
 # the one line that says WHICH REVISION the matrix last went green at, without
 # opening two dozen run directories to find it
@@ -279,7 +279,7 @@ while [[ $# -gt 0 ]]; do
     --keep) KEEP=1; shift ;;
     --fail-fast) FAIL_FAST=1; shift ;;
     # the launch order: shuffled by default, longest-first on request.  The block that
-    # orders the roster below says what each costs.
+    # orders the configurations below says what each costs.
     --ordered) SHUFFLE=0; shift ;;
     --owed) OWED=1; shift ;;
     # a ref rather than a bare flag, so it cannot be confused with the positional
@@ -474,20 +474,20 @@ if (( OWED )); then
   (( quiet > 0 )) && echo "  ${DIM}${quiet} other changed file(s) owe no configuration${OFF}"
   if [[ ${#WANTED[@]} -eq 0 ]]; then
     echo "${GREEN}these changes owe the matrix no configuration${OFF}" \
-         "${DIM}— nothing here swaps a store or an implementation, so \`lein gate\` is the gate${OFF}"
+         "${DIM}— nothing here swaps a store or an implementation, so \`lein gate\` covers them${OFF}"
     exit 0
   fi
 fi
 
-# A bare run is the ROUTINE roster, not every configuration: `routine` in
+# A bare run is the ROUTINE configuration set, not every configuration: `routine` in
 # scripts/lib/suite-configs.sh says which two sit out and why, and the header below
-# names them every time, because a roster that quietly shrank is a matrix that means
+# names them every time, because a configuration set that quietly shrank is a matrix that means
 # less than the word does.
 if [[ ${#WANTED[@]} -eq 0 ]]; then WANTED=(routine); fi
-# What this run calls its roster, for the ledger row.  `--owed` names itself rather
+# What this run calls its configuration set, for the logs/runs.tsv row.  `--owed` names itself rather
 # than listing the configurations it resolved to: the set is a function of the diff,
 # so the word is the reproducible thing and the list is in `summary.tsv`.
-if (( OWED )); then ROSTER_LABEL="owed"; else ROSTER_LABEL="${WANTED[*]}"; fi
+if (( OWED )); then CONFIG_SET_LABEL="owed"; else CONFIG_SET_LABEL="${WANTED[*]}"; fi
 CONFIGS=()
 while IFS= read -r c; do CONFIGS+=("$c"); done < <(expand_configs "${WANTED[@]}")
 [[ ${#CONFIGS[@]} -gt 0 ]] || { echo "no configurations selected" >&2; exit 2; }
@@ -568,7 +568,7 @@ if (( OWED )); then
 fi
 
 # AN OWED RUN IS CAPPED at MATRIX_OWED_MAX configurations (default 4; 0 lifts the cap),
-# taken off the front of the launch order.  An owed set reaches most of the roster once
+# taken off the front of the launch order.  An owed set reaches most of the configurations once
 # a diff touches the engine, and the queue re-runs it after every matrix, so an uncapped
 # owed run repeated the same failures across a dozen JVMs.  A configuration a changed
 # file names itself (`disk-snapshot` for the reasoning image) goes ahead of the ones a
@@ -594,7 +594,7 @@ if (( OWED && OWED_MAX > 0 && ${#CONFIGS[@]} > OWED_MAX )); then
   CONFIGS=("${CONFIGS[@]:0:OWED_MAX}")
 fi
 
-# What is NOT running, in the full roster's order — read once here and printed with the
+# What is NOT running, in the full configuration set's order — read once here and printed with the
 # header and again with the verdict.  Uniform across every way of choosing: a bare run,
 # a group, `--owed` and a hand-named list all answer the same question the same way.
 SAT_OUT=()
@@ -603,23 +603,23 @@ for c in "${ALL_BACKENDS[@]}" "${ALL_SWEEPS[@]}"; do
   for r in "${CONFIGS[@]}"; do [[ "$c" == "$r" ]] && { running=1; break; }; done
   (( running )) || SAT_OUT+=("$c")
 done
-ROSTER_TOTAL=$(( ${#ALL_BACKENDS[@]} + ${#ALL_SWEEPS[@]} ))
-# The routine roster's size, which is the floor a run has to reach to be filed as
+CONFIG_TOTAL=$(( ${#ALL_BACKENDS[@]} + ${#ALL_SWEEPS[@]} ))
+# The routine configuration set's size, which is the floor a run has to reach to be filed as
 # the matrix rather than as a subset (see the ledger row at the end).
-ROUTINE_TOTAL=$(( ROSTER_TOTAL - ${#ROUTINE_SKIP[@]} ))
+ROUTINE_TOTAL=$(( CONFIG_TOTAL - ${#ROUTINE_SKIP[@]} ))
 
-# WHAT THIS ROSTER COVERS: `full` where nothing sits out, `routine` where the only
-# ones sitting out are the two the routine roster leaves out, empty otherwise.  A
-# subset that covers the routine roster answers the matrix column's question as
-# well as its own — `--owed` on a change that owes everything runs a wider roster
+# WHAT THIS CONFIGURATION SET COVERS: `full` where nothing sits out, `routine` where the only
+# ones sitting out are the two the routine configuration set leaves out, empty otherwise.  A
+# subset that covers the routine configuration set answers the matrix column's question as
+# well as its own — `--owed` on a change that owes everything runs a wider configuration set
 # than a bare `lein test-matrix` does — so the ledger row below names it and the
 # tool reading the row files it under both columns.
 COVERS=""
 covered=1
 # `${SAT_OUT[@]+...}` because bash 3.2 — which is what macOS ships — treats an empty
 # array expanded as `"${a[@]}"` under `set -u` as an unbound variable.  SAT_OUT is empty
-# exactly when the roster leaves nothing out, so a `--owed` set covering all
-# $ROSTER_TOTAL configurations is the case that reaches it.
+# exactly when the configuration set leaves nothing out, so a `--owed` set covering all
+# $CONFIG_TOTAL configurations is the case that reaches it.
 for c in ${SAT_OUT[@]+"${SAT_OUT[@]}"}; do
   optional=0
   for s in "${ROUTINE_SKIP[@]}"; do [[ "$c" == "$s" ]] && { optional=1; break; }; done
@@ -644,7 +644,7 @@ AUTO_JOBS=0; [[ -z "$JOBS" ]] && AUTO_JOBS=1
 # start them, at the slot count it would use.  A matrix is minutes to an hour, so the
 # question "is this the right set?" wants an answer before it, not after.
 if (( DRY )); then
-  echo "${BOLD}${#CONFIGS[@]} of $ROSTER_TOTAL configuration(s), $JOBS at a time${OFF}" \
+  echo "${BOLD}${#CONFIGS[@]} of $CONFIG_TOTAL configuration(s), $JOBS at a time${OFF}" \
        "${DIM}$SELECTOR${OFF}"
   [[ ${#SAT_OUT[@]} -gt 0 ]] && echo "${DIM}not run: ${SAT_OUT[*]}${OFF}"
   (( SHUFFLE )) && echo "${DIM}seed $SEED  (TEST_MATRIX_SEED=$SEED to replay this order)${OFF}"
@@ -729,16 +729,16 @@ n=${#CONFIGS[@]}
 # and a run that is killed leaves it behind saying what it had meant to do.
 {
   printf 'selector\t%s\n' "$SELECTOR"
-  printf 'roster\t%s\n' "$ROSTER_LABEL"
+  printf 'config-set\t%s\n' "$CONFIG_SET_LABEL"
   printf 'configs\t%d\n' "$n"
-  printf 'of\t%d\n' "$ROSTER_TOTAL"
-  # the routine roster's size, which is the floor the ledger row below files a
-  # run as a subset under.  Written here so a watcher decides the variant the
-  # way this script decides it, rather than on the roster word alone — the two
+  printf 'of\t%d\n' "$CONFIG_TOTAL"
+  # the routine configuration set's size, which is the floor below which the
+  # runs.tsv row files a run as a subset.  Written here so a watcher decides the variant the
+  # way this script decides it, rather than on the configuration-set word alone — the two
   # rules disagreed on a hand-named short list, and a run changed column as it
   # finished.
   printf 'routine\t%d\n' "$ROUTINE_TOTAL"
-  # what this roster covers, where it covers one.  The INTENTION, like the rest of
+  # what this configuration set covers, where it covers one.  The INTENTION, like the rest of
   # the plan: a run interrupted with configurations still to go covers whatever it
   # reached, and the ledger row at the end is what says so.
   [[ -n "$COVERS" ]] && printf 'covers\t%s\n' "$COVERS"
@@ -852,7 +852,7 @@ ledger_variant() {
 # never ran at, when it ran there and failed.  `failed` where a configuration failed
 # before the stop, since that verdict stands whatever came after; `interrupted`
 # otherwise.  Nothing is filed for a stop before the first launch (`runlog_start` has
-# not stamped the run), which ran nothing.
+# not recorded the run's start), which ran nothing.
 # shellcheck disable=SC2317,SC2329  # invoked from the INT/TERM trap below
 record_interrupted() {
   [[ -n "${RUNLOG_EPOCH:-}" ]] || return 0
@@ -867,8 +867,8 @@ record_interrupted() {
   write_summary 2>/dev/null
   (( ${#FAILED[@]} > 0 )) && stopped_state=failed
   runlog_record matrix "$(ledger_variant $((n - finished)))" "$stopped_state" \
-    "$(printf '%d of %d configurations, roster %s, %d failed, %d skipped, interrupted after %d finished' \
-         "$n" "$ROSTER_TOTAL" "$ROSTER_LABEL" "${#FAILED[@]}" $((n - finished)) "$finished")" \
+    "$(printf '%d of %d configurations, config set %s, %d failed, %d skipped, interrupted after %d finished' \
+         "$n" "$CONFIG_TOTAL" "$CONFIG_SET_LABEL" "${#FAILED[@]}" $((n - finished)) "$finished")" \
     "$OUT_DIR"
 }
 
@@ -930,7 +930,7 @@ launch() {                                         # launch <index>
   # config that went red is reproducible by copying its second line.  The console cannot
   # carry it — a dozen launches with a `-Dvaelii.disk.dir=…` each is not a readable
   # column — and the log is where somebody debugging that config is already looking.
-  revision_stamp "$cfg" > "$log"
+  revision_header "$cfg" > "$log"
   printf '# env %s lein test %s\n' "${envv[*]}" "$SELECTOR" >> "$log"
   # `< /dev/null` is what keeps it running: `set -m` puts the job outside the terminal's
   # foreground group and leiningen pumps its own stdin into the project subprocess, so a
@@ -951,7 +951,7 @@ launch() {                                         # launch <index>
     >> "$OUT_DIR/configs.tsv" 2>/dev/null || true
   state[i]=running
   # the live dashboard carries a launching config as a bar that starts filling; only
-  # the scrolling view announces it as a line
+  # the scrolling log announces it as a line
   (( LIVE )) || printf '  %s▸%s %-16s %s%s  # %s%s\n' \
     "$DIM" "$OFF" "$cfg" "$DIM" "${rev[i]}" "$log" "$OFF"
 }
@@ -969,7 +969,7 @@ reap() {                                           # reap <index> -> prints its 
   else mark="$CROSS"; state[i]=failed; FAILED+=("$cfg"); fi
   fin[i]="${summary:-did not finish}${counts:+, $counts}"
   # On the dashboard the finished row and its ✔/✘ are already in the block, and the
-  # failing tests are the end-of-run rollup's to name; only the scrolling view prints
+  # failing tests are the end-of-run rollup's to name; only the scrolling log prints
   # the row and its failures inline as they land.
   if (( ! LIVE )); then
     printf '  %s %-16s %-52s %8s  %s\n' \
@@ -994,8 +994,8 @@ reap() {                                           # reap <index> -> prints its 
 
 # ---- the live dashboard (a terminal only) -----------------------------------
 # `redraw` repaints one row per configuration in place — queued, a filling bar while
-# running, ✔/✘ when done — from the same `ns_reached` poll the heartbeat reads.  It is
-# gated on `LIVE`, so a pipe or CI never sees a cursor-motion byte; the scrolling
+# running, ✔/✘ when done — from the same `ns_reached` poll the heartbeat reads.  It runs
+# only under `LIVE`, so a pipe or CI never sees a cursor-motion byte; the scrolling
 # heartbeat is what those get.
 
 # a proportional bar `━━━╾────────` `w` cells wide: heavy for the reached fraction, a
@@ -1197,10 +1197,10 @@ runlog_start
 RUNLOG_REV="$START_REV"
 RUNLOG_DIRTY="$START_DIRTY"
 
-echo "${BOLD}running ${n} of $ROSTER_TOTAL configuration(s), $JOBS at a time${OFF}" \
+echo "${BOLD}running ${n} of $CONFIG_TOTAL configuration(s), $JOBS at a time${OFF}" \
      "${DIM}$SELECTOR — $RUN_NS_COUNT of $NS_COUNT namespaces${OFF}"
 if [[ ${#SAT_OUT[@]} -gt 0 ]]; then
-  echo "${DIM}not run: ${SAT_OUT[*]} — \`full\` runs all $ROSTER_TOTAL${OFF}"
+  echo "${DIM}not run: ${SAT_OUT[*]} — \`full\` runs all $CONFIG_TOTAL${OFF}"
 fi
 echo "${DIM}at $(revision_line)${OFF}"
 if (( SHUFFLE )); then
@@ -1492,11 +1492,11 @@ if (( YIELDED )); then
        "requests, and the next matrix runs their owed configurations at the primary's HEAD."
   echo "  ${DIM}\`lein test-matrix --covered=<your first>..<your last>\` says when your commits have run.${OFF}"
 elif [[ ${#FAILED[@]} -eq 0 && $skipped -eq 0 && $stopped -eq 0 ]]; then
-  # the roster is part of the verdict, not a footnote to it: "all green" over a subset
+  # the configuration set is part of the verdict, not a footnote to it: "all green" over a subset
   # is a different sentence from "all green" over the sixteen, and this is the line
   # that gets quoted into a commit message
   if [[ ${#SAT_OUT[@]} -gt 0 ]]; then
-    echo "${GREEN}${BOLD}all $n of $ROSTER_TOTAL configurations green${OFF}" \
+    echo "${GREEN}${BOLD}all $n of $CONFIG_TOTAL configurations green${OFF}" \
          "${DIM}in $(hms $ELAPSED) — not run: ${SAT_OUT[*]} ($OUT_DIR/)${OFF}"
   else
     echo "${GREEN}${BOLD}all $n configurations green${OFF} ${DIM}in $(hms $ELAPSED) ($OUT_DIR/)${OFF}"
@@ -1523,7 +1523,7 @@ fi
 # The question a GREEN matrix asks, and the one nothing used to answer.  Fourteen runs
 # that all pass have still told you nothing if one of them ran four hundred fewer
 # assertions than the rest: a namespace that failed to load, a `deftest` that stood aside
-# without saying so, a gate that inherited a switch and measured nothing.  Every one of
+# without saying so, a check that inherited a switch and measured nothing.  Every one of
 # those is green.  `config_expected_delta` expects no shortfall anywhere and says why no
 # configuration stands aside; any shortfall is reported here.
 #
@@ -1604,37 +1604,37 @@ fi
 # ---- the ledger row ----------------------------------------------------------
 # The selector is the `variant` column: a `:default` matrix and an `:all` matrix are
 # different verdicts, and the row for one must not read as the last run of the other.
-# The roster goes in the summary instead, because it is what the count is OVER — "all
+# The configuration set goes in the summary instead, because it is what the count is OVER — "all
 # green" over `routine` is a different sentence from "all green" over `full`, and a
 # reader of the row needs both numbers to tell them apart.
-matrix_summary=$(printf '%d of %d configurations, roster %s, %d failed, %d skipped' \
-                   "$n" "$ROSTER_TOTAL" "$ROSTER_LABEL" "${#FAILED[@]}" "$((skipped + stopped))")
+matrix_summary=$(printf '%d of %d configurations, config set %s, %d failed, %d skipped' \
+                   "$n" "$CONFIG_TOTAL" "$CONFIG_SET_LABEL" "${#FAILED[@]}" "$((skipped + stopped))")
 (( YIELDED )) && matrix_summary="$matrix_summary, yielded to a queued request"
 
 # A SUBSET IS ITS OWN VERDICT, so it goes under its own variant rather than
 # overwriting the matrix's.  `lein test-matrix --owed` is the common way to run
 # one — it runs what the changed files owe — and "the matrix is green" off
 # fourteen configurations is a different sentence from the same words off three.
-# Filed under one variant, the cheap run would keep hiding when the whole roster
+# Filed under one variant, the cheap run would keep hiding when the whole configuration set
 # last ran, which is the question the row exists to answer.
 #
 # Decided on what was ASKED FOR and on WHAT RAN, either one: `--owed` files under
 # the owed variant however many configurations the diff owed, and a count short of
-# the routine roster files under it whatever asked.  A hand-named list therefore
+# the routine configuration set files under it whatever asked.  A hand-named list therefore
 # lands here too, and belongs here — its claim is partial for the same reason.
 #
 # The `--owed` half is not redundant.  An `--owed` run that owes every
-# configuration is a full roster and was still an owed run, and filing it as the
+# configuration is a full configuration set and was still an owed run, and filing it as the
 # matrix moved it out of the owed column at the moment it finished — the column
 # it had been in for the twenty minutes it ran.  The row's own summary carries
-# the count and the roster word, so a reader who wants to know how wide the run
+# the count and the configuration-set word, so a reader who wants to know how wide the run
 # was reads it there.
 #
-# A subset that COVERS the routine roster keeps its own variant and names the
+# A subset that COVERS the routine configuration set keeps its own variant and names the
 # coverage in it, so one row answers two columns: the owed column it was run
 # under, and the matrix column whose question it also settled.  Claimed only
 # where nothing was skipped — a run stopped by `--fail-fast` or by ^C planned a
-# roster it did not finish, and the plan's word for it is an intention.
+# configuration set it did not finish, and the plan's word for it is an intention.
 matrix_variant=$(ledger_variant "$((skipped + stopped))")
 if [[ ${#FAILED[@]} -eq 0 && $((skipped + stopped)) -eq 0 && $deltas_bad -eq 0 ]]; then
   matrix_state=passed

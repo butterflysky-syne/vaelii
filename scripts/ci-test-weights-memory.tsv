@@ -26,8 +26,8 @@ vaelii.arity-vocabulary-test	20.12
 vaelii.asp-aspif-test	0.01
 vaelii.asp-edge-test	0.02
 vaelii.asp-label-test	0.00
+vaelii.asp-namespaces-test	0.15
 vaelii.asp-prover-test	0.13
-vaelii.asp-roster-test	0.15
 vaelii.asp-solver-test	0.56
 vaelii.assert-cost-test	3.51
 vaelii.assert-soundness-test	0.06
@@ -147,10 +147,11 @@ vaelii.gloss-test	2.42
 vaelii.grounded-in-region-test	1.29
 vaelii.guard-test	0.02
 vaelii.handle-cache-test	0.03
+vaelii.handle-set-test	0.06
 vaelii.handle-test	0.05
 vaelii.index-dump-test	0.62
 vaelii.index-edge-test	0.04
-vaelii.index-layout-gate-test	0.08
+vaelii.index-layout-check-test	0.08
 vaelii.index-snapshot-test	2.58
 vaelii.index-test	1.48
 vaelii.inference-canonical-test	0.13
@@ -284,7 +285,7 @@ vaelii.recovery-test	14.14
 vaelii.ref.believe-test	0.62
 vaelii.ref.nogoods-test	0.00
 vaelii.reference-test	19.51
-vaelii.refusal-roster-test	2.67
+vaelii.refusal-types-test	2.67
 vaelii.refused-assert-test	0.15
 vaelii.refused-firing-test	0.21
 vaelii.reindex-test	0.69
@@ -299,7 +300,6 @@ vaelii.retrieval-completeness-test	0.03
 vaelii.revived-datum-test	0.09
 vaelii.rewrite-test	0.02
 vaelii.rewriteof-predicate-test	0.15
-vaelii.roster-test	0.06
 vaelii.round-trip-test	1.93
 vaelii.rule-instance-test	0.18
 vaelii.rule-variable-arg-test	1.29
@@ -354,7 +354,7 @@ vaelii.taxonomy-test	5.34
 vaelii.temporal-diamond-test	0.66
 vaelii.temporal-functional-in-arg-test	0.09
 vaelii.term-index-test	0.01
-vaelii.term-roster-test	1.58
+vaelii.term-names-test	1.58
 vaelii.test-util-test	0.01
 vaelii.text-export-test	0.66
 vaelii.timepoint-test	4.54
@@ -371,7 +371,7 @@ vaelii.untrusted-files-test	0.22
 vaelii.vacuous-assertion-test	0.77
 vaelii.vantage-differential-test	26.07
 vaelii.vector-spelling-test	0.02
-vaelii.violation-roster-test	0.85
+vaelii.violation-kinds-test	0.85
 vaelii.violations-test	0.02
 vaelii.vocabulary-audit-test	0.67
 vaelii.web-caches-test	81.43

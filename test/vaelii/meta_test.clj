@@ -62,7 +62,7 @@
 (tu/deftest-kb an-asserted-arity-concludes-the-class-and-a-class-is-read-as-the-arity
   (testing "arity is itself a binary predicate"
     (is (v/isa? kb 'arity 'binary_predicate)))
-  (testing "no rule concludes an arity from a class: arity is on the forced-monotonic roster"
+  (testing "no rule concludes an arity from a class: arity is forced-monotonic"
     (is (empty? (v/sentexes-matching kb '(arity dog 1) '?ctx)))
     (is (empty? (v/sentexes-matching kb '(arity parentOf 2) '?ctx)))
     (is (empty? (v/sentexes-matching kb '(arity arg 3) '?ctx))))
@@ -132,7 +132,7 @@
     (is (v/isa? kb 'siblingOf 'symmetric))
     (is (v/isa? kb 'marriedTo 'symmetric))
     (is (v/isa? kb 'ancestorOf 'transitive))
-    (is (v/isa? kb 'partOf 'transitive))
+    (is (v/isa? kb 'tangiblePartOf 'transitive))
     (is (v/isa? kb 'birthYearOf 'functional)))
   (testing "and inherit binary_predicate / predicate through genl"
     (is (v/isa? kb 'siblingOf 'binary_predicate))
@@ -148,14 +148,14 @@
     (is (v/ask? kb '(functional birthYearOf)))
     (is (not (v/ask? kb '(symmetric parentOf)))))
   (testing "and enumerated"
-    ;; the domain relations and orthogonal are the symmetric marks, decontextualized like
-    ;; the other algebraic marks, so they answer the enumeration wherever CxUniverse is
-    ;; seen.  seeAlso is NOT among them — it is a directional cross-reference, not
+    ;; the domain relations, orthogonal, negates and diachronicallyDisjoint are the symmetric
+    ;; marks, decontextualized like the other algebraic marks, so they answer the
+    ;; enumeration wherever CxUniverse is seen.  seeAlso is NOT among them — it is a directional cross-reference, not
     ;; symmetric.  The social relations (CxSocial and CxSocialExtension) are among them:
     ;; their marks are stated in CxUniverse like the rest, and ?ctx is open.
     (is (= '#{siblingOf marriedTo friendOf orthogonal siblingDisjointException
               relativeOf romanticPartnerOf coworkerOf roommateOf
-              nestingPartnerOf chosenSiblingOf}
+              nestingPartnerOf chosenSiblingOf diachronicallyDisjoint negates}
            (set (map #(get % '?p) (v/ask kb '(symmetric ?p) '?ctx)))))
     ;; `genl` and `genlCx` are in the enumeration because core.txt asserts (transitive genl)
     ;; / (transitive genlCx) outright.  They *are* transitive; answering them from cached
@@ -171,7 +171,8 @@
     ;; `greaterInMagnitudeThan` is the fourth, over quantities rather than objects.
     ;; `instantBefore` / `instantAfter` are the point algebra's strict orders, transitive
     ;; so a forward join reads a narrative's consecutive links as one ordering.
-    (is (= '#{ancestorOf partOf locatedIn largerThan instantBefore instantAfter
+    (is (= '#{ancestorOf partOf tangiblePartOf subSituationOf properPartOf properTangiblePartOf
+              properSubSituationOf properPartOfRegion properSubintervalOf locatedIn largerThan instantBefore instantAfter
               causes beforeEvent genl genlCx
               heavierThan tallerThan olderThan greaterInMagnitudeThan}
            (set (map #(get % '?p) (v/ask kb '(transitive ?p) '?ctx)))))
@@ -182,7 +183,7 @@
     (is (seq   (v/sentexes-matching kb '(genlCx CxBiology CxUniverse) 'CxUniverse)))
     (is (empty? (v/sentexes-matching kb '(genlCx CxBiology CxUniverse) 'CxBiology)))))
 
-;; ---- forced_monotonic_predicate: the roster no default reaches ----------------------
+;; ---- forced_monotonic_predicate: the forced-monotonic set no default reaches --------
 
 (defn- predicate-spelled
   "A fresh predicate spelled camelCase, which a predicate `genl` needs: `tu/with-terms`
@@ -190,7 +191,7 @@
   [base]
   (gensym (str "tmp" base)))
 
-(tu/deftest-kb a-default-write-of-each-roster-group-keeps-its-strength
+(tu/deftest-kb a-default-write-of-each-forced-monotonic-group-keeps-its-strength
   (tu/with-terms [CxLow parentOf dog_kind cat_kind bird_kind Ann Bob Cal Dan]
     (let [fatherOf (predicate-spelled "FatherOf")
           kinOf    (predicate-spelled "KinOf")
@@ -215,53 +216,63 @@
       (v/assert kb (list 'forced_monotonic_predicate likes) 'CxUniverse)
       (is (= [:default :default :default] (mapv #(v/defeat-class kb %) hs))))))
 
-(defn- inert?
-  "Is handle `h` stored, not believed, and reported `:inert` by `why-not`."
+(defn- defeated?
+  "Is handle `h` stored, not believed at its own context, and reported `:defeated` by
+  `why-not`."
   [kb h]
-  (and (some? (v/sentex kb h)) (not (v/in? kb h)) (= :inert (:reason (v/why-not kb h)))))
+  (= [false :defeated] ((juxt :believed? :reason) (v/why-not kb h))))
 
-(tu/deftest-kb a-denial-of-a-roster-literal-is-stored-inert-in-either-order
-  (tu/with-terms [CxLow parentOf dog_kind cat_kind likes Ann Bob Cal Dan]
-    (let [fatherOf (predicate-spelled "FatherOf")
-          kinOf    (predicate-spelled "KinOf")]
-      (testing "beside the literal it denies, which keeps its belief"
+(tu/deftest-kb a-denial-of-a-forced-monotonic-literal-loses-to-it-in-either-order
+  (doseq [denial-first? [false true] strength [:default :monotonic]]
+    (tu/with-terms [CxLow parentOf dog_kind cat_kind Ann Bob]
+      (let [fatherOf (predicate-spelled "FatherOf")
+            kinOf    (predicate-spelled "KinOf")]
         (doseq [s [(list 'genlCx CxLow 'CxUniverse)
                    (list 'functional parentOf)
                    (list 'genl fatherOf kinOf)
                    (list 'disjoint dog_kind cat_kind)
                    (list 'sameAs Ann Bob)]]
-          (let [h (v/assert kb s 'CxUniverse)]
-            (is (empty? (v/check kb (list 'not s) 'CxUniverse)) (pr-str s))
-            (is (inert? kb (v/assert kb (list 'not s) 'CxUniverse)) (pr-str s))
-            (is (v/in? kb h) (pr-str s)))))
-      (testing "a genl between types is not on the roster, and its denial is believed"
-        (is (v/in? kb (v/assert kb (list 'not (list 'genl dog_kind cat_kind)) 'CxUniverse))))
-      (testing "a declaration arriving after a stored denial makes it inert"
-        (let [d (v/assert kb (list 'not (list likes Cal Dan)) 'CxUniverse)]
-          (is (v/in? kb d))
-          (v/assert kb (list 'forced_monotonic_predicate likes) 'CxUniverse)
-          (is (inert? kb d))
-          (is (= d (v/assert kb (list 'not (list likes Cal Dan)) 'CxUniverse))
-              "the declaration arriving first stores the same record"))))))
+          (let [why   (str (pr-str s) ", denial first " denial-first? ", " strength)
+                deny! #(v/assert kb (list 'not s) 'CxUniverse {:strength strength})
+                early (when denial-first? (deny!))]
+            (when early
+              (is (v/ask? kb (list 'not s) 'CxUniverse) (str why ": believed alone")))
+            (let [h (v/assert kb s 'CxUniverse)
+                  d (or early (deny!))]
+              (is (empty? (v/check kb (list 'not s) 'CxUniverse)) why)
+              (is (defeated? kb d) why)
+              (is (v/ask? kb s 'CxUniverse) why)
+              (v/retract! kb h)
+              (is (v/ask? kb (list 'not s) 'CxUniverse) (str why ": believed again once the literal is retracted")))))))))
 
-(tu/deftest-kb why-not-of-an-inert-denial-names-the-literal-and-what-puts-it-on-the-roster
+(tu/deftest-kb a-declaration-makes-a-denial-lose-to-the-literal-it-denies
   (tu/with-terms [dog_kind cat_kind likes Cal Dan]
-    (testing "a literal the engine's own roster holds, beside the literal it denies"
-      (let [s (list 'disjoint dog_kind cat_kind)
-            h (v/assert kb s 'CxUniverse)
-            d (v/assert kb (list 'not s) 'CxUniverse)]
-        (is (= {:sentence s :handle h :believed? true
-                :roster {:predicate 'disjoint :kind :forced-monotonic :global? true
-                         :declarations [(v/handle-of kb '(forced_monotonic_predicate disjoint)
-                                                     'CxUniverse)]}}
-               (:denies (v/why-not kb d))))))
-    (testing "a literal a declaration puts on the roster, with no literal stored"
-      (let [decl (v/assert kb (list 'forced_monotonic_predicate likes) 'CxUniverse)
-            d    (v/assert kb (list 'not (list likes Cal Dan)) 'CxUniverse)]
-        (is (= {:sentence (list likes Cal Dan) :handle nil :believed? false
-                :roster {:predicate likes :kind :forced-monotonic :global? false
-                         :declarations [decl]}}
-               (:denies (v/why-not kb d))))))))
+    (testing "a genl between types is not forced-monotonic, and its denial is believed beside it"
+      (v/assert kb (list 'genl dog_kind cat_kind) 'CxUniverse)
+      (v/assert kb (list 'not (list 'genl dog_kind cat_kind)) 'CxUniverse {:strength :monotonic})
+      (is (v/ask? kb (list 'not (list 'genl dog_kind cat_kind)) 'CxUniverse)))
+    (testing "a declaration arriving after a :monotonic denial and its literal flips the verdict"
+      (let [p    (v/assert kb (list likes Cal Dan) 'CxUniverse)
+            d    (v/assert kb (list 'not (list likes Cal Dan)) 'CxUniverse {:strength :monotonic})
+            decl (list 'forced_monotonic_predicate likes)]
+        (is (= [false true] [(v/ask? kb (list likes Cal Dan) 'CxUniverse) (v/ask? kb (list 'not (list likes Cal Dan)) 'CxUniverse)]))
+        (v/assert kb decl 'CxUniverse)
+        (is (defeated? kb d))
+        (is (v/ask? kb (list likes Cal Dan) 'CxUniverse))
+        (is (= p (v/assert kb (list likes Cal Dan) 'CxUniverse)))
+        (v/retract! kb (v/handle-of kb decl 'CxUniverse))
+        (is (= [false true] [(v/ask? kb (list likes Cal Dan) 'CxUniverse) (v/ask? kb (list 'not (list likes Cal Dan)) 'CxUniverse)])
+            "retracting the declaration gives back the reading of a KB that never held it")))))
+
+(tu/deftest-kb why-not-of-a-denial-a-forced-monotonic-literal-defeats-names-the-literal
+  (tu/with-terms [dog_kind cat_kind likes Cal Dan]
+    (doseq [[s decl] [[(list 'disjoint dog_kind cat_kind) nil]
+                      [(list likes Cal Dan) (list 'forced_monotonic_predicate likes)]]]
+      (when decl (v/assert kb decl 'CxUniverse))
+      (let [h (v/assert kb s 'CxUniverse)
+            d (v/assert kb (list 'not s) 'CxUniverse {:strength :monotonic})
+            w (v/why-not kb d)]
+        (is (= [:defeated [h]] [(:reason w) (mapv :handle (:contradicted-by w))]) (pr-str s))))))
 
 (defn- forced-entries
   "The `:forced-conclusion` entries `violations` reads about a conclusion in `context`,
@@ -280,14 +291,14 @@
   ([kb s context]
    [(v/ask? kb s context) (boolean (seq (forced-entries kb s context)))]))
 
-(tu/deftest-kb a-rule-concludes-a-roster-literal-only-from-roster-antecedents
+(tu/deftest-kb a-rule-concludes-a-forced-monotonic-literal-only-from-forced-monotonic-antecedents
   (tu/with-terms [strict_kind flies_kind bird_kind parentOf siblingOf Tweety]
-    (testing "a non-roster antecedent: the rule is stored, and its firing is dropped and reported"
+    (testing "an antecedent that is not forced-monotonic: the rule is stored, and its firing is dropped and reported"
       (v/assert kb (list 'set/forwardRule (list 'implies (list strict_kind '?p) (list 'asymmetric '?p)))
                 'CxUniverse)
       (v/assert kb (list strict_kind parentOf) 'CxUniverse)
       (is (= [false true] (concluded? kb (list 'asymmetric parentOf)))))
-    (testing "roster antecedents: the conclusion is believed at its antecedents' class"
+    (testing "forced-monotonic antecedents: the conclusion is believed at its antecedents' class"
       (let [r (v/assert kb (list 'set/forwardRule
                                  (list 'implies (list 'anti_transitive '?p) (list 'irreflexive '?p)))
                         'CxUniverse)]
@@ -319,9 +330,9 @@
             w (v/why-not kb h)]
         (is (some? h) "the firing is stored")
         (is (= :forced-conclusion (:reason w)))
-        (is (= [[r [trigger_kind]]] (mapv (juxt :informant :off-roster) (:convicted w))))))))
+        (is (= [[r [trigger_kind]]] (mapv (juxt :informant :not-forced-monotonic) (:convicted w))))))))
 
-(tu/deftest-kb the-forced-conclusion-report-names-the-antecedents-off-the-roster
+(tu/deftest-kb the-forced-conclusion-report-names-the-antecedents-not-forced-monotonic
   (tu/with-terms [trigger_kind other_kind made_kind rival_kind species_kind]
     (v/assert kb (definitional-rule trigger_kind made_kind (list other_kind '?s)
                    (list 'disjoint '?s rival_kind))
@@ -330,8 +341,8 @@
                (list 'disjoint species_kind rival_kind)]]
       (v/assert kb s 'CxUniverse))
     (let [vs (forced-entries kb (list 'orthogonal species_kind made_kind) 'CxUniverse)]
-      (is (= [#{trigger_kind other_kind}] (mapv (comp set :off-roster :detail) vs))
-          "disjoint is on the roster and is not named")
+      (is (= [#{trigger_kind other_kind}] (mapv (comp set :not-forced-monotonic :detail) vs))
+          "disjoint is forced-monotonic and is not named")
       (is (every? #(and (str/includes? % (str trigger_kind)) (str/includes? % (str other_kind)))
                   (map (comp :message :detail) vs))))))
 
@@ -369,7 +380,7 @@
                            (boolean (some #(= #{t v} (set (:nogood %))) (v/conflicts kb)))])
               why)
           (is (= :default (v/defeat-class kb t)) why)))))
-  (testing "a denial of a forced trigger is inert, and the trigger and its consequences stand"
+  (testing "a denial of a forced trigger loses to it, and the trigger and its consequences stand"
     (doseq [forced? [false true]]
       (tu/with-terms [trigger_kind made_kind species_kind qq]
         (when forced? (v/assert kb (list 'forced_monotonic_predicate trigger_kind) 'CxUniverse))
@@ -380,7 +391,7 @@
               d (v/assert kb (list 'not t) 'CxUniverse {:strength :monotonic})]
           (v/assert kb t 'CxUniverse)
           (is (= [forced? forced? forced? forced?]
-                 [(inert? kb d) (v/ask? kb t 'CxUniverse) (v/ask? kb (list qq species_kind) 'CxUniverse)
+                 [(defeated? kb d) (v/ask? kb t 'CxUniverse) (v/ask? kb (list qq species_kind) 'CxUniverse)
                   (v/ask? kb (list 'orthogonal species_kind made_kind) 'CxUniverse)])
               (str "forced " forced?)))))))
 
@@ -397,7 +408,7 @@
   [orders]
   [(first orders) (last orders)])
 
-(defn- roster-reading
+(defn- forced-reading
   "Assert the `fixed` writes, then the `writes` (`{key [sentence context strength]}`) in
   `order`, and with `retract` retract that write last.  Answers `{key [believed? …]}`,
   each `ask?` of `asked` at the context `ctxs` names under that key."
@@ -435,7 +446,7 @@
         (is (= (if retract
                  {:a [true true false] :b [true true false] :u [true true false]}
                  {:a [true false true] :b [true true false] :u [true true false]})
-               (roster-reading kb {:a CxA :b CxB :u CxU} world))
+               (forced-reading kb {:a CxA :b CxB :u CxU} world))
             (str "order " (vec order) (when retract ", declaration retracted")))))))
 
 (tu/deftest-kb a-declaration-forces-a-verdict-and-a-firing-only-where-it-is-seen
@@ -444,9 +455,9 @@
 (tu/deftest-kb ^:slow a-declaration-forces-a-verdict-and-a-firing-only-where-it-is-seen-in-every-order
   (declaration-seen-reading kb identity))
 
-(tu/deftest-kb a-declaration-makes-a-denial-inert-only-where-it-is-seen
-  ;; [trigger denial] in every arrival order: CxA sees the declaration, so the denial is
-  ;; inert and the trigger stands; at CxB and CxU the :monotonic denial defeats the
+(tu/deftest-kb a-declaration-defeats-a-denial-only-where-it-is-seen
+  ;; [trigger denial] in every arrival order: CxA sees the declaration, so the denial
+  ;; loses to the trigger at :monotonic; at CxB and CxU the :monotonic denial defeats the
   ;; :default trigger.  Retracting the declaration leaves that reading at CxA too.
   (doseq [order   (orders [:decl :denial :trigger])
           retract [nil :decl]]
@@ -461,12 +472,12 @@
         (is (= (if retract
                  {:a [false true] :b [false true] :u [false true]}
                  {:a [true false] :b [false true] :u [false true]})
-               (roster-reading kb {:a CxA :b CxB :u CxU} world))
+               (forced-reading kb {:a CxA :b CxB :u CxU} world))
             (str "order " (vec order) (when retract ", declaration retracted")))))))
 
 (tu/deftest-kb a-declared-conclusion-is-void-only-where-the-declaration-is-seen
   ;; [conclusion] in every arrival order: a rule at CxU concludes `(trigger_kind s)` from
-  ;; an antecedent off the roster.  CxA sees the declaration, so the firing is void there;
+  ;; an antecedent that is not forced-monotonic.  CxA sees the declaration, so the firing is void there;
   ;; CxB and CxU do not, so the conclusion is an ordinary belief.  Retracting the
   ;; declaration leaves it believed at all three.
   (doseq [order   (orders [:decl :rule :fact])
@@ -483,7 +494,7 @@
         (is (= (if retract
                  {:a [true] :b [true] :u [true]}
                  {:a [false] :b [true] :u [true]})
-               (roster-reading kb {:a CxA :b CxB :u CxU} world))
+               (forced-reading kb {:a CxA :b CxB :u CxU} world))
             (str "order " (vec order) (when retract ", declaration retracted")))))))
 
 (tu/deftest-kb why-not-names-the-conviction-of-a-declared-conclusion-where-it-is-seen
@@ -497,7 +508,7 @@
       (v/assert kb (list seed_kind species_kind) CxU)
       (let [w (v/why-not kb c CxU)]
         (is (= :forced-conclusion (:reason w)))
-        (is (= [[r [seed_kind]]] (mapv (juxt :informant :off-roster) (:convicted w)))))
+        (is (= [[r [seed_kind]]] (mapv (juxt :informant :not-forced-monotonic) (:convicted w)))))
       (is (= 1 (count (forced-entries kb c CxU))) "the firing is void at a reader"))))
 
 (tu/deftest-kb a-late-declaration-defeats-the-rival-of-a-standing-dilemma
@@ -506,7 +517,7 @@
   (doseq [order (orders [:decl :trigger :rival])]
     (tu/with-terms [CxU trigger_kind rival_kind species_kind]
       (is (= {:u [true false]}
-             (roster-reading kb {:u CxU}
+             (forced-reading kb {:u CxU}
                              {:fixed  [[(list 'genlCx CxU 'CxUniverse) 'CxUniverse :monotonic]
                                        [(list 'disjoint trigger_kind rival_kind) CxU :monotonic]]
                               :writes {:decl    [(list 'forced_monotonic_predicate trigger_kind) CxU]
@@ -530,7 +541,7 @@
           order (orders [:decl :trigger :rival])]
     (tu/with-terms [CxU trigger_kind rival_kind species_kind]
       (is (= {:u expected}
-             (roster-reading kb {:u CxU}
+             (forced-reading kb {:u CxU}
                              {:fixed  [[(list 'genlCx CxU 'CxUniverse) 'CxUniverse :monotonic]
                                        [(list 'disjoint trigger_kind rival_kind) CxU :monotonic]]
                               :writes {:decl    [(list 'forced_monotonic_predicate trigger_kind)
@@ -549,7 +560,7 @@
     (tu/with-terms [CxU CxA CxB trigger_kind rival_kind species_kind]
       (let [decl (list 'forced_monotonic_predicate trigger_kind)]
         (is (= {:a [true false] :b [true true]}
-               (roster-reading kb {:a CxA :b CxB}
+               (forced-reading kb {:a CxA :b CxB}
                                {:fixed  (concat (scoped-contexts CxU CxA CxB)
                                                 [[(list 'disjoint trigger_kind rival_kind) CxU :monotonic]])
                                 :writes {:core    [decl 'CxUniverse]
@@ -573,7 +584,7 @@
     (tu/with-terms [CxU CxA CxB CxDen trigger_kind rival_kind species_kind]
       (let [decl (list 'forced_monotonic_predicate trigger_kind)]
         (is (= expected
-               (roster-reading kb {:a CxA :b CxB :d CxDen}
+               (forced-reading kb {:a CxA :b CxB :d CxDen}
                                {:fixed  (concat (scoped-contexts CxU CxA CxB)
                                                 [[(list 'genlCx CxDen CxU) 'CxUniverse :monotonic]
                                                  [(list 'disjoint trigger_kind rival_kind) CxU :monotonic]])
@@ -615,11 +626,12 @@
                  {:u (ab CxU) :r (ab CxR) :foo (ab CxFoo)})
               (str "declared " declared?)))))))
 
-(tu/deftest-kb the-roster-hides-a-handle-whose-valid-firings-are-all-void-at-its-context
-  ;; (functional P) is on the baseline roster.  One rule concludes it from an antecedent no
-  ;; declaration puts on the roster, which the network holds void, and one from an
-  ;; antecedent CxFoo declares, which is valid in the network and void at CxU, which does
-  ;; not see CxFoo.  The roster alone hides the conclusion at CxU, where it is stored.
+(tu/deftest-kb the-forced-monotonic-set-hides-a-handle-whose-valid-firings-are-all-void-at-its-context
+  ;; (functional P) is in the baseline forced-monotonic set.  One rule concludes it from an
+  ;; antecedent no declaration makes forced-monotonic, which the network holds void, and one
+  ;; from an antecedent CxFoo declares, which is valid in the network and void at CxU, which
+  ;; does not see CxFoo.  The forced-monotonic set alone hides the conclusion at CxU, where
+  ;; it is stored.
   (tu/with-terms [CxU CxFoo kind_d kind_n parentOf]
     (let [M {:strength :monotonic}]
       (v/assert kb (list 'genlCx CxU 'CxUniverse) 'CxUniverse M)
@@ -631,7 +643,7 @@
       (let [h (v/handle-of kb (list 'functional parentOf) CxU)]
         (is (= [false true] [(v/ask? kb (list 'functional parentOf) CxU)
                              (v/ask? kb (list 'functional parentOf) CxFoo)]))
-        (is (true? ((exc/roster-hidden-own-fn kb) h)))))))
+        (is (true? ((exc/forced-hidden-own-fn kb) h)))))))
 
 (defn- declaration-reach-oracle
   "Over a random 40-context DAG per seed, two roots under CxUniverse and each later
@@ -709,14 +721,14 @@
 
 (defn- entry-shape
   "The `:forced-conclusion` entries `violations` reads in `context`, as `[sentence context
-  off-roster]`, with each value of `names` replaced by its key."
+  not-forced-monotonic]`, with each value of `names` replaced by its key."
   [kb names context]
   (walk/postwalk-replace (zipmap (vals names) (keys names))
-                         (mapv (juxt :sentence :context (comp :off-roster :detail))
+                         (mapv (juxt :sentence :context (comp :not-forced-monotonic :detail))
                                (forced-entries kb context))))
 
 (tu/deftest-kb the-forced-conclusion-entries-are-the-same-in-every-arrival-order
-  ;; a network-void firing (orthogonal, on the global roster) and a reader-only void
+  ;; a network-void firing (orthogonal, in the baseline forced-monotonic set) and a reader-only void
   ;; firing (kind_t, declared at CxFoo); a second trigger arrives and is retracted last
   (let [shapes (doall
                 (for [order (orders [:decl :rule :fact :gone])]
@@ -749,8 +761,8 @@
         (is (= 4 (count live)))
         (is (= [live live] [cleared (forced-entries kb CxU)]))))))
 
-(tu/deftest-kb a-firing-void-at-some-reader-reads-one-entry-and-logs-once-while-the-roster-moves
-  ;; a roster rule's exceptWhen arriving and leaving, and the declaration leaving and
+(tu/deftest-kb a-firing-void-at-some-reader-reads-one-entry-and-logs-once-while-the-forced-monotonic-set-moves
+  ;; a forced-monotonic rule's exceptWhen arriving and leaving, and the declaration leaving and
   ;; arriving again, read the firing again: `violations` reads one entry for it each
   ;; time, and the firing logs once, as its justification is added
   (tu/with-terms [CxU CxFoo kind_t kind_s Sp]
@@ -809,7 +821,7 @@
   "CxDen and CxB under CxU, the writes in each order `pick` keeps.  A :monotonic denial
   of the declaration at CxDen defeats it there, so CxDen believes the :monotonic denial
   of the trigger fact and the fact loses.  CxB sees the declaration believed: the denial
-  is inert and the fact stands."
+  loses to the fact."
   [kb pick]
   (doseq [decl-cx [:at :core]
           order   (pick (orders [:decl :deny-decl :deny-fact :fact]))]
@@ -817,7 +829,7 @@
       (let [decl (list 'forced_monotonic_predicate kind_t)
             t    (list kind_t Sp)]
         (is (= {:den [false false true] :b [true true false]}
-               (roster-reading kb {:den CxDen :b CxB}
+               (forced-reading kb {:den CxDen :b CxB}
                                {:fixed  (scoped-contexts CxU CxDen CxB)
                                 :writes {:decl      [decl (if (= :core decl-cx) 'CxUniverse CxU)]
                                          :deny-decl [(list 'not decl) CxDen :monotonic]
@@ -827,10 +839,10 @@
                                 :asked  [decl t (list 'not t)]}))
             (str "declared " decl-cx ", order " (vec order)))))))
 
-(tu/deftest-kb a-defeated-declaration-makes-no-denial-inert-where-the-defeat-is-seen
+(tu/deftest-kb a-defeated-declaration-defeats-no-denial-where-the-defeat-is-seen
   (defeated-declaration-reading kb sampled))
 
-(tu/deftest-kb ^:slow a-defeated-declaration-makes-no-denial-inert-where-the-defeat-is-seen-in-every-order
+(tu/deftest-kb ^:slow a-defeated-declaration-defeats-no-denial-where-the-defeat-is-seen-in-every-order
   (defeated-declaration-reading kb identity))
 
 (tu/deftest-kb an-excepted-defeat-of-a-declaration-leaves-it-forcing-where-the-except-is-seen
@@ -870,9 +882,9 @@
       (is (v/ask? kb c CxA))
       (let [w (v/why-not kb c CxB)]
         (is (= :forced-conclusion (:reason w)))
-        (is (= [[r [trigger_kind]]] (mapv (juxt :informant :off-roster) (:convicted w))))))))
+        (is (= [[r [trigger_kind]]] (mapv (juxt :informant :not-forced-monotonic) (:convicted w))))))))
 
-(tu/deftest-kb an-exception-on-a-roster-rule-makes-its-firings-inert-in-either-order
+(tu/deftest-kb an-exception-on-a-forced-monotonic-rule-makes-its-firings-inert-in-either-order
   ;; a context per order, so the rule and its exception are two sentexes per order
   (doseq [exception-first? [true false]]
     (tu/with-terms [CxHere odd_kind parentOf]
@@ -888,9 +900,9 @@
             (str "exception first: " exception-first?))))))
 
 (tu/deftest-kb a-denied-except-still-hides
-  ;; `except` is on the forced-monotonic roster: an except keeps the strength it was
-  ;; written at and is never a loser, and a denial of one is held OUT, so it keeps hiding
-  ;; (docs/nmtms.md, "The forced-monotonic roster").
+  ;; `except` is forced-monotonic: an except keeps the strength it was
+  ;; written at and is never a loser, and a denial of one loses to it, so it keeps hiding
+  ;; (docs/nmtms.md, "The forced-monotonic set").
   (let [ctx (tu/tmp-ctx "Sub") shiny (tu/tmp-pred) gold (tu/tmp-ind)]
     (v/assert kb (list 'genlCx ctx 'CxWell) 'CxUniverse {:strength :monotonic})
     (let [h (v/assert kb (list shiny gold) ctx {:strength :monotonic})
@@ -899,27 +911,28 @@
       (is (not (v/ask? kb (list shiny gold) ctx)) "the except hides it")
       (let [d (v/assert kb (list 'not (list 'except (sx/sentex-handle h))) ctx
                         {:strength :monotonic})]
-        (is (not (v/in? kb d)) "the denial is held OUT")
+        (is (defeated? kb d) "the denial loses to the except")
         (is (not (v/ask? kb (list shiny gold) ctx)) "and the target stays hidden")))))
 
-(deftest the-verdict-weighs-only-the-members-off-the-roster
-  ;; handles 1 and 2 are roster literals: whatever their class, neither is a loser, and a
-  ;; nogood with no defeasible member off the roster is `:hard`
+(deftest the-verdict-weighs-only-the-members-not-forced-monotonic
+  ;; handles 1 and 2 are forced-monotonic literals: whatever their class, neither is a loser, and a
+  ;; nogood with no defeasible member outside the forced-monotonic set is `:hard`
   (let [class-of {1 :default 2 :default 3 :default 4 :default 5 :monotonic}
-        roster?  #{1 2}]
-    (is (= :hard (decide/verdict class-of roster? #{1 2})))
-    (is (= :hard (decide/verdict class-of roster? #{1 5})))
-    (is (= {:defeat 3} (decide/verdict class-of roster? #{1 3})))
-    (is (= :dilemma (decide/verdict class-of roster? #{1 3 4})))))
+        forced?  #{1 2}
+        no-denial (constantly nil)]
+    (is (= :hard (decide/verdict class-of forced? no-denial #{1 2})))
+    (is (= :hard (decide/verdict class-of forced? no-denial #{1 5})))
+    (is (= {:defeat 3} (decide/verdict class-of forced? no-denial #{1 3})))
+    (is (= :dilemma (decide/verdict class-of forced? no-denial #{1 3 4})))))
 
-(deftest a-roster-member-is-never-a-loser-whatever-its-strength
-  ;; decide/verdict weighs only the members off the roster: two arity-class memberships
+(deftest a-forced-monotonic-member-is-never-a-loser-whatever-its-strength
+  ;; decide/verdict weighs only the members that are not forced-monotonic: two arity-class memberships
   ;; separated by a `:default` `disjoint` form a `:hard` clash and both stay believed, in
   ;; either order and at either strength.  A bare KB, so no upper-layer declaration of the
   ;; separation is re-asserted at `:monotonic`.
   (doseq [membership-strength [:monotonic :default] disjoint-first? [true false]]
     (tu/with-neutral-kb [kb tu/isolated-fresh]
-      (let [p    (predicate-spelled "RosterRel")
+      (let [p    (predicate-spelled "ForcedRel")
             decl #(v/assert kb '(disjoint unary binary) 'CxUniverse {:strength :default})
             why  (str membership-strength " memberships, disjoint first: " disjoint-first?)]
         (v/assert kb '(genl unary_predicate unary) 'CxUniverse {:strength :monotonic})
@@ -932,8 +945,8 @@
           (is (some #(= (set ms) (set (:nogood %))) (v/conflicts kb)) why))))))
 
 (defn- own-ground?
-  "Is `literal` among `grounds`, a family's `:grounds` map, read as `decide/roster-literal?`
-  reads the roster."
+  "Is `literal` among `grounds`, a family's `:grounds` map, read as `decide/forced-literal?`
+  reads the forced-monotonic set."
   [grounds literal]
   (let [[f & args] literal]
     (boolean (or (contains? (:forced-monotonic grounds) f)
@@ -941,15 +954,17 @@
                       (every? #(re-matches #"[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*" (name %)) args))))))
 
 (deftest a-family-names-its-own-ground-as-a-member-only-beside-other-grounds
-  ;; A family reads its `:grounds` as stored marks.  The one nogood that names them as
-  ;; members is the arity family's `:arity-descension`, two bindings and nothing else,
-  ;; which `decide/verdict` reads `:hard`.  Every family with grounds places its nogoods,
+  ;; A family reads its `:grounds` as stored marks.  The nogoods that name them as
+  ;; members are the arity family's: `:arity-descension`, two bindings and nothing else,
+  ;; which `decide/verdict` reads `:hard`, and `:negates-arity`, a lone `negates`
+  ;; declaration.  Every family with grounds places its nogoods,
   ;; so each is read off the placed `contradicts`; the arity family places only its pairs,
   ;; and the ternary shortRel tuple is inert.
   (tu/with-neutral-kb [kb tu/isolated-fresh]
     (tu/with-terms [Ann Bob Cal dog_kind cat_kind Rex]
-      (let [[shortRel longRel irrRel antiRel ageRel beatsRel nextRel]
-            (mapv predicate-spelled ["Short" "Long" "Irr" "Anti" "Age" "Beats" "Next"])
+      (let [[shortRel longRel irrRel antiRel ageRel beatsRel nextRel likesRel hatesRel]
+            (mapv predicate-spelled ["Short" "Long" "Irr" "Anti" "Age" "Beats" "Next" "Likes"
+                                     "Hates"])
             U 'CxUniverse]
         (doseq [s [(list 'binary_predicate shortRel) (list shortRel Ann Bob Cal)
                    (list 'ternary_predicate longRel) (list 'genl longRel shortRel)
@@ -959,7 +974,9 @@
                    (list 'asymmetric beatsRel) (list beatsRel Ann Bob) (list beatsRel Bob Ann)
                    (list 'anti_transitive nextRel) (list nextRel Ann Bob) (list nextRel Bob Cal)
                    (list nextRel Ann Cal)
-                   (list 'disjoint dog_kind cat_kind) (list dog_kind Rex) (list cat_kind Rex)]]
+                   (list 'disjoint dog_kind cat_kind) (list dog_kind Rex) (list cat_kind Rex)
+                   (list 'negates likesRel hatesRel) (list likesRel Ann Bob) (list hatesRel Ann Bob)
+                   (list 'negates shortRel longRel)]]
           (v/assert kb s U))
         (let [sen     #(:sentence (v/sentex kb %))
               grounds (keep :grounds decide/registry)
@@ -967,7 +984,7 @@
                             :let [ms (into #{} (map v/handle-id) (rest (:sentence c)))]]
                         [ms (decide/placed-kind kb ms)])]
           (is (= #{:arity-descension :irreflexive :anti-symmetric :functional :asymmetric
-                   :anti-transitive :disjoint}
+                   :anti-transitive :disjoint :negates :negates-arity}
                  (into #{} (map second) placed))
               "every family with grounds places a nogood here")
           (is (= #{(list cat_kind Rex) (list dog_kind Rex)}
@@ -976,11 +993,11 @@
           (doseq [[ms kind] placed
                   :let [own (filterv (fn [h] (some #(own-ground? % (sen h)) grounds)) ms)]
                   :when (seq own)]
-            (is (and (= :arity-descension kind) (= (count own) (count ms)))
+            (is (and (#{:arity-descension :negates-arity} kind) (= (count own) (count ms)))
                 (pr-str kind (mapv sen ms)))))))))
 
 (tu/deftest-kb an-except-hides-the-derivation-it-blocks-in-either-order-beside-its-denial
-  ;; A denial held OUT moves no belief, so the except and its denial end in one state
+  ;; A denial loses to the except it denies, so the except and its denial end in one state
   ;; whichever arrives first: the conclusion resting on the hidden fact is swept.
   (let [ctx (tu/tmp-ctx "Sub") qq (tu/tmp-pred) pp (tu/tmp-pred)]
     (v/assert kb (list 'genlCx ctx 'CxWell) 'CxUniverse {:strength :monotonic})
@@ -997,9 +1014,9 @@
           (is (empty? (v/sentexes-matching kb (list pp Aa) ctx))
               (str "the except sweeps the conclusion, denial first: " denial-first?)))))))
 
-(defn- roster-history
-  "Assert into CxUniverse a fact and a denial of `likes`, a non-roster rule concluding
-  `likes` from `knows`, and the fact that fires it, with a `(forced_monotonic_predicate
+(defn- forced-history
+  "Assert into CxUniverse a fact and a denial of `likes`, a rule that is not
+  forced-monotonic concluding `likes` from `knows`, and the fact that fires it, with a `(forced_monotonic_predicate
   likes)` declaration arriving before the write at index `at` and retracted after the
   last one (no declaration when `at` is nil).  Answers, for the fact, the denial and the
   rule's conclusion, `[believed? defeat-class justification-count]`."
@@ -1022,11 +1039,11 @@
 
 (tu/deftest-kb retracting-a-declaration-leaves-the-belief-a-kb-that-never-had-it-holds
   (let [never (tu/with-terms [likes knows Ann Bob Cal Dan]
-                (roster-history kb likes knows Ann Bob Cal Dan nil))]
+                (forced-history kb likes knows Ann Bob Cal Dan nil))]
     (is (= [[true :default 0] [true :default 0] [true :default 1]] never))
     (doseq [at (range 4)]
       (tu/with-terms [likes knows Ann Bob Cal Dan]
-        (is (= never (roster-history kb likes knows Ann Bob Cal Dan at))
+        (is (= never (forced-history kb likes knows Ann Bob Cal Dan at))
             (str "declared before write " at))))))
 
 ;; ---- the declaration is a switch: an oracle over random histories -------------------
@@ -1038,10 +1055,10 @@
     (java.util.Collections/shuffle l rng)
     (vec l)))
 
-(defn- roster-world
+(defn- forced-world
   "A random history over abstract terms, from `seed`: writes of two predicates `:p` and
-  `:q` and a non-roster `:k` over four individuals in two contexts, a rule concluding
-  `:p` from `:k` and one concluding `:q` from `:p` (a roster rule while both are
+  `:q` and a third, `:k`, never forced-monotonic, over four individuals in two contexts, a rule concluding
+  `:p` from `:k` and one concluding `:q` from `:p` (a forced-monotonic rule while both are
   declared), and `forced_monotonic_predicate` declarations of `:p` and `:q` arriving at
   random points, half of them retracted later.  Answers `{:history [[op form ctx
   strength] …] :final [[form ctx strength] …]}`: `:final` is the content the history
@@ -1100,10 +1117,10 @@
 (defn- declaration-oracle
   "The oracle for the switch over the worlds of `seeds`: declarations arriving and
   leaving at random points give the beliefs and classes the final content gives when
-  asserted fresh, in another order (docs/nmtms.md, \"The forced-monotonic roster\")."
+  asserted fresh, in another order (docs/nmtms.md, \"The forced-monotonic set\")."
   [kb seeds]
   (doseq [seed seeds]
-    (let [{:keys [history final]} (roster-world seed)]
+    (let [{:keys [history final]} (forced-world seed)]
       (is (= (run-world kb (mapv #(into [:assert] %) final)) (run-world kb history))
           (str "seed " seed)))))
 
@@ -1124,20 +1141,35 @@
 
 (deftest a-declaration-of-a-baseline-member-runs-no-switch
   ;; a bare KB: the engine's baseline already holds `sameAs`, so its declaration moves no
-  ;; membership, while `likes` joins and leaves the roster by its declaration, which a
-  ;; stored denial of each reads: held OUT while its literal is on the roster
+  ;; membership, while `likes` joins and leaves the forced-monotonic set by its declaration.
+  ;; A denial with no literal stored beside it is believed whichever way its predicate is read
   (tu/with-neutral-kb [kb tu/isolated-fresh]
     (tu/with-terms [likes Ann Bob Cal Dan]
       (let [same  (v/assert kb (list 'not (list 'sameAs Ann Bob)) 'CxUniverse)
             fact  (v/assert kb (list 'not (list likes Cal Dan)) 'CxUniverse)
             decl  (list 'forced_monotonic_predicate likes)
             in    #(mapv (partial v/in? kb) [same fact])]
-        (is (= [false true] (in)))
+        (is (= [true true] (in)))
         (is (= 0 (switches #(v/assert kb '(forced_monotonic_predicate sameAs) 'CxUniverse))))
         (is (= 1 (switches #(v/assert kb decl 'CxUniverse))))
-        (is (= [false false] (in)))
+        (is (= [true true] (in)))
         (is (= 1 (switches #(v/retract! kb (v/handle-of kb decl 'CxUniverse)))))
-        (is (= [false true] (in)))))))
+        (is (= [true true] (in)))))))
+
+(tu/deftest-kb exceptWhen-is-declared-as-except-is
+  ;; An `exceptWhen` meta-sentex blocks the firings of the rule it names, so taking one OUT
+  ;; would unblock them, as taking an `except` OUT un-hides its target.  Both are in the
+  ;; engine's own forced-monotonic set, and core.txt states the declaration and a comment for each.
+  (testing "the engine holds both forced-monotonic whether or not they are declared"
+    (doseq [p '[except exceptWhen]]
+      (is (contains? decide/held-members p) (str p))
+      (is (decide/global? (reasoning/taxonomy kb) :forced-monotonic p) (str p))))
+  (testing "a stored exception is a forced-monotonic literal"
+    (is (checks/forced-monotonic? kb '(exceptWhen (penguin ?var0) (sentexHandle 1)))))
+  (testing "core.txt declares exceptWhen, two arguments as stored, and comments it"
+    (is (some? (v/handle-of kb '(forced_monotonic_predicate exceptWhen) 'CxUniverse)))
+    (is (some? (v/handle-of kb '(binary_predicate exceptWhen) 'CxUniverse)))
+    (is (= 1 (count (v/sentexes-matching kb '(comment exceptWhen ?text) 'CxUniverse))))))
 
 (tu/deftest-kb an-uncleared-declaration-is-not-retracted
   (testing "genlCx is always forced: its declaration stays"
@@ -1157,6 +1189,12 @@
                 (try (v/retract! kb h) nil (catch clojure.lang.ExceptionInfo e (ex-data e)))))
             (pr-str s))
         (is (v/in? kb h) (pr-str s)))))
+  (testing "exceptWhen's declaration stays, as except's does"
+    (let [h (v/handle-of kb '(forced_monotonic_predicate exceptWhen) 'CxUniverse)]
+      (is (= [:uncleared-forcing :unforced-exception]
+             ((juxt :type :missing)
+              (try (v/retract! kb h) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+      (is (v/in? kb h))))
   (testing "injection, surjection, bijection and an author's own predicate are cleared"
     (tu/with-terms [likes]
       (doseq [p ['injection 'surjection 'bijection likes]]
@@ -1207,7 +1245,7 @@
   ;; a claim of the whole KB, and would take a rule's conclusions out with it: a
   ;; decontextualized marriage lifts (knows ?x ?y) through CxSocial's rule into a
   ;; context every data context sees, decontextualizing a predicate nothing declared.
-  (testing "the roster is the algebraic marks, the inverse declaration, the length bindings, and genlCx"
+  (testing "the marked predicates are the algebraic marks, the inverse declaration, the length bindings, and genlCx"
     ;; The three commutativity marks are here for `symmetric`'s reason and one of its
     ;; own: they are predicate algebra, and `res/kb-sentex` reads them **globally** —
     ;; a sentex has one key, so whether a predicate sorts its arguments cannot vary by
@@ -1393,7 +1431,7 @@
 (tu/deftest-kb a-negative-fact-is-not-lifted
   ;; `(not (P a))` has functor `not`, so a declaration about `P` does not reach it: the
   ;; positive extent becomes universal and the negative one stays in its context.
-  ;; Deliberate, and pinned here so changing it has to be a decision.
+  ;; Deliberate, and asserted here so changing it has to be a decision.
   (tu/with-terms [flies Tweety Opus CxAlpha]
     (v/assert kb (list 'genlCx CxAlpha 'CxUniverse) 'CxUniverse)
     (v/assert kb (list 'decontextualized_predicate flies) 'CxUniverse)

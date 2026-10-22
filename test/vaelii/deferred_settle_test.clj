@@ -144,7 +144,7 @@
           facts  (mapv (fn [a b] (list edgeOf a b)) inds (rest (cycle inds)))
           events (atom [])]
       (v/bulk-assert-facts! kb facts CxRate {:on-progress #(swap! events conj %)})
-      (is (= 1 (count @events)) "one event: the corpus is under the 100,000-fact window")
+      (is (= 1 (count @events)) "one event: the corpus is under the 100,000 facts between progress events")
       (let [{:keys [phase total elapsed-ms facts-per-sec]} (first @events)]
         (is (= :done phase))
         (is (= (count facts) total))

@@ -7,7 +7,6 @@
   (:require [clojure.set :as set]
             [clojure.test :refer [are deftest is testing use-fixtures]]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.impl.provers :as provers]
             [vaelii.impl.sign :as sign]
             [vaelii.impl.types.prover :as prover-types]
@@ -152,7 +151,7 @@
       (tu/with-terms [Radiation]
         (v/assert kb (list 'derivativeOf Radiation BodyTemperature) C)
         (is (v/ask? kb (list 'signOf Radiation 'SignNegative) C))))
-    (testing "the edge runs up too: a stated trend pins the rate that made it"
+    (testing "the edge runs up too: a stated trend determines the rate that made it"
       (tu/with-terms [Growth Population]
         (v/assert kb (list 'derivativeOf Growth Population) C)
         (v/assert kb (list 'trendOf Population 'SignPositive) C)
@@ -218,7 +217,7 @@
   trend, each with the **sentences** its support names: handles follow arrival order."
   [order]
   (let [k (doto (tu/isolated-fresh)
-            (core-context/load-into)
+            (tu/load-core!)
             (v/add-prover (sign/sign-prover)))]
     (try
       (doseq [s order] (v/assert k s C))

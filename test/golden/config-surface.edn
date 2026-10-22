@@ -62,6 +62,7 @@
  :properties
  ["vaelii.asp.solver"
   "vaelii.belief.snapshot"
+  "vaelii.browser.detach-ms"
   "vaelii.build"
   "vaelii.clingo.lib"
   "vaelii.closure.limit"
@@ -73,11 +74,13 @@
   "vaelii.disk.dir"
   "vaelii.disk.fsync"
   "vaelii.disk.lock"
+  "vaelii.disk.shutdown-unwind-ms"
   "vaelii.disk.sync-ms"
   "vaelii.disk.tokens"
   "vaelii.index.snapshot"
   "vaelii.index.snapshot-drift"
   "vaelii.kb.catalog"
   "vaelii.kb.path"
+  "vaelii.removed.dir"
   "vaelii.test.bash"
   "vaelii.web.port"]}

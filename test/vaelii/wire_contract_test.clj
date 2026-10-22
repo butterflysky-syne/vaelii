@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.wire-contract-test
-  "The daemon's wire contract, pinned pair by pair: every refusal `POST /op` can
+  "The daemon's wire contract, asserted pair by pair: every refusal `POST /op` can
   answer is a status code *and* a plain `:type` keyword, the two halves
   `docs/operations.md` promises together.  Driven against `serve/app` directly —
   the handler is pure `request -> response`, so no socket — with one property over
@@ -53,7 +53,7 @@
           oversized (with-redefs [guard/max-body-bytes 8]
                       (post-raw handler edn-headers
                                 (op-body :assert [(list dog Rex) CxWireProbe])))
-          pinned
+          expected
           [["a wrong content-type" 415 :not-edn
             (post-raw handler {"content-type" "text/plain"}
                       (op-body :assert [(list dog Rex) CxWireProbe]))]
@@ -110,7 +110,7 @@
           ;; and 5xx alarm between the caller and the daemon
           engine (post-raw handler edn-headers
                            (op-body :assert [(list dog '?x) CxWireProbe]))]
-      (doseq [[label status type reply] pinned]
+      (doseq [[label status type reply] expected]
         (testing label
           (is (= status (:status reply)) label)
           (is (= type (:type reply)) label)))
@@ -129,15 +129,15 @@
           (is (= 404 (:status r)))
           (is (= :not-found (:type r)))))
       (testing "the property over every refusal: :ok false, :type a non-nil keyword"
-        (doseq [[label _ _ reply] (conj pinned ["an engine refusal" nil nil engine])]
+        (doseq [[label _ _ reply] (conj expected ["an engine refusal" nil nil engine])]
           (is (false? (:ok reply)) label)
           (is (keyword? (:type reply)) label))))))
 
 (tu/deftest-kb a-refusal-from-any-served-entry-point-is-a-400
-  ;; `client-error-types` is a roster written by hand, and its failure mode is quiet: a
+  ;; `client-error-types` is a list written by hand, and its failure mode is quiet: a
   ;; refusal type born at one entry point and never added to it answers **500**, which every
   ;; reverse proxy and 5xx alarm between the caller and the daemon counts as a backend
-  ;; fault — for a request the caller wrote.  `assert`'s own vocabulary is pinned above;
+  ;; fault — for a request the caller wrote.  `assert`'s own vocabulary is asserted above;
   ;; these are the entry points beside it, one refusal each, driven through the same handler.
   (tu/with-terms [dog cat Rex]
     (let [handler (open-app kb)
@@ -161,7 +161,7 @@
                     (op! :assert [(list dog Rex) 'CxUniverse])
                     (op! :try-assert [(list cat Rex) 'CxUniverse]))]
                ;; a `:find-terms` regex whose backtracking blows the per-term step
-               ;; budget is the caller's abuse, refused rather than left to pin the
+               ;; budget is the caller's abuse, refused rather than left to occupy the
                ;; writer's core (docs/web.md); over the wire it is a 400 like the rest
                ["a pathological find-terms regex" :pattern-too-costly
                 (do (op! :assert [(list 'genl (symbol (str (apply str (repeat 2000 \a)) "b"))

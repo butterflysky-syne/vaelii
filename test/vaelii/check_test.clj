@@ -245,7 +245,7 @@
                 "the read entry point that answered nothing for the vector answers here")
             (v/retract! kb h)))))))
 
-;; ---- the opts roster: admissible knowledge, inadmissible request ---------
+;; ---- the accepted option keys: admissible knowledge, inadmissible request
 ;; These two are the request rather than the sentence, and neither is visible after the
 ;; fact: both store the sentence at a defeat class the caller did not ask for, and a
 ;; sentex carries no record of the class it was *meant* to have.  So `check` must answer
@@ -260,14 +260,14 @@
                                           (v/check kb sentence CxThe {:strenth :monotonic}))))
           (is (= :unknown-option (try (v/assert kb sentence CxThe {:strenth :monotonic}) nil
                                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
-        (testing "and the refusal names both the offending key and the roster"
+        (testing "and the refusal names both the offending key and the key set"
           (let [d (try (v/assert kb sentence CxThe {:strenth :monotonic}) nil
                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
             (is (= [:strenth] (:unknown d)))
             (is (= (vec (sort v/assert-opt-keys)) (:options d)))))
         (testing "nothing was stored by either"
           (is (empty? (v/sentexes-matching kb sentence CxThe))))
-        (testing "every key on the roster is still accepted"
+        (testing "every key in the key set is still accepted"
           (is (empty? (v/check kb sentence CxThe
                                {:strength :monotonic :chain? false :max-depth 8
                                 :creator "t" :provenance {:source :test}}))))))))
@@ -287,13 +287,13 @@
           (is (some? (v/assert kb sentence CxThe {:strength :monotonic})))
           (is (= :monotonic (v/defeat-class kb (v/handle-of kb sentence CxThe)))))))))
 
-(deftest assert-rule-holds-its-opts-to-the-same-roster
+(deftest assert-rule-holds-its-opts-to-the-same-key-set
   (tu/with-neutral-kb [kb kb-with-starter]
     (tu/with-terms [base derived CxThe]
       (let [antes [(list base '?x)] conseq (list derived '?x)]
         (is (= :unknown-option (try (v/assert-rule kb antes conseq CxThe {:dir :forward}) nil
                                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
-        (testing ":direction itself is on the roster"
+        (testing ":direction itself is in the key set"
           (is (some? (v/assert-rule kb antes conseq CxThe {:direction :forward}))))))))
 
 ;; ---- stratification: the rule-set check runs too ------------------------
@@ -317,7 +317,7 @@
 ;; A `different` antecedent is negation as failure over the equality closure
 ;; (`checks/negative-predicates`), so a rule reading it carries a negative edge while
 ;; carrying no exception — and nothing registers such a rule for re-checking, so the
-;; roster of watched rules does not name it.  Both stratification entry points have to find it
+;; watched-rule set does not name it.  Both stratification entry points have to find it
 ;; anyway (`checks/negative-edge-rules`), or the same pair of rules is refused in one
 ;; arrival order and stored in the other.
 
@@ -497,21 +497,22 @@
    ;; Nothing is stored, so each add is judged against the KB *before the batch*, not
    ;; against the KB the entries before it would have made.  That is the correct answer
    ;; for a dry run, and it differs from the sequential reading in **both** directions —
-   ;; so both are pinned, because an assertion true under either reading says nothing
+   ;; so both are asserted, because an assertion true under either reading says nothing
    ;; about which one `check-edit` implements.
    (tu/with-neutral-kb [kb kb-with-starter]
      (testing "an add admissible only *after* an earlier one landed is still reported"
-       ;; sequentially the genl edge lands first and puts the kind under the constraint
-       ;; type; as it stands the kind reaches `thing` and not the constraint, which is
-       ;; the visible-evidence-in-the-wrong-place case genlArg convicts
-       (tu/with-terms [relOf a_kind an_animal Rex CxThe]
+       ;; sequentially the quotedArg declaration lands first and makes the application at
+       ;; position 1 a mention, which no input declaration of its function reaches; as it
+       ;; stands the position is not quoted, and the string input is convicted
+       (tu/with-terms [relOf InputFn an_animal Rex CxThe]
          (v/assert kb (list 'genlCx CxThe 'CxUniverse) 'CxUniverse)
          (v/assert kb (list 'genl an_animal 'thing) 'CxUniverse)
-         (v/assert kb (list 'genl a_kind 'thing) 'CxUniverse)
-         (v/assert kb (list 'genlArg relOf 1 an_animal) 'CxUniverse)
-         (let [ps (v/check-edit kb {:add [[(list 'genl a_kind an_animal) CxThe]
-                                          [(list relOf a_kind Rex) CxThe]]})]
-           (is (= [{:in :add :index 1 :type :arg-genl}]
+         (v/assert kb (list 'unreifiable_function InputFn) 'CxUniverse)
+         (v/assert kb (list 'unary_function InputFn) 'CxUniverse)
+         (v/assert kb (list 'arg InputFn 1 an_animal) 'CxUniverse)
+         (let [ps (v/check-edit kb {:add [[(list 'quotedArg relOf 1 'thing) CxThe]
+                                          [(list relOf (list InputFn "x") Rex) CxThe]]})]
+           (is (= [{:in :add :index 1 :type :arg-type}]
                   (mapv #(select-keys % [:in :index :type]) ps))
                "the second add was judged against a KB the first had already changed"))))
      (testing "and an add the KB as it stands admits is *not* reported for what an
@@ -534,7 +535,7 @@
   ;; two visible arg declarations convict the same sentence, one per argument;
   ;; the single reported violation must name the content-sort winner in every
   ;; assertion order — `res/matches-visible` promises the answer *set*, so
-  ;; enumeration order may not pick the declaration a refusal is about.  Pinned to the
+  ;; enumeration order may not pick the declaration a conviction is about.  Forced to the
   ;; constraint-only reading: under the entailing one a declaration derives its type of a
   ;; symbol argument and convicts nothing, so there is no violation to name
   (doseq [flip? [false true]]
@@ -544,6 +545,8 @@
          (v/assert kb (list 'genlCx CxThe 'CxUniverse) 'CxUniverse)
          (doseq [t [t_first t_second t_plain]]
            (v/assert kb (list 'genl t 'thing) 'CxUniverse))
+         (doseq [t [t_first t_second]]
+           (v/assert kb (list 'disjoint t_plain t) 'CxUniverse))
          (let [d1     (list 'arg relOf 1 t_first)
                d2     (list 'arg relOf 2 t_second)
                winner (first (sort-by pr-str [d1 d2]))]
@@ -551,10 +554,9 @@
              (v/assert kb d 'CxUniverse))
            (v/assert kb (list t_plain Muffet) CxThe)
            (v/assert kb (list t_plain Alice) CxThe)
-           (let [ps (v/check kb (list relOf Muffet Alice) CxThe)
-                 p  (first (filter #(= :arg-type (:type %)) ps))]
+           (let [p (tu/write-conviction kb (list relOf Muffet Alice) CxThe)]
              (testing (str "assertion order " (if flip? "second first" "first second"))
-               (is (some? p) "both declarations convict, so a violation is reported")
+               (is (= :arg-type (:type p)) "both declarations convict, so a violation is reported")
                (is (= (nth winner 2) (:position p)))
                (is (= (nth winner 3) (:expected p)))))))))))
 
@@ -841,7 +843,7 @@
   ;; The *other* inertness is the rule's own `set/inertRule` — believed, indexed and
   ;; browsable, firing neither way — which is what a documentation-only rule wants (a
   ;; transitivity the cached closure computes instead) and what
-  ;; `direction_test/inert-rule-is-documentation-only` pins.  The refusal's message names
+  ;; `direction_test/inert-rule-is-documentation-only` asserts.  The refusal's message names
   ;; it, since a caller reaching for this entry point usually meant that one.
   (tu/with-neutral-kb [kb tu/fresh]
     (tu/with-terms [bird flies Tweety CxInert]

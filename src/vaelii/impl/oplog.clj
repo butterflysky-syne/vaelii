@@ -3,10 +3,10 @@
 (ns vaelii.impl.oplog
   "The **operation log**: each public write a KB takes, recorded as the call that made it.
   A frame holds the operation's name, its arguments, and the inputs the call reads that
-  its arguments do not carry — the clock `:created` is stamped from, the creator, and the
+  its arguments do not carry — the clock `:created` is read from, the creator, and the
   dynamic bindings that change what a write stores.  `vaelii.core` names the operations
-  and their classes in its `write-ops` table, routes each through `run-op`, and installs
-  the table as the dispatch `replay!` runs frames through.
+  and their classes in its `write-ops` table, routes each through `run-op`, and builds
+  from it the dispatch `replay!` runs frames through (`wiring/replay-op`).
 
   ## One frame per outermost write
 
@@ -56,7 +56,7 @@
 
   The file's first frame is a header naming the log's **generation**.  `rotate!` starts
   a generation: it truncates the file to a new header and clears the unusable mark.
-  `replay!` runs each operation frame through the installed dispatch with `*replaying?*`
+  `replay!` runs each operation frame through `vaelii.core`'s dispatch with `*replaying?*`
   bound, so `run-op` appends nothing and binds the frame's inputs, and with the change
   feed off, since listeners belong to the process that made the writes.  An operation
   that refused when it was made refuses again, and replay goes on to the next frame.
@@ -78,8 +78,10 @@
             [vaelii.impl.disk.durability :as dur]
             [vaelii.impl.disk.files :as f]
             [vaelii.impl.feed :as feed]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
-            [vaelii.impl.types.store :as store-types])
+            [vaelii.impl.types.store :as store-types]
+            [vaelii.impl.wiring :as wiring])
   (:import [java.io RandomAccessFile]))
 
 (def format-version
@@ -336,17 +338,6 @@
 
 ;; ---- replay ---------------------------------------------------------------
 
-(defonce ^{:private true
-           :doc "Operation name -> the function a frame of it runs through.  Installed by `vaelii.core`
-  at load, with the write entry points of its `write-ops` table."}
-  dispatch
-  (atom {}))
-
-(defn install-dispatch!
-  "Install `m`, operation name -> function of the KB and the frame's arguments."
-  [m]
-  (reset! dispatch m))
-
 (defn- diverged! [kind id]
   (throw (ex-info (str "replaying the operation log wrote " (name kind) " " id
                        " differently from the record the store holds there")
@@ -362,13 +353,15 @@
   is missing the write."
   [kb frames]
   (binding [*replaying?* true, feed/*enabled?* false]
-    (doseq [{:keys [op args in]} frames
-            :when op]
-      (let [g (or (get @dispatch op) (diverged! :operation op))]
-        (binding [*replay-inputs* in]
-          (try (apply g kb args)
-               (catch clojure.lang.ExceptionInfo t
-                 (when (::diverged (ex-data t)) (throw t)))))))))
+    (with-open [r (progress/start ::replay "replay: run the logged operations" (count frames))]
+      (doseq [{:keys [op args in]} frames]
+        (progress/tick! r)
+        (when op
+          (let [g (or (wiring/replay-op op) (diverged! :operation op))]
+            (binding [*replay-inputs* in]
+              (try (apply g kb args)
+                   (catch clojure.lang.ExceptionInfo t
+                     (when (::diverged (ex-data t)) (throw t)))))))))))
 
 ;; ---- the logged record store --------------------------------------------
 

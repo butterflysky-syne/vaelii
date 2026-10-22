@@ -77,11 +77,11 @@
 
 (tu/deftest-kb a-rule-derived-except-reads-the-same-after-a-restart
   ;; A visibility `except` is dispatched on the sentence's shape rather than out of the
-  ;; special-predicate table, and the roster it writes is kept at the store primitive —
+  ;; special-predicate table, and the visibility `except` set it writes is kept at the store primitive —
   ;; which `recover` replays and a derivation path can miss.  The rule fires first, so
   ;; there is a standing firing for the except to sweep: a cold KB computes rather than
   ;; recalls, and would hide the difference.
-  ;; `hide` is on the forced-monotonic roster at CxSub, so a rule there reading it may
+  ;; `hide` is forced-monotonic at CxSub, so a rule there reading it may
   ;; conclude an `except`
   (tu/with-terms [q p hide Aa Trigger CxSub]
     (v/assert kb (list 'forced_monotonic_predicate hide) CxSub)
@@ -287,14 +287,14 @@
       (is (= ["LaMulanaTwo"] (:from-january reading))
           "and January reads one filler on both sides of the restart"))))
 
-;; ---- the forced-monotonic roster is a label, read back from the records ----------
+;; ---- the forced-monotonic set is a label, read back from the records ----------
 
-(tu/deftest-kb the-roster-forcing-reads-the-same-after-a-restart
+(tu/deftest-kb the-declared-forcing-reads-the-same-after-a-restart
   ;; The records hold every write as written; the forced sets are rebuilt from them and
-  ;; the declarations (docs/nmtms.md, "The forced-monotonic roster").  The declaration is
-  ;; no entry of the global roster, so the denial and the firing are IN in the network at
-  ;; their classes, and the context that sees the declaration reads the denial inert and the
-  ;; firing void.
+  ;; the declarations (docs/nmtms.md, "The forced-monotonic set").  The declaration is
+  ;; no entry of the baseline forced-monotonic set, so the firing is IN in the network at its
+  ;; class, and the context that sees the declaration reads it void.  The denial has no
+  ;; literal stored beside it, so it is believed.
   (tu/with-terms [likes knows Ann Bob Cal Dan]
     (v/assert kb (list 'forced_monotonic_predicate likes) 'CxUniverse)
     (v/assert kb (list 'set/forwardRule (list 'implies (list knows '?x '?y) (list likes '?x '?y)))
@@ -305,13 +305,13 @@
           fired  (v/handle-of kb (list likes Ann Dan) 'CxUniverse)
           observe (fn [k] (mapv (fn [h] [(v/in? k h) (v/defeat-class k h) (:strength (v/sentex k h))])
                                 [fact denial fired]))]
-      (is (= [[true :default :default] [false :default :default] [false :default nil]]
-             (one-reading! "a roster fact at its written strength, a denial held OUT and a void firing"
+      (is (= [[true :default :default] [true :default :default] [false :default nil]]
+             (one-reading! "a forced-monotonic fact at its written strength, a denial with no literal beside it and a void firing"
                            kb observe))))))
 
 (tu/deftest-kb a-declaration-below-the-root-reads-the-same-after-a-restart
   ;; CxA sees the declaration and CxB does not: the rival loses, the definitional firing
-  ;; stands and the denial is inert at CxA alone, either side of a restart
+  ;; stands and the denial loses to its literal at CxA alone, either side of a restart
   (tu/with-terms [CxU CxA CxB trigger_kind rival_kind made_kind species_kind kind_two]
     (doseq [[sub super] [[CxU 'CxUniverse] [CxA CxU] [CxB CxU]]]
       (v/assert kb (list 'genlCx sub super) 'CxUniverse {:strength :monotonic}))
@@ -372,7 +372,7 @@
                (one-reading! "an excepted defeat of a declaration" kb observe)))))))
 
 (tu/deftest-kb a-declared-conclusion-reads-the-same-after-a-restart
-  ;; a firing concluding a literal CxA declares on the roster, from an antecedent off it:
+  ;; a firing concluding a literal CxA declares forced-monotonic, from an antecedent that is not:
   ;; void at CxA, believed at CxB and CxU, either side of a restart
   (tu/with-terms [CxU CxA CxB trigger_kind seed_kind species_kind]
     (doseq [[sub super] [[CxU 'CxUniverse] [CxA CxU] [CxB CxU]]]
@@ -385,13 +385,14 @@
           observe (fn [k] (mapv #(v/ask? k c %) [CxA CxB CxU]))]
       (is (= [false true true] (one-reading! "a declared conclusion" kb observe))))))
 
-(tu/deftest-kb a-denial-an-older-store-kept-inert-recovers-as-a-default-premise
-  ;; An older store held a denial of a roster literal with no premise mark; a recover
-  ;; gives it the `:default` mark it was written with, and the labeller holds it OUT.
+(tu/deftest-kb a-denial-an-older-store-kept-unmarked-recovers-as-a-default-premise
+  ;; An older store held a denial of a forced-monotonic literal with no premise mark; a recover
+  ;; gives it the `:default` mark it was written with, and with no literal stored beside it
+  ;; the denial is believed.
   (tu/with-terms [likes Ann Cal]
     (v/assert kb (list 'forced_monotonic_predicate likes) 'CxUniverse)
     (let [d (v/assert kb (list 'not (list likes Ann Cal)) 'CxUniverse)]
       (p/unmark-premise! (:records kb) d)
       (let [back (restarted)]
-        (is (= [:default false :inert]
-               [(:strength (v/sentex back d)) (v/in? back d) (:reason (v/why-not back d))]))))))
+        (is (= [:default true]
+               [(:strength (v/sentex back d)) (v/in? back d)]))))))

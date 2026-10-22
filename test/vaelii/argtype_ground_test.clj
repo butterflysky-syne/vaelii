@@ -50,11 +50,11 @@
 ;; ---- the contract: a stored fact short-circuits the scan ----------------
 
 (tu/deftest-kb stored-fact-ground-ask-does-not-scan-the-individuals-relations
-  ;; THE gate.  With `(dog Muffet)` stored and Muffet also filling 30 arg-constrained
-  ;; positions, `ask? (dog Muffet)` must be answered by the stored fact — FactProver
-  ;; precedes ArgTypeProver and the union is lazy, so ArgTypeProver.solve is never
-  ;; forced and `inferred-types` never runs.  Pre-change (ArgTypeProver first, eager
-  ;; scan) this issued ~M arg probes before FactProver got a turn.
+  ;; This test is the contract's regression test.  With `(dog Muffet)` stored and Muffet
+  ;; also filling 30 arg-constrained positions, `ask? (dog Muffet)` must be answered by
+  ;; the stored fact — FactProver precedes ArgTypeProver and the union is lazy, so
+  ;; ArgTypeProver.solve is never forced and `inferred-types` never runs.  Pre-change
+  ;; (ArgTypeProver first, eager scan) this issued ~M arg probes before FactProver got a turn.
   (tu/with-terms [Muffet]
     (let [ctx 'CxUniverse, m 30
           dog (typed-individual-in-m-relations! kb Muffet m ctx)
@@ -91,16 +91,18 @@
 (tu/deftest-kb inferred-only-membership-still-holds
   ;; (food Bone1) is provable only through (arg eats 2 food) + (eats Muffet Bone1):
   ;; no stored (food Bone1) fact, so ArgTypeProver must still run when FactProver
-  ;; yields nothing — the reorder and the lazy `some` must not lose this answer.
+  ;; yields nothing — the reorder and the lazy `some` must not lose this answer.  The
+  ;; constraint-only reading stores no mint, which the entailing reading would.
   (tu/with-terms [eats food Muffet Bone1]
-    (let [ctx 'CxUniverse]
-      (v/assert kb (list 'arg eats 2 food) ctx)
-      (v/assert kb (list eats Muffet Bone1) ctx)          ; Bone1 @ arg2, food-constrained
-      (testing "the inferred membership is provable"
-        (is (v/ask? kb (list food Bone1) ctx)))
-      (testing "with no stored fact backing it"
-        (is (empty? (v/sentexes-matching kb (list food Bone1) ctx))
-            "membership is inferred, not stored")))))
+    (tu/without-entailing
+     (let [ctx 'CxUniverse]
+       (v/assert kb (list 'arg eats 2 food) ctx)
+       (v/assert kb (list eats Muffet Bone1) ctx)          ; Bone1 @ arg2, food-constrained
+       (testing "the inferred membership is provable"
+         (is (v/ask? kb (list food Bone1) ctx)))
+       (testing "with no stored fact backing it"
+         (is (empty? (v/sentexes-matching kb (list food Bone1) ctx))
+             "membership is inferred, not stored"))))))
 
 ;; ---- open enumeration unchanged -----------------------------------------
 

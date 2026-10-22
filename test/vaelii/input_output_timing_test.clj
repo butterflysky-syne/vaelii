@@ -58,16 +58,16 @@
       (is (= :false (exists-at kb ctx Pot1 noon-next-year))))))
 
 (tu/deftest-kb an-output-starts-within-its-event
-  (tu/with-terms [Carving1 Statue1 Stamping1 Widget1]
+  (tu/with-terms [Carving1 Statue1 Pressing1 Widget1]
     (testing "an output that started before its event is an inconsistency"
       (let [ctx (story! kb [(list 'event Carving1)
                             (list 'instantBefore (list 'StartFn Statue1) (list 'StartFn Carving1))
                             (list 'output Carving1 Statue1)])]
         (is (false? (consistent? kb ctx)))))
     (testing "and one that starts exactly as its event ends is not"
-      (let [ctx (story! kb [(list 'event Stamping1)
-                            (list 'instantEqual (list 'StartFn Widget1) (list 'EndFn Stamping1))
-                            (list 'output Stamping1 Widget1)])]
+      (let [ctx (story! kb [(list 'event Pressing1)
+                            (list 'instantEqual (list 'StartFn Widget1) (list 'EndFn Pressing1))
+                            (list 'output Pressing1 Widget1)])]
         (is (true? (consistent? kb ctx)))))))
 
 (tu/deftest-kb a-destroyed-input-ends-within-its-event

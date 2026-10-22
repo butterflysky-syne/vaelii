@@ -148,11 +148,11 @@
   ;; existed to avoid.  So a `:max-cost` outside the three tiers has to say so, and
   ;; carry a `:type` a caller can discriminate on rather than an NPE from inside a
   ;; comparison.
-  (tu/with-terms [partOf A B D CxFam]
-    (v/assert kb (list 'transitive partOf) CxFam)
-    (v/assert kb (list partOf A B) CxFam)
-    (v/assert kb (list partOf B D) CxFam)
-    (let [goal (list partOf A '?y)]
+  (tu/with-terms [tangiblePartOf A B D CxFam]
+    (v/assert kb (list 'transitive tangiblePartOf) CxFam)
+    (v/assert kb (list tangiblePartOf A B) CxFam)
+    (v/assert kb (list tangiblePartOf B D) CxFam)
+    (let [goal (list tangiblePartOf A '?y)]
       (testing "a real tier answers"
         (is (= :complete (:status (v/ask-within kb goal CxFam {:max-cost :compute})))))
       (doseq [bogus [:Lookup :cheap :lookups "lookup"]]
@@ -187,7 +187,7 @@
   ;; result rests on: dropping a `:compute` prover makes a run *under-report*, which is the trade a
   ;; ceiling asks for, while dropping the closed-world one **inverts** it — an empty result
   ;; for `(unknown S)` reads as "S is derivable" and the run reports `:complete` while
-  ;; saying it.  So both directions are pinned here: with the prover dropped, the second
+  ;; saying it.  So both directions are asserted here: with the prover dropped, the second
   ;; assertion would read the same and the first would go quietly false.
   (tu/with-terms [flies Tweety CxFam]
     (let [goal (list 'unknown (list flies Tweety))]
@@ -276,7 +276,7 @@
           (is (= 2 (:max-depth b)))
           (is (nil? (:max-term-growth b)) "unnamed is the default ceiling, not no ceiling")))
       ;; ...and the public entry point reaches `prove-from` through that same translation rather
-      ;; than through a bounds map of its own.  The bound is rostered, so `check-budget!`
+      ;; than through a bounds map of its own.  The bound is an accepted key, so `check-budget!`
       ;; admits it — an entry point that then dropped it would answer under the shipped ceiling
       ;; with nothing to say the raise had not been read.
       ;; Under the shipped executor whatever the sweep installed: the claim is about the
@@ -288,11 +288,72 @@
           (is (= [{}] (:results (v/prove-within kb (list p A) CxRaise {:max-term-growth 20})))
               "and a raised one reaches the fact the bounds map already reaches"))))))
 
+;; ---- a both-open goal over a transitive predicate ------------------------------
+;; `(P ?x ?y)` over a `transitive` `P` answers `P`'s stored pairs and not its closure
+;; (docs/taxonomy.md), so the derived `(P R0 R2)` is missing from every answer below.
+
+(defn- open-transitive-kb [kb P R0 R1 R2 Cx]
+  (v/assert kb (list 'transitive P) Cx)
+  (v/assert kb (list P R0 R1) Cx)
+  (v/assert kb (list P R1 R2) Cx))
+
+(defn- every-step
+  "`r` and each partial result its `resume`s return under `budget`, in order."
+  [r budget]
+  (loop [r r, steps []]
+    (if (:resume r)
+      (recur (v/resume r budget) (conj steps r))
+      (conj steps r))))
+
+(tu/deftest-kb ask-within-reads-incomplete-over-an-open-transitive-goal
+  (tu/with-terms [aheadOf R0 R1 R2 CxT]
+    (open-transitive-kb kb aheadOf R0 R1 R2 CxT)
+    (let [goal (list aheadOf '?x '?y)
+          r    (v/ask-within kb goal CxT {:max-ms 60000})]
+      (is (= 2 (:count r)))
+      (is (= :incomplete (:status r)))
+      (is (nil? (:resume r)))
+      (is (= [aheadOf] (:unenumerated r)))
+      (testing "a resume loop under a cap of one reads it at the last step"
+        (let [steps (every-step (v/ask-within kb goal CxT {:max-results 1}) {:max-results 1})]
+          (is (= 2 (reduce + (map :count steps))))
+          (is (= :incomplete (:status (peek steps))))
+          (is (= [aheadOf] (:unenumerated (peek steps)))))))
+    (testing "one end bound enumerates the closure"
+      (let [r (v/ask-within kb (list aheadOf R0 '?y) CxT {:max-ms 60000})]
+        (is (= #{R1 R2} (set (map #(get % '?y) (:results r)))))
+        (is (= :complete (:status r)))
+        (is (= [] (:unenumerated r)))))))
+
+(tu/deftest-kb prove-within-reads-incomplete-over-an-open-transitive-goal-on-each-engine
+  ;; each engine named and forced, so every configuration runs both
+  (tu/with-terms [aheadOf R0 R1 R2 CxT]
+    (open-transitive-kb kb aheadOf R0 R1 R2 CxT)
+    (doseq [engine [:dfs :inference]]
+      (binding [v/*query-engine* engine]
+        (testing (name engine)
+          (let [goal   (list aheadOf '?x '?y)
+                budget {:max-depth 2}
+                r      (v/prove-within kb goal CxT budget)]
+            (is (= 2 (:count r)))
+            (is (= :incomplete (:status r)))
+            (is (nil? (:resume r)))
+            (is (= [aheadOf] (:unenumerated r)))
+            (let [capped (assoc budget :max-results 1)
+                  steps  (every-step (v/prove-within kb goal CxT capped) capped)]
+              (is (= 2 (reduce + (map :count steps))))
+              (is (= :incomplete (:status (peek steps))))
+              (is (= [aheadOf] (:unenumerated (peek steps)))))
+            (let [r (v/prove-within kb (list aheadOf R0 '?y) CxT budget)]
+              (is (= #{R1 R2} (set (map #(get % '?y) (:results r)))))
+              (is (= :complete (:status r)))
+              (is (= [] (:unenumerated r))))))))))
+
 ;; ---- the plain entry points under a bound ----------------------------------------
 ;; `ask` / `ask?` / `prove` / `provable?` each take a trailing bound of their own, and the
 ;; two kinds of bound answer differently on purpose: a depth PRUNES, so the answer is the
 ;; whole of what that depth admits, while a clock SUSPENDS, so what the search holds is a
-;; prefix — and a solution vector and a boolean have no room to say so.  These pin both
+;; prefix — and a solution vector and a boolean have no room to say so.  These assert both
 ;; halves, and the second is what stops a deadline from reading as a KB that knows less.
 
 (tu/deftest-kb a-bound-it-runs-dry-inside-answers-what-the-unbounded-entry-point-does
@@ -344,29 +405,29 @@
           (is (= [entry-point :timeout] [(:entry-point d) (:status d)])
               "naming the entry point that ran out and what stopped it"))))))
 
-(tu/deftest-kb each-bounded-entry-point-reads-its-own-roster
-  (tu/with-terms [dog Muffet CxRoster]
-    (v/assert kb (list dog Muffet) CxRoster)
+(tu/deftest-kb each-bounded-entry-point-reads-its-own-key-set
+  (tu/with-terms [dog Muffet CxKeys]
+    (v/assert kb (list dog Muffet) CxKeys)
     (let [goal    (list dog '?x)
           refusal (fn [f] (:type (ex-data (is (thrown? clojure.lang.ExceptionInfo (f))))))]
       (testing "a misspelt bound is refused rather than run unbounded"
         (is (= [:unknown-option :unknown-option :unknown-option :unknown-option]
-               [(refusal #(v/prove kb goal CxRoster {:max-mss 10}))
-                (refusal #(v/provable? kb goal CxRoster {:max-mss 10}))
-                (refusal #(v/ask kb goal CxRoster {:max-mss 10}))
-                (refusal #(v/ask? kb goal CxRoster {:max-mss 10}))])))
+               [(refusal #(v/prove kb goal CxKeys {:max-mss 10}))
+                (refusal #(v/provable? kb goal CxKeys {:max-mss 10}))
+                (refusal #(v/ask kb goal CxKeys {:max-mss 10}))
+                (refusal #(v/ask? kb goal CxKeys {:max-mss 10}))])))
       (testing "a depth is prove's and not ask's — nothing in the registry expands a
                 rule, so a depth there would be a bound accepted and never consulted"
-        (is (= :unknown-option (refusal #(v/ask kb goal CxRoster {:max-depth 1}))))
-        (is (= :unknown-option (refusal #(v/ask? kb goal CxRoster {:max-depth 1}))))
+        (is (= :unknown-option (refusal #(v/ask kb goal CxKeys {:max-depth 1}))))
+        (is (= :unknown-option (refusal #(v/ask? kb goal CxKeys {:max-depth 1}))))
         (is (= #{Muffet} (set (map #(get % '?x)
-                                   (v/prove kb goal CxRoster {:max-depth 1}))))))
+                                   (v/prove kb goal CxKeys {:max-depth 1}))))))
       (testing "and a bound that is not the kind of number it names, since one that is
                 not reads as no bound at all"
-        (is (= :unknown-option (refusal #(v/prove kb goal CxRoster {:max-depth -1}))))
-        (is (= :unknown-option (refusal #(v/ask kb goal CxRoster {:max-ms :soon}))))))))
+        (is (= :unknown-option (refusal #(v/prove kb goal CxKeys {:max-depth -1}))))
+        (is (= :unknown-option (refusal #(v/ask kb goal CxKeys {:max-ms :soon}))))))))
 
-;; ---- the budget roster ----------------------------------------------------
+;; ---- the budget key set ---------------------------------------------------
 
 (deftest a-budget-bound-nothing-reads-is-refused
   ;; Every bound is optional, so a misspelt one is not missing — the run is simply
@@ -385,7 +446,7 @@
   (testing "a non-map budget is refused rather than read as unbounded"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be a map"
                           (budget/collect (range 5) :max-results))))
-  (testing "each anytime entry point's own rostered bounds pass — ask's three and prove's four"
+  (testing "each anytime entry point's own accepted bounds pass — ask's three and prove's four"
     (tu/with-neutral-kb [kb tu/fresh]
       (tu/with-terms [dog Muffet CxBudget]
         (v/assert kb (list dog Muffet) CxBudget)
@@ -395,7 +456,7 @@
         (is (= :complete (:status (v/prove-within kb (list dog '?x) CxBudget
                                                   {:max-results 10 :max-depth 3
                                                    :max-term-growth 40})))))))
-  (testing "and both anytime entry points hold their budget to the roster"
+  (testing "and both anytime entry points hold their budget to the key set"
     (tu/with-neutral-kb [kb tu/fresh]
       (tu/with-terms [dog]
         (doseq [entry-point [#(v/ask-within kb (list dog '?x) {:max-result 1})

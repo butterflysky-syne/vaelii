@@ -622,24 +622,24 @@
 (defn publish!
   "Write the seat's KB out as a portable export dump in `dir`, the form a git host
   carries: `v/export!` with `:compression :none` so the record streams are a
-  byte-stable function of the KB — gzip stamps a header timestamp, which would make the
+  byte-stable function of the KB — gzip writes a header timestamp, which would make the
   same state export to different bytes.  `dir` must be absent or empty.  Returns
   `export!`'s summary; the commit the other seats pull is this directory.
 
-  **`:compression` is pinned, not defaulted.**  Byte-stability is the property this
+  **`:compression` is fixed, not defaulted.**  Byte-stability is the property this
   function exists to provide — it is what lets two publishes of one state be compared as
   bytes — so a caller asking for `:gzip` here is asking for something `publish!` cannot be.
-  Passing anything but `:none` is refused (`:koinii/compression-pinned`) rather than
+  Passing anything but `:none` is refused (`:koinii/compression-fixed`) rather than
   quietly honoured; a caller that wants a compressed dump wants `v/export!` directly, which
   makes no byte-stability claim.  Every other `export!` option passes through."
   ([kb dir] (publish! kb dir {}))
   ([kb dir opts]
    (when-let [c (:compression opts)]
      (when-not (= :none c)
-       (throw (ex-info (str "koinii: publish! pins :compression :none — a published commit's"
+       (throw (ex-info (str "koinii: publish! requires :compression :none — a published commit's"
                             " record streams are a byte-stable function of the KB, and "
-                            (pr-str c) " stamps bytes that are not; export! takes it directly")
-                       {:type :koinii/compression-pinned :compression c}))))
+                            (pr-str c) " writes bytes that are not; export! takes it directly")
+                       {:type :koinii/compression-fixed :compression c}))))
    (v/export! kb dir (assoc opts :compression :none))))
 
 (defn pull!

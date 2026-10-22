@@ -4,7 +4,7 @@
   "What a declaration above a predicate binds below it, on the five channels
   `constraint-descension-test` leaves open.
 
-  That namespace pins the descension where it is *asserted*: an edge written by a
+  That namespace tests the descension where it is *asserted*: an edge written by a
   caller, a mark read off a super, a refusal that names the declaration that convicted.
   Each test here is a place where the same descension has to happen and the ingredient
   arrives by another entry point, or where reading it right is only visible in a count or a key:
@@ -79,7 +79,7 @@
       ;; Both routes reach this arm: a predicate carrying its own declaration is convicted
       ;; against its own number and told so (`arggenl-test`'s
       ;; `a-constraint-on-a-position-the-predicate-lacks-is-refused`), which is why the
-      ;; message branches rather than saying one thing.  What this pins is the branch the
+      ;; message branches rather than saying one thing.  This asserts the branch the
       ;; inherited route takes — "declared with 2 arguments" is false of fatherOf, which
       ;; declares nothing, and would send an author looking for a declaration on it that
       ;; does not exist
@@ -135,7 +135,7 @@
 ;;
 ;; `arg` read as an inference makes a fact evidence of a membership nobody wrote, so a
 ;; fact can flip an `exceptWhen` with nothing on the excepted type having been asserted.
-;; `except-recheck-test` pins that channel where the declaration is on the fact's own
+;; `except-recheck-test` asserts that channel where the declaration is on the fact's own
 ;; functor.  The declaration descends too — a `fatherOf` tuple is a `parentOf` tuple and
 ;; is typed by `parentOf`'s declarations — so the trigger has to look up the hierarchy or
 ;; the channel is blind again for exactly the facts the descension opened.
@@ -249,9 +249,10 @@
             "where CxA, which sees one half, reads no dilemma")))))
 
 (tu/deftest-kb a-cross-context-clash-is-decided-through-a-mark-on-the-super-alone
-  ;; The gate the case above had to work around.  `could-clash?` and `partner-contexts`
-  ;; decide, per sentex, whether a binary fact can be half of a pair at all — and they
-  ;; asked `has-prop?` of the exact functor while every check they gate asks `props-over`.
+  ;; The case above had to work around this candidate filter.  `could-clash?` and
+  ;; `partner-contexts` decide, per sentex, whether a binary fact can be half of a pair at
+  ;; all — and they asked `has-prop?` of the exact functor while every check behind them
+  ;; asks `props-over`.
   ;; So the descension the checks implement was invisible here: a pair the assert entry point
   ;; refuses in one context was never weighed across two, because the pass dropped both
   ;; halves before looking at them.  Nothing marks the sub-predicate now.
@@ -271,7 +272,7 @@
     (is (empty? (v/contradictions kb CxA)))))
 
 (tu/deftest-kb a-cross-context-partner-need-not-share-the-sentences-functor
-  ;; The other half of the same gate.  `partner-contexts` narrowed the postings it read
+  ;; This test covers the other half of the same filter.  `partner-contexts` narrowed the postings it read
   ;; to the sentence's own functor, which was the right narrowing while a mark could only
   ;; sit on the functor — and drops exactly the pairs descending it exists to catch: under
   ;; `(functional aaMeasureOf)` a `zzHeightOf` reading and a `zzStatureOf` one are two
@@ -279,7 +280,7 @@
   ;;
   ;; Numeric fillers on purpose: two **symbols** filling one functional slot are the
   ;; co-reference case and the engine merges them into an `equals` rather than convicting
-  ;; anything, so a clash count would pin the wrong half.  No merge can make two
+  ;; anything, so a clash count would assert the wrong half.  No merge can make two
   ;; numbers one thing, which is what leaves a clash for the vantage to weigh.
   (tu/with-terms [CxA CxB CxW aaMeasureOf zzHeightOf zzStatureOf Tom]
     (v/with-deferred-settle kb

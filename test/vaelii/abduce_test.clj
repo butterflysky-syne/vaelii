@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.abduce-test
-  "`abduce`: the gate, the loop, the caps, the record a hypothesis leaves and the
+  "`abduce`: the abducibility check, the loop, the caps, the record a hypothesis leaves and the
   isolation of the scratch context (docs/abduction.md)."
   (:require [clojure.string :as str]
             [clojure.test :refer [is testing use-fixtures]]
@@ -49,12 +49,12 @@
         (is (nil? (v/handle-of kb (list wabPremise N) (:context r))))
         (is (not (v/provable? kb (list wabGoal N) CxTheory)))))))
 
-;; ---- the gate ------------------------------------------------------------
+;; ---- the abducibility check ----------------------------------------------
 
-(tu/deftest-kb the-gate-refuses-and-reports-what-it-will-not-assume
+(tu/deftest-kb the-abducibility-check-refuses-and-reports-what-it-will-not-assume
   ;; The constraint-only reading, where the cat in a dog-only slot is a refusal; under
   ;; the entailing reading the slot derives `(dog_ N)`, a clash and not a refusal, so the
-  ;; gate admits the hypothesis as `assert` admits the sentence.
+  ;; abducibility check admits the hypothesis as `assert` admits the sentence.
   (tu/without-entailing
    (doseq [[why setup]
            [["ungranted" (fn [_ _ _ _ _] nil)]
@@ -101,7 +101,7 @@
           (is (= wabPremise pred))
           (is (str/starts-with? (name arg) "?")))))))
 
-(tu/deftest-kb the-gate-reads-grants-and-denials-visible-from-the-asking-context
+(tu/deftest-kb the-abducibility-check-reads-grants-and-denials-visible-from-the-asking-context
   (doseq [[what in-sibling before after]
           [["a grant" (fn [kb p _ cx _] (grant kb p cx)) empty? seq]
            ["a denial" (fn [kb p n cx asker]

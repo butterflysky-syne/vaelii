@@ -5,7 +5,8 @@
   over a caller-owned finite set of ground candidate terms, the predicate `genl`
   edges that widen a declared argument type, the candidate types with no `genl`
   path to `thing`, the `genl` edges a cover forces on a candidate type that the
-  closure does not hold, the orthogonal declarations (`orthogonal` and
+  closure does not hold, the exact-arity class a candidate predicate or function's kind
+  and arity force that it is not an instance of, the orthogonal declarations (`orthogonal` and
   `siblingDisjointException`) over a pair a stated separation divides, the stored rules a
   declaration the engine implements states, the `genl` nodes with no declared arity, and
   three ontology-engineering smells for review: sibling types with one direct `genl` set,
@@ -67,6 +68,8 @@ declared predicate independently. The widening pass does the same: one census of
 `arg` declarations, then one direct `genl` edge at a time. The `thing` pass reads no
 census: it checks one candidate term at a time. The implicit-`genl` pass reads none
 either: one candidate term, then one visible cover over it, at a time. The
+implicit-arity-class pass reads one census of the visible `predicateTypeByArity` and
+`functionTypeByArity` facts, then one candidate term at a time. The
 `orthogonal` pass reads one census of visible orthogonal declarations, then one
 declaration at a time. The rule-macro pass reads one census of the stored rules, then
 one rule at a time. The undeclared-arity pass reads one census of the visible `genl`
@@ -104,7 +107,7 @@ A finding changes the top-level status and adds only the populated categories:
   {:status :audited :violations #{Bob}}}}
 ```
 
-`:status :audited` means all twelve passes ran and none found a gap. `:status :gap` cannot
+`:status :audited` means all thirteen passes ran and none found a gap. `:status :gap` cannot
 be confused with that clean shape even when only one sparse category is present. The
 specified category is exactly `all-specified-violations`, including its typed declaration
 gaps; it is composed, not reimplemented.
@@ -221,7 +224,7 @@ Reading the declaration and testing the `genl` path each spend one work unit, an
 
 A cover places individuals: an instance of the whole denied every part but one is an
 instance of the remaining part
-([taxonomy.md](taxonomy.md#the-coverage-inference-is-gated-on-explicit-negation)). The
+([taxonomy.md](taxonomy.md#the-coverage-inference-is-conditional-on-explicit-negation)). The
 same argument holds of a type, and nothing on the write path applies it there. A type
 under the whole that is disjoint from every part but one has all its instances in that
 part, so `(genl X P)` is true, but no sentence states it and the `genl` closure does not
@@ -245,7 +248,9 @@ other part, the declarations that separate the type from it:
 
 `abstract_kind` is separated from `tangible` by the second partition, which holds a
 supertype of each, so every `abstract_kind` is `intangible`. The finding is a
-suggestion: the sweep asserts nothing, and the edge is the author's to state.
+suggestion: the sweep asserts nothing, and the edge is the author's to state. Every predicate and function the starter ships states its
+exact-arity class, so the shipped starter has no finding, in CxUniverse or in any middle
+context.
 
 One finding is reported for each candidate term and cover that force an edge, in print
 order of the term and then of the cover. The separation is `disjoint?`, so an explicit
@@ -261,7 +266,7 @@ The pass has these limits:
   edge; an individual and a relation of two or more places are skipped.
 - **Covers over a supertype or over `thing`.** Every visible `covering` or `partition`
   over a supertype of the term is read, and every one over `thing` even when the term
-  has no `genl` path to `thing` yet. A `separating` roster claims no coverage and forces
+  has no `genl` path to `thing` yet. A `separating` declaration claims no coverage and forces
   nothing, though it may separate the term from a part.
 - **Exactly one part left.** A term separated from every part is empty and is forced
   under none; a term left two parts or more is forced under none. A part, or the whole
@@ -274,12 +279,67 @@ The pass has these limits:
 Reading the term's arity and edges, each cover and each part's disjointness test spend
 one work unit, and `:max-results` counts these findings last, after the `thing` category.
 
+## What an implicit-arity-class finding means
+
+`(predicateTypeByArity binary_predicate 2)` says that a predicate of two arguments is a
+`binary_predicate`, and `functionTypeByArity` says the same of functions. Each mapping
+fact generates that classification as a rule, and the rule is `set/inertRule`: believed and
+browsable, run on no write and no query. Run backward, the predicate rule reached
+`(binary ?r)` through the `genl` edge from `binary_predicate` to `binary` while the
+converse proves `(arity ?r 2)` from `(binary ?r)`, and every `(binary ?r)` and `(arity ?p
+?n)` query paid for the cycle ([taxonomy.md](taxonomy.md#arity)). The sweep applies the
+rule instead: it reports the class a predicate's or a function's arity forces that the
+relation is not an instance of, and an author states it:
+
+```clojure
+;; (predicateTypeByArity binary_predicate 2)
+;; (predicate pairOf)
+;; (arity pairOf 2)
+{:status :gap
+ :candidate-count 1
+ :implicit-arity-class
+ [{:term pairOf
+   :kind predicate
+   :arity 2
+   :class binary_predicate
+   :mapping (predicateTypeByArity binary_predicate 2)}]}
+```
+
+The finding is a suggestion: the sweep asserts nothing, and `(binary_predicate pairOf)`
+is the author's to state.
+
+One finding is reported for each candidate term and class, in print order of the term,
+then of the kind (predicate before function), then of the class. The length is
+`arity/relation-length`'s exact one, read the same at every context: an `(arity R n)`
+declaration, a membership in an exact-arity class, or the one exact length the bound
+predicates above `R` agree on ([taxonomy.md](taxonomy.md#arity)). The kind and the class
+are memberships read through the `genl` closure, so a relation stated `binary_predicate`,
+or an instance of a type under it, is not a finding.
+
+The pass has these limits:
+
+- **Candidate terms, not a census of relations.** The caller's candidate set bounds the
+  pass, as it bounds the `thing` pass. A candidate that is not a ground symbol is skipped,
+  and so is one with no exact length: a variable-arity relation has no exact-arity class.
+- **Only the shipped mappings.** The pass reads `predicateTypeByArity` and
+  `functionTypeByArity`. An arity no visible mapping fact names forces nothing, so
+  `(arity InstantFn 6)` is not a finding.
+- **A kind, not the relation-wide class.** `relationTypeByArity`'s rule is forward and
+  stores `(binary R)` from `(arity R 2)`, so the relation-wide class is never missing. A
+  relation that is neither a predicate nor a function is suggested no class.
+- **Visible from the audit context.** The mapping facts and the memberships are those the
+  audit context sees.
+
+Reading the mapping facts, each term's length, its kind and each class it lacks spend one
+work unit each, and `:max-results` counts these findings after the implicit-`genl`
+category.
+
 ## What an orthogonal-over-separation finding means
 
 The pass reads every visible orthogonal declaration: an `(orthogonal a b)`, or a fact
 whose functor the `genl` closure places under `orthogonal`, which a
 `(siblingDisjointException a b)` is. A `siblingDisjointException` exempts the pair from the
-separation marks: a `partition` or `separating` roster naming both, a `sibling_disjoint`
+separation marks: a `partition` or `separating` declaration naming both, a `sibling_disjoint`
 parent and a shared `disjoint_metatype`, read over `a` and `b` or over a separated
 supertype of each ([taxonomy.md](taxonomy.md#disjointness)). The exemption is what the
 exception is for, and it is also why nothing on the read path can show the conflict when
@@ -378,7 +438,7 @@ shapes, with `?o…` standing for the free arguments of a predicate of arity `n`
 | `(predAllInstance P C K)` | `(C ?x)` ⇒ `(P ?x K)`, `K` ground | the rule is a `set/defaultRule`, and `P` is not declared with another arity |
 | `(predInstanceAll P K C)` | `(C ?y)` ⇒ `(P K ?y)`, `K` ground | as `predAllInstance` |
 
-The two generators stamp a `set/defaultRule`, so a monotonic rule of their shape is not
+The two generators generate a `set/defaultRule`, so a monotonic rule of their shape is not
 reported as one. Every other declaration concludes at the class of its weakest premise,
 as a bare rule does, so a `set/defaultRule` of their shape is not the declaration. Such
 a rule is either a default its author meant, or a rule written as a default by accident,
@@ -455,7 +515,7 @@ The pass has these limits:
   an individual, so the caller's candidate set does not bound the pass. The pass reads
   every rule off the rule index once (80 on the shipped load), then each of the rule's
   shapes.
-- **Premises only.** A rule a generator stamped is a conclusion of the generator, so it
+- **Premises only.** A rule a generator generated is a conclusion of the generator, so it
   is not reported, and the generator is.
 - **Rules a chainer runs.** An inert rule, a choice or constraint rule, and a rule with
   an `exceptWhen`, `unknown`, aggregate or `different` condition are not read.
@@ -535,7 +595,7 @@ and `:categories` names a pass to run it.
 How each pass decides, and its limits:
 
 - **Twin genls read direct edges.** A type's direct `genl` set is every visible edge one
-  step up: a stated `genl`, a `covering`, `separating` or `partition` roster installing its
+  step up: a stated `genl`, a `covering`, `separating` or `partition` declaration installing its
   part under its whole, or a
   rule-derived edge such as an `intersection`'s. Every node of the `genl` relation is
   read once and grouped by that set, so the pass costs one unit per node. A type is
@@ -546,14 +606,14 @@ How each pass decides, and its limits:
 - **Derivable edges are structural, not a re-proof.** The engine has no query that asks
   whether a goal derives with one premise set aside, so the pass reads the taxonomy. A
   stated `(genl a b)` is redundant when the edge has another believed visible supporter
-  (the same edge stated again, a whole-and-parts roster installing it, a rule deriving
+  (the same edge stated again, a whole-and-parts declaration installing it, a rule deriving
   it), or when a
   breadth-first walk over the visible direct edges reaches `b` from `a` without the edge
   `a`→`b`; the walk runs only after a cheaper test finds a direct parent of `a` other
   than `b` under `b`. A stated `(disjoint a b)` is redundant when the pair has another
   believed visible supporter, or when `separating-keys` names any other separation of
   `a`, or a supertype of it, from `b`, or a supertype of it: a `disjoint` over two
-  supertypes, a `partition` or `separating` roster, a `sibling_disjoint` parent or a
+  supertypes, a `partition` or `separating` declaration, a `sibling_disjoint` parent or a
   `disjoint_metatype`. Only premises are read as stated, so a rule's conclusion is never a
   finding of its own. A supporter derived through the statement itself still counts as
   another supporter, and a statement reached only through a backward rule is not seen.
@@ -581,7 +641,7 @@ types:
 - **What types a position.** An `arg`, `genlArg` or `quotedArg` at that position, an
   `argAndRest` or `argAndRestGenl` from that position or an earlier one, or an `args` or
   `argsGenl`, each read on `P` and on every super-predicate
-  `res/constraining-predicates` reads, plus the `arg1`/`arg2`/`arg3` projections stated on
+  `res/constraining-predicates` reads, plus the `arg1` through `arg5` projections stated on
   `P` itself. For a unary predicate, a visible `genl` edge out of it types its one position,
   since `(genl P T)` says of P's members what `(arg P 1 T)` would. `interArg` and the
   `type_relation_predicate` mark relate or classify positions and do not count.
@@ -591,11 +651,10 @@ types:
 - **Arity conflicts.** A predicate told two different arities is skipped, as
   `kb/relation-arity` reads it.
 
-The shipped contexts leave undeclared each position that holds a term of any kind,
-because no type below `thing` covers it and no `arg`-family declaration names `thing`
+The shipped contexts declare `thing` at each position that holds a term of any kind
 ([argtypes.md](argtypes.md#constraint-and-entailment-readings)). `:missing-arg` reports
-those positions on the starter, and `ontology_test`'s `untyped-positions` roster gives
-the reason for each fixed-arity one.
+the positions the starter leaves undeclared, and `ontology_test`'s `undeclared-positions`
+gives the reason for each fixed-arity one.
 
 `:missing-arg` is review-only: a sweep without `:categories` skips it, and `:categories`
 names it to run it. The pass reads one census of arity declarations, then each

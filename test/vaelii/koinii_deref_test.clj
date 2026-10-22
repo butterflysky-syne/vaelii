@@ -46,13 +46,13 @@
 (defn- rm-rf! [^File d]
   (doseq [^File f (reverse (file-seq d))] (.delete f)))
 
-;; Atlas and Boreas each on their own seat's context, provenance pinned so the export is a
+;; Atlas and Boreas each on their own seat's context, provenance fixed so the export is a
 ;; byte-stable function of state and every seat computes the same content.
 (def ^:private atlas-fact  '(usesDatabase ProdCluster PostgreSQL14))
 (def ^:private boreas-fact '(usesDatabase StageCluster RedisCache))
 
 (defn- atlas-writes!
-  "Atlas asserts its claim into its own context, stamped as its creator."
+  "Atlas asserts its claim into its own context, recorded as its creator."
   [kb]
   (binding [v/*clock* (constantly 1750000000000)]
     (v/assert kb atlas-fact 'CxAtlas {:creator 'AgentAtlas})))
@@ -378,7 +378,7 @@
         (d/publish! source dump)
         (d/pull! seat dump)
         (let [mk (d/marker source ha)]
-          (testing "the genuine marker still resolves — the gate lets a real one through"
+          (testing "the genuine marker still resolves — the malformed-marker check lets a real one through"
             (is (:resolved? (d/dereference seat mk))))
 
           (testing "a malformed :sentence is answered, not thrown — the bug this closes"
@@ -443,7 +443,8 @@
             (testing "but the CLAIMED seat is not required — dereference never reads it"
               (is (:resolved? (d/dereference seat (dissoc mk :seat))))))
 
-          ;; the gate must not swallow the genuine absence it exists to stay distinct from
+          ;; the malformed-marker check must not swallow the genuine absence it exists to stay
+          ;; distinct from
           (testing "a WELL-FORMED marker for a sentence this seat does not hold is still :not-received"
             (let [r (d/dereference seat (assoc mk :sentence '(usesDatabase ProdCluster Mango9)))]
               (is (false? (:resolved? r)))
@@ -670,18 +671,18 @@
           (is (true? (:resolved? (d/dereference a (d/marker a defeated)))))))
       (finally (tu/clear-kb! a) (tu/clear-kb! b)))))
 
-;;; ── publish! pins :compression :none ──────────────────────────────────
+;;; ── publish! requires :compression :none ──────────────────────────────
 
 (deftest publish-refuses-a-compression-that-would-cost-byte-stability
-  (let [a   (fresh-seat :pin)
-        dir (temp-dir "pin")]
+  (let [a   (fresh-seat :fixed-compression)
+        dir (temp-dir "fixed-compression")]
     (rm-rf! dir)
     (try
       (atlas-writes! a)
       (testing "the byte-stability claim is not a default a caller can override"
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"pins :compression :none"
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"requires :compression :none"
                               (d/publish! a dir {:compression :gzip})))
-        (is (= :koinii/compression-pinned
+        (is (= :koinii/compression-fixed
                (:type (ex-data (try (d/publish! a dir {:compression :gzip})
                                     (catch clojure.lang.ExceptionInfo e e)))))))
       (testing "asking for what it already is is allowed, and other opts pass through"
@@ -726,7 +727,7 @@
   ;; the 64-char key — 32 Formatter allocations each — ~2·n·log₂n times on the path
   ;; `commit-id` folds every believed sentex through.  Equal-width digests order the
   ;; same way under unsigned byte comparison as under their hex spelling, so the sort
-  ;; needs no hex at all; this pins both halves: no superlinear hex builds, and the
+  ;; needs no hex at all; this asserts both halves: no superlinear hex builds, and the
   ;; order is still exactly hex order.
   (let [locators (mapv #(str "probe:" %) (range 16))
         real-hex @#'d/hex

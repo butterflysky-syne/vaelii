@@ -365,7 +365,7 @@
 ;; They are here rather than in the generated differential test because each needs a shape
 ;; the generator does not reach — a third literal, a merged spelling in the goal, an
 ;; argument-type declaration — and a property test that cannot produce the shape proves
-;; nothing about it.  The generator was widened to reach four of them; these pin all five
+;; nothing about it.  The generator was widened to reach four of them; these assert all five
 ;; exactly, so a regression names itself.
 
 (defn- agree?
@@ -419,7 +419,7 @@
           "only the context that can see the sameAs can ask the question with B in it"))))
 
 (tu/deftest-kb a-literal-that-leaves-the-domain-once-bound-goes-to-the-fan
-  ;; `placeable?` sees the conjunction as written, and `applicable?` gates on groundness:
+  ;; `placeable?` sees the conjunction as written, and `applicable?` tests groundness:
   ;; `(t ?a)` is fact-only and `(t QX)` is not, once the join has bound `?a`.  Post-hoc
   ;; only ever reads the index, so the literal that gained a prover answered with less.
   (tu/with-terms [CxA p1 t1 Seed X Y]

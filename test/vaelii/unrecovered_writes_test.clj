@@ -7,7 +7,7 @@
   *wrote* to any of them — every `:recover? false` in it was a construction detail.  The
   four are reached differently and are repaired differently:
 
-  | how you got there | records | index | TMS | premise roster |
+  | how you got there | records | index | TMS | premise set |
   |---|---|---|---|---|
   | `:disk-log`, `:recover? false` | full | durable, full | empty | full |
   | a derived index, `:recover? false` | full | **empty** | empty | full |
@@ -114,13 +114,13 @@
   ;; Rows 3 and 4: a load that stores records into a KB opened over an **empty** store
   ;; and skips the recover.  Nothing was wrong at open, so `open-kb` concluded nothing —
   ;; and the state that results cannot be read back off the store afterwards, in either
-  ;; direction.  Row 4 (a foreign dialect) rosters no premise and carries no strength, so
+  ;; direction.  Row 4 (a foreign dialect) marks no premise and carries no strength, so
   ;; its store is byte-for-byte the store a KB of `assert-inert` sentexes has; row 3's is
   ;; the store two KBs sharing a space have, where the second one's belief is behind by
   ;; construction and the engine supports that.  So the loader says so, and the entry points
   ;; refuse on its word rather than on a reading that would catch the wrong things.
-  (doseq [[label premise?] [["our dialect — a premise roster and no network" true]
-                            ["a foreign dialect — no roster at all" false]]]
+  (doseq [[label premise?] [["our dialect — a premise set and no network" true]
+                            ["a foreign dialect — no premise set at all" false]]]
     (testing label
       (let [kb (tu/fresh)]
         (is (= {} (kb/write-hazards kb)) "an empty KB is empty, not unrecovered")
@@ -140,7 +140,7 @@
   ;; network over a populated store by construction.  Nothing is *inferred* from that —
   ;; `assert-inert` stores a record and mints no node, so an all-inert KB reads the same
   ;; way and a probe would refuse every write into one.  The hazard is therefore a fact
-  ;; about what this KB's own open could see, and both halves of that are pinned here:
+  ;; about what this KB's own open could see, and both halves of that are asserted here:
   ;; the same pairing is guarded or unguarded depending on which end opened first, which
   ;; is a cost of declaring rather than probing and is stated in `kb`'s docstring comment.
   ;;
@@ -171,7 +171,7 @@
   ;; around the write entry points; anything else that emptied the store and is now asserting is
   ;; building this KB's network as it goes.  Retiring on *read* broke the first; never
   ;; retiring made every wipe-then-write caller carry the rule, which the perf harness,
-  ;; the cost gate and the forward bench had each got wrong.
+  ;; the counted cost test and the forward bench had each got wrong.
   (testing "a wipe, then an ordinary write: the write discharges it"
     (let [kb (tu/fresh)]
       (v/assert kb '(dog Muffet) 'CxUniverse)

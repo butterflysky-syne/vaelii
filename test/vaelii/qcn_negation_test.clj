@@ -33,7 +33,7 @@
 ;; ---- (a) negative goals: refutation --------------------------------------
 
 (tu/deftest-kb a-chain-of-containments-refutes-disconnection
-  ;; A ⊏ B ⊏ D pins A?D to NTPP, and NTPP is not DC — so the network *disproves*
+  ;; A ⊏ B ⊏ D narrows A?D to NTPP, and NTPP is not DC — so the network *disproves*
   ;; disconnection, which nothing asserted and no fact records.
   (tu/with-terms [A B D]
     (v/assert kb (list 'nonTangentialProperPart A B) C)
@@ -119,7 +119,7 @@
     (is (= #{:dc} (qkb/possible space/rcc8 kb C A B))
         "the complement of C's denotation is the singleton DC")
     (is (= :dc (qkb/definite space/rcc8 kb C A B)))
-    (testing "and the positive goal it pins down is answered"
+    (testing "and the positive goal it determines is answered"
       (is (v/ask? kb (list 'spatiallyDisconnected A B) C))
       (is (v/ask? kb (list 'regionDiscreteFrom A B) C))
       (is (not (v/ask? kb (list 'partOfRegion A B) C))))
@@ -185,7 +185,11 @@
     (is (seq (v/sentexes-matching kb (list 'not (list 'partOfRegion A B)) C)))
     (testing "the calculus answers nothing at all"
       (is (not (v/ask? kb (list 'nonTangentialProperPart A B) C)))
-      (is (not (v/ask? kb (list 'not (list 'partOfRegion A B)) C))))
+      ;; The denial is read off the network rather than asked: abstract.txt's rule
+      ;; (properPartOf x y) → (not (partOf y x)) concludes denials of partOf, a genl of
+      ;; partOfRegion, so a rule the calculus does not read reaches the goal and the
+      ;; stored denial answers it.
+      (is (= #{} (qkb/possible space/rcc8 kb C A B))))
     (testing "and reports the pair the two facts emptied"
       (let [es (filter #(= :qualitative-inconsistency (:violation %)) (v/violations kb))]
         (is (= 1 (count es)))

@@ -414,14 +414,14 @@
       (is (empty? (ok! (post b :watchers []))))
       (ok! (post a :unwatch [token])))))
 
-;;; ── the roster, and the client ─────────────────────────────────────────
+;;; ── the op list, and the client ────────────────────────────────────────
 
 (clojure.test/deftest the-feed-ops-are-reachable-and-are-not-a-model-tool
   (testing "the four are op keywords the daemon answers"
     (is (= [:poll :unwatch :watch :watchers] (sort (keys serve/feed-ops))))
     (is (every? (set serve/op-names) (keys serve/feed-ops))
         "and an unknown-op refusal lists them, so a caller discovering the surface
-         sees one roster rather than the larger half of two"))
+         sees one list rather than the larger half of two"))
   (testing "they are not in the vaelii.core allowlist, which is what keeps them out of
             the local access facade and out of any call table generated from `ops`"
     (is (empty? (filter serve/ops (keys serve/feed-ops))))))
@@ -590,7 +590,7 @@
 
 (tu/deftest-kb a-subscription-dropped-mid-registration-leaves-no-listener-and-no-zombie
   ;; `watch` files its registry entry before registering the listener, so an event fired
-  ;; between the two has somewhere to go.  The window that opens is the other way round:
+  ;; between the two has somewhere to go.  The race window that opens is the other way round:
   ;; if the entry goes while `core/watch` is in flight, an unguarded `assoc-in` at the
   ;; end **recreates** it with nothing in it but `:watch-token` — and `reap` runs at the
   ;; head of every feed op, so the next one on this daemon reads `(- at nil)` and throws.

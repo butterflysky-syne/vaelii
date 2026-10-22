@@ -6,7 +6,7 @@
   Residency is the lever here: keep the working set in RAM and page the cold tail.  `vaelii.impl.disk.index-snapshot` implements it for the columnar
   index — the CSR skeleton, the roots' key column and the token dictionary are read into
   heap, the leaf handles and the roots' handle run are `mmap`ed.  This measures the split
-  rather than asserting it, and it is the gate the design is judged by: *loading more
+  rather than asserting it, and it is the check the design is judged by: *loading more
   facts over the same vocabulary must not grow resident heap in proportion*.
 
   The corpus is deliberately **vocabulary-fixed**: the same individuals, types and
@@ -108,7 +108,7 @@
   (println (format "    %-30s %7.1f MB  %7.1f MB   %.2f×"
                    "WHOLE INDEX" (mb (:whole rebuilt)) (mb (:whole mapped))
                    (/ (double (:whole rebuilt)) (max 1.0 (double (:whole mapped))))))
-  (println (format "  on disk: trie %.1f MB · roots %.1f MB · dictionary %.1f MB · roster %.1f MB"
+  (println (format "  on disk: trie %.1f MB · roots %.1f MB · dictionary %.1f MB · roots fallback %.1f MB"
                    (mb (:trie files)) (mb (:roots files)) (mb (:tokens files)) (mb (:fallback files))))
   (println (format "  open (index + recover): mapped %,.0f ms · rebuilt %,.0f ms   %.2f×"
                    map-ms rebuild-ms (/ rebuild-ms (max 1.0 map-ms)))))
@@ -123,7 +123,7 @@
         big   (run-one (* facts multiple) individuals)]
     (report "small" small)
     (report "big"   big)
-    (println "\n══ the gate: growth over a FIXED vocabulary ══")
+    (println "\n══ the check: growth over a FIXED vocabulary ══")
     (println (format "  %,d → %,d records, %,d → %,d distinct terms\n"
                      (:facts small) (:facts big) (:terms small) (:terms big)))
     (growth "rebuilt index, resident"  small big #(-> % :rebuilt :whole))

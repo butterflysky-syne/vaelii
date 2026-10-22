@@ -31,7 +31,7 @@ mkdir -p testbench/bench-caches
   echo "=== started $(date -u '+%Y-%m-%dT%H:%M:%SZ') ==="
 } >| "$LOG"
 
-# The heap is the reason this is a script.  The :bench profile pins -Xmx6g, which a
+# The heap is the reason this is a script.  The :bench profile sets -Xmx6g, which a
 # corpus of this size runs in only by collecting constantly — and a `JVM_OPTS` in the
 # environment does NOT override it, the profile's `:jvm-opts` winning outright.  So the
 # vector is edited on the way past: `update-in … conj` appends, and the JVM takes the

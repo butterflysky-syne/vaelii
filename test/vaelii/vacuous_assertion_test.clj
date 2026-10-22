@@ -25,7 +25,7 @@
     * `(is (<= 0 x))` / `(is (>= x 0))` on a count, a length or a wall-clock delta.
       The bound is a fact about the quantity's type, not about the run.
 
-  **The scan is textual and the window is four lines**, which is what these shapes fit
+  **The scan is textual and each span it reads is four lines**, which is what these shapes fit
   in; a form spread wider than that is missed rather than mis-read.  Nesting deeper
   than four parenthesis levels inside one operand is missed for the same reason.  It
   is a ratchet against the next one, not a proof about the ones already here.
@@ -41,7 +41,7 @@
 
 (defn- test-sources
   "Every test source but this one — the patterns below appear here as patterns, and a
-  scan that reads its own roster reports itself."
+  scan that reads its own source reports itself."
   []
   (->> (file-seq (io/file "test/vaelii"))
        (filter #(.isFile ^File %))
@@ -114,13 +114,13 @@
   #{"(edge/translate (mk))"})
 
 (defn- opens-on-the-first-line?
-  "Does `pattern` match `window` starting inside the line the window opens on?
+  "Does `pattern` match `span` starting inside the line `span` opens on?
 
-  Without this the window is a second bug: four lines over a clean assertion reach the
-  *next* one, and a finding three lines down is reported against the line above it —
-  once per window that saw it, so four times over."
-  [^java.util.regex.Pattern pattern ^String window ^long head-length]
-  (let [m (.matcher pattern window)]
+  Without this check the span is a second bug: four lines over a clean assertion reach
+  the *next* one, and a finding three lines down is reported against the line above it —
+  once per span that saw it, so four times over."
+  [^java.util.regex.Pattern pattern ^String span ^long head-length]
+  (let [m (.matcher pattern span)]
     (and (.find m) (<= (.start m) head-length))))
 
 (defn- vacuous-assertions
@@ -131,11 +131,11 @@
         i    (range (count lines))
         :when (str/includes? (nth lines i) "(is ")
         :let [head   (str/replace (nth lines i) #"\s+" " ")
-              window (-> (str/join " " (subvec lines i (min (count lines) (+ i 4))))
+              span   (-> (str/join " " (subvec lines i (min (count lines) (+ i 4))))
                          (str/replace #"\s+" " "))]
         [what pattern] shapes
-        :when (and (opens-on-the-first-line? pattern window (count head))
-                   (not-any? #(str/includes? window %) allowed))]
+        :when (and (opens-on-the-first-line? pattern span (count head))
+                   (not-any? #(str/includes? span %) allowed))]
     [path (inc i) (str/trim (nth lines i)) what]))
 
 (deftest no-assertion-that-cannot-fail

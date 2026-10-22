@@ -1,15 +1,14 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.refused-firing-test
-  "A firing refused at derive time, and the release that has to reach it.
+  "A firing an `exceptWhen` blocks, stored with a guard defeat, and a firing a
+  closed-extent antecedent refuses, kept in the refusal record; and the release that has
+  to reach each.
 
-  `derive-conclusion` does not place a firing whose exception already holds, so such a
-  firing owns no justification and sits in no blocked set.  Reading a released *block*
-  is therefore blind to it, and without a second record it never comes back — which
-  makes belief depend on whether the exception's answer moved before or after the facts
-  arrived.  These pin the three orderings of one shape: the release arriving late by a
-  fact, by a `genlCx` edge, and the order that never needed a record at all, which
-  is the oracle the other two are scored against.
+  The first three tests assert three orderings of one guard: the release arriving late by
+  a fact, by a `genlCx` edge, and the order where the guard never held, which is the
+  oracle the other two are scored against.  The rest read the refusal record through a
+  closed-extent rule, the block condition that still refuses a firing.
 
   Each test builds its own KB on the **isolated** database pair: it rebuilds in a loop,
   which would clear the shared pair out from under another namespace's `:once`
@@ -46,12 +45,11 @@
                             (set/defaultRule (set/forwardRule (implies (and (fmark ?x)) (fseen ?x)))))
             ctx))
 
-(deftest a-firing-refused-at-derive-time-is-re-derived-when-a-fact-releases-it
-  (testing "the converse fact arrives after the firing was refused"
-    ;; The exception holds when `(fmark FM1)` arrives, so the firing is refused: no
-    ;; justification, no node, nothing in `jtms/blocked`.  `(fbigger fmc fchi)` then
-    ;; undercuts the inherited claim and the exception stops holding — a release with no
-    ;; block to be read off.
+(deftest a-guard-defeated-firing-is-believed-when-a-fact-releases-it
+  (testing "the converse fact arrives after the firing was defeated"
+    ;; The exception holds when `(fmark FM1)` arrives, so the firing is stored with a
+    ;; guard defeat.  `(fbigger fmc fchi)` then undercuts the inherited claim and the
+    ;; exception stops holding, which takes the defeat's support OUT.
     (tu/with-cleared-kb [kb tu/isolated-fresh]
       (inheritance! kb)
       (excepted-rule! kb)
@@ -59,21 +57,20 @@
       (is (v/ask? kb '(fbigger fchi fmc) ctx)
           "the general claim reaches the pair, so the exception holds")
       (is (empty? (v/sentexes-matching kb '(fseen FM1) '?ctx))
-          "and the firing is refused at derive time")
+          "and the firing's guard defeat hides it")
       (v/assert kb '(fbigger fmc fchi) ctx)
       (is (not (v/ask? kb '(fbigger fchi fmc) ctx))
           "the specific converse undercuts the inherited claim")
       (is (seq (v/sentexes-matching kb '(fseen FM1) '?ctx))
-          "so the refused firing is re-derived")
+          "so the defeat is withdrawn")
       (v/assert kb '(fmark FM2) ctx)
       (is (seq (v/sentexes-matching kb '(fseen FM2) '?ctx))
           "and a firing made after the release is not blocked"))))
 
 (deftest the-release-arriving-first-reaches-the-same-belief
-  (testing "the order that never needed a record is the oracle"
-    ;; Nothing here is refused: the converse is in place before the rule ever fires, so
-    ;; this order works with no second record at all.  If the order above disagrees with
-    ;; it, belief depends on arrival order.
+  (testing "the order where the guard never held is the oracle"
+    ;; The converse is in place before the rule ever fires, so no defeat is placed.  If
+    ;; the order above disagrees with it, belief depends on arrival order.
     (tu/with-cleared-kb [kb tu/isolated-fresh]
       (inheritance! kb)
       (v/assert kb '(fbigger fmc fchi) ctx)
@@ -83,11 +80,11 @@
       (is (= 2 (count (v/sentexes-matching kb '(fseen ?x) '?ctx)))
           "released first, both firings conclude"))))
 
-(deftest a-firing-refused-at-derive-time-is-re-derived-when-an-edge-releases-it
+(deftest a-guard-defeated-firing-is-believed-when-an-edge-releases-it
   (testing "a genlCx edge makes the more specific claim visible"
     ;; No inheritance and no declaration: the converse is stated in a context the
-    ;; rule's context cannot see, so the exception holds and the firing is refused.
-    ;; Wiring the two contexts together is what brings the converse into view.
+    ;; rule's context cannot see, so the exception holds and a guard defeat hides the
+    ;; firing.  Wiring the two contexts together is what brings the converse into view.
     (tu/with-cleared-kb [kb tu/isolated-fresh]
       (v/assert kb (list 'genlCx 'CxFSub ctx) ctx {:strength :monotonic})
       (v/assert kb '(transitiveInArgInverse ebigger 1 genl) ctx)
@@ -103,14 +100,14 @@
       (v/assert kb '(ebigger emc echi) 'CxFAside)
       (v/assert kb '(emark EM1) 'CxFSub)
       (is (empty? (v/sentexes-matching kb '(eseen EM1) '?ctx))
-          "the exception holds where the conclusion would land, so the firing is refused")
+          "the exception holds where the conclusion lands, so its guard defeat hides it")
       (v/assert kb '(genlCx CxFSub CxFAside) ctx {:strength :monotonic})
       (is (not (v/ask? kb '(ebigger echi emc) 'CxFSub))
           "the sub-context now sees the converse, which undercuts the general claim")
       (is (seq (v/sentexes-matching kb '(eseen EM1) '?ctx))
-          "so the refused firing is re-derived"))))
+          "so the defeat is withdrawn"))))
 
-;; ---- what the record is, and what retires an entry ----------------------
+;; ---- a guard stores the firing, and records nothing ----------------------
 
 (defn- skip-rule!
   "`(rmark ?x) => (rseen ?x)`, excepted when `(rskip ?x)` — the plain shape, where the
@@ -120,15 +117,41 @@
                             (set/defaultRule (set/forwardRule (implies (and (rmark ?x)) (rseen ?x)))))
             ctx))
 
-(deftest a-refusal-is-recorded-and-retired-when-it-fires
-  (testing "one entry per refused firing, and it goes when the firing is made"
+(deftest a-firing-a-monotonic-blocker-blocks-is-stored-with-a-guard-defeat
+  (testing "the conclusion and its defeat are stored, hidden at the reader, and nothing is recorded"
     (tu/with-cleared-kb [kb tu/isolated-fresh]
       (skip-rule! kb)
       (v/assert kb '(rskip RM1) ctx {:strength :monotonic})
+      (v/assert kb '(rmark RM1) ctx)
+      (let [h (v/handle-of kb '(rseen RM1) ctx)]
+        (is (some? h))
+        (is (some? (v/handle-of kb (list 'defeat (list 'sentexHandle h)) ctx)))
+        (is (not (v/ask? kb '(rseen RM1) ctx)))
+        (is (zero? (recorded kb)))
+        (v/recover kb)
+        (is (not (v/ask? kb '(rseen RM1) ctx)) "the recovered store reads the stored defeat")
+        (v/retract! kb (v/handle-of kb '(rskip RM1) ctx))
+        (is (v/ask? kb '(rseen RM1) ctx) "and the blocker leaving withdraws it")))))
+
+;; ---- what the record is, and what retires an entry ----------------------
+
+(defn- member-rule!
+  "`(rmark ?x) ∧ (not (rmember ?x)) => (rseen ?x)` under a `closed_extent_predicate` grant
+  on `rmember`: a stored `(rmember X)` refuses the firing at `X`, and retracting it
+  releases the firing."
+  [kb]
+  (v/assert kb '(closed_extent_predicate rmember) ctx)
+  (v/assert kb '(implies (and (rmark ?x) (not (rmember ?x))) (rseen ?x)) ctx {:direction :forward}))
+
+(deftest a-refusal-is-recorded-and-retired-when-it-fires
+  (testing "one entry per refused firing, and it goes when the firing is made"
+    (tu/with-cleared-kb [kb tu/isolated-fresh]
+      (member-rule! kb)
+      (v/assert kb '(rmember RM1) ctx {:strength :monotonic})
       (let [h (v/assert kb '(rmark RM1) ctx)]
         (is (= 1 (recorded kb)) "the refused firing left an entry")
         (is (empty? (v/sentexes-matching kb '(rseen RM1) '?ctx)))
-        (v/retract! kb (v/handle-of kb '(rskip RM1) ctx))
+        (v/retract! kb (v/handle-of kb '(rmember RM1) ctx))
         (is (seq (v/sentexes-matching kb '(rseen RM1) '?ctx))
             "the release re-derives it")
         (is (zero? (recorded kb)) "and the entry is retired, not left to fire twice")
@@ -137,27 +160,27 @@
 
 (deftest a-refusal-does-not-resurrect-a-firing-whose-support-left
   (testing "the bindings are a snapshot, so what they rest on is re-checked"
-    ;; The antecedent fact is retracted while the exception still holds, so the firing
-    ;; is not one the KB could make any more.  Releasing the exception afterwards must
-    ;; find nothing to place — a record that placed it would be deriving a conclusion
-    ;; from a premise nobody believes.
+    ;; The antecedent fact is retracted while the member still refuses the firing, so the
+    ;; firing is not one the KB could make any more.  Retracting the member afterwards
+    ;; must find nothing to place — a record that placed it would be deriving a
+    ;; conclusion from a premise nobody believes.
     (tu/with-cleared-kb [kb tu/isolated-fresh]
-      (skip-rule! kb)
-      (v/assert kb '(rskip RM1) ctx {:strength :monotonic})
+      (member-rule! kb)
+      (v/assert kb '(rmember RM1) ctx {:strength :monotonic})
       (let [h (v/assert kb '(rmark RM1) ctx)]
         (is (= 1 (recorded kb)))
         (v/retract! kb h)
-        (v/retract! kb (v/handle-of kb '(rskip RM1) ctx))
+        (v/retract! kb (v/handle-of kb '(rmember RM1) ctx))
         (is (empty? (v/sentexes-matching kb '(rseen RM1) '?ctx))
-            "the premise is gone, so the released exception derives nothing")
+            "the premise is gone, so the release derives nothing")
         (is (zero? (recorded kb)) "and the dead entry is dropped")))))
 
 (deftest a-release-that-places-an-exception-blocks-the-next-release
-  (testing "two refusals freed by one retraction, the first one's conclusion excepting the second"
-    ;; Both firings are refused by `(rskip RM1)` and both are free once it goes.  Placing
-    ;; the first concludes `(cseen RM1)`, which the second rule is excepted by, so the
-    ;; second is re-decided as blocked at its own release.  The order that never refused
-    ;; either is the oracle: `cseen` holds and `dseen` does not.
+  (testing "two guard defeats withdrawn by one retraction, the first firing excepting the second"
+    ;; `(rskip RM1)` defeats both firings and both defeats go once it goes.  The first
+    ;; firing concludes `(cseen RM1)`, which the second rule is excepted by, so the second
+    ;; keeps a guard defeat.  The order where `(rskip RM1)` never held is the oracle:
+    ;; `cseen` holds and `dseen` does not.
     (let [rule    (fn [q head]
                     (list 'exceptWhen q (list 'set/defaultRule
                                               (list 'set/forwardRule
@@ -171,13 +194,13 @@
         (rules! kb)
         (v/assert kb '(rskip RM1) ctx {:strength :monotonic})
         (v/assert kb '(rmark RM1) ctx)
-        (is (= 2 (recorded kb)))
+        (is (zero? (recorded kb)))
         (v/retract! kb (v/handle-of kb '(rskip RM1) ctx))
         (is (= [true false] (reading kb))))
       (tu/with-cleared-kb [kb tu/isolated-fresh]
         (rules! kb)
         (v/assert kb '(rmark RM1) ctx)
-        (is (= [true false] (reading kb)) "the order with no refusal agrees")))))
+        (is (= [true false] (reading kb)) "the order with no blocker agrees")))))
 
 (deftest a-refusal-remembers-the-run-s-depth-bound-not-the-default
   (testing "the bound a release honours travels on the entry, set to the refusing run's"
@@ -186,8 +209,8 @@
     ;; (or drop) a released firing at a ceiling the configured run never set; recorded as
     ;; the run's own, the release honours what the firing was refused under.
     (tu/with-cleared-kb [kb tu/isolated-fresh]
-      (skip-rule! kb)
-      (v/assert kb '(rskip RM1) ctx {:strength :monotonic})
+      (member-rule! kb)
+      (v/assert kb '(rmember RM1) ctx {:strength :monotonic})
       ;; the mark's chain runs at a non-default max-depth; the firing it refuses must
       ;; remember *that* bound
       (v/assert kb '(rmark RM1) ctx {:max-depth 7})
@@ -207,8 +230,8 @@
     ;; live one, and the reason it is coherent rather than a drift: the recovered KB's
     ;; reset depths bound future chaining against that same default.
     (tu/with-cleared-kb [kb tu/isolated-fresh]
-      (skip-rule! kb)
-      (v/assert kb '(rskip RM1) ctx {:strength :monotonic})
+      (member-rule! kb)
+      (v/assert kb '(rmember RM1) ctx {:strength :monotonic})
       (v/assert kb '(rmark RM1) ctx {:max-depth 7})
       (is (= 7 (:max-depth (-> @(reasoning/refused kb) vals first first)))
           "the live entry carries the run's bound")
@@ -221,8 +244,8 @@
 (deftest a-refusal-is-not-a-contradiction
   (testing "nothing was believed and nothing conflicts: the rule simply did not fire"
     (tu/with-cleared-kb [kb tu/isolated-fresh]
-      (skip-rule! kb)
-      (v/assert kb '(rskip RM1) ctx {:strength :monotonic})
+      (member-rule! kb)
+      (v/assert kb '(rmember RM1) ctx {:strength :monotonic})
       (v/assert kb '(rmark RM1) ctx)
       (is (= 1 (recorded kb)))
       (is (empty? (v/contradictions kb)) "a refusal is not a represented dilemma")
@@ -234,15 +257,15 @@
     ;; a restarted KB would answer the later release differently from one that never
     ;; restarted.
     (tu/with-cleared-kb [kb tu/isolated-fresh]
-      (skip-rule! kb)
-      (v/assert kb '(rskip RM1) ctx {:strength :monotonic})
+      (member-rule! kb)
+      (v/assert kb '(rmember RM1) ctx {:strength :monotonic})
       (v/assert kb '(rmark RM1) ctx)
       (is (= 1 (recorded kb)))
       (v/recover kb)
       (is (= 1 (recorded kb)) "the rebuild re-decides the record rather than reading it")
       (is (empty? (v/sentexes-matching kb '(rseen RM1) '?ctx))
-          "and the exception still holds after the rebuild")
-      (v/retract! kb (v/handle-of kb '(rskip RM1) ctx))
+          "and the member still refuses it after the rebuild")
+      (v/retract! kb (v/handle-of kb '(rmember RM1) ctx))
       (is (seq (v/sentexes-matching kb '(rseen RM1) '?ctx))
           "so the release reaches the refused firing across the restart"))))
 
@@ -253,12 +276,12 @@
     ;; mark *writes* one, at handles the rollback then takes away.  A preview promises to
     ;; leave the KB as it found it, and the record is part of what it found.
     (tu/with-cleared-kb [kb tu/isolated-fresh]
-      (skip-rule! kb)
-      (v/assert kb '(rskip RM1) ctx {:strength :monotonic})
-      (v/assert kb '(rskip RM2) ctx {:strength :monotonic})
+      (member-rule! kb)
+      (v/assert kb '(rmember RM1) ctx {:strength :monotonic})
+      (v/assert kb '(rmember RM2) ctx {:strength :monotonic})
       (v/assert kb '(rmark RM1) ctx)
       (is (= 1 (recorded kb)))
-      (let [h (v/handle-of kb '(rskip RM1) ctx)
+      (let [h (v/handle-of kb '(rmember RM1) ctx)
             p (v/preview kb {:remove [h] :add [['(rmark RM2) ctx]]})]
         (is (= '[(rmark RM2) (rseen RM1)] (mapv :sentence (:believed-added p)))
             "the preview sees the refused firing come back, and the mark it added")
@@ -273,17 +296,17 @@
 
 (deftest a-rule-past-the-cap-falls-back-to-the-coarse-re-join
   (testing "the record collapses to :overflow, and the release still happens"
-    ;; The cap is what keeps a rule excepted on a common condition from keeping one
+    ;; The cap is what keeps a rule refused on a common condition from keeping one
     ;; entry per firing it never made.  Past it the rule keeps none and is re-joined
     ;; instead, which finds the same releases at the cost the record avoids — so the
     ;; behaviour on the far side of the line is slower, never wrong.
     (with-redefs [chain/max-refusals-per-rule 4]
       (tu/with-cleared-kb [kb tu/isolated-fresh]
-        (skip-rule! kb)
-        ;; the exception fact is derived from `rpre`, which arrives first, so every
-        ;; `rmark` firing meets a condition that already holds and is refused rather
-        ;; than placed and swept
-        (v/assert kb '(set/forwardRule (implies (and (rpre ?x)) (rskip ?x))) ctx)
+        (member-rule! kb)
+        ;; the member is derived from `rpre`, which arrives first, so every `rmark`
+        ;; firing meets a member already stored and is refused rather than placed and
+        ;; swept
+        (v/assert kb '(set/forwardRule (implies (and (rpre ?x)) (rmember ?x))) ctx)
         (dotimes [i 10] (v/assert kb (list 'rpre (symbol (str "RM" i))) ctx {:strength :monotonic}))
         (dotimes [i 10] (v/assert kb (list 'rmark (symbol (str "RM" i))) ctx))
         (is (empty? (v/sentexes-matching kb '(rseen ?x) '?ctx))
@@ -299,7 +322,7 @@
 (defn- swept-then-released
   "`[recorded rseen? recorded re-chained]` for the firing of `skip-rule!` placed before its
   blocker `(rskip RM1)`, asserted at `strength`, arrives: the entries recorded once the
-  blocker sweeps it, whether it is believed and the entries recorded after `trigger` lifts
+  blocker arrives, whether it is believed and the entries recorded after `trigger` lifts
   the block, and the rules re-chained over their extent meanwhile.  `:except` hides the
   blocker, `:retract` retracts it, `:defeat` stores a `:monotonic` denial whose placed
   defeat hides it."
@@ -318,14 +341,12 @@
           :defeat  (v/assert kb '(not (rskip RM1)) ctx {:strength :monotonic})))
       [swept (v/ask? kb '(rseen RM1) ctx) (recorded kb) @seen])))
 
-(deftest a-firing-a-late-blocker-swept-is-released-from-the-refusal-record
-  ;; A `:monotonic` blocker sweeps the firing and records it as a refusal, so each trigger
-  ;; that lifts the block re-derives it from its bindings and re-chains no rule over its
-  ;; extent.  A `:default` blocker sweeps nothing: the firing stays stored with a guard
-  ;; defeat resting on the blocker (design ruling 25), and each trigger gives it back with
-  ;; nothing recorded or re-chained.
-  (doseq [[strength trigger expected] [[:monotonic :except [1 true 0 #{}]]
-                                       [:monotonic :retract [1 true 0 #{}]]
+(deftest a-late-blocker-of-either-class-defeats-the-firing-and-records-nothing
+  ;; A blocker sweeps nothing: the firing stays stored with a guard defeat resting on the
+  ;; blocker (design rulings 25 and 30), and each trigger that lifts the block gives it
+  ;; back with nothing recorded or re-chained.
+  (doseq [[strength trigger expected] [[:monotonic :except [0 true 0 #{}]]
+                                       [:monotonic :retract [0 true 0 #{}]]
                                        [:default :except [0 true 0 #{}]]
                                        [:default :retract [0 true 0 #{}]]
                                        [:default :defeat [0 true 0 #{}]]]]

@@ -10,7 +10,7 @@
   algorithms drift, and belief is the last thing in the engine that may drift
   silently: a wrong label does not throw, it just answers a query differently.
 
-  So this is the gate, in the shape `dense_kv_oracle_test` and
+  So this is the oracle test, in the shape `dense_kv_oracle_test` and
   `columnar_index_oracle_test` established for the index: drive **both**
   implementations through the same randomized operation stream and compare after
   *every* step.  The comparison is the whole network — `jtms/snapshot` — not a
@@ -21,14 +21,14 @@
   `:removed-sentexes` / `:removed-justifications` are unordered by contract (the
   caller `doseq`es over them to delete records, and only their *count* reaches the
   public API); the reference happens to emit hash-map iteration order and the dense
-  one sorted order, and pinning either would be pinning an accident.
+  one sorted order, and asserting either would be asserting an accident.
 
   **Answers are not the whole of it.**  Locality is a claim about every representation
   (docs/defenses.md), and two networks that answer identically can still differ in how
   much they recomputed to do it — a dense relabel that quietly widened to the whole graph
   is invisible to a comparison of labels.  So every step also checks the containment
   locality means, on **both** implementations: the datums whose belief flipped are inside
-  the window the settle published, and that window is inside the affected region of the
+  the touched set the settle published, and that touched set is inside the affected region of the
   step's own seeds.
 
   Pure — no store, no fixture: a TMS is a graph of integers and needs neither."
@@ -185,11 +185,11 @@
 ;; ---- locality: flipped ⊆ touched ⊆ affected-region(seeds) ---------------
 ;;
 ;; The containment is the whole of what locality claims, and each half is a different
-;; failure.  **flipped ⊆ touched** is the window's contract (docs/defenses.md, "The
-;; touched window is a superset, not the flip set"): every consumer — a preview, a
-;; consequence report, the change feed — reads the window instead of diffing the believed
+;; failure.  **flipped ⊆ touched** is the touched set's contract (docs/defenses.md, "The
+;; touched set is a superset, not the flip set"): every consumer — a preview, a
+;; consequence report, the change feed — reads the touched set instead of diffing the believed
 ;; set, so a belief that moved outside it is a stale answer served with no way to notice.
-;; **touched ⊆ region** is locality itself: what the window gained this step is what the
+;; **touched ⊆ region** is locality itself: what the touched set gained this step is what the
 ;; implementation relabelled, and a relabel that reached past the seeds' forward closure
 ;; did work the graph's shape says it did not have to.  A dense network is where that can
 ;; hide — a rebuilt bitmap costs a pass over all of its containers, so a widened region is
@@ -217,7 +217,7 @@
   "The datums an op relabels from, read off the state **before** it ran — each one taken
   from the operation's own arguments, exactly as the implementation takes them.  nil where
   an op relabels nothing at all: `:supersede` replaces a read-time mask and moves no
-  label, `:reset-touch` clears the window rather than filling it.
+  label, `:reset-touch` clears the touched set rather than filling it.
 
   The region is computed on the pre-state on purpose, and it is the same set the op will
   walk: `affected-region` reads only the consequence adjacency, and none of these ops adds
@@ -250,31 +250,31 @@
 (defn- locality-problem
   "nil when one step held the containment on one implementation, else what broke it.
 
-  Three readings, because the window and the region are measured over different spans.
-  The **window** is published per *settle* and cleared at the end of one
+  Three readings, because the touched set and the region are measured over different spans.
+  The **touched set** is published per *settle* and cleared at the end of one
   (`settle/settle-finish` calls `reset-touched!`), and a settle is many TMS operations —
   `:reset-touch` is that boundary in the stream — so the flip set is contained in the
-  window as it stands *after* the step, not in the one step's addition to it.  The
+  touched set as it stands *after* the step, not in the one step's addition to it.  The
   **region** is the one step's own, so what the step relabelled and what its beliefs did
   are both contained in it.
 
   Belief is read as the label set `:in` rather than through `in?`, because supersession
   masks a believed datum at *read* time and relabels nothing — it is not a label that
-  moved, and counting it as one would be asking the window for something it never claimed."
+  moved, and counting it as one would be asking the touched set for something it never claimed."
   [label before after op]
   (when-let [seeds (seq (locality-seeds before op))]
     (let [in-b    (:in before #{})
           in-a    (:in after #{})
           flipped (set/union (set/difference in-b in-a) (set/difference in-a in-b))
-          window  (:touched after #{})
-          added   (set/difference window (:touched before #{}))
+          touched (:touched after #{})
+          added   (set/difference touched (:touched before #{}))
           region  (region-of before seeds)
           out-of  (fn [claim xs] (when (seq xs)
                                    {:implementation label :claim claim
                                     :datums xs :seeds (vec seeds)}))]
-      (or (out-of :belief-flipped-outside-the-window (set/difference flipped window))
+      (or (out-of :belief-flipped-outside-the-touched-set (set/difference flipped touched))
           (out-of :belief-flipped-outside-the-affected-region (set/difference flipped region))
-          (out-of :window-grew-outside-the-affected-region (set/difference added region))))))
+          (out-of :touched-grew-outside-the-affected-region (set/difference added region))))))
 
 ;; ---- the differential run ----------------------------------------------
 
@@ -306,7 +306,7 @@
 
 (deftest streams-are-not-vacuous
   ;; Agreement between two networks that both did nothing is worth nothing.  Before
-  ;; trusting the comparison, pin that the generated streams actually reach every
+  ;; trusting the comparison, assert that the generated streams actually reach every
   ;; state the comparison is supposed to cover — a generator tweak that stopped
   ;; producing sweeps (or blocks, or monotonic classes) would otherwise leave the
   ;; oracle green and empty.
@@ -334,7 +334,7 @@
       (is (pos? n) (str "the streams never produced any " (name k))))))
 
 (deftest short-streams-agree-and-stay-local
-  ;; The oracle's own claims at a size the gate can afford: the two implementations agree
+  ;; The oracle's own claims at a size `lein gate` can afford: the two implementations agree
   ;; after every step, and each keeps flipped ⊆ touched ⊆ region.  The wide runs below
   ;; carry the same driver at 200 streams; this one is what fails on a landing rather than
   ;; on the run somebody remembers to make.
@@ -545,7 +545,7 @@
 ;; primitive columns keyed by id, and a record is rebuilt only when a caller asks for
 ;; one.  The randomized streams above compare `:justs` after every step, so a column
 ;; that failed to round-trip shows up there — but they issue one shape of
-;; justification, so these pin the shapes they do not reach.
+;; justification, so these assert the shapes they do not reach.
 
 (deftest the-network-keeps-the-graph-and-not-the-bindings
   (testing "the firing's variable map is the record store's, not the network's"
@@ -662,7 +662,7 @@
         (is (some? ex) "must throw rather than silently truncate")
         (is (= :handle-ceiling (:type (ex-data ex)))
             "on the refusal vocabulary a supervisor discriminates on (type_contract_test)")
-        (is (= {:tms :reference} (:remedy (ex-data ex))) "carries the pin as the remedy")
+        (is (= {:tms :reference} (:remedy (ex-data ex))) "carries the forced TMS as the remedy")
         (is (= over (:value (ex-data ex))))
         (is (re-find #"reference" (.getMessage ^Throwable ex)))))
     (testing "a justification id past the ceiling throws the same way"
@@ -714,8 +714,8 @@
 
 (deftest ensuring-a-node-already-deep-enough-takes-no-write
   ;; `-ensure-node` runs once per placement and the placement path calls it on nodes that
-  ;; already exist, so the exclusive write stamp is taken only where the write would change
-  ;; something.  Counting `ensure!` counts exactly the stamps taken: `with-write` wraps that
+  ;; already exist, so the write lock is taken only where the write would change
+  ;; something.  Counting `ensure!` counts exactly the write locks taken: `with-write` wraps that
   ;; call and nothing else in the method.
   (let [t     (dense/create-dense-tms)
         orig  @#'dense/ensure!
@@ -727,7 +727,7 @@
         (dotimes [_ 50] (jtms/ensure-node t 1 3))
         (dotimes [_ 50] (jtms/ensure-node t 1 9))
         (is (= 1 @calls)
-            "a node already at or below the asked depth is what `ensure!` would leave — no stamp")
+            "a node already at or below the asked depth is what `ensure!` would leave — no write lock")
         (jtms/ensure-node t 1 0)
         (is (= 2 @calls) "a shallower depth is a real write, and is taken")
         (testing "the skip is under the fast-path switch, like the reference's"

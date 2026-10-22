@@ -2,15 +2,15 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.predicates
   "What is *said* about each term of the engine's own grammar, in one place — the
-  declaration half of the twenty-odd functor-keyed rosters scattered across nine
+  declaration half of the twenty-odd functor-keyed lists scattered across nine
   namespaces, none of which can see each other.
 
   **The problem this is the bottom half of.**  Adding an engine-interpreted predicate
   means finding every place that keys on a functor name and writing an entry there.
   `special/entries` is the one that got it right: a single ordered table walked by four
-  consumers, refused at load if an entry is half-written.  Every other roster —
+  consumers, refused at load if an entry is half-written.  Every other list —
   `settle`'s eight, `taxonomy`'s three, `checks`' four, `provers`' four, `sentex`'s
-  three, `kb/equality-predicates`, `inherit/declarations`, `vocabulary/roster` — is a
+  three, `kb/equality-predicates`, `inherit/declarations`, `vocabulary/classification` — is a
   *projection* of the same fact, written where it was needed.  The record of what that
   costs is #45 (one trio spelled out in two places that had to agree), #52 and #54 (one
   spelling wired into one lane of a family and not the other, twice, in different lanes,
@@ -36,7 +36,7 @@
               a term nothing caches.  `storage-kinds` below.
     :checked  does `special/entries` give the functor a structural well-formedness arm.
     :facets   a set from the **closed** vocabulary `facets` below — the lanes the term
-              takes part in.  An open set of keywords would be a roster again, with the
+              takes part in.  An open set of keywords would be a hand-kept list again, with the
               same drift and none of the checking.
     :family   the family whose spellings must move together, or nil.  `functional` and
               `functionalInArg` are one family written two ways; the four argument
@@ -74,17 +74,17 @@
   the *declaration* that does belong is the `:answers` facet below.
 
   **What reads this.**  `special/entries` joins the declarations to `special`'s arms;
-  `taxonomy`'s three rosters (`closure-relations`, `arg-declaration-props`,
-  `functional-family-marks`), `settle`'s trigger rosters, `spec/::prop-kind` and
-  `vocabulary/roster` are field reads.
+  `taxonomy`'s three lists (`closure-relations`, `arg-declaration-props`,
+  `functional-family-marks`), `settle`'s trigger lists, `spec/::prop-kind` and
+  `vocabulary/classification` are field reads.
 
   **The validator runs a layer up.**  `check-facets` runs at `settle`'s load, because two
   of its rules read an arm that lives four layers up and a bottom namespace cannot see
   whether an arm exists — it takes those facts as arguments rather than requiring the
   layer that holds them.
-  The rosters that have not moved yet are reconstructed from here by `predicates_test`
+  The lists that have not moved yet are reconstructed from here by `predicates_test`
   and asserted equal to the live one, which is the only defensible proof that the population
-  is right before a consumer switches over.  A roster that *has* moved is proved
+  is right before a consumer switches over.  A list that *has* moved is proved
   differently: its value becomes a literal in the test, since a reconstruction of a
   derived var proves the wiring and nothing about what it holds.
 
@@ -125,7 +125,7 @@
   only in the table they call are three arms one shape can write.
 
   `:mark` is **not** `:prop`, and the difference is not cosmetic: `:prop` means the
-  `tax/props` roster, whose keys `spec/::prop-kind` pins, while `disjoint_metatype` and
+  `tax/props` `:props` sets, whose keys `spec/::prop-kind` lists, while `disjoint_metatype` and
   `sibling_disjoint` are one-term marks into tables of their own.  Calling them `:prop`
   would put two keywords in that spec that no `has-prop?` ever answers."
   #{:prop                     ; tax/props, keyed by the ::prop-kind keyword — (F P)
@@ -134,7 +134,7 @@
     :keyed-pair               ; a table keyed on the argument pair — (F a b)
     :pred-position            ; a table keyed on [predicate position] — (F P n)
     :pred-commuting           ; a table keyed on [predicate group] — (F P n) / (F P p …)
-    :roster                   ; a table keyed on [whole parts] — (F whole part part …)
+    :cover                    ; a table keyed on [whole parts] — (F whole part part …)
     :none})                   ; nothing is cached; the declaration is read back per use
 
 (def facet-contract
@@ -188,9 +188,9 @@
   is where they come from: a facet exists exactly when a row states what carrying it
   commits the declaration to.
 
-  Six of the ten are reconstructible from a live data structure and are pinned that way
-  by `predicates_test`.  Four — `:answers`, `:retriggers`, `:convicts` and `:inert` —
-  are *claims*: no roster in the tree states them, which is exactly why they are the
+  Six of the ten are reconstructible from a live data structure, and `predicates_test`
+  checks them that way.  Four — `:answers`, `:retriggers`, `:convicts` and `:inert` —
+  are *claims*: no list in the tree states them, which is exactly why they are the
   ones that go wrong quietly."
   (set (keys facet-contract)))
 
@@ -217,9 +217,9 @@
   `checks` pairs two of them against each other — and each is written at its own arity,
   which is why the family is the thing a reader names and the shape is not.
 
-  A family is **not** a storage roster.  `functional` stores under the `:functional`
+  A family is **not** a storage kind.  `functional` stores under the `:functional`
   prop where `functionalInArg` stores `[pred n]` pairs; the two have no common storage
-  to be rostered by, only a common family and a common argument 1.  Keep `:family` and
+  to be listed by, only a common family and a common argument 1.  Keep `:family` and
   `:storage` separate or #52 comes back with a new number."
   #{:functional :argument-constraint})
 
@@ -274,16 +274,16 @@
            :family  nil}
     notes  (assoc :notes notes)))
 
-(defn- roster
+(defn- whole-parts
   "A whole-and-parts declaration — `(F whole part part …)` — cached in a table keyed on
-  the whole and its sorted part roster together (`tax/cover-key`).
+  the whole and its sorted part list together (`tax/cover-key`).
 
   Variable-arity, and the arity is content: two parts and three parts are two claims
-  about one whole, so the roster is part of the key rather than something accumulated
+  about one whole, so the part list is part of the key rather than something accumulated
   under the whole."
   [target & {:keys [facets notes opposing-read] :or {facets #{}}}]
   (cond-> {:shape   {:args [:type :type :type] :variadic :type}
-           :storage [:roster target]
+           :storage [:cover target]
            :checked true
            :facets  (conj facets :cached :derived)
            :family  nil}
@@ -329,14 +329,14 @@
 
 (defn- enforced
   "`spec` plus `where` — the prose naming the code path that reads the term, which is
-  what `vocabulary/roster` answers with and what `core/interpreted` hands a KB author.
+  what `vocabulary/classification` answers with and what `core/interpreted` hands a KB author.
 
   **Prose, and not generated prose.**  No facet set can produce
   \"taxonomy/add-genl — the cached closure every membership, match and placement reads\",
   and a sentence assembled from `#{:cached :convicts}` would be worse than none: the
   audit exists so an author can be told *where* the enforcement is, which is the half of
   the answer that stays a judgement.  What is no longer a judgement is the **class** —
-  `roster` reads that off `:facets`, so a term the engine demonstrably reads cannot be
+  `classification` reads that off `:facets`, so a term the engine demonstrably reads cannot be
   called inert by writing different prose beside it.
 
   Nil-tolerant, because the question is only asked about terms core.txt comments: the
@@ -358,21 +358,21 @@
   (assoc spec :facets #{:inert} :inert why))
 
 (def ^:private arity-note
-  "The clause every exact-arity class's note ends with — nine classes say one thing, and
-  a sentence written nine times is a sentence that drifts in eight of them."
-  (str " — tax/exact-arity-classes — plus the disjointness that separates the"
-       " relation-wide three, which the kind specializations inherit through their genl"
+  "The clause every exact-arity class's note ends with — fifteen classes say one thing,
+  and a sentence written fifteen times is a sentence that drifts in fourteen of them."
+  (str " — tax/exact-arity-classes — plus the separating declaration that separates the"
+       " relation-wide five, which the kind specializations inherit through their genl"
        " edges. Read as storage by the inert-tuple test (arity/relation-length)."))
 
 ;; ---- the entries ---------------------------------------------------------
 
 (def entries
-  "`[term spec]` pairs, ordered.  `special/entries`' fifty-nine functors first, in the table's
+  "`[term spec]` pairs, ordered.  `special/entries`' functors first, in the table's
   own order — that order is replayed by `rebuild-taxonomy` and so is content — then the
-  rest of the grammar `vocabulary/roster` covers.
+  rest of the grammar `vocabulary/classification` covers.
 
   Read `entry` / `by-facet` / `by-family` / `by-storage` below rather than this vector;
-  they are what the rosters above become."
+  they are what the lists above become."
   (vec
    (concat
     ;; ---- the two cached closures ----------------------------------------
@@ -433,7 +433,7 @@
                                    " so the related-types family reads it as the orthogonal it"
                                    " entails."))
                 (str "taxonomy/add-sib-exception — exempts one pair from the separation marks"
-                     " (sibling_disjoint, disjoint_metatype, a partition or separating roster),"
+                     " (sibling_disjoint, disjoint_metatype, a partition or separating declaration),"
                      " read at the reader in disjointness-test"))]
 
      ;; ---- exhaustion: the parts that cover a whole ------------------------
@@ -444,41 +444,41 @@
      ;; `separating` and `partition` separate their parts from each other, and every one
      ;; of them installs a `genl` edge per part.
      ['covering
-      (enforced (roster :cover :facets #{:reach :convicts :arbitrable}
-                        :opposing-read
-                        (str "the nogood holds the whole's membership and the negations,"
-                             " and the declaration the conviction is read through is not a"
-                             " member of it — disjoint's rule, for disjoint's reason: a"
-                             " nogood defeating the cover would read a taxonomy without it"
-                             " on the next pass, find no violation, and revive it.")
-                        :notes (str "the coverage half is answered by provers/CoveringProver"
-                                    " and convicts through settle's cover violation; the"
-                                    " genl edge per part is installed by the integrate arm,"
-                                    " against the covering sentex's own handle."))
-                (str "taxonomy/add-cover — the part roster consulted, never stored as a"
+      (enforced (whole-parts :cover :facets #{:reach :convicts :arbitrable}
+                             :opposing-read
+                             (str "the nogood holds the whole's membership and the negations,"
+                                  " and the declaration the conviction is read through is not a"
+                                  " member of it — disjoint's rule, for disjoint's reason: a"
+                                  " nogood defeating the cover would read a taxonomy without it"
+                                  " on the next pass, find no violation, and revive it.")
+                             :notes (str "the coverage half is answered by provers/CoveringProver"
+                                         " and convicts through settle's cover violation; the"
+                                         " genl edge per part is installed by the integrate arm,"
+                                         " against the covering sentex's own handle."))
+                (str "taxonomy/add-cover — the part list consulted, never stored as a"
                      " sentex per part, plus one taxonomy/add-genl per part"))]
      ['separating
-      (enforced (roster :cover :facets #{:reach :convicts}
-                        :notes (str "the separation half alone: the roster reaches"
-                                    " disjointness-test and no coverage inference, so no"
-                                    " nogood of its own and no :arbitrable facet. The genl"
-                                    " edge per part is installed as covering's is."))
-                (str "taxonomy/add-cover — the part roster read by disjointness-test, which"
+      (enforced (whole-parts :cover :facets #{:reach :convicts}
+                             :notes (str "the separation half alone: the part list reaches"
+                                         " disjointness-test and no coverage inference, so no"
+                                         " nogood of its own and no :arbitrable facet. The genl"
+                                         " edge per part is installed as covering's is."))
+                (str "taxonomy/add-cover — the part list read by disjointness-test, which"
                      " separates the parts the way it separates a disjoint metatype's"
                      " members, plus one taxonomy/add-genl per part"))]
      ['partition
-      (enforced (roster :cover :facets #{:reach :convicts :arbitrable}
-                        :opposing-read
-                        (str "the nogood holds the whole's membership and the negations,"
-                             " and the declaration the conviction is read through is not a"
-                             " member of it — disjoint's rule, for disjoint's reason: a"
-                             " nogood defeating the cover would read a taxonomy without it"
-                             " on the next pass, find no violation, and revive it.")
-                        :notes (str "covering's storage exactly, with the separating flag"
-                                    " set: one key and one table, so the coverage half"
-                                    " needs no second reader and no genl edge between the"
-                                    " two spellings."))
-                (str "taxonomy/add-cover — the same roster, read additionally by"
+      (enforced (whole-parts :cover :facets #{:reach :convicts :arbitrable}
+                             :opposing-read
+                             (str "the nogood holds the whole's membership and the negations,"
+                                  " and the declaration the conviction is read through is not a"
+                                  " member of it — disjoint's rule, for disjoint's reason: a"
+                                  " nogood defeating the cover would read a taxonomy without it"
+                                  " on the next pass, find no violation, and revive it.")
+                             :notes (str "covering's storage exactly, with the separating flag"
+                                         " set: one key and one table, so the coverage half"
+                                         " needs no second reader and no genl edge between the"
+                                         " two spellings."))
+                (str "taxonomy/add-cover — the same part list, read additionally by"
                      " disjointness-test, which separates the parts the way it separates"
                      " a disjoint metatype's members"))]
 
@@ -585,29 +585,31 @@
                  :family nil :facets #{:reach :convicts}
                  :notes (str "floors a variable_arity relation: a shorter tuple is held inert in"
                              " the :out forced set. Ordinary core.txt rules"
-                             " also derive the at_least_binary and at_least_ternary classifications.")}
+                             " also derive the at_least_binary through at_least_quinary classifications.")}
                 "arity/drain! floors a variable-arity tuple at the minimum")]
      ['relationTypeByArity
       (enforced {:shape {:args [:type :integer]} :storage [:none] :checked false
                  :family nil :facets #{}
-                 :notes "the relation-wide mappings are the premises of one core.txt generator that stamps, per mapping fact, the rule deriving a relation's exact arity from its type."}
-                "one core.txt generator stamps the per-type exact-arity rules")]
+                 :notes "the relation-wide mappings are the premises of one core.txt generator that generates, per mapping fact, the rule deriving a relation's exact arity from its type."}
+                "one core.txt generator generates the per-type exact-arity rules")]
      ['predicateTypeByArity
       (enforced {:shape {:args [:type :integer]} :storage [:none] :checked false
                  :family nil :facets #{}
-                 :notes (str "a genl specialization of relationTypeByArity; a fact of"
-                             " its own is a relationTypeByArity fact by ordinary core.txt"
-                             " inference, and core.txt ships none — the shipped predicate"
-                             " types reach the relation-wide mapping by genl instead.")}
-                "genl specialization of relationTypeByArity")]
+                 :notes (str "related to relationTypeByArity by termsRelated, not a genl"
+                             " specialization of it. The premises of a core.txt generator"
+                             " that generates, per mapping fact, an inert rule classifying a"
+                             " predicate of that arity under the type; kb-integrity's"
+                             " implicit-arity-class pass applies it.")}
+                "one core.txt generator generates the per-type inert predicate rules")]
      ['functionTypeByArity
       (enforced {:shape {:args [:type :integer]} :storage [:none] :checked false
                  :family nil :facets #{}
-                 :notes (str "a genl specialization of relationTypeByArity; a fact of"
-                             " its own is a relationTypeByArity fact by ordinary core.txt"
-                             " inference, and core.txt ships none — the shipped function"
-                             " types reach the relation-wide mapping by genl instead.")}
-                "genl specialization of relationTypeByArity")]
+                 :notes (str "related to relationTypeByArity by termsRelated, not a genl"
+                             " specialization of it. The premises of a core.txt generator"
+                             " that generates, per mapping fact, an inert rule classifying a"
+                             " function of that arity under the type; kb-integrity's"
+                             " implicit-arity-class pass applies it.")}
+                "one core.txt generator generates the per-type inert function rules")]
      ['admitsArgnum
       (enforced {:shape {:args [:relation :position]} :storage [:none] :checked false
                  :family nil :facets #{:answers}
@@ -656,7 +658,7 @@
                  :checked true
                  :facets  #{:cached :derived :reach :answers}
                  :family  nil
-                 :notes   (str "the canonical runtime spelling of commutativity: the assert entry point sorts the arguments inside the component it names, so every permitted permutation of a ground fact is one sentex and one handle. A canonicalization mark, not a conviction — it refuses nothing and licenses nothing, so it carries no sweep and reaches no clash roster.")}
+                 :notes   (str "the canonical runtime spelling of commutativity: the assert entry point sorts the arguments inside the component it names, so every permitted permutation of a ground fact is one sentex and one handle. A canonicalization mark, not a conviction — it refuses nothing and licenses nothing, so it carries no sweep and reaches no clash list.")}
                 (str "sentex/sort-commuting-args at the assert entry point, and"
                      " integrate/commute-existing for the facts already stored"))]
      ['commutativeInArgs
@@ -683,6 +685,22 @@
                                   " type read walks."))
                 (str "taxonomy/add-genl-inverse — the signed closure (tax/signed-closure) the"
                      " matching fan, the forward trigger and the subsumption witness read"))]
+     ['negates
+      (enforced (pair :negates :relation
+                      :facets #{:reach :convicts :answers}
+                      :notes (str "a tuple of one side's spec subtree beside a tuple of the"
+                                  " other's on the same arguments is a nogood the settle"
+                                  " places from the candidate index, whichever of the"
+                                  " declaration, the edges and the tuples arrived first; a"
+                                  " tuple under both sides is a one-member nogood. Not"
+                                  " :arbitrable, irreflexive's reading. The well-formedness"
+                                  " arm reads the argument count alone: a kind or a length the"
+                                  " stored content gives the two arguments is a placed clash"
+                                  " of the declaration."))
+                (str "chain/place-tuples! — the two tuples are a nogood placed with the"
+                     " declaration and the predicate genl edges as grounds; and"
+                     " provers/NegatesProver, which answers a ground (not (Q …)) from a"
+                     " believed tuple of a negating predicate"))]
 
      ;; ---- placement, lifting and the policy grants -----------------------
      ['decontextualized_predicate
@@ -697,12 +715,12 @@
      ['forced_monotonic_predicate (enforced (prop :forced-monotonic)
                                             (str "decide/verdict, which never takes a literal of the"
                                                  " predicate OUT, and the labeller's forced sets — a"
-                                                 " denial held OUT and a firing concluding one from a"
-                                                 " non-roster ground held void"))]
+                                                 " denial the literal defeats and a firing concluding one from a"
+                                                 " ground that is not forced-monotonic held void"))]
      ['forced_monotonic_between_predicates
       (enforced (prop :forced-between-predicates)
                 (str "checks/forced-monotonic? — a literal of the predicate whose arguments are all"
-                     " spelled as predicates is on the forced-monotonic roster"))]
+                     " spelled as predicates is forced-monotonic"))]
      ['target_following_predicate
       (enforced (prop :target-following
                       :notes (str "makes a (P … (sentexHandle H) …) meta-sentex not outlive H."
@@ -711,7 +729,7 @@
                      " core/retract-following-metas! reads to tear down a meta-sentex when"
                      " the sentex it names by handle is retracted"))]
      ['abducible_predicate  (enforced (prop :abducible)
-                                      "taxonomy prop :abducible — the gate on what abduce may hypothesize")]
+                                      "taxonomy prop :abducible — the check on what abduce may hypothesize")]
      ['closed_extent_predicate
       (enforced (prop :closed-extent :facets #{:answers :retriggers}
                       :notes (str "its arms re-index the rules the grant newly governs, from both"
@@ -725,7 +743,7 @@
       (enforced (assoc (prop :closed-extent-arg :facets #{:answers :retriggers}
                              :notes (str "closed_extent_predicate narrowed to the goals whose"
                                          " argument n is v. The prop marks P alone, as the"
-                                         " gate; the position and value are read back from"
+                                         " presence check; the position and value are read back from"
                                          " the believed grants visible to the asker."))
                        :shape {:args [:predicate :position :term]})
                 (str "taxonomy prop :closed-extent-arg — ClosedExtentProver answers a ground"
@@ -753,18 +771,27 @@
                  :notes "the binary spelling of (closedExtentForArg ?p 3 ?v) — see closedExtentForArg1."}
                 (str "the CxUniverse forward rule deriving (closedExtentForArg P 3 V); see"
                      " closedExtentForArg1"))]
+     ['closedExtentForArg4
+      (enforced {:shape {:args [:predicate :term]} :storage [:none] :checked false
+                 :family nil :facets #{}
+                 :notes "the binary spelling of (closedExtentForArg ?p 4 ?v) — see closedExtentForArg1."}
+                (str "the CxUniverse forward rule deriving (closedExtentForArg P 4 V); see"
+                     " closedExtentForArg1"))]
+     ['closedExtentForArg5
+      (enforced {:shape {:args [:predicate :term]} :storage [:none] :checked false
+                 :family nil :facets #{}
+                 :notes "the binary spelling of (closedExtentForArg ?p 5 ?v) — see closedExtentForArg1."}
+                (str "the CxUniverse forward rule deriving (closedExtentForArg P 5 V); see"
+                     " closedExtentForArg1"))]
      ['modal_predicate (enforced (prop :modal)
-                                 (str "taxonomy prop :modal — the gate BeliefProjectionProver reads to decide"
+                                 (str "taxonomy prop :modal — the check BeliefProjectionProver reads to decide"
                                       " which predicates project their sentence into the agent's context"))]
 
      ;; ---- the NAT function kinds -----------------------------------------
      ['reifiable_function       (enforced (prop :reifiable   :arg :function)
-                                          "taxonomy prop :reifiable — the gate that turns the nat reify pass on")]
+                                          "taxonomy prop :reifiable — the presence check that turns the nat reify pass on")]
      ['unreifiable_function     (enforced (prop :unreifiable :arg :function)
                                           "taxonomy prop :unreifiable — kept structural for a prover to compute")]
-     ['quoting_function         (enforced (prop :quoting     :arg :function)
-                                          (str "taxonomy prop :quoting — its arguments are a mention, held opaque to"
-                                               " identity congruence (res/representative-term spelling mode)"))]
      ['contextArgSubrelation   (enforced (wff-only [:function :position :predicate])
                                          (str "context-nat producer — sibling F-contexts differing at one arg are"
                                               " ordered by the sub-relation on that arg, materializing genlCx"))]
@@ -802,7 +829,7 @@
                                               " *mints* the type rather than convicting the fact:"
                                               " special/entail-existing, a third sweep mechanism"
                                               " beside settle's clash reach and its arity report,"
-                                              " and the only one gated on a dynamic var"
+                                              " and the only one conditional on a dynamic var"
                                               " (checks/*assertive-arg-types?*)."))
                            "checks/args-problem — refuses on the way in, and entails under *assertive-arg-types?*")]
      ['genlArg   (enforced (assoc (prop :declares-arg-genl :arg :relation
@@ -825,9 +852,9 @@
                             :family nil :facets #{:convicts :reach}
                             :notes (str "the projection relates STORED declarations only — a"
                                         " reading arg generalizes up genl or inherits from a"
-                                        " super-predicate has no arg1/arg2/arg3 twin; ask arg for those."
+                                        " super-predicate has no arg1…arg5 twin; ask arg for those."
                                         " :family stays nil for arity's reason rather than for"
-                                        " want of a family: mark-families rosters the lanes"
+                                        " want of a family: mark-families lists the lanes"
                                         " that must recognize one spelling set, and two"
                                         " spellings a rule cycle keeps believed under one check"
                                         " are not that. Exists so a positional constraint can"
@@ -846,6 +873,16 @@
                             :family nil :facets #{:convicts :reach}
                             :notes "the binary projection of (arg ?p 3 ?t) — see arg1."}
                            (str "checks/declaration-problem — the same at position 3; see"
+                                " arg1"))]
+     ['arg4      (enforced {:shape {:args [:relation :type]} :storage [:none] :checked false
+                            :family nil :facets #{:convicts :reach}
+                            :notes "the binary projection of (arg ?p 4 ?t) — see arg1."}
+                           (str "checks/declaration-problem — the same at position 4; see"
+                                " arg1"))]
+     ['arg5      (enforced {:shape {:args [:relation :type]} :storage [:none] :checked false
+                            :family nil :facets #{:convicts :reach}
+                            :notes "the binary projection of (arg ?p 5 ?t) — see arg1."}
+                           (str "checks/declaration-problem — the same at position 5; see"
                                 " arg1"))]
      ['quotedArg (enforced (assoc (prop :declares-quoted-arg :arg :relation
                                         :facets #{:convicts :answers})
@@ -1068,6 +1105,22 @@
                              (str "provers/DifferentProver — a ground goal of two or more terms,"
                                   " answered from the equality closure under the unique-name"
                                   " assumption"))]
+     ['minCommonGenl (enforced (operator {:args [:type :type] :variadic :type}
+                                         :notes (str "computed from the genl closure: argument 1"
+                                                     " is each minimal type strictly above every"
+                                                     " later argument, and a ground argument 1"
+                                                     " outside that set proves the negation."))
+                               (str "provers/CommonGenlProver — taxonomy/min-common-genls of"
+                                    " arguments 2 and up, read through the edges the asking"
+                                    " context sees"))]
+     ['maxCommonSpec (enforced (operator {:args [:type :type] :variadic :type}
+                                         :notes (str "computed from the genl closure: argument 1"
+                                                     " is each maximal type strictly below every"
+                                                     " later argument, and a ground argument 1"
+                                                     " outside that set proves the negation."))
+                               (str "provers/CommonGenlProver — taxonomy/max-common-specs of"
+                                    " arguments 2 and up, read through the edges the asking"
+                                    " context sees"))]
      ['unknown     (operator {:args [:sentence]})]
      ['thereExists (enforced (operator {:args [:term :sentence]})
                              "provers/ThereExistsProver — a ground existential, binding its variable(s) against the body and projecting the binder out")]
@@ -1096,7 +1149,7 @@
 
     ;; ======================================================================
     ;; Everything below heads no entry in `special/entries`. It is the rest of
-    ;; core.txt's grammar — the terms `vocabulary/roster` answers for and the
+    ;; core.txt's grammar — the terms `vocabulary/classification` answers for and the
     ;; table does not.
     ;; ======================================================================
 
@@ -1145,9 +1198,9 @@
     ;; discharges an antecedent on one through it (`provers/expression-kind-predicates`).
     (map (fn [[t why]]
            [t (enforced (collection :notes why)
-                        "impl/provers.clj — shape-kinds, expression-kind-predicates, ExpressionKindProver")])
+                        "impl/provers.clj — shape-kinds, stated-kinds, expression-kind-predicates, ExpressionKindProver")])
          '[[unrepresented_term "the expression kind the value kinds sit under, placed under linguistic so every value kind reads as nowhere_never and disjoint from relation. A quoted value reaches it through genl."]
-           [formula "a predication, an operator applied to formulas, or a quantifier binding variables in one. A quoted form under a connective or quantifier head reaches it."]
+           [formula "a predication, an operator applied to formulas, or a quantifier binding variables in one. A quoted form under a connective or quantifier head reaches it, and so does a quoted application of a stored predicate."]
            [sentence "a closed formula, which checks/check-ground enforces on the way in. shape-kinds names it of a closed quoted form under a connective or quantifier head."]
            [non_atomic_term "a function applied to as many closed terms as it takes — the NAT of docs/nat.md, named as a collection. Reification reads the declaration on the function, never this; ExpressionKindProver answers it of a quoted form."]])
     (map (fn [[t why]] [t (inert (collection :notes why) why)])
@@ -1157,8 +1210,9 @@
     [['Quote (enforced (collection
                         :notes (str "quasiquote.clj's quote-function — the literal symbol"
                                     " ensure-quasiquote-functions declares reifiable_function"
-                                    " and quoting_function on, and reduce-term mints a (Quote"
-                                    " E) mention from a reduced ground Quasiquote. Takes no"
+                                    " on, and reduce-term mints a (Quote E) mention from a"
+                                    " reduced ground Quasiquote. A quoting function fixed by"
+                                    " the engine (sx/quoting-functors). Takes no"
                                     " arg, result or metatype declaration of its own: what"
                                     " kind of expression (Quote X) is follows from X's shape,"
                                     " per its core.txt comment."))
@@ -1187,11 +1241,14 @@
     (map (fn [[t why]] [t (inert (collection :notes why) why)])
          '[[intangible "ontology, not grammar: something with no mass, the complement of tangible. core.txt states it as the top of the ontology the domain files extend; no engine check names it."]
            [spatial "ontology, not grammar: something with a location in some space, physical or mathematical. core.txt states it as the top of the ontology the domain files extend; no engine check names it."]
-           [spatiotemporal "ontology, not grammar: something with a location in space and time. core.txt states it as the top of the ontology the domain files extend; no engine check names it."]
+           [physical "ontology, not grammar: something with a location in the physical space of our universe. core.txt states it as the top of the ontology the domain files extend; no engine check names it."]
+           [spatiotemporal "ontology, not grammar: something with a location in physical space and time. core.txt states it as the top of the ontology the domain files extend; no engine check names it."]
            [tangible "ontology, not grammar: something with mass, and so with a location. core.txt states it as the top of the ontology the domain files extend; no engine check names it."]
            [organism "ontology, not grammar: something alive in its own right. core.txt states it as the top of the ontology organism.txt's kinds hang from; no engine check names it."]
            [biological "ontology, not grammar: a tangible that is an organism or part of one. core.txt states it because organism (organism.txt) and body_part (abstract.txt) both extend it; no engine check names it."]
-           [measure "ontology, not grammar: what a QuantityFn or QuantityIntervalFn application denotes. core.txt states it because measure.txt and time.txt both declare a position over it; no engine check names it."]])
+           [measure "ontology, not grammar: what a QuantityFn or QuantityIntervalFn application denotes. core.txt states it because measure.txt and time.txt both declare a position over it; no engine check names it."]
+           [logical "ontology, not grammar: what a logic is about, the whole above relation, proposition and context. core.txt states it so the separation from linguistic and quantitative reaches relation and context; no engine check names it."]
+           [quantitative "ontology, not grammar: what a measurement is made of or yields, the whole above measure, unit_of_measure, physical_dimension and sign_value. core.txt states it so the separation from logical and linguistic reaches measure; no engine check names it."]])
 
     ;; ---- the space/time complements, nowhere_never, and the metatype ladder ----
     ;; core.txt comments these too, beside their genl edges, so `vocabulary/audit` answers
@@ -1207,14 +1264,17 @@
            [atemporal "ontology, not grammar: not located in time, the complement of temporal. core.txt states it so nowhere_never can sit under it; no engine check names it."]
            [uninterrupted "ontology, not grammar: something temporal present at every moment between its start and its end, one side of the partition of temporal. core.txt states it as the top of the ontology the domain files place kinds under; no engine check names it."]
            [intermittent "ontology, not grammar: something temporal with a gap between its start and its end, the other side of the partition of temporal. core.txt states it as the top of the ontology the domain files place kinds under; no engine check names it."]
-           [nowhere_never "ontology, not grammar: in no space and at no time, below aspatial and atemporal and the parent of linguistic, measure, context and relation; no engine check names it."]
+           [nowhere_never "ontology, not grammar: in no space and at no time, below aspatial and atemporal and the whole that logical, linguistic and quantitative are separated under; no engine check names it."]
            [type "ontology, not grammar: a first-order type, on the metatype-order ladder. No engine check names it — typeGenl, which reads the ladder, is inert."]
            [metatype "ontology, not grammar: a second-order type, on the metatype-order ladder. No engine check names it."]
            [meta_metatype "ontology, not grammar: a third-order type, on the metatype-order ladder. No engine check names it."]
            [at_least_metatype "ontology, not grammar: a type of order two or higher, on the metatype-order ladder. No engine check names it."]
            [fixed_order_type "ontology, not grammar: a type whose members are all of one order, on the metatype-order ladder. No engine check names it."]
            [variable_order_type "ontology, not grammar: a type holding members of any order, on the metatype-order ladder. No engine check names it."]
-           [type_type_by_order "ontology, not grammar: the disjoint_metatype partitioning fixed_order_type by order. No engine check names it."]])
+           [type_type_by_order "ontology, not grammar: the disjoint_metatype partitioning fixed_order_type by order. No engine check names it."]
+           [spatiality_type "ontology, not grammar: the at_least_metatype holding spatial and aspatial. The orthogonalMetatypes and partitionedByType rules read its memberships as any membership is; no engine check names it."]
+           [temporality_type "ontology, not grammar: the at_least_metatype holding temporal and atemporal. The orthogonalMetatypes and partitionedByType rules read its memberships as any membership is; no engine check names it."]
+           [arity_type "ontology, not grammar: the at_least_metatype of the relation-level arity types, e.g. binary and variable_arity. The typeOrthogonal rule reads its memberships as any membership is; no engine check names it."]])
 
     ;; ---- the two halves of unary_predicate ---------------------------------
     ;; `empty` and `nonempty` partition `unary_predicate`.  The disjointness audit reads
@@ -1260,6 +1320,12 @@
      ['ternary (enforced (collection :facets #{:convicts :reach}
                                      :notes (str "the same, at three" arity-note))
                          "tax/exact-arity-classes — the relation-wide membership spelling of an arity")]
+     ['quaternary (enforced (collection :facets #{:convicts :reach}
+                                        :notes (str "the same, at four" arity-note))
+                            "tax/exact-arity-classes — the relation-wide membership spelling of an arity")]
+     ['quinary (enforced (collection :facets #{:convicts :reach}
+                                     :notes (str "the same, at five" arity-note))
+                         "tax/exact-arity-classes — the relation-wide membership spelling of an arity")]
 
      ;; ---- the predicate types --------------------------------------------
      ['unary_predicate   (enforced (collection :facets #{:convicts :reach}
@@ -1275,6 +1341,14 @@
                                                :notes (str "the same, at three" arity-note))
                                    (str "tax/exact-arity-classes — a predicate's membership spelling of"
                                         " an arity"))]
+     ['quaternary_predicate (enforced (collection :facets #{:convicts :reach}
+                                                  :notes (str "the same, at four" arity-note))
+                                      (str "tax/exact-arity-classes — a predicate's membership spelling of"
+                                           " an arity"))]
+     ['quinary_predicate (enforced (collection :facets #{:convicts :reach}
+                                               :notes (str "the same, at five" arity-note))
+                                   (str "tax/exact-arity-classes — a predicate's membership spelling of"
+                                        " an arity"))]
      ['unary_function
       (enforced (collection :facets #{:convicts :reach}
                             :notes (str "the function specialization of unary, and a"
@@ -1288,9 +1362,17 @@
       (enforced (collection :facets #{:convicts :reach}
                             :notes (str "the same, at three" arity-note))
                 "tax/exact-arity-classes — a function's membership spelling of an arity")]
+     ['quaternary_function
+      (enforced (collection :facets #{:convicts :reach}
+                            :notes (str "the same, at four" arity-note))
+                "tax/exact-arity-classes — a function's membership spelling of an arity")]
+     ['quinary_function
+      (enforced (collection :facets #{:convicts :reach}
+                            :notes (str "the same, at five" arity-note))
+                "tax/exact-arity-classes — a function's membership spelling of an arity")]
      ['fixed_arity       (enforced (collection
                                     :notes (str "classifies one exact argument policy; exact"
-                                                " arity declarations and the unary/binary/ternary"
+                                                " arity declarations and the unary through quinary"
                                                 " families specialize it."))
                                    "generic taxonomy classification and ordinary core.txt arity rule")]
      ['fixed_arity_predicate
@@ -1323,6 +1405,15 @@
      ['at_least_ternary
       (enforced (collection :notes (str "derived by core.txt rules from arity or arityMin greater"
                                         " than two, and through (genl ternary at_least_ternary)."))
+                "ordinary core.txt rule inference from arity and arityMin")]
+     ['at_least_quaternary
+      (enforced (collection :notes (str "derived by core.txt rules from arity or arityMin greater"
+                                        " than three, and through (genl quaternary"
+                                        " at_least_quaternary)."))
+                "ordinary core.txt rule inference from arity and arityMin")]
+     ['at_least_quinary
+      (enforced (collection :notes (str "derived by core.txt rules from arity or arityMin greater"
+                                        " than four, and through (genl quinary at_least_quinary)."))
                 "ordinary core.txt rule inference from arity and arityMin")]
      ['relation_kind     (enforced (collection :notes "a disjoint_metatype, so its two members separate each other.")
                                    "generic: a disjoint_metatype, so its two members separate each other")]
@@ -1410,6 +1501,14 @@
            [set/monotonic    "sentex/strength-wrapper — peeled at the entry point into :monotonic strength"]])
     [['set/inert (enforced (structural {:args [:sentence]} "stores the sentence inert.")
                            "io.text/peel-form — the text loader writes the sentence through assert-inert")]]
+    [['exceptWhen (enforced {:shape   {:args [:sentence :sentence]}
+                             :storage [:none] :checked false :family nil :facets #{}
+                             :notes   (str "split off at the assert layer: the rule is stored as"
+                                           " written and the exception apart, as the meta-sentex"
+                                           " (exceptWhen Q (sentexHandle H)) naming the rule's handle.")}
+                            (str "assert-entry/assert-exceptWhen-meta! — stores the exception;"
+                                 " provers/rule-exceptions reads it per firing, and the recheck"
+                                 " queue re-evaluates it"))]]
 
     ;; ---- the evaluable comparisons ---------------------------------------
     [['lessThan    (enforced {:shape   {:args [:term :term] :variadic :term}
@@ -1439,7 +1538,7 @@
                                 "the evaluable prover — a step-limited whole-string regex match")]
 
      ;; ---- the reified-term vocabulary -------------------------------------
-     ['termOfUnit (enforced {:shape {:args [:term :term]} :storage [:none] :checked false
+     ['natFormula (enforced {:shape {:args [:term :term]} :storage [:none] :checked false
                              :family nil :facets #{}
                              :notes "the constant-to-expression half of the reified-term map."}
                             "nat — the constant-to-expression half of the reified-term map")]
@@ -1451,11 +1550,11 @@
                             :family nil :facets #{}
                             :notes (str "derived as a membership of each minted constant,"
                                         " in the type the application's argument ?n names,"
-                                        " off its termOfUnit fact: checks/result-arg-rows"
+                                        " off its natFormula fact: checks/result-arg-rows"
                                         " reads each declaration as arg rows, so the"
                                         " entailment, entail-existing and the wait on an"
                                         " unmintable type are argArg's.")}
-                           "checks/constraint-entailments over checks/result-arg-rows — argArg on the constant a termOfUnit fact maps")]
+                           "checks/constraint-entailments over checks/result-arg-rows — argArg on the constant a natFormula fact maps")]
      ['genlResult (enforced {:shape {:args [:function :type]} :storage [:none] :checked false
                              :family nil :facets #{}
                              :notes "materialized as a genl edge on each minted constant."}
@@ -1518,6 +1617,15 @@
      ;; like any fact and read for inference by nothing.  Inert is the decision rather than
      ;; the omission — the grammar documents itself in its own representation, and a
      ;; cross-reference earns a stored sentex whether or not a check ever keys on it.
+     ['diachronicallyDisjoint
+      (inert {:shape {:args [:term :term]} :storage [:none] :checked false
+              :family nil :facets #{}
+              :notes (str "(diachronicallyDisjoint ?type1 ?type2): nothing is an instance of both"
+                          " at the same time, though one thing can be each in turn. disjoint is a"
+                          " genl of it. Stated and queryable; memberships are checked without time,"
+                          " so no clash check can read it yet.")}
+             (str "aspirational: enforcing it needs time-indexed membership, which the engine"
+                  " does not have. No inference path beyond the genl from disjoint."))]
      ['typeGenl
       (inert {:shape {:args [:term :term]} :storage [:none] :checked false
               :family nil :facets #{}
@@ -1526,17 +1634,48 @@
                           " derive (genl ?x ?genl) from (?classifier ?x) once rule support lands.")}
              (str "aspirational: a higher-order genl constraint whose rule-based derivation"
                   " depends on engine support for higher-order patterns. No inference path."))]
+     ['typeOrthogonal
+      (enforced {:shape {:args [:type :type]} :storage [:none] :checked false
+                 :family nil :facets #{}
+                 :notes (str "enforced by the generic chain, not by name: the core.txt"
+                             " generator beside the declaration generates (implies (?classifier ?x)"
+                             " (orthogonal ?type ?x)) per fact, the type first. The generated rule"
+                             " concludes a forced-monotonic literal, so a firing is believed"
+                             " only from a forced-monotonic classifier.")}
+                (str "generic rule generator (docs/generators.md): the core.txt generator"
+                     " beside it generates one membership rule per fact, and chain inference"
+                     " concludes every member of the classifier orthogonal to the type"))]
+     ['properCounterpart
+      (enforced {:shape {:args [:term :term]} :storage [:none] :checked false
+                 :family nil :facets #{}
+                 :notes (str "enforced by the generic chain, not by name: a core.txt generator"
+                             " generates, per pair, a rule concluding the proper tuple from a tuple and"
+                             " a believed denial of its reverse. The denial half is a rule stated"
+                             " once at a family's root. An inert fact generates nothing, which is how"
+                             " the calculus-owned pairs are recorded.")}
+                (str "generic rule generator (docs/generators.md): each pair's definition,"
+                     " (?proper x y) from (?pred x y) and not (?pred y x), is generated as a"
+                     " forward rule"))]
+     ['orthogonalMetatypes
+      (enforced {:shape {:args [:type :type] :variadic :type} :storage [:none] :checked false
+                 :family nil :facets #{}
+                 :notes (str "enforced by the generic chain, not by name: core.txt generators"
+                             " generate one membership-pair rule concluding orthogonal per pair of"
+                             " positions, for two and three metatypes only.")}
+                (str "generic rule generators (docs/generators.md): a fact of two or three"
+                     " metatypes generates rules making every member of each orthogonal to every"
+                     " member of the others; four or more pends variable-arity rule support"))]
      ['partitionedByType
-      (inert {:shape {:args [:term :term :term] :variadic :term} :storage [:none] :checked false
-              :family nil :facets #{}
-              :notes (str "(partitionedByType ?whole ?classifier . ?cells) records that the"
-                          " ?cells exhaustively and disjointly partition ?whole, each a"
-                          " ?classifier instance. Inert: the disjointness rides a"
-                          " disjoint_metatype and the memberships are stated beside it, so this"
-                          " draws no inference and expands to nothing.")}
-             (str "a partition declaration (variable arity) documenting that the cell types"
-                  " exhaustively and disjointly cover the whole. Nothing infers from it — the"
-                  " disjoint_metatype and the explicit memberships carry the separation."))]
+      (enforced {:shape {:args [:type :type]} :storage [:none] :checked false
+                 :family nil :facets #{}
+                 :notes (str "enforced by the generic chain, not by name: a core.txt generator"
+                             " generates a membership rule concluding (genl ?part ?whole), and a"
+                             " core.txt rule concludes (disjoint_metatype ?classifier), which"
+                             " separates every two members. The coverage half has no rule, and"
+                             " a partition stated beside the fact carries it.")}
+                (str "generic rule generators (docs/generators.md): a fact places every member"
+                     " of the classifier under the whole and separates the members; coverage"
+                     " pends the engine reading it from the classifier's members"))]
      ['argN
       (inert {:shape {:args [:term :integer :sentence]} :storage [:none] :checked false
               :family nil :facets #{}
@@ -1563,6 +1702,15 @@
              (str "a documentation 'see also' cross-reference between two terms; read like"
                   " comment and by nobody for inference. Directional — (seeAlso a b)"
                   " does not imply (seeAlso b a); the reverse is a separate assertion."))]
+     ['implementationNote
+      (inert {:shape {:args [:term :term]} :storage [:none] :checked false
+              :family nil :facets #{}
+              :notes (str "documentation the engine stores and never reads: how a term is"
+                          " implemented or where its implementation stops short, beside the"
+                          " comment that says what the term means.")}
+             (str "an implementation note on a term, a sibling of comment: comment carries"
+                  " the meaning, and this carries how the engine or the KB text implements it."
+                  " Nothing infers from it."))]
 
      ;; A reviewer's record that a rule-macro suggestion was read and declined.  It names
      ;; the suggestion by content rather than the rule by handle, so a text export keeps it.
@@ -1574,38 +1722,57 @@
                 (str "integrity/rule-macro-findings — a rule-macro suggestion the rule's"
                      " context declines is not reported"))]
 
-     ;; The three worked-example annotations name their example sentex by handle.  Each is
-     ;; a `target_following_predicate` in core.txt, so retracting the example tears the
-     ;; annotation down with it — that mark's enforcement, reached through a declaration
-     ;; rather than through an arm keyed on these functors, which is why they stay inert
-     ;; while participating in a teardown.
+     ;; The three worked-example annotations quote their example sentence, (Quote S), and
+     ;; name no sentex, so they carry no target_following_predicate mark and nothing tears
+     ;; them down.  Their obligation is a test's: curation_test asks S in the example's
+     ;; context.
      ['positiveExample
       (inert {:shape {:args [:term :term]} :storage [:none] :checked false
               :family nil :facets #{}
-              :notes (str "belief-following through target_following_predicate, and an"
-                          " integrity obligation — the named sentex is provable — held"
-                          " by curation_test rather than by any engine path.")}
-             (str "a curation meta-sentex naming, by handle, a sentex that is a true example"
+              :notes (str "an integrity obligation — the quoted sentence is provable in the"
+                          " example's context — held by curation_test rather than by any"
+                          " engine path.")}
+             (str "a curation fact quoting, as (Quote S), a sentence that is a true example"
                   " of a term's usage. Nothing reads the annotation for inference; its"
-                  " integrity (the named sentex is provable) is held by curation_test."
-                  " Belief-following via the target_following_predicate mark, so it does not"
-                  " outlive the example it names."))]
+                  " integrity (S is provable) is held by curation_test."))]
      ['negativeExample
       (inert {:shape {:args [:term :term]} :storage [:none] :checked false
               :family nil :facets #{}
-              :notes (str "the same teardown and the mirror obligation: the named sentex is"
-                          " provable as its negation, which curation_test holds.")}
-             (str "the same, for a sentex whose negation is provable — a false example of"
-                  " a term's usage. Read by no check; its integrity is a test's, and it"
-                  " cascades with its target like positiveExample."))]
+              :notes (str "the mirror obligation: the quoted sentence is not provable in the"
+                          " example's context (unknown is enough), which curation_test holds.")}
+             (str "the same, quoting a sentence that is a false example of a term's usage."
+                  " Read by no check; its integrity (S is not provable) is a test's."))]
      ['borderlineExample
       (inert {:shape {:args [:term :term]} :storage [:none] :checked false
               :family nil :facets #{}
-              :notes (str "the same teardown, and no obligation at all: truth-agnostic by"
-                          " design, so no regression reads its target.")}
-             (str "the same pointing shape, truth-agnostic: it names a sentex neither"
-                  " asserted true nor false, so it carries no provability obligation and no"
-                  " regression reads its target. Documentation only."))]
+              :notes (str "no obligation at all: truth-agnostic by design, so curation_test"
+                          " does not ask its sentence.")}
+             (str "the same shape, truth-agnostic: it quotes a sentence whose truth is"
+                  " arguable, so it carries no provability obligation and no test asks it."
+                  " Documentation only."))]
+
+     ;; The string siblings carry the example as text, so no test reads it and they carry
+     ;; no provability obligation.
+     ['positiveExampleComment
+      (inert {:shape {:args [:term :term]} :storage [:none] :checked false
+              :family nil :facets #{}
+              :notes (str "documentation the engine stores and never reads: a string, so no"
+                          " obligation for a test to hold.")}
+             (str "a curation annotation carrying a true example of a term's usage as a"
+                  " string, for an example that is not a sentence the KB can state or prove."
+                  " Read like comment and by nobody for inference."))]
+     ['negativeExampleComment
+      (inert {:shape {:args [:term :term]} :storage [:none] :checked false
+              :family nil :facets #{}
+              :notes "the same, for a false example; nothing checks the text."}
+             (str "the same, carrying a false example of a term's usage as a string. Read"
+                  " like comment and by nobody for inference."))]
+     ['borderlineExampleComment
+      (inert {:shape {:args [:term :term]} :storage [:none] :checked false
+              :family nil :facets #{}
+              :notes "the same, for a borderline example; truth-agnostic as borderlineExample is."}
+             (str "the same, carrying a borderline example of a term's usage as a string."
+                  " Documentation only."))]
 
      ;; ---- the predAll / predExists / predSpecified matrix ------------------
      ;;
@@ -1619,16 +1786,16 @@
       (enforced {:shape {:args [:predicate :type :term]} :storage [:none] :checked false
                  :family nil :facets #{}
                  :notes (str "enforced by the generic chain, not by name: the core.txt"
-                             " generator beside the declaration stamps the concrete rule"
+                             " generator beside the declaration generates the concrete rule"
                              " when the holes ground.")}
                 (str "generic rule generator (docs/generators.md): the core.txt generator"
-                     " beside it stamps (implies (?indep ?x) (?pred ?x ?fixed)) — chain"
+                     " beside it generates (implies (?indep ?x) (?pred ?x ?fixed)) — chain"
                      " inference concludes the fixed filler for every member"))]
      ['predInstanceAll
       (enforced {:shape {:args [:predicate :term :type]} :storage [:none] :checked false
                  :family nil :facets #{}
                  :notes "the argument-swapped twin of predAllInstance, same generic chain."}
-                (str "generic rule generator: the core.txt generator stamps (implies (?dep ?y)"
+                (str "generic rule generator: the core.txt generator generates (implies (?dep ?y)"
                      " (?pred ?fixed ?y)), the argument-swapped twin"))]
      ['predAllExists
       (inert {:shape {:args [:predicate :type :type]} :storage [:none] :checked false
@@ -1652,7 +1819,7 @@
       (inert {:shape {:args [:predicate :type :term]} :storage [:none] :checked false
               :family nil :facets #{}
               :notes (str "a pure existential — no universal to range over — expressible"
-                          " precisely because the class stamps nothing.")}
+                          " precisely because the class generates nothing.")}
              (str "an inert record: some ?indep member bears ?pred to the fixed filler."
                   " (PredExistsInstanceFn ?pred ?indep ?fixed) is its sanctioned"
                   " placeholder."))]
@@ -1674,7 +1841,7 @@
                              " declaration-contract gap the audit reports explicitly.")}
                 (str "vaelii.core/specified-violations — the on-demand integrity"
                      " audit reads the declaration and returns the instances of ?indep with"
-                     " no determinate filler; stamps no rule"))]
+                     " no determinate filler; generates no rule"))]
      ['predSpecifiedAll
       (enforced {:shape {:args [:predicate :type]} :storage [:none] :checked false
                  :family nil :facets #{}
@@ -1803,7 +1970,7 @@
 
   * `:recheck-subjects` — the functors that post exception re-checks through the shared
     path (`special/declaration-subjects`) rather than from an arm of their own.
-  * `:family-rosters` — `family -> {roster-name functors}`, the rosters that read a mark
+  * `:family-lists` — `family -> {list-name functors}`, the lists that read a mark
     family **as a family**.  Each must enumerate exactly that family.
 
   Six rules, nine `:mismatch` values:
@@ -1819,15 +1986,15 @@
     why it names a second sentex and is still not arbitrable.
   * an `:inert` term carrying another facet or a storage.  The `inert` constructor makes
     that unwritable; this is what says the constructor is still the only way in.
-  * a roster that reads a family as a family and enumerates something else.  This is the
+  * a list that reads a family as a family and enumerates something else.  This is the
     `:enumeration` rule of `special/check-declarations` at the family level, and it is the
     one rule here with **no** `:stops-short` escape: where a facet is a claim that an
-    entry can answer for in prose, a roster is a set sitting in another namespace, and two
+    entry can answer for in prose, a list is a set sitting in another namespace, and two
     enumerations of one fact do not get to disagree.  `quotedArg` is why it exists — the
     entry point read it up `res/constraining-predicates` with its three siblings while
     `provers/meta-constraint-shape` had no row for it, so one declaration meant one thing
     to `assert` and another to `ask`.  The lane rule below caught that and offered a
-    record; a record is the wrong answer to two rosters disagreeing.
+    record; a record is the wrong answer to two lists disagreeing.
   * a facet the entry is **committed to** and does not carry, by one of three rules —
     `:implication` (`facet-contract`), `:family-lane` (a sibling spelling carries it) or
     `:recheck` (it answers goals about a predicate and posts no re-check) — unless the
@@ -1836,7 +2003,7 @@
 
   **What no rule can refuse** is a spelling dropped from its family outright: membership
   is a stated fact, as `:inert` is, and every rule above is about spellings that *are*
-  enrolled agreeing with each other.  `predicates_test` pins `tax/functional-family-marks`
+  enrolled agreeing with each other.  `predicates_test` asserts `tax/functional-family-marks`
   as a literal for exactly that move.
 
   Rule 1 of the registry — `:cached` implies the whole integrate / disintegrate / rebuild
@@ -1846,24 +2013,24 @@
 
   O(declarations), no KB, no I/O, no reflection: `check-entries` is the budget.  Returns
   `entries` unchanged so it can wrap a def."
-  [entries {:keys [recheck-subjects family-rosters]}]
+  [entries {:keys [recheck-subjects family-lists]}]
   (let [refuse (fn [mismatch msg data]
                  (throw (ex-info msg (merge {:type :bad-table-entry :mismatch mismatch}
                                             data))))]
-    (doseq [[fam rosters] (sort-by key family-rosters)
+    (doseq [[fam lists] (sort-by key family-lists)
             :let              [spellings (into #{} (comp (filter #(= fam (:family (second %))))
                                                          (map first))
                                                entries)]
-            [roster functors] (sort-by key rosters)
+            [list-name functors] (sort-by key lists)
             :when             (not= spellings functors)]
-      (refuse :family-roster
-              (str roster " reads the " fam " family as a family and enumerates "
+      (refuse :family-list
+              (str list-name " reads the " fam " family as a family and enumerates "
                    (pr-str (vec (sort functors))) " where the declarations say "
                    (pr-str (vec (sort spellings)))
                    " — a spelling one of them holds and the other does not is one fact"
                    " written twice, and the half that is missing fails silently in"
-                   " whichever lane that roster is")
-              {:family fam :roster roster :roster-holds functors :declared spellings}))
+                   " whichever lane that list is")
+              {:family fam :list list-name :list-holds functors :declared spellings}))
     (let [lanes (family-lanes entries)]
       (doseq [[term spec] entries
               :let        [fs (:facets spec)
@@ -1879,7 +2046,7 @@
           (refuse :vocabulary
                   (str term "'s :" (name field) " holds " (pr-str bad)
                        ", which the closed vocabulary does not name — an open field is a"
-                       " roster again, with the same drift and none of the checking")
+                       " hand-kept list again, with the same drift and none of the checking")
                   {:functor term :field field :outside bad}))
 
         (when (not= (contains? fs :cached) (not= :none skind))
@@ -1964,7 +2131,7 @@
   (if (= 1 (count (:args (shape-of term)))) :mark :mark-in-arg))
 
 (defn by-facet
-  "Every term carrying `facet`, as a set — what the lane rosters become."
+  "Every term carrying `facet`, as a set — what the lane lists become."
   [facet]
   (into #{} (comp (filter #(contains? (:facets (second %)) facet)) (map first)) entries))
 
@@ -2021,6 +2188,12 @@
 (def query-only
   "Every term refused at the assert entry point and answered by a prover instead."
   (by-facet :query-only))
+
+(def belief-free
+  "The terms no inference reads: every `:inert` term, and `comment`, whose readers (gloss,
+  `vocabulary/audit`, the browser's term pages) show its prose.  A literal of one moves
+  belief as a literal of a predicate this table does not cover moves it."
+  (conj (by-facet :inert) 'comment))
 
 (def checked
   "Every term `special/entries` gives a structural well-formedness arm."

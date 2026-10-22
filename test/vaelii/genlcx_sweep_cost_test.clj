@@ -34,7 +34,7 @@
   in another's, because a sweep's absolute total also carries what the settle beneath it
   probes, which is a function of the KB the fixture happened to build.  A slope is not:
   one derivation per candidate per swept reader is what the code does, and it reads the
-  same whatever the fixture holds.  So the pins here are `=` across bystanders and an
+  same whatever the fixture holds.  So the assertions here are `=` across bystanders and an
   exact slope across widened readers, and neither can be satisfied by a fixture drifting
   under them.
 

@@ -198,8 +198,8 @@
         (is (= (.length (java.io.File. (str root "/kv.log"))) (get (f/read-clean-marker root) "kv"))
             "a clean close records the length it closed at"))
       ;; and a crash after that close invalidates it by length alone.  Asserted on the
-      ;; two things the length check decides — the damaged flag the open gate reads, and
-      ;; the walk it forces — never on the replayed value, which reads the same whether
+      ;; two things the length check decides — the damaged flag the open's coverage check
+      ;; reads, and the walk it forces — never on the replayed value, which reads the same whether
       ;; the marker was believed or not (`scan-log` stops at the torn frame either way).
       (let [path   (str dir "/index/kv.log")
             closed (.length (java.io.File. path))]
@@ -218,9 +218,10 @@
 ;; A frame inside `kv.log` that does not thaw, with frames after it, is damage rather
 ;; than a torn tail.  Read as a tail, the replay stopped there and the open answered from
 ;; a map missing every op after it, with nothing flagged; on a compacted log (one `[:put]`
-;; per key in hash order) the batch-seal counter can sit before the damage, so the open
-;; gate's counts agree and nothing rebuilds.  The replay keeps the ops before the frame
-;; and flags the store, and the open gate rebuilds a flagged index from the records.
+;; per key in hash order) the batch-seal counter can sit before the damage, so the open's
+;; coverage check reads agreeing counts and nothing rebuilds.  The replay keeps the ops
+;; before the frame and flags the store, and the open's coverage check rebuilds a flagged
+;; index from the records.
 
 (defn- forty-keys! [dir]
   (let [b (dkv/open-kv-backend dir)]
@@ -248,7 +249,7 @@
         (let [b (dkv/open-kv-backend dir)]
           (try
             (is (= :damaged-frame (:damaged b))
-                "the store is flagged, which the open gate answers with a rebuild")
+                "the store is flagged, which the open's coverage check answers with a rebuild")
             (is (= (into {} (map (fn [i] [[:k i] i])) (range 7)) (into {} (p/kv-entries b)))
                 "the ops before the damaged frame replay")
             (is (= len (.length (java.io.File. path))) "the log is not truncated at the damage")
@@ -282,7 +283,7 @@
   ;; The contract for logical (op) logging: adding the i-th member to one set logs the
   ;; member alone, not the size-i set, so a bulk load of N members writes O(N) WAL bytes.
   ;; New-value logging re-serialized the grown set on every add — O(N²), bytes/member
-  ;; growing ∝ N — and would fail this gate.
+  ;; growing ∝ N — and would fail this test.
   (letfn [(load-bytes [n]
             (let [dir (tmpdir)]
               (try
@@ -349,7 +350,7 @@
           (dkv/close! b))))))
 
 (deftest compact-on-a-closed-store-writes-nothing
-  ;; The store-level half of the closed-store guard, for the window the registry check
+  ;; The store-level half of the closed-store guard, for the race window the registry check
   ;; cannot cover: that check runs outside the store lock, so a close can land between
   ;; it and `compact!` acquiring the lock.  An unguarded compaction of a closed log
   ;; fails late — temp and commit marker already on disk, the delete that clears them
@@ -397,7 +398,7 @@
   ;; is the signal a queued task reads; this is that it honours it and skips.
   ;;
   ;; The registry check is the early skip, not the airtight guard — it runs outside
-  ;; the store lock, and the window between it and `compact!` taking that lock is the
+  ;; the store lock, and the race window between it and `compact!` taking that lock is the
   ;; store's own closed flag's to close (`compact-on-a-closed-store-writes-nothing`
   ;; above).  The remaining ordering — a task already inside `compact!` — needs no
   ;; guard, since it holds the store lock that `close!` blocks on.
@@ -410,7 +411,7 @@
                                 :compact    compact
                                 :dead-ratio (fn [] 1.0)})]
     ;; paused so the daemon's own tick cannot fire this entry underneath the test — the
-    ;; two submits below are then the only ones, and pausing gates the tick alone
+    ;; two submits below are then the only ones, and pausing stops the tick alone
     (dur/pause-compaction!)
     (try
       (testing "registered, the queued task compacts"

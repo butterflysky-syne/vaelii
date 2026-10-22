@@ -35,7 +35,7 @@
   beside the overlay (`vaelii.impl.overlay.store`).  An in-RAM overlay gets an in-RAM one
   — the whole fork is ephemeral — and a disk overlay gets a durable one under
   `<dir>/overlay-meta`, so remounting that directory over the same base serves the merged
-  view it was left in.  The index half needs none: its bookkeeping lives in the overlay
+  contents it was left in.  The index half needs none: its bookkeeping lives in the overlay
   index itself, under reserved keys, and so is exactly as durable as the fork is."
   (:require [vaelii.impl.disk.backend :as disk]
             [vaelii.impl.kv :as kv]

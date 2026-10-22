@@ -91,8 +91,8 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
 
   | symbol | belief | whose view must hold the answer |
   |---|---|---|
-  | `CxEverything` | **ignored** | — (not a view question at all) |
-  | `CxInference` | followed | every literal in **one** view, handed back as `?ctx` |
+  | `CxEverything` | **ignored** | — (not a question of a context's view at all) |
+  | `CxInference` | followed | every literal in **one** context's view, handed back as `?ctx` |
   | `CxNothing` | followed (vacuously) | the empty view: the provers alone |
 
   A **variable** context (`?ctx`, the default of every short arity) is the fourth spelling
@@ -105,12 +105,12 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
   These are **two axes and not a ladder**.  `CxEverything` alone stops following belief,
   which makes it a different kind of question — its answers are not belief claims — while
   `?ctx`, `CxInference` and an ordinary context all ask what the KB holds and differ only in
-  whose view has to hold it.  A reader who takes the roster for an ordered list concludes
+  whose belief has to hold it.  A reader who takes `query-contexts` for an ordered list concludes
   that `?ctx` is a near neighbour of `CxEverything`, and it is not.
 
   Spelled `Cx…` because they stand where a context stands, and deliberately left **in**
   `context?`, which is spelling alone and stays that way: a role-read asking what a symbol
-  looks like must not have to know this roster.  What refuses them is the write side,
+  looks like must not have to know this list.  What refuses them is the write side,
   where the difference between a place and a reading is an invariant rather than a naming
   policy — `core/assert`'s context slot, and the `genlCx` argument slots at
   `vaelii.impl.wff`."
@@ -118,7 +118,7 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
 
 (defn query-context?
   "Is `x` a query context — a reading mode wearing a context's spelling?  See
-  `query-contexts` for the roster and what each one reads."
+  `query-contexts` for the list and what each one reads."
   [x]
   (contains? query-contexts x))
 
@@ -175,6 +175,20 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
   (and (symbol? x) (not (lexeme? x))
        (or (some? (re-matches #"[a-z][a-z0-9_]*" (nm x)))
            (sense? x))))
+
+(defn predicate-spelled?
+  "Is `x` spelled as a predicate of arity 2 or more: `predicate?` and not `type-symbol?`,
+  so camelCase with an uppercase letter after the first character.  A bare lowercase word
+  satisfies the type spelling as well and is read as a type (docs/naming.md)."
+  [x]
+  (and (predicate? x) (not (type-symbol? x))))
+
+(defn between-predicates?
+  "Does `literal` have an argument, every one of them `predicate-spelled?`: the literals a
+  `:forced-between-predicates` functor makes forced-monotonic (`decide/forced-literal?`),
+  and the opposed bodies the index files under `[:opposed-between f]`."
+  [literal]
+  (boolean (and (next literal) (every? predicate-spelled? (rest literal)))))
 
 (defn functor [sentence] (when (sequential? sentence) (first sentence)))
 (defn args    [sentence] (when (sequential? sentence) (rest sentence)))
@@ -257,7 +271,7 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
   The order is arbitrary but stable, which is the contract a content order owes
   (docs/nmtms.md).  It is deliberately **not** the lexicographic order `pr-str` gave —
   `(a)` before `(a b)` where the printed forms compared the other way — so a caller that
-  had pinned that exact reading re-pins this one."
+  had asserted that exact reading asserts this one instead."
   [a b]
   (let [ra (form-rank a) rb (form-rank b)]
     (cond
@@ -384,7 +398,7 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
    :antecedent "rule antecedent"
    :consequent "rule consequent"
    :exception  "exceptWhen exception"
-   ;; a generator's stamped rule (docs/generators.md) — named apart from the
+   ;; a generator's generated rule (docs/generators.md) — named apart from the
    ;; generator's own literals, because an author reading the rejection has two rules
    ;; in one sentence to tell apart
    :generated-antecedent "generated rule antecedent"
@@ -460,17 +474,17 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
 
          (= sx/and-functor h) (vec (mapcat #(applied-literals role %) (rest form)))
 
-         ;; A rule in **consequent** position is a generator's stamped rule
+         ;; A rule in **consequent** position is a generator's generated rule
          ;; (docs/generators.md), and its literals are tagged as such: the naming
          ;; invariants hold of them exactly as they hold of a written rule's — a
-         ;; stamped `(feels ?a ?e)` is still a predicate application — but the
+         ;; generated `(feels ?a ?e)` is still a predicate application — but the
          ;; *index* has no claim on them, because what gets indexed is the mint and
          ;; not the pattern.  `rules/variable-functor-literals` reads the tag to draw
          ;; that line, which is what lets a hole stand in functor position.
          ;;
-         ;; A stamped rule may stamp one in turn, so a *stamped* consequent is a
+         ;; A generated rule may generate one in turn, so a *generated* consequent is a
          ;; generator's head by the same reading: the tag survives the whole nesting,
-         ;; and a literal three levels in still reads as stamped rather than as the
+         ;; and a literal three levels in still reads as generated rather than as the
          ;; author's own.
          (and (= sx/rule-functor h) (= 3 n))
          (let [gen?  (contains? #{:consequent :generated-consequent} role)
@@ -520,7 +534,7 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
   "The camelCase functors that stand at arity 1 and are **not** unary predicates, so the
   snake_case rule does not reach them.  `sentexHandle` names a stored sentex by its id —
   a term constructor wearing a literal's shape, which states nothing and so is no
-  predicate to spell either way.  Kept as a roster rather than a shape test because it is
+  predicate to spell either way.  Kept as a set rather than a shape test because it is
   engine vocabulary and finite; a name earns a place here only by naming no relation."
   '#{sentexHandle})
 

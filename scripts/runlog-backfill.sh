@@ -3,20 +3,20 @@
 #
 # `scripts/lib/runlog.sh` records a run as it finishes, so the ledger starts
 # empty in a checkout that has been building for weeks.  The verdicts are not
-# missing, though: every gate left `logs/gate/run-*/{lint,test,perf}.log` (or
+# missing, though: every `lein gate` run left `logs/gate/run-*/{lint,test,perf}.log` (or
 # `target/gate/run-*/` in a checkout at an older revision) and
 # every matrix left `logs/test-matrix/run-*/summary.tsv`, and each of those
-# opens with the revision stamp `scripts/lib/revision.sh` writes.  This reads
+# opens with the revision header `scripts/lib/revision.sh` writes.  This reads
 # them and appends the rows nothing wrote at the time.
 #
 # IDEMPOTENT, and on the `log` column: a row names the file or directory it was
 # derived from, so a second pass adds nothing.  That is also what makes it safe
-# beside a live run — a gate going right now has a row of its own to write, and
+# beside a live run — a `lein gate` run going right now has a row of its own to write, and
 # this one skips the path once that row exists.
 #
-# WHAT IS APPROXIMATE, and it is one column.  A gate stage log carries its start
-# time and not its duration, so `seconds` for lint and perf is the gap from the
-# stamp to the log's last write.  That over-reads by however long the file sat
+# WHAT IS APPROXIMATE, and it is one column.  A `lein gate` stage log carries its
+# start time and not its duration, so `seconds` for lint and perf is the gap from
+# the revision line's time to the log's last write.  That over-reads by however long the file sat
 # after the stage finished, which is nothing for a stage whose last line is its
 # verdict.  The suite and the matrix report their own wall clock and use it.
 # Every other column is read, not inferred.
@@ -34,7 +34,7 @@ cd "$ROOT" || exit 1
 
 # shellcheck source=scripts/lib/runlog.sh
 . "$ROOT/scripts/lib/runlog.sh"
-# the roster sizes, to tell a matrix from a subset by what it ran
+# the configuration-set sizes, to tell a matrix from a subset by what it ran
 # shellcheck source=scripts/lib/suite-configs.sh
 . "$ROOT/scripts/lib/suite-configs.sh"
 ROUTINE_TOTAL=$(( ${#ALL_BACKENDS[@]} + ${#ALL_SWEEPS[@]} - ${#ROUTINE_SKIP[@]} ))
@@ -57,11 +57,11 @@ known() {                      # known <log path>
 
 # `date` parses a fixed timestamp two incompatible ways: BSD (macOS) wants
 # `-j -f <format>`, GNU coreutils wants `-d`.  Try BSD first and fall back,
-# because this repo is authored on macOS and gated on Linux.
+# because this repo is authored on macOS and checked on Linux.
 to_epoch() {                   # to_epoch "YYYY-MM-DD HH:MM:SS"
-  local stamp="$1" out
-  out=$(date -j -f '%Y-%m-%d %H:%M:%S' "$stamp" '+%s' 2>/dev/null) \
-    || out=$(date -d "$stamp" '+%s' 2>/dev/null) || out=""
+  local when="$1" out
+  out=$(date -j -f '%Y-%m-%d %H:%M:%S' "$when" '+%s' 2>/dev/null) \
+    || out=$(date -d "$when" '+%s' 2>/dev/null) || out=""
   printf '%s' "$out"
 }
 
@@ -69,14 +69,14 @@ mtime_of() {                   # mtime_of <path>
   stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
 }
 
-# The revision stamp at the top of every log these read:
+# The revision header at the top of every log these read:
 #   `# <name> at <rev> — <state clause> — <YYYY-MM-DD HH:MM:SS>`
 # Three readers rather than one call returning three values, because a log
-# missing its stamp must leave each field empty rather than shift the others.
-stamp_line() { head -1 "$1" 2>/dev/null | grep '^# ' || true; }
-stamp_rev()  { printf '%s' "$1" | sed -n 's/^# [^ ]* at \([0-9a-f]\{6,\}\) .*/\1/p'; }
-stamp_date() { printf '%s' "$1" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' | tail -1; }
-stamp_dirty() {
+# missing its header must leave each field empty rather than shift the others.
+header_line() { head -1 "$1" 2>/dev/null | grep '^# ' || true; }
+header_rev()  { printf '%s' "$1" | sed -n 's/^# [^ ]* at \([0-9a-f]\{6,\}\) .*/\1/p'; }
+header_date() { printf '%s' "$1" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' | tail -1; }
+header_dirty() {
   local n
   n=$(printf '%s' "$1" | sed -n 's/.*tree DIRTY: \([0-9]*\) uncommitted.*/\1/p')
   printf '%s' "${n:-0}"
@@ -112,7 +112,7 @@ emit() {
   local started="$RUNLOG_STARTED"
   runlog_record "$kind" "$variant" "$state" "$summary" "$log"
   # Rewrite the two clock columns of the row just appended to the run's own,
-  # rather than the now the writer stamped.  `ed`-free and in place: the last
+  # rather than the time the writer recorded.  `ed`-free and in place: the last
   # line is the one this call wrote, and no other writer appends between the
   # two statements of one shell.
   awk -F'\t' -v OFS='\t' -v n="$(wc -l < "$RUNLOG_FILE" | tr -d ' ')" \
@@ -123,15 +123,15 @@ emit() {
   added=$((added + 1))
 }
 
-# ---- the gate stages ---------------------------------------------------------
+# ---- the `lein gate` stages --------------------------------------------------
 for dir in logs/gate/run-* target/gate/run-*; do
   [[ -d "$dir" ]] || continue
   for stage in lint test perf; do
     log="$dir/$stage.log"
     [[ -f "$log" ]] || continue
     if known "$log"; then skipped=$((skipped + 1)); continue; fi
-    line=$(stamp_line "$log")
-    rev=$(stamp_rev "$line"); date_str=$(stamp_date "$line"); dirty=$(stamp_dirty "$line")
+    line=$(header_line "$log")
+    rev=$(header_rev "$line"); date_str=$(header_date "$line"); dirty=$(header_dirty "$line")
     [[ -n "$rev" && -n "$date_str" ]] || continue
     epoch=$(to_epoch "$date_str"); [[ -n "$epoch" ]] || continue
     secs=$(( $(mtime_of "$log") - epoch )); (( secs < 0 )) && secs=0
@@ -178,9 +178,9 @@ for dir in logs/test-matrix/run-*; do
   summary_tsv="$dir/summary.tsv"
   [[ -f "$summary_tsv" ]] || continue
   if known "$dir"; then skipped=$((skipped + 1)); continue; fi
-  # The log written FIRST, by mtime — the run's start stamp is at the top of
+  # The log written FIRST, by mtime — the run's start time is at the top of
   # whichever configuration launched first, and every one of them carries a
-  # stamp of its own (`ls | head` reads a name where this reads a time).
+  # time of its own (`ls | head` reads a name where this reads a time).
   first_log=""; first_m=0
   for f in "$dir"/*.log; do
     [[ -f "$f" ]] || continue
@@ -188,8 +188,8 @@ for dir in logs/test-matrix/run-*; do
     if [[ -z "$first_log" ]] || (( m < first_m )); then first_log="$f"; first_m=$m; fi
   done
   [[ -n "$first_log" ]] || continue
-  line=$(stamp_line "$first_log")
-  rev=$(stamp_rev "$line"); date_str=$(stamp_date "$line"); dirty=$(stamp_dirty "$line")
+  line=$(header_line "$first_log")
+  rev=$(header_rev "$line"); date_str=$(header_date "$line"); dirty=$(header_dirty "$line")
   [[ -n "$rev" && -n "$date_str" ]] || continue
   epoch=$(to_epoch "$date_str"); [[ -n "$epoch" ]] || continue
   # The selector off the `# env … lein test :SEL` line test-matrix.sh writes,
@@ -205,7 +205,7 @@ for dir in logs/test-matrix/run-*; do
   (( total > 0 )) || continue
   bad=$(awk -F'\t' 'NR>1 && $4 != "passed" && $1 != "" { n++ } END { print n+0 }' "$summary_tsv")
   # Concurrent runs, so the matrix's wall clock is the span from the first
-  # stamp to the last log write, not the sum of the per-config seconds.
+  # header to the last log write, not the sum of the per-config seconds.
   last=0
   for f in "$dir"/*.log; do
     [[ -f "$f" ]] || continue
@@ -213,18 +213,18 @@ for dir in logs/test-matrix/run-*; do
   done
   secs=$(( last - epoch )); (( secs < 0 )) && secs=0
   if (( bad == 0 )); then state=passed; else state=failed; fi
-  # `roster backfilled` and not a roster name: which group was ASKED for is the
+  # `config set backfilled` and not a configuration-set name: which group was ASKED for is the
   # one fact these artifacts do not carry, and naming a guess would put a wrong
   # word in a column a reader compares runs on.
   #
   # What RAN is a count, though, and that is the fact the variant needs: a run
-  # short of the routine roster is a subset and is filed as one, the same rule
+  # short of the routine configuration set is a subset and is filed as one, the same rule
   # test-matrix.sh applies to a live run.  So a backfilled `--owed` run does not
-  # land in the column that answers when the whole roster last went green.
+  # land in the column that answers when the whole configuration set last went green.
   variant="$selector"
   if (( total < ROUTINE_TOTAL )); then variant="$selector owed"; fi
   emit matrix "$variant" "$state" "$secs" "$epoch" "$rev" "$dirty" \
-       "$(printf '%d configurations, roster backfilled, %d failed, 0 skipped' "$total" "$bad")" \
+       "$(printf '%d configurations, config set backfilled, %d failed, 0 skipped' "$total" "$bad")" \
        "$dir"
 done
 

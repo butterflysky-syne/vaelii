@@ -27,7 +27,7 @@
 
   **Ordering is a cost decision and never a semantic one.**  Every tactician here
   returns the same answer set; what differs is when.  `inference_tactics_test`'s
-  completeness sweep is the gate that keeps it that way, and the one mode that
+  completeness sweep is the regression test that keeps it that way, and the one mode that
   deliberately returns fewer answers (`:first-result?`) says so in its own docstring and
   is excluded from that sweep by name.  The join *inside* a node is ordered by
   `plan/order` alone and never by the strategy, for the same reason: a complete search

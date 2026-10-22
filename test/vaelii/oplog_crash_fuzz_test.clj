@@ -23,12 +23,13 @@
   decline.  A throw from `restore!` once the open succeeded, a throw carrying no `:type`,
   a hang, and a restored KB that differs from its reference are failures.
 
-  **The source identity is held for the sweep.**  A seal stamps its images with the
+  **The source identity is held for the sweep.**  A seal writes its images with the
   identity of the source it was taken under, and a restore refuses an image whose identity
   has moved — so an edit under `src/` while the sweep runs would decline every cut, on a
-  reason that says nothing about a crash, and the sweep would measure nothing.  Pinned
-  around the build and the probes, the cut is what varies.  What an *uncut* copy does is
-  taken first and reported as the sweep's premise: it restores, or no cut could.
+  reason that says nothing about a crash, and the sweep would measure nothing.  With
+  the identity held fixed around the build and the probes, the cut is what varies.  The
+  sweep first takes what an *uncut* copy does and reports it as its premise: it restores,
+  or no cut could.
 
   The `^:fuzz` test walks every offset; the unmarked one walks a seeded sample, so the
   harness runs on every commit (`vaelii.truncation-fuzz-test` states the rule)."
@@ -118,7 +119,7 @@
    #(v/retract! % (v/handle-of % '(animal Zeno) 'CxUniverse))
    #(v/assert % '(animal Thales) 'CxUniverse {:strength :monotonic})])
 
-(defn- view
+(defn- contents
   "Every sentex `kb`'s records hold, as `[sentence context believed?]`."
   [kb]
   (into #{} (keep (fn [h]
@@ -127,14 +128,14 @@
         (p/sentex-ids (:records kb))))
 
 (defn- reference
-  "The view of a directory that took `setup!` and the first `n` of `ops`, and closed."
+  "The contents of a directory that took `setup!` and the first `n` of `ops`, and closed."
   [n]
   (let [dir (tmpdir)]
     (try
       (let [kb (open dir)]
         (try (setup! kb)
              (doseq [op (take n ops)] (op kb))
-             (view kb)
+             (contents kb)
              (finally (v/close! kb))))
       (finally (rm-rf! dir)))))
 
@@ -167,8 +168,8 @@
   "How long one probe is given before it counts as a hang."
   60000)
 
-(defn- rebuilt-view
-  "The view of `dir` opened with no images: a copy with `index/` and `reasoning/` removed,
+(defn- rebuilt-contents
+  "The contents of `dir` opened with no images: a copy with `index/` and `reasoning/` removed,
   so the open rebuilds both from the records."
   [^String dir]
   (let [copy (tmpdir)]
@@ -177,7 +178,7 @@
       (rm-rf! (str copy "/index"))
       (rm-rf! (str copy "/reasoning"))
       (let [kb (open copy {:recover? :auto})]
-        (try (view kb) (finally (v/close! kb))))
+        (try (contents kb) (finally (v/close! kb))))
       (finally (backend/close-dir! copy) (rm-rf! copy)))))
 
 (defn- restore-outcome
@@ -198,7 +199,7 @@
 
                   (:restored r)
                   (let [n    (:frames r)
-                        got  (try (view (:kb r)) (finally (v/close! (:kb r))))
+                        got  (try (contents (:kb r)) (finally (v/close! (:kb r))))
                         want (reference n)]
                     (if (= want got) {:restored n} {:wrong n :missing (remove got want)
                                                     :extra (remove want got)}))
@@ -206,8 +207,8 @@
                   :else
                   (do (v/close! kb)
                       (let [got (let [kb2 (open dir {:recover? :auto})]
-                                  (try (view kb2) (finally (v/close! kb2))))
-                            want (rebuilt-view dir)]
+                                  (try (contents kb2) (finally (v/close! kb2))))
+                            want (rebuilt-contents dir)]
                         (if (= want got)
                           {:declined (:reason r)}
                           {:wrong [:after-decline (:reason r)] :missing (remove got want)
@@ -248,7 +249,7 @@
         (mapv #(nth all %) (repeatedly (min (long sample) n) #(.nextInt rnd (int n))))))))
 
 (defn- call-with-source-identity-held
-  "Run `thunk` with `si/source-identity` pinned to the value it answers now — the
+  "Run `thunk` with `si/source-identity` held at the value it answers now — the
   namespace docstring, \"The source identity is held for the sweep\"."
   [thunk]
   (let [held (si/source-identity)]

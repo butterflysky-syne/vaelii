@@ -26,7 +26,7 @@
   `(pred, pos, ctx)` scope, and any other count trie leaf's context scope `(ctx, 0, ctx)`,
   is interned to a dense id of its own (`argfam-id`) and rides the `pos` field, which
   the flat families do not use.  The tries' child sets and every name set (the term,
-  slot and membership rosters, the keys a handle installs) route as packed keys too, their
+  slot and membership name sets, the keys a handle installs) route as packed keys too, their
   members held as ids in the shared dictionary.  So the fallback holds only the
   vocabulary's counters, and the fact-scaled mass is one packed map — or, under a
   snapshot, one mapped run.  Single-writer, like every index;
@@ -43,7 +43,7 @@
   on `DenseRoots` are `^:unsynchronized-mutable`, so installing or thawing a snapshot
   publishes through no barrier and a second thread may read this backend mid-install —
   `mapped?` true against a `mkeys` it has not seen, say.  The atom- and lock-based
-  backends give an incidental reader beside the writer a consistent view; this one does
+  backends give an incidental reader beside the writer a consistent snapshot; this one does
   not.  Same trade as `vaelii.impl.columnar`, whose docstring states it: these fields are
   read on the hot lookup path, and a volatile read there buys a guarantee the engine's own
   single writer never needs."
@@ -68,17 +68,17 @@
 ;; own representation, a mapped run included.
 ;;
 ;; The predicate-AGNOSTIC reads cost one lookup more.  The index layer takes them over the
-;; slot roster — `[:argument-slot pos term]` → the predicates present there, a name set
+;; slot predicate set — `[:argument-slot pos term]` → the predicates present there, a name set
 ;; packed under the position and the term — and unions the scoped postings.
-;; That roster is *one predicate* in the common case (a term occupies a given position
+;; That set is *one predicate* in the common case (a term occupies a given position
 ;; under one predicate), so the union is a single set handed straight back and the cost
-;; over a maintained node union is the roster read itself.  A handful of predicates is a
+;; over a maintained node union is the set read itself.  A handful of predicates is a
 ;; handful of packed lookups.
 ;;
 ;; Maintaining an agnostic union here instead would mean a second posting per
 ;; `(pos, term)` holding what the scoped postings already hold — the family's whole
 ;; fact-scaled mass, stored twice — to save one lookup on a read that is usually a union
-;; of one.  The roster is already maintained, one predicate id per argument node.
+;; of one.  The slot predicate set is already maintained, one predicate id per argument node.
 
 (defn dense-roots
   "A key-interning `KvBackend` sharing `dict` (the columnar trie's token dictionary) so a

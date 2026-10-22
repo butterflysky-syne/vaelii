@@ -41,8 +41,8 @@
   mint family's two
   (\"The count tries that end in the context\" below) — and three flat sets whose
   cardinality is their own size: the context root, the exception re-check index and the
-  inverted term index.  One more flat set, the **term roster**
-  `[:term-roster]`, holds the term index's *names* rather than handles, so the
+  inverted term index.  One more flat set, the **term-name set**
+  `[:term-names]`, holds the term index's *names* rather than handles, so the
   vocabulary can be listed and counted in O(terms) instead of a walk over every record.
 
   Contract: lookup expects a *full* path (sentence tokens + a context slot; the
@@ -64,16 +64,18 @@
   counter value — are read; the rest are placeholders that keep the vector aligned).
 
   **`kv-member?` is a membership test, not a fetch**, and it is its own op because on
-  several backends those cost different orders.  `exception-rule?` is the gate
-  `chain/rule-view-of` takes once per candidate rule per new datum, so answering it by
-  materializing the roster and testing the result makes forward chaining a product of
-  two KB-sized quantities.  A flat-map backend hands the stored set back by reference
-  and hides the distinction entirely; a dense one holds the roster as an `IntPostings`,
-  where 1e5 gate calls against a roster of 1,000 cost 15,926 ms built-then-tested
-  against 87 ms on the flat map — so the op exists to let each backend answer with the
-  probe it already has (a hash lookup, a binary search, a bitmap test)."
+  several backends those cost different orders.  `exception-rule?` is the membership
+  check `chain/rule-fields-of` takes once per candidate rule per new datum, so answering it
+  by materializing the stored rule set and testing the result makes forward chaining a
+  product of two KB-sized quantities.  A flat-map backend hands the stored set back by
+  reference and hides the distinction entirely; a dense one holds the set as an
+  `IntPostings`, where 1e5 membership calls against a set of 1,000 rules cost 15,926 ms
+  built-then-tested against 87 ms on the flat map — so the op exists to let each backend
+  answer with the probe it already has (a hash lookup, a binary search, a bitmap test)."
   (:require [clojure.set :as set]
             [taoensso.trove :as trove]
+            [vaelii.impl.naming :as nm]
+            [vaelii.impl.observe :as observe]
             [vaelii.impl.profile :as prof]
             [vaelii.impl.protocols :as p
              :refer [kv-batch kv-clear! kv-count kv-entries kv-get
@@ -85,7 +87,7 @@
 
   The key families below — `[:trie :count|:children|:handles prefix]`, the context root,
   the five count tries ending in the context, the exception index, the term index and the
-  rosters — *are*
+  name sets — *are*
   the index's portable form, so a dump of them is only readable by a build that agrees on
   them.  An index written in a layout this build does not use reads as **empty** rather
   than as wrong (a lookup finds no key and answers nothing), which is fail-safe and
@@ -96,8 +98,8 @@
   arity, or a different value type at an existing key.
 
   2 scopes the argument roots by predicate (`[:argument-root pred pos term]`) and adds
-  the `[:argument-slot pos term]` roster that keeps the predicate-agnostic reads
-  answerable.  3 adds the `[:unary-slot term]` roster beside it, which is what lets a
+  the `[:argument-slot pos term]` slot predicate set that keeps the predicate-agnostic reads
+  answerable.  3 adds the `[:unary-slot term]` unary predicate set beside it, which is what lets a
   membership question read a term's types without fetching every fact that names it.
   4 keys the argument roots as a count trie over `[pred pos term ctx]`: a node's
   `[:argument-root :count|:children [pred pos term]]` and the leaf
@@ -111,8 +113,8 @@
   count trie over `[k ctx]` keyed by the key a declaration installs (`:tax-support`), and
   `[:tax-installs h]`.  9 adds the mint family: the `:mint` count trie over `[term ctx]`
   with its root level `[:mint-terms]`, and the `:mint-in` count trie over `[ctx]`.  10
-  adds the shape roster, `[:shape-count f n]` and `[:shape-lengths f]`, `[:unary-multi]`,
-  the terms the unary roster lists two or more predicates of, and the self-tuple count
+  adds the length set, `[:shape-count f n]` and `[:shape-lengths f]`, `[:unary-multi]`,
+  the terms the unary predicate set lists two or more predicates of, and the self-tuple count
   trie over `[pred ctx]` (`:self-tuple`).  11 adds the same terms by predicate,
   `[:unary-kept pred]` and `[:unary-kept-types]`, and the terms a stored denial names by
   predicate, `[:unary-denied pred]` and `[:unary-denied-types]`.  12 adds the arity
@@ -121,8 +123,10 @@
   shape counter with the count trie `:shape-tuple` over `[f n ctx]`, the positive facts of
   functor `f` holding `n` arguments, with `[:shape-lengths f]` above its nodes.  14 adds
   the count trie `:tax-named` over `[rel functor ctx]`, the positive `except` and `defeat`
-  facts naming a stored supporter of a taxonomy relation."
-  14)
+  facts naming a stored supporter of a taxonomy relation.  15 keys the term-name set
+  as `[:term-names]`.  16 adds the opposed bodies by functor, `[:opposed-between f]`
+  holding those `nm/between-predicates?` and `[:opposed-functor f]` the rest."
+  16)
 
 (defn apply-op
   "Apply one `kv-batch` write op to map `m`, returning `[m' reply]`.  Only
@@ -163,7 +167,7 @@
 (def index-families
   "The index families, one row per key tag (the first element of every key the index
   writes), as data.  `dense-kv`'s handle-posting test reads `:leaf`, the importer's
-  records-only test reads `:source`, and the root-roster keys below read `:root`.
+  records-only test reads `:source`, and the root-set keys below read `:root`.
   docs/indexing.md, \"The index-family registry\", states what each field decides.
 
   - `:shape` — `:trie`, `:count-trie` (`[tag :count|:children node]` and `[tag
@@ -171,7 +175,7 @@
   - `:leaf` — `:handles` (int postings) or `:names` (terms, keys); nil for a counter.
   - `:context-last?` — whether the key's last level is the context.
   - `:children?` — whether a node lists the contexts below it.
-  - `:root` — the tag of the roster one level above the family's nodes, where one is
+  - `:root` — the tag of the name set one level above the family's nodes, where one is
     stored.
   - `:canon?` — whether a key term is `sx/canon`'d.
   - `:source` — what the write posts from: `:sentex` (`index-sentex`), `:rule`
@@ -183,8 +187,8 @@
     empty when none does) or `:readers`."
   (let [ctrie (fn [source m] (merge {:shape :count-trie :leaf :handles :context-last? true
                                      :children? true :canon? false :source source} m))
-        roster (fn [source m] (merge {:shape :set :leaf :names :context-last? false
-                                      :children? false :canon? false :source source} m))
+        name-set (fn [source m] (merge {:shape :set :leaf :names :context-last? false
+                                        :children? false :canon? false :source source} m))
         scan  (fn [& writes] {:class :scan-recoverable :class-evidence {:writes (vec writes)}})
         sole  (fn [& readers] {:class :sole-witness :class-evidence {:readers (vec readers)}})
         term-oracle {:class :access-path
@@ -193,57 +197,62 @@
         membership (scan "decide.membership's placement of a term's memberships, on a fact, a cover or an edge move")
         arity      (scan "decide.arity's arity rows, on a binding fact and the first sync after recover")
         opposed    (scan "chain/place-negations! and chain/place-nogoods!, on a fact and a genlCx edge")
+        opposed-by-functor {:class :access-path
+                            :class-evidence {:oracle '[vaelii.index-test/the-opposed-bodies-by-functor-follow-the-opposed-bodies]
+                                             :via [:opposed-bodies]}}
         rules      (sole "chain/fire-rules-for" "resolution/concluding-rule-handles" "the solve's program")
         mints      (sole "special's mint withdrawal and its genlCx edge routes")
         supporters (sole "the taxonomy's supporter reads" "reindex")]
     {:trie (merge {:shape :trie :leaf :handles :context-last? true :children? true
                    :canon? false :source :sentex}
                   (sole "plan's count-at and children" "kb's leaf-at, the assert dedup" "lookup"))
-     :context-root (merge (roster :sentex {:leaf :handles :context-last? true})
+     :context-root (merge (name-set :sentex {:leaf :handles :context-last? true})
                           (scan "special/entail-under-context-edge and the other genlCx edge arms"))
      :predicate-extent (ctrie :sentex term-oracle)
      :argument-root (ctrie :sentex {:canon? true :class :access-path
                                     :class-evidence {:oracle '[vaelii.arg-root-retrieval-test/a-sample-of-the-arg-root-oracle-runs-at-default
                                                                vaelii.matches-hierarchical-test/a-sample-of-the-hierarchical-oracle-runs-at-default]
                                                      :via [:trie]}})
-     :argument-slot (roster :sentex (assoc term-oracle :canon? true))
-     :unary-slot (roster :sentex (assoc term-oracle :canon? true))
-     :unary-multi (roster :sentex membership)
-     :unary-kept (roster :sentex (assoc membership :root :unary-kept-types))
-     :unary-kept-types (roster :sentex membership)
-     :unary-denied (roster :sentex (assoc membership :root :unary-denied-types))
-     :unary-denied-types (roster :sentex membership)
+     :argument-slot (name-set :sentex (assoc term-oracle :canon? true))
+     :unary-slot (name-set :sentex (assoc term-oracle :canon? true))
+     :unary-multi (name-set :sentex membership)
+     :unary-kept (name-set :sentex (assoc membership :root :unary-kept-types))
+     :unary-kept-types (name-set :sentex membership)
+     :unary-denied (name-set :sentex (assoc membership :root :unary-denied-types))
+     :unary-denied-types (name-set :sentex membership)
      :shape-tuple (ctrie :sentex (assoc arity :root :shape-lengths))
-     :shape-lengths (roster :sentex arity)
+     :shape-lengths (name-set :sentex arity)
      :self-tuple (ctrie :sentex (scan "decide.tuple's irreflexivity candidates, on a fact"))
      :opposed (ctrie :sentex (assoc opposed :root :opposed-bodies))
-     :opposed-bodies (roster :sentex opposed)
-     :opposed-in (merge (roster :sentex {:leaf :handles :context-last? true}) opposed)
+     :opposed-bodies (name-set :sentex opposed)
+     :opposed-in (merge (name-set :sentex {:leaf :handles :context-last? true}) opposed)
+     :opposed-functor (name-set :sentex opposed-by-functor)
+     :opposed-between (name-set :sentex opposed-by-functor)
      :arity-binding (ctrie :sentex (assoc arity :root :arity-binding-kinds))
-     :arity-binding-kinds (roster :sentex (assoc arity :root :arity-bound))
-     :arity-bound (roster :sentex arity)
+     :arity-binding-kinds (name-set :sentex (assoc arity :root :arity-bound))
+     :arity-bound (name-set :sentex arity)
      :rule-extent (ctrie :sentex rules)
      :rule-antecedent (ctrie :rule (assoc rules :root :rule-antecedent-keys))
-     :rule-antecedent-keys (roster :rule rules)
+     :rule-antecedent-keys (name-set :rule rules)
      :rule-consequent (ctrie :rule rules)
-     :exception-index (roster :rule (merge {:leaf :handles}
-                                           (sole "except's exceptWhen re-check on a fact or an edge")))
+     :exception-index (name-set :rule (merge {:leaf :handles}
+                                             (sole "except's exceptWhen re-check on a fact or an edge")))
      :tax-support (ctrie :taxonomy supporters)
-     :tax-installs (roster :taxonomy supporters)
+     :tax-installs (name-set :taxonomy supporters)
      :tax-named (ctrie :sentex {:class :access-path
                                 :class-evidence {:oracle '[vaelii.index-test/the-named-supporter-family-agrees-with-the-naming-trie]
                                                  :via [:trie :tax-installs]}})
      :mint (ctrie :justification (assoc mints :root :mint-terms))
-     :mint-terms (roster :justification mints)
+     :mint-terms (name-set :justification mints)
      :mint-in (ctrie :justification mints)
-     :term-index (roster :sentex (merge {:leaf :handles :canon? true :root :term-roster}
-                                        (scan "special/trigger-entailments" "special/migrate-handle-metas"
-                                              "except/conflicts-naming" "settle's partners"
-                                              "chain/placed-justifications-within")))
-     :term-roster (roster :sentex (scan))}))
+     :term-index (name-set :sentex (merge {:leaf :handles :canon? true :root :term-names}
+                                          (scan "special/trigger-entailments" "special/migrate-handle-metas"
+                                                "except/conflicts-naming" "settle's partners"
+                                                "chain/placed-justifications-within")))
+     :term-names (name-set :sentex (scan))}))
 
 (defn- root-of
-  "The tag of family `tag`'s root roster (`index-families`)."
+  "The tag of family `tag`'s root set (`index-families`)."
   [tag]
   (:root (index-families tag)))
 
@@ -305,22 +314,31 @@
 (def ^:private opposed-bodies-key [(root-of :opposed)])
 (defn- opposed-in-key [ctx] [:opposed-in ctx])
 
+(defn- opposed-functor-key
+  "The name set the opposed body `b` is filed in by its functor `f`: `[:opposed-between
+  f]` when `b` is `nm/between-predicates?`, else `[:opposed-functor f]`; nil when `f` is
+  not a symbol."
+  [b]
+  (let [f (first b)]
+    (when (symbol? f)
+      [(if (nm/between-predicates? b) :opposed-between :opposed-functor) f])))
+
 ;; ---- the argument family's keys ------------------------------------------
-;; The argument roots are the `:argument-root` trie, and the family adds two rosters
-;; beside it: the slot roster that keeps the predicate-AGNOSTIC reads answerable without
-;; a second copy of the postings, and the unary slice of that roster a membership question
+;; The argument roots are the `:argument-root` trie, and the family adds two name sets
+;; beside it: the slot predicate set that keeps the predicate-AGNOSTIC reads answerable without
+;; a second copy of the postings, and the unary slice of that set a membership question
 ;; reads.  `arg-slots` below canonicalizes the term on the way in and the argument reads
 ;; (`sentexes-with-args`, the `reads` entry points) canonicalize on the way out, so a term reaching a key here is already
 ;; `sx/canon`'d: a lazy seq and the `PersistentList` it is `=` to agree in any Clojure map
 ;; but freeze to different nippy bytes, so a key built from an uncanonicalized term misses
 ;; a durable backend's stored key and reports the fact absent
-;; (`index_edge_test/the-argument-root-canonicalizes-a-compound-term` is the pin).
+;; (`index_edge_test/the-argument-root-canonicalizes-a-compound-term` is the test).
 
 (defn- arg-ctxs-key  [node] (node-ctxs-key :argument-root node))
 (defn- arg-leaf-key  [node ctx] (node-leaf-key :argument-root node ctx))
 
 (defn- slot-key
-  "The slot roster key: the predicates present at `(pos, term)`.
+  "The slot predicate set's key: the predicates present at `(pos, term)`.
 
   This keeps the predicate-AGNOSTIC reads answerable without a second copy of the
   postings — the coarse read is a union over a handful of scoped leaves rather than one
@@ -329,11 +347,11 @@
   [:argument-slot pos term])
 
 (defn- unary-slot-key
-  "The unary slice of the slot roster: the predicates `term` is the LONE argument of.
+  "The unary slice of the slot predicate set: the predicates `term` is the LONE argument of.
 
   `kb/types-of` — the retrieval every definitional check bottoms out on — asks what types
   a term holds, and `slot-key` cannot answer it: `(T x)` and `(P x y)` both put `x` at
-  position 1, share the roster entry and share the trie node below it, so the only way to
+  position 1, share the slot entry and share the trie node below it, so the only way to
   tell them apart was to fetch every record at that node and read its arity.  A term at
   argument 1 of n binary facts therefore cost n record fetches per membership question,
   and every assert asks one.
@@ -348,18 +366,18 @@
 ;; the key both index stores' non-trie writes carry, through `flat-family-adds` /
 ;; `flat-family-retires` below, so the two stores key the term index identically.
 (defn term-key [term]  [:term-index (sx/canon term)])
-;; the term roster — ONE set holding every name the term index is keyed by, so the
+;; the term-name set — ONE set holding every name the term index is keyed by, so the
 ;; vocabulary is listable and countable without walking the records.  Its own key
 ;; family, because its members are terms rather than handles: a backend that packs the
-;; handle families into int postings routes `[:term-roster]` to its ordinary set storage.
-(def ^:private roster-key [(root-of :term-index)])
+;; handle families into int postings routes `[:term-names]` to its ordinary set storage.
+(def ^:private term-names-key [(root-of :term-index)])
 
-;; The terms the unary roster lists two or more predicates of, which the membership
+;; The terms the unary predicate set lists two or more predicates of, which the membership
 ;; family reads for the terms that can form a nogood.  Its members are terms.
 (def ^:private unary-multi-key [:unary-multi])
 
 ;; The same terms by predicate: `[:unary-kept pred]` holds each term of `unary-multi-key`
-;; whose unary roster lists `pred`, and `unary-kept-types-key` every predicate whose set
+;; whose unary predicate set lists `pred`, and `unary-kept-types-key` every predicate whose set
 ;; is not empty.  The membership family reads the terms under a type a separation or a
 ;; `genl` edge moves there.  Their members are terms and predicates.
 (defn- unary-kept-key [pred] [:unary-kept pred])
@@ -372,7 +390,7 @@
 (defn- unary-denied-key [pred] [:unary-denied pred])
 (def ^:private unary-denied-types-key [(root-of :unary-denied)])
 
-;; The shape roster: per functor, the lengths its positive facts are stored at, the root
+;; The length set: per functor, the lengths its positive facts are stored at, the root
 ;; level of the `:shape-tuple` trie, so a length leaves with its node's last fact.  Its
 ;; members are numbers.
 (def ^:private shape-lengths-tag (root-of :shape-tuple))
@@ -391,7 +409,7 @@
   Empty for a rule and for a non-fact, matching `root-keys`.
 
   The canonicalization is here rather than in the key constructors so a term reaching a
-  key or a backend read is canonical whichever of the three rosters it is going into."
+  key or a backend read is canonical whichever of the three name sets it is going into."
   [sentex]
   (let [b (sx/body sentex)]
     (if (and (sequential? b) (seq b) (symbol? (first b)))
@@ -465,15 +483,15 @@
   [sentex]
   (conj (sx/index-terms sentex) (:context sentex)))
 
-;; ---- the term roster ----------------------------------------------------
+;; ---- the term-name set -------------------------------------------------
 ;; Membership is *derived from the postings*, never counted separately: a name enters
-;; the roster when the first sentex to mention it is indexed (its `[:term-index term]` posting
+;; the set when the first sentex to mention it is indexed (its `[:term-index term]` posting
 ;; is empty) and leaves when the last one is unindexed (its posting is exactly that
 ;; handle).  Both are decided from the pre-write state, so each stays one extra read per
-;; name and the index write remains a single batch.  Only *symbols* are rostered: a
+;; name and the index write remains a single batch.  Only *symbols* are listed: a
 ;; ground compound keys the term index too, but it is a sentence fragment, not a name.
 
-(defn roster-retires
+(defn term-names-retires
   "The write ops retiring the names in `terms` that `handle` is the last mention of —
   read BEFORE their postings are removed, so a name dies exactly when its posting is
   `#{handle}`."
@@ -483,10 +501,10 @@
                            (let [k (term-key t)]
                              (and (= 1 (long (kv-count backend k)))
                                   (contains? (kv-members backend k) handle)))))
-                 (map (fn [t] [:remove-from-set roster-key t])))
+                 (map (fn [t] [:remove-from-set term-names-key t])))
         terms))
 
-;; ---- the count tries' nodes, and the slot roster --------------------------
+;; ---- the count tries' nodes, and the slot predicate set -------------------
 ;; A fact enters one leaf per node through `root-keys`, and the node above that leaf
 ;; here: the context joins the node's children and the node's count goes up.  A
 ;; retraction reads the leaf and the children BEFORE the batch, so it decides from the
@@ -497,13 +515,13 @@
 ;; The predicate-scoped argument roots answer `(P ?x B)` directly, but they cannot
 ;; answer the predicate-AGNOSTIC public reads (`sentexes-with-arg` / `count-with-arg`,
 ;; which `settle` uses for functional-predicate clash detection and the planner for
-;; selectivity).  Rather than keep a second copy of every posting, the slot roster holds
+;; selectivity).  Rather than keep a second copy of every posting, the slot predicate set holds
 ;; the *predicates* present at a slot, so the coarse read is a union over a handful of
 ;; nodes.  A predicate enters when its node is created and leaves when its node empties.
 
 (defn- unary-slot
   "`[pred term]` when `sentex` is a unary fact about an indexable term, else nil - the
-  one entry it owes the unary roster, derived from the same positive body `arg-slots`
+  one entry it owes the unary predicate set, derived from the same positive body `arg-slots`
   reads so a negation is listed under the type it denies exactly as its argument root
   is."
   [sentex]
@@ -573,14 +591,14 @@
   holds no context yet - read BEFORE the postings are written, so a predicate is entered
   exactly by the fact that creates its node.  Returns `ops`.
 
-  The unary roster is the exception and takes no read at all: its entry is written by
+  The unary predicate set is the exception and takes no read at all: its entry is written by
   every unary fact rather than by the first, because the node that guards the others is
   `[pred 1 term]`, which a *binary* fact of the same predicate about the same term also
   creates - so a reference count read off it would skip the unary entry whenever the
   binary fact arrived first, and a missing entry there loses a membership.  An
   `:add-to-set` of a member already present is a no-op inside the same batch.  A term
   joins `unary-multi-key` when the entry is its second predicate, which two reads of the
-  unary roster decide, and `unary-kept-key` under each predicate it then holds
+  unary predicate set decide, and `unary-kept-key` under each predicate it then holds
   (`kept-adds`)."
   [ops backend sentex fnodes]
   (let [ops (reduce (fn [ops [tag node]]
@@ -606,12 +624,12 @@
 
   A **unary** fact retires the unary entry with its position-1 slot, and a fact of any
   other arity leaves it alone: the extra op is owed by the sentexes that wrote one and by
-  no others, so a KB of binary facts pays nothing for a roster it never enters.  The
+  no others, so a KB of binary facts pays nothing for a set it never enters.  The
   entry therefore outlives the last unary fact wherever a *binary* one of the same
   predicate is what empties the node — the ragged-arity case the naming invariant already
   refuses — and that is the superset `unary-slot-key` describes: a stale entry costs one
   posting read and the caller's arity filter drops it.  A term leaves `unary-multi-key`
-  with the entry that leaves it one predicate, read off the unary roster's size, and
+  with the entry that leaves it one predicate, read off the unary predicate set's size, and
   leaves `unary-kept-key` under the predicate leaving and, with it, under the one left
   (`kept-retires`)."
   [backend sentex retires]
@@ -721,7 +739,8 @@
     (let [c      (:context sentex)
           denied (long ((:count trie) [:false b]))
           join   (fn [others]
-                   (into [[:add-to-set opposed-bodies-key b]]
+                   (into (cond-> [[:add-to-set opposed-bodies-key b]]
+                           (opposed-functor-key b) (conj [:add-to-set (opposed-functor-key b) b]))
                          (mapcat (fn [[c' hs]] (mapcat #(member-adds b c' %) hs)))
                          (cons [c [handle]] others)))]
       (cond
@@ -745,7 +764,8 @@
             denied (long ((:count trie) [:false b]))
             all    (->count (kv-get backend (node-count-key :opposed [b])))]
         (if (== 1 (if neg? denied (- all denied)))
-          (-> [[:remove-from-set opposed-bodies-key b] [:delete (node-count-key :opposed [b])]]
+          (-> (cond-> [[:remove-from-set opposed-bodies-key b] [:delete (node-count-key :opposed [b])]]
+                (opposed-functor-key b) (conj [:remove-from-set (opposed-functor-key b) b]))
               (into (mapcat (fn [c']
                               (into [[:remove-from-set (node-ctxs-key :opposed [b]) c']]
                                     (mapcat (fn [h] [[:remove-from-set (node-leaf-key :opposed [b] c') h]
@@ -844,35 +864,35 @@
 ;; ---- the non-trie write path ---------------------------------------------
 ;; `KvIndexStore` and `ColumnarIndexStore` store the trie differently and store
 ;; everything under it identically: the inverted term index, the context root, the
-;; predicate extent, the argument trie, the term roster and the argument-slot roster are
+;; predicate extent, the argument trie, the term-name set and the slot predicate set are
 ;; `key -> set` and `key -> count` families over one backend.  The two builders below
 ;; produce that half of a write — the ops and the per-family counts together.  Each store
 ;; conjes its own trie ops, then the adds' ops, and hands the counts to the profile tally
 ;; with its own `:levels` (and `:dead` on the retire).  One definition fixes three things across the
 ;; two stores: which families a sentex enters, the order its ops land in, and the numbers
-;; the tally reports.  The order belongs to the definition because `assert_cost_test` pins
+;; the tally reports.  The order belongs to the definition because `assert_cost_test` asserts
 ;; the per-family read/write counts one assert costs, on either store.  `:roots` counts
 ;; the root postings, the count-trie nodes' ops and the opposed family's ops together.
 ;; `trie` is the store's own trie reads (`trie-reads`), which only the opposed family
 ;; takes.
 
 (defn flat-family-adds
-  "`{:ops ops :counts {:terms n :roots n :roster n :slots n}}` — conjes onto the transient
+  "`{:ops ops :counts {:terms n :roots n :term-names n :slots n}}` — conjes onto the transient
   `ops` the non-trie write ops entering `sentex` under `handle`, and reports the number
   of ops each family took.  `:ops` is the transient `conj!` returned: the caller keeps
   using it, and seals it with `persistent!`.
 
   The families conj straight onto `ops`, so no vector is built per family or per sentex;
-  the order is terms, roots, nodes, opposed, named, roster, slots, and `assert_cost_test`
-  pins the per-family counts.  Every read runs here, before the caller batches the ops, so
-  a name enters the term roster and a predicate enters its argument slot exactly on the
+  the order is terms, roots, nodes, opposed, named, term names, slots, and `assert_cost_test`
+  asserts the per-family counts.  Every read runs here, before the caller batches the ops, so
+  a name enters the term-name set and a predicate enters its argument slot exactly on the
   first sentex to carry it."
   [ops backend trie sentex handle]
   (let [c       (:context sentex)
         fnodes  (fact-nodes sentex)                     ; derived from the sentex alone
         n0      (count ops)
         ;; terms, and the names among them no stored sentex mentions yet (reads the
-        ;; pre-write postings), which enter the roster after the opposed and named ops
+        ;; pre-write postings), which enter the term-name set after the opposed and named ops
         [ops fresh]
         (loop [s (seq (sentex-terms sentex)) ops ops fresh nil]
           (if s
@@ -894,7 +914,7 @@
         ops     (reduce conj! ops (opposed-adds backend trie sentex handle)) ; reads the trie
         ops     (reduce conj! ops (named-adds backend sentex handle))        ; reads the target's installs
         n2      (count ops)
-        ops     (reduce (fn [ops t] (conj! ops [:add-to-set roster-key t])) ops fresh)
+        ops     (reduce (fn [ops t] (conj! ops [:add-to-set term-names-key t])) ops fresh)
         n3      (count ops)
         ops     (-> ops
                     (slot-adds backend sentex fnodes)                         ; reads the pre-write postings
@@ -904,16 +924,16 @@
     {:ops    ops
      :counts {:terms  (- (long n1) (long n0))
               :roots  (- (long n2) (long n1))
-              :roster (- (long n3) (long n2))
+              :term-names (- (long n3) (long n2))
               :slots  (- (long (count ops)) (long n3))}}))
 
 (defn flat-family-retires
-  "`{:ops [...] :counts {:terms n :roots n :roster n :slots n}}` — the mirror of
+  "`{:ops [...] :counts {:terms n :roots n :term-names n :slots n}}` — the mirror of
   `flat-family-adds`: the ops taking `handle` out of those same families, and the
   number of ops each family takes.
 
-  Every read runs here, before the caller batches the ops, so a name leaves the term
-  roster, a predicate leaves its argument slot and a node leaves the argument trie
+  Every read runs here, before the caller batches the ops, so a name leaves the term-name
+  set, a predicate leaves its argument slot and a node leaves the argument trie
   exactly on the last sentex to carry it."
   [backend trie sentex handle]
   (let [terms   (sentex-terms sentex)
@@ -922,16 +942,16 @@
         nodes   (into [] (mapcat :ops) retires)
         opposed (opposed-retires backend trie sentex handle) ; likewise, and the trie
         named   (named-retires backend sentex handle)   ; likewise, and the target's installs
-        roster  (roster-retires backend terms handle)   ; likewise
+        names   (term-names-retires backend terms handle)   ; likewise
         slots   (-> (slot-retires backend sentex retires) (into (shape-retires retires))
                     (into (binding-retires backend retires))
                     (into (denied-retires backend trie sentex)))]
     {:ops    (concat (map (fn [t] [:remove-from-set (term-key t) handle]) terms)
                      (map (fn [k] [:remove-from-set k handle]) roots)
-                     nodes opposed named roster slots)
+                     nodes opposed named names slots)
      :counts {:terms  (count terms)
               :roots  (+ (count roots) (count nodes) (count opposed) (count named))
-              :roster (count roster)
+              :term-names (count names)
               :slots  (count slots)}}))
 
 ;; ---- reading the family --------------------------------------------------
@@ -956,6 +976,12 @@
       (<= (long (kv-count backend k)) (count ctxs))
       (filterv #(contains? ctxs %) (kv-members backend k))
       :else (filterv #(kv-member? backend k %) ctxs))))
+
+(defn- handle-posting
+  "`xs`, a family read's answer, passed to `prof/record-posting` when family `f`'s leaf
+  holds handles (`index-families`' `:leaf`) and handed back as is otherwise."
+  [f xs]
+  (if (= :handles (:leaf (index-families f))) (prof/record-posting xs) xs))
 
 (defn- node-handles
   "The handles under the `tag` trie's `node` in the contexts `seen-ctxs` returns.  One
@@ -983,9 +1009,9 @@
       1 (leaves (nth common 0))
       (reduce (fn [acc c] (into acc (leaves c))) #{} common))))
 
-(defn- roster-union
+(defn- slot-union
   "The union of `preds`' nodes at `(pos, term)`, in the contexts `ctxs` (every context
-  when nil).  A roster holds ONE predicate in the common case — a term occupies a given
+  when nil).  A slot holds ONE predicate in the common case — a term occupies a given
   position under one predicate — and that node's handles are handed straight back."
   [backend preds pos term ctxs]
   (case (count preds)
@@ -994,17 +1020,57 @@
     (reduce (fn [acc pd] (into acc (node-handles backend :argument-root [pd pos term] ctxs)))
             #{} preds)))
 
+;; ---- the write record ---------------------------------------------------------
+;;
+;; While a write record is open (`observe/*write-record*`), every index write records,
+;; per key of the backend it moves, what the key held before its first move: a counter's
+;; value (`[:scalar v]`), the members an add or a removal names with whether each was
+;; present (`[:members {member present?}]`), or, for a key deleted whole, its set
+;; (`[:whole set]`).  `prior-kv` reads the backend as it stood.
+
+(defn- keep-op!
+  "Record in `rec`, `backend`'s map of the write record, what op `[op k x]` of a batch on
+  `backend` is about to move at `k`, unless an earlier op recorded it."
+  [backend rec [op k x]]
+  (let [e (get rec k)]
+    (case op
+      (:increment :decrement :put)
+      (if e rec (assoc rec k [:scalar (kv-get backend k)]))
+      (:add-to-set :remove-from-set)
+      (cond (nil? e)                                   (assoc rec k [:members {x (kv-member? backend k x)}])
+            (and (= :members (nth e 0)) (not (contains? (nth e 1) x)))
+            (assoc-in rec [k 1 x] (kv-member? backend k x))
+            :else                                      rec)
+      :delete
+      (cond (nil? e) (let [v (kv-get backend k)]
+                       (assoc rec k (if (number? v) [:scalar v] [:whole (set (kv-members backend k))])))
+            (= :members (nth e 0))
+            (assoc rec k [:whole (reduce (fn [acc [x was?]] (if was? (conj acc x) (disj acc x)))
+                                         (set (kv-members backend k)) (nth e 1))])
+            :else rec)
+      rec)))
+
+(defn batch!
+  "`kv-batch` of `ops` on `backend`, after recording in the open write record what each
+  op's key held before it (`keep-op!`).  Every index write a `KvIndexStore` or a
+  `ColumnarIndexStore`'s families make runs through here."
+  [backend ops]
+  (when observe/*write-record*
+    (let [v (observe/record-of backend #(volatile! {}))]
+      (vswap! v (fn [rec] (reduce #(keep-op! backend %1 %2) rec ops)))))
+  (kv-batch backend ops))
+
 (def sealed-prefix
   "The count prefix of the batch-seal counter: incremented as the **last** op of every
   `index-sentex` batch and decremented as the last op of an unindex's cleanup batch,
   so it equals the indexed-sentex count exactly when every batch landed whole.  The
-  durable open's coverage gate compares it against the record count: the WAL logs one
+  durable open's coverage check compares it against the record count: the WAL logs one
   frame per op, so a torn tail keeps a batch's *prefix* — the root counter `count-at
   []` reads is op 0 and survives every tear, which is what makes it the wrong
   instrument — while this counter is the op a tear loses first.  A namespaced keyword,
   so it collides with no term path; only the count key is written, so no trie walk
   ever meets it.  Zero on a store whose index arrived by `index-load` replay or was
-  written before the counter existed — the gate falls back to the root count there."
+  written before the counter existed — the check falls back to the root count there."
   [::sealed])
 
 (defn- unindex-present!
@@ -1018,28 +1084,28 @@
   (let [n        (count pth)
         flat     (flat-family-retires backend (kv-trie backend) sentex handle) ; reads the pre-write postings
         prefixes (mapv #(subvec pth 0 %) (range n -1 -1))          ; leaf .. root
-        replies  (kv-batch backend
-                           (cons [:remove-from-set (leaf-key pth) handle]
-                                 (map (fn [prefix] [:decrement (count-key prefix)]) prefixes)))
+        replies  (batch! backend
+                         (cons [:remove-from-set (leaf-key pth) handle]
+                               (map (fn [prefix] [:decrement (count-key prefix)]) prefixes)))
         dead     (keep (fn [[prefix c]] (when (<= (long c) 0) prefix))
                        (map vector prefixes (rest replies)))]
-    (kv-batch backend
-              (concat
-               (mapcat (fn [prefix]
-                         ;; the node is empty: drop its counter *and* both of its
-                         ;; sets, or an orphaned [:trie :count prefix] leaves
-                         ;; plan/prefix-estimate costing off a phantom count forever;
-                         ;; then detach its edge from the parent's child set.
-                         (cond-> [[:delete (count-key prefix)]
-                                  [:delete (set-key prefix)]
-                                  [:delete (leaf-key prefix)]]
-                           (pos? (count prefix))
-                           (conj [:remove-from-set (set-key (subvec pth 0 (dec (count prefix))))
-                                  (nth pth (dec (count prefix)))])))
-                       dead)
-               (:ops flat)
-               ;; the batch seal, last on purpose — `sealed-prefix` says why
-               [[:decrement (count-key sealed-prefix)]]))
+    (batch! backend
+            (concat
+             (mapcat (fn [prefix]
+                       ;; the node is empty: drop its counter *and* both of its
+                       ;; sets, or an orphaned [:trie :count prefix] leaves
+                       ;; plan/prefix-estimate costing off a phantom count forever;
+                       ;; then detach its edge from the parent's child set.
+                       (cond-> [[:delete (count-key prefix)]
+                                [:delete (set-key prefix)]
+                                [:delete (leaf-key prefix)]]
+                         (pos? (count prefix))
+                         (conj [:remove-from-set (set-key (subvec pth 0 (dec (count prefix))))
+                                (nth pth (dec (count prefix)))])))
+                     dead)
+             (:ops flat)
+             ;; the batch seal, last on purpose — `sealed-prefix` says why
+             [[:decrement (count-key sealed-prefix)]]))
     ;; the mirror of the assert tally in `index-sentex`, and the reason it is a separate
     ;; one: `dead` is the only quantity here the sentex does not decide.  Every other
     ;; number is a property of what is being retracted; how many trie nodes empty
@@ -1105,7 +1171,7 @@
     (reduce (fn [acc c] (into acc (kv-members backend (flat-key f (conj node c))))) #{} ctxs)))
 
 ;; A batch decides each op against the store as the ops before it in the batch left it, so
-;; it equals the ops applied one call at a time.  `staged` holds that view: the ops written
+;; it equals the ops applied one call at a time.  `staged` holds that intermediate state: the ops written
 ;; so far, and per key the members they added and removed and the counter they set, laid
 ;; over the backend's reads.
 
@@ -1142,8 +1208,8 @@
                    (= :remove-from-set op) (update-in [:sets k] (fn [m] {:add (disj (:add m #{}) x)
                                                                          :rem (conj (:rem m #{}) x)})))))))
 
-(defn- roster-entry
-  "`[tag key member]` of the root roster above family `f`'s `path`: `[r]` holding a one-token
+(defn- root-entry
+  "`[tag key member]` of the root set above family `f`'s `path`: `[r]` holding a one-token
   path's token, else `[r first]` holding the rest (one token bare, several as a vector)."
   [f path]
   (when-let [r (root-tag f)]
@@ -1154,14 +1220,14 @@
           [r [r (nth path 0)] (if (== 1 (count more)) (nth more 0) more)])))))
 
 (defn- post-root! [backend st f path]
-  (when-let [[r k m] (roster-entry f path)]
+  (when-let [[r k m] (root-entry f path)]
     (when-not (stage-member? backend st k m)
       (let [first? (zero? (long (stage-count backend st k)))]
         (stage! backend st [:add-to-set k m])
         (when first? (post-root! backend st r (subvec k 1)))))))
 
 (defn- retire-root! [backend st f path]
-  (when-let [[r k m] (roster-entry f path)]
+  (when-let [[r k m] (root-entry f path)]
     (when (stage-member? backend st k m)
       (let [last? (== 1 (long (stage-count backend st k)))]
         (stage! backend st [:remove-from-set k m])
@@ -1169,7 +1235,7 @@
 
 (defn- post-node!
   "Stage `h` into count trie `f`'s leaf `lp`: the leaf, the node's children and count, and
-  the root roster when the node was empty.  The node's count after, or nil."
+  the root set when the node was empty.  The node's count after, or nil."
   [backend st f lp h]
   (when (= :trie f) (bad-family! 'family-apply! "the trie is written by index-sentex" {:family f}))
   (let [node (pop lp) c (peek lp) leaf (node-leaf-key f node c)
@@ -1184,7 +1250,7 @@
 
 (defn- retire-node!
   "Stage `h` out of count trie `f`'s leaf `lp` — out of whichever context holds it when `lp`
-  ends in `p/any-context` — and the node's children, count and root roster where they
+  ends in `p/any-context` — and the node's children, count and root set where they
   empty.  The node's count after, or nil."
   [backend st f lp h]
   (when (= :trie f) (bad-family! 'family-apply! "the trie is written by index-sentex" {:family f}))
@@ -1214,7 +1280,7 @@
         (stage-count backend st k)))))
 
 (defn- retire-flat!
-  "Stage `x` out of flat set `f` at `path`.  A flat set keeps no roster of the contexts a
+  "Stage `x` out of flat set `f` at `path`.  A flat set keeps no list of the contexts a
   path may end in, so a `path` ending in `p/any-context` throws `:bad-args`."
   [backend st f path x]
   (when (and (seq path) (identical? p/any-context (peek (vec path))))
@@ -1242,7 +1308,7 @@
                                               (bad-family! 'family-apply! "a counter takes no post or retire" {:family f}))
                             (bad-family! 'family-apply! "an op is :post or :retire" {:family f :family-op op}))))
                       ops)]
-    (when-let [written (seq (:ops @st))] (kv-batch backend written))
+    (when-let [written (seq (:ops @st))] (batch! backend written))
     replies))
 
 (defrecord KvIndexStore [backend]
@@ -1253,7 +1319,7 @@
   ;; another matter: the disk WAL logs one frame per op, all in one write
   ;; (`disk/kv.clj`, `apply-ops!`), so a crash that tears that write persists a
   ;; *prefix* — e.g. an argument-root posting whose predicate never entered the slot
-  ;; roster, which under-answers the predicate-agnostic reads while the trie and the
+  ;; predicate set, which under-answers the predicate-agnostic reads while the trie and the
   ;; scoped reads see the fact.  The
   ;; record/index boundary remains; `vaelii.impl.reindex` is the repair for both.
   (index-sentex [_ sentex handle]
@@ -1270,10 +1336,10 @@
                                         [:add-to-set (leaf-key prefix) handle])))))  ; leaf handle
                        (transient []) (range (inc n)))
           flat (flat-family-adds trie backend (kv-trie backend) sentex handle)]
-      (kv-batch backend
-                (-> (:ops flat)
-                    (conj! [:increment (count-key sealed-prefix)])
-                    persistent!))
+      (batch! backend
+              (-> (:ops flat)
+                  (conj! [:increment (count-key sealed-prefix)])
+                  persistent!))
       ;; what this assert cost the index, per family, when somebody is asking
       ;; (`vaelii.impl.profile`).  The trie depth is this store's own number; the four
       ;; family counts come back with the ops that produced them, so the tally cannot
@@ -1282,7 +1348,7 @@
         (prof/record-index-write sentex (assoc (:counts flat) :levels (inc n))))
       handle))
 
-  ;; **Gated on the handle being at the leaf.**  The counters are decremented without
+  ;; **Runs only when the handle is at the leaf.**  The counters are decremented without
   ;; looking, and a node whose count reaches zero is deleted with every handle at its
   ;; leaf — so one stray unindex (a handle never indexed here, or indexed and already
   ;; removed) would take live nodes, and the sentexes stored under them, out of the
@@ -1313,7 +1379,7 @@
   ;; the split is the whole reason the tally is worth reading: these three are the
   ;; **cost model's** probes (`plan`'s selectivity and fan-out divisor), and `lookup`
   ;; below is **retrieval**.  A run that reads the counts a hundred times per walk is
-  ;; using the trie to plan, not to fetch, and a family roster that added them together
+  ;; using the trie to plan, not to fetch, and a family tally that added them together
   ;; would report that as one number meaning neither.
   (count-at [_ prefix] (prof/record-read :trie-counts) (count-at* backend prefix))
 
@@ -1376,7 +1442,7 @@
                      (set (kv-members backend (leaf-key (nth frontier 0))))
                      (into #{} (mapcat (fn [prefix] (kv-members backend (leaf-key prefix)))) frontier))]
             (prof/record-fan pattern (+ visits (count frontier)) widest (count hs))
-            hs)
+            (prof/record-posting hs))
           (let [q (first qs)
                 ctx-level? (and ctxs (nil? (next qs)))
                 frontier'
@@ -1397,13 +1463,15 @@
   ;; The exact leaf — one hash read of the node the path names, no walk and no fan.
   ;; Tallied as retrieval like `lookup` beside it, because that is what it is; it records
   ;; no fan, having none to record.
-  (leaf-at [_ path] (prof/record-read :trie-lookup) (kv-members backend (leaf-key (vec path))))
+  (leaf-at [_ path]
+    (prof/record-read :trie-lookup)
+    (prof/record-posting (kv-members backend (leaf-key (vec path)))))
 
   ;; The predicate extent: every context's leaf, or the one leaf a predicate stated in one
   ;; context has, handed back as stored.  The count is the node's own.
   (sentexes-with-functor [_ pred]
     (prof/record-read :predicate-extent)
-    (node-handles backend :predicate-extent [pred] nil))
+    (prof/record-posting (node-handles backend :predicate-extent [pred] nil)))
   (count-with-functor    [_ pred]
     (prof/record-read :predicate-extent)
     (->count (kv-get backend (node-count-key :predicate-extent [pred]))))
@@ -1414,36 +1482,37 @@
   ;; argument is the predicate extent's node `[rel]`.  With `ctxs`, each node's contexts
   ;; are intersected with the reader's ancestor set before a leaf is read, so no handle
   ;; stored where the reader cannot see is returned.  A `nil` pred
-  ;; (a variable functor) has no scope to read, so it unions the slot roster's nodes per
+  ;; (a variable functor) has no scope to read, so it unions the slot predicate set's nodes per
   ;; column and intersects the columns.  The result stays a superset of the
   ;; positional-trie hits — it does not constrain numeric arguments — which the caller's
   ;; `unify` filters exact.
   (sentexes-with-args [this pred pos-terms] (p/sentexes-with-args this pred pos-terms nil))
   (sentexes-with-args [_ pred pos-terms ctxs]
-    (cond
-      (nil? pred)
-      (if (empty? pos-terms)
-        #{}
-        (reduce (fn [acc [pos term]]
-                  (prof/record-read :argument-slot)
-                  (prof/record-read :argument-root)
-                  (let [term (sx/canon term)
-                        s    (roster-union backend (kv-members backend (slot-key pos term))
-                                           pos term ctxs)]
-                    (if (nil? acc) s (set/intersection acc s))))
-                nil pos-terms))
-      (empty? pos-terms) (do (prof/record-read :predicate-extent)
-                             (node-handles backend :predicate-extent [pred] ctxs))
-      :else
-      (do (prof/record-read :argument-root)
-          (let [nodes (mapv (fn [[pos term]] [pred pos (sx/canon term)]) pos-terms)]
-            (if (nil? (next nodes))
-              (node-handles backend :argument-root (nth nodes 0) ctxs)
-              (nodes-intersect backend nodes ctxs))))))
+    (prof/record-posting
+     (cond
+       (nil? pred)
+       (if (empty? pos-terms)
+         #{}
+         (reduce (fn [acc [pos term]]
+                   (prof/record-read :argument-slot)
+                   (prof/record-read :argument-root)
+                   (let [term (sx/canon term)
+                         s    (slot-union backend (kv-members backend (slot-key pos term))
+                                          pos term ctxs)]
+                     (if (nil? acc) s (set/intersection acc s))))
+                 nil pos-terms))
+       (empty? pos-terms) (do (prof/record-read :predicate-extent)
+                              (node-handles backend :predicate-extent [pred] ctxs))
+       :else
+       (do (prof/record-read :argument-root)
+           (let [nodes (mapv (fn [[pos term]] [pred pos (sx/canon term)]) pos-terms)]
+             (if (nil? (next nodes))
+               (node-handles backend :argument-root (nth nodes 0) ctxs)
+               (nodes-intersect backend nodes ctxs)))))))
 
   (sentexes-with-terms [_ terms]
     (prof/record-read :term-index)
-    (if (empty? terms) #{} (kv-intersect backend (mapv term-key terms))))
+    (if (empty? terms) #{} (prof/record-posting (kv-intersect backend (mapv term-key terms)))))
 
   ;; The family methods (`family-ctxs`, `by-shape` above): untallied, since the `reads`
   ;; entry point that calls one tallies the logical read it serves.
@@ -1468,10 +1537,11 @@
               (kv-count backend (flat-key f path))
               (bad-family! 'family-child-count "a counter has no children" {:family f})))
   (family-leaf [_ f path]
-    (by-shape 'family-leaf f
-              (or (kv-members backend [f :handles (vec path)]) #{})
-              (or (kv-members backend (flat-key f path)) #{})
-              (bad-family! 'family-leaf "a counter has no leaf" {:family f})))
+    (handle-posting f
+                    (by-shape 'family-leaf f
+                              (or (kv-members backend [f :handles (vec path)]) #{})
+                              (or (kv-members backend (flat-key f path)) #{})
+                              (bad-family! 'family-leaf "a counter has no leaf" {:family f}))))
   (family-member? [_ f path x]
     (by-shape 'family-member? f
               (kv-member? backend [f :handles (vec path)] x)
@@ -1479,12 +1549,13 @@
               (bad-family! 'family-member? "a counter has no leaf" {:family f})))
   (family-handles [_ f node ctxs]
     (let [cs (family-ctxs 'family-handles ctxs) node (vec node)]
-      (by-shape 'family-handles f
-                (node-handles backend f node cs)
-                (if cs
-                  (flat-handles backend f node cs)
-                  (bad-family! 'family-handles "a flat set lists no contexts to range" {:family f}))
-                (bad-family! 'family-handles "a counter has no leaf" {:family f}))))
+      (handle-posting f
+                      (by-shape 'family-handles f
+                                (node-handles backend f node cs)
+                                (if cs
+                                  (flat-handles backend f node cs)
+                                  (bad-family! 'family-handles "a flat set lists no contexts to range" {:family f}))
+                                (bad-family! 'family-handles "a counter has no leaf" {:family f})))))
   (family-apply! [_ ops] (apply-family-ops! backend ops))
 
   ;; the flat-map index *is* the portable projection, so both directions are the
@@ -1492,12 +1563,97 @@
   ;; minus the batch-seal counter: it describes the WAL's own health, not the
   ;; records, so it is no part of the portable projection — a dump carries it to no
   ;; store that can read it as anything, and the cross-backend parity of this seq is
-  ;; what `index-dump-test` pins
+  ;; what `index-dump-test` asserts
   (index-entries [_]         (remove (fn [[k _]] (= k (count-key sealed-prefix)))
                                      (kv-entries backend)))
   (index-load    [_ entries] (kv-load    backend entries))
 
   (clear-index! [_] (kv-clear! backend) nil))
+
+;; ---- the index before the write ------------------------------------------------
+
+(defn- net-moves
+  "`[added removed]`: the members of the `{member present?}` map `ms` that key `k` of
+  `live` holds now and did not, and held and does not now."
+  [live k ms]
+  (reduce (fn [[a d] [x was?]]
+            (let [now? (kv-member? live k x)]
+              (cond (and now? (not was?)) [(conj a x) d]
+                    (and was? (not now?)) [a (conj d x)]
+                    :else                 [a d])))
+          [#{} #{}] ms))
+
+(defn- prior-members
+  "The members key `k` of `live` held before the write recorded `rec`."
+  [live rec k]
+  (let [e (get rec k)]
+    (case (when e (nth e 0))
+      :whole   (or (nth e 1) #{})
+      :members (let [[a d] (net-moves live k (nth e 1))]
+                 (if (and (empty? a) (empty? d))
+                   (kv-members live k)
+                   (-> (set/difference (set (kv-members live k)) a) (into d))))
+      (kv-members live k))))
+
+(defn- read-only! [op]
+  (throw (UnsupportedOperationException. (str "the index before the write takes no " op))))
+
+(deftype PriorKv [live rec]
+  ;; `live`, a backend, read as it stood before the write that recorded `rec` (`batch!`):
+  ;; a key `rec` holds answers from its record and the live members, every other key from
+  ;; `live`, which no write since moved
+  p/KvBackend
+  (kv-get [_ k]
+    (let [e (get rec k)]
+      (case (when e (nth e 0))
+        :scalar (nth e 1)
+        :whole  nil
+        (kv-get live k))))
+  (kv-members [_ k] (prior-members live rec k))
+  (kv-member? [_ k x]
+    (let [e (get rec k)]
+      (case (when e (nth e 0))
+        :whole   (contains? (nth e 1) x)
+        :members (let [ms (nth e 1)]
+                   (if (contains? ms x) (boolean (get ms x)) (kv-member? live k x)))
+        (kv-member? live k x))))
+  (kv-count [_ k]
+    (let [e (get rec k)]
+      (case (when e (nth e 0))
+        :whole   (count (nth e 1))
+        :members (let [[a d] (net-moves live k (nth e 1))]
+                   (+ (- (long (kv-count live k)) (count a)) (count d)))
+        (kv-count live k))))
+  (kv-intersect [this ks]
+    (if (some #(contains? rec %) ks)
+      (let [sets (sort-by count (map #(set (kv-members this %)) ks))]
+        (if (seq sets) (reduce set/intersection sets) #{}))
+      (kv-intersect live ks)))
+  (kv-put [_ _ _] (read-only! 'kv-put))
+  (kv-delete [_ _] (read-only! 'kv-delete))
+  (kv-increment [_ _] (read-only! 'kv-increment))
+  (kv-decrement [_ _] (read-only! 'kv-decrement))
+  (kv-add-to-set [_ _ _] (read-only! 'kv-add-to-set))
+  (kv-remove-from-set [_ _ _] (read-only! 'kv-remove-from-set))
+  (kv-batch [_ _] (read-only! 'kv-batch))
+  (kv-entries [_] (read-only! 'kv-entries))
+  (kv-load [_ _] (read-only! 'kv-load))
+  (kv-clear! [_] (read-only! 'kv-clear!)))
+
+(defn prior-kv
+  "`backend` as it stood before the writes the open write record recorded on it, or
+  `backend` itself when the record holds none."
+  [backend]
+  (if-let [rec (observe/kept backend)]
+    (->PriorKv backend rec)
+    backend))
+
+(defn prior-index
+  "The `KvIndexStore` `store` as it stood before the writes the open write record
+  recorded on its backend (`prior-kv`), or `store` itself when the record holds none."
+  [store]
+  (let [b (:backend store) pb (prior-kv b)]
+    (if (identical? b pb) store (->KvIndexStore pb))))
 
 ;; ---- the registry, read by the importer ----------------------------------------
 

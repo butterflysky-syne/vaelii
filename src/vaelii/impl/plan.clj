@@ -106,8 +106,8 @@
     that refutes it in one lookup.
   - **The anchored block runs before the rest.**  Every component touching the
     already-bound variables, a deferred (evaluable) literal or the recursive literal
-    is fused into one component, and that one leads.  It is the only block the pins
-    reach: its literals feed the evaluables, which prune, and are narrowed by bindings
+    is fused into one component, and that one leads.  It is the only block the fixed
+    placements reach: its literals feed the evaluables, which prune, and are narrowed by bindings
     the caller already has — neither of which the summary algebra models, since an
     evaluable's selectivity is a function of values rather than of counts.  Running it
     first is what makes those prunes land before another block multiplies them.
@@ -144,14 +144,14 @@
   estimate admits.
 
   **Remembering the answer does not work**, and both halves of why are measured rather
-  than argued.  A cache stamped with `observe/change-clock` is retired between one plan
+  than argued.  A cache keyed by `observe/change-clock` is retired between one plan
   and the next by the chaining run's own placements, and turning one on measures
   **0.98–0.99×** there.  On a query, where nothing moves the clock and every plan after
   the first would be served, the fan is under 3% of the run — 120 estimates against a
   search that dominates them, where chaining makes 901 — and it measures **0.91–1.04×**.
   So the entry is either invalid or not worth having, by path.
 
-  A **finer** stamp is what would reach it, and it is unsound rather than merely fiddly:
+  A **finer** cache key would reach it, and it is unsound rather than merely fiddly:
   the estimate bounds a literal from *above*, an estimate of 1 is a proof `rank-blocks`
   and `cartesian-factors` rest on, and a fact placed under one subtype makes an entry
   computed before it too small.  Reaching this cost again means making the fan cheaper
@@ -179,8 +179,8 @@
     canonical order at *storage* (`sentex/canonicalize-rule`), which is where an
     author's spelling stops being observable — assert the same rule with the
     recursive literal written first and the stored antecedents are identical.  So
-    left-recursion is not a state a rule can reach here, and this pin is the cost
-    model being kept from re-introducing one, not a rescue.
+    left-recursion is not a state a rule can reach here.  Placing the recursive literal
+    last keeps the cost model from re-introducing one, and is not a rescue.
 
   A third class is the caller's to name (`:end-vars`): a literal that answers in full
   only once one of its ends is bound.  The forward join's `genl` / `genlCx` antecedent
@@ -205,7 +205,8 @@
   content, never of iteration order.  Same knowledge, same plan: the order
   independence the rest of the engine holds to (see `vaelii.impl.jtms`) applied to
   execution rather than belief."
-  (:require [vaelii.impl.reads :as reads]
+  (:require [vaelii.impl.budget :as budget]
+            [vaelii.impl.reads :as reads]
             [vaelii.impl.sentex :as sx]
             [vaelii.impl.taxonomy :as tax]
             [vaelii.impl.types.reasoning :as reasoning]))
@@ -265,7 +266,7 @@
 (defn- dotted?
   "A dotted rest pattern — `(?pred . ?args)`, `(rel A . ?rest)` — whose tail variable
   splices a whole argument list.  It has no fixed arity, so past the marker nothing
-  sits at a position the trie key or an argument root pins, and the marker itself is
+  sits at a position the trie key or an argument root binds, and the marker itself is
   not a term: both index models answer 0 for it, a *lower* bound that would rank the
   literal cheapest and hoist it to the front of the conjunction."
   [goal]
@@ -343,7 +344,7 @@
   "The tightest count from the secondary argument roots.  These reach what the trie
   cannot: a ground argument sitting *after* a variable is on no prefix, so the trie
   can only count up to that variable, while the argument roots (the node `[pred pos term]`'s
-  count, summed over the slot roster's predicates) index it directly.
+  count, summed over the slot predicate set's predicates) index it directly.
   Each is an upper bound on the literal's matches (it ignores the other positions),
   so the smallest is the tightest.
 
@@ -438,7 +439,7 @@
            (or (arg-root-estimate ix body count-with-arg) unbounded)
            (count-with-functor ix (functor-of goal))))
 
-       ;; A dotted rest pattern pins no argument position at all, so the predicate extent
+       ;; A dotted rest pattern binds no argument position at all, so the predicate extent
        ;; is the only real bound on it — and an open functor has not even that.
        (dotted? goal)
        (if (variable-functor? goal)
@@ -660,9 +661,14 @@
                ;; so the rows sum; the distinct counts sum too and are then capped,
                ;; since two subtypes may share an instance but cannot have more between
                ;; them than the union has rows.
+               ;; One trie walk per subtype, and a broad type over a large KB has hundreds of
+               ;; thousands of them, so this one estimate can outlast a bounded read's whole
+               ;; budget: it reads `budget/*deadline*` per walk, as the claim walk does.
                (unary-literal? goal)
                (let [[t a] goal
-                     parts (mapv #(prefix-summary ix (list % a) count-at count-children)
+                     dl    budget/*deadline*
+                     parts (mapv #(do (budget/check-deadline! dl)
+                                      (prefix-summary ix (list % a) count-at count-children))
                                  (tax/specs (reasoning/taxonomy kb) t context))
                      rows  (min (double unbounded) (reduce + 0.0 (map :rows parts)))]
                  {:rows rows
@@ -816,8 +822,8 @@
      not an estimate: every literal in the block matches at most once, so the block can
      only shrink what follows it and costs one lookup to do so.  A false ground literal
      belongs here and this is the tier that puts it there.
-  2. **The anchored block next.**  It holds every literal the pins and the caller's
-     bindings reach, and both are selectivity the summary algebra does not model — an
+  2. **The anchored block next.**  It holds every literal the fixed placements and the
+     caller's bindings reach, and both are selectivity the summary algebra does not model — an
      evaluable prunes on values, and a bound variable narrows a literal the block's own
      `n` already accounts for but a rival block's does not.
   3. **Everything else by the transposition law**, `s/(n−1)` descending, with `n ≤ 1`
@@ -879,7 +885,7 @@
 (defn- partition-literals
   "Split a conjunction into the three classes that are ordered differently, as
   `[index literal]` pairs: the **generators** free to be reordered on cost, the
-  **recursive** literal pinned last, and the **deferred** ones threaded back in where
+  **recursive** literal placed last, and the **deferred** ones threaded back in where
   each becomes ready.  `order` sequences them and `explain` reports which class a
   literal landed in, so the split is made once rather than agreed on twice."
   [goals consequent-pred]
@@ -893,12 +899,12 @@
   "The deferred literals whose **input** variables are all bound — pull them forward to
   here, in their original relative order (one computation may feed the next).
 
-  Gated on the inputs a literal reads (`sentex/deferred-input-vars`), not on every
-  variable it mentions: `(evaluate ?z (+ ?x ?y))` is ready once `?x` and `?y` are bound,
-  and its own written `?z` is never generator-bound, so gating on it would strand the
-  literal in the tail — after the pinned recursive literal — where the docstring above
-  says it must be pulled forward, and a bind-mode `evaluate` parked there can cost the
-  recursive subgoal its per-level distinctness."
+  The readiness condition is the inputs a literal reads (`sentex/deferred-input-vars`),
+  not every variable it mentions: `(evaluate ?z (+ ?x ?y))` is ready once `?x` and `?y`
+  are bound, and its own written `?z` is never generator-bound, so waiting on it would
+  strand the literal in the tail — after the recursive literal ordered last — where the
+  docstring above says it must be pulled forward, and a bind-mode `evaluate` parked there
+  can cost the recursive subgoal its per-level distinctness."
   [defs bound]
   (filterv (fn [[_ l]] (every? bound (sx/deferred-input-vars l))) defs))
 
@@ -1040,7 +1046,7 @@
                       into the goals can leave this empty; the substituted values
                       make the literals ground on their own.
     :consequent-pred  the functor of the rule these goals are the antecedents of, if
-                      they are.  Identifies the recursive literal, which is pinned
+                      they are.  Identifies the recursive literal, which is placed
                       last (see the namespace docstring).
     :est-override     (fn [goal bound]) -> estimate or nil.  Consulted before the
                       index model, so a caller whose executor is not the index — the
@@ -1074,7 +1080,7 @@
 
   And three flags, because a literal's position is decided by one of three different
   things and a plan is only diagnosable if it says which.  `:deferred?` and
-  `:recursive?` mark the operational pins.  **`:isolated?` marks a cartesian factor
+  `:recursive?` mark the operational placements.  **`:isolated?` marks a cartesian factor
   that was held to the back** for being one — read it as the answer to \"why is this
   last\", not as a structural property of the literal.  Without it a selective one
   is indistinguishable from a small number sitting last, which looks like the planner erred; it is the

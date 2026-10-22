@@ -147,9 +147,9 @@
                             (zs (v/query kb goal CxQ {:max-depth 3})))))))))
 
 (tu/deftest-kb a-key-query-does-not-read-is-refused-not-handed-to-the-engine
-  ;; The node engine reads the keys it knows and ignores the rest, so an open roster here
+  ;; The node engine reads the keys it knows and ignores the rest, so an open key set here
   ;; would let `{:max-deph 3}` answer facts-only with nothing to say a rule was never
-  ;; expanded — the silent-default failure every other entry point refuses.  The roster is the
+  ;; expanded — the silent-default failure every other entry point refuses.  The key set is the
   ;; union of `query`'s own dial and the engine's, and it is public.
   (tu/with-terms [parentOf anc Ann Bob CxQ]
     (v/assert kb (list parentOf Ann Bob) CxQ)
@@ -159,7 +159,7 @@
           refusal (fn [opts]
                     (try (v/query kb goal CxQ opts) nil
                          (catch clojure.lang.ExceptionInfo e (ex-data e))))]
-      (testing "every key on the roster is taken"
+      (testing "every key in the key set is taken"
         (is (= #{:max-depth :proof? :strategy :portfolio? :auto? :racers} v/query-opt-keys))
         (is (= [{'?z Bob}] (vec (v/query kb goal CxQ {:max-depth 2 :strategy :depth-first
                                                       :auto? false :portfolio? false
@@ -169,7 +169,7 @@
         (doseq [opts [{:max-deph 2} {:proof true :max-depth 2} {:max-depth 2 :strategy :cost :portfolio true}]]
           (let [d (refusal opts)]
             (is (= :unknown-option (:type d)) (pr-str opts))
-            (is (= (vec (sort v/query-opt-keys)) (:options d)) "and the refusal names the roster")
+            (is (= (vec (sort v/query-opt-keys)) (:options d)) "and the refusal names the key set")
             (is (seq (:unknown d))))
           (is (= :unknown-option
                  (:type (try (v/query? kb goal CxQ opts) nil
@@ -249,10 +249,10 @@
         (is (= [true true] [a4 a16]) nm)
         (is (= n4 n16) (str nm ": " n4 " leaf reads at 4 derivations, " n16 " at 16"))))))
 
-(tu/deftest-kb each-debugger-entry-point-rosters-what-it-actually-reads
-  ;; A roster wider than its entry point is the silent default one level in: `search-tree` runs
+(tu/deftest-kb each-debugger-entry-point-accepts-what-it-actually-reads
+  ;; A key set wider than its entry point is the silent default one level in: `search-tree` runs
   ;; under `:proof? true` and never reaches the portfolio path, and `compare-tacticians`
-  ;; sets the ordering per row — so `query`'s roster handed to either accepts a key the
+  ;; sets the ordering per row — so `query`'s key set handed to either accepts a key the
   ;; entry point then overwrites.  `{:strategy :cost}` at `compare-tacticians` is the one that
   ;; reads worst: taken, discarded, and four rows come back under the default orderings
   ;; as though the caller had named none.
@@ -263,7 +263,7 @@
     (let [goal (list anc Ann '?z)
           data (fn [f opts] (try (f kb goal CxDbg opts) nil
                                  (catch clojure.lang.ExceptionInfo e (ex-data e))))]
-      (testing "the rosters are public and are what each entry point reads"
+      (testing "the key sets are public and are what each entry point reads"
         (is (= #{:max-depth :strategy :node-budget :max-ms} v/search-tree-opt-keys))
         (is (= #{:max-depth :tacticians :node-budget :max-ms} v/compare-tacticians-opt-keys)))
       (testing "search-tree refuses the keys it would overwrite or never read"
@@ -279,7 +279,7 @@
           (let [d (data v/compare-tacticians opts)]
             (is (= :unknown-option (:type d)) (pr-str opts))
             (is (= (vec (sort v/compare-tacticians-opt-keys)) (:options d))))))
-      (testing "and every rostered key still answers"
+      (testing "and every accepted key still answers"
         (is (= :complete (:status (v/search-tree kb goal CxDbg
                                                  {:max-depth 2 :strategy :depth-first
                                                   :node-budget 200 :max-ms 5000}))))

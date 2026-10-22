@@ -141,7 +141,7 @@
 
   The record moves, and so does the one derived copy of the defeasibility slot: the
   justifications already fired through this rule carry its contribution as their
-  `:strength`, read off the record at fire time (`chain/rule-view-of`), so a
+  `:strength`, read off the record at fire time (`chain/rule-fields-of`), so a
   defeasible→strict resolution must reach them or belief keeps the arrival order this
   fn exists to remove — facts asserted *between* the two spellings would hold
   conclusions at `:default` that the same assertions in the other order hold at
@@ -165,7 +165,7 @@
         (when moved? (p/index-sentex (:index kb) s' h))
         (when (not= (boolean def?) (boolean (:defeasible stored)))
           (special/restrength-firings! kb h)
-          ;; a rule's defeasibility decides whether it is a roster rule
+          ;; a rule's defeasibility decides whether it is a forced-monotonic rule
           (checks/force-sentexes! kb [s']))
         ;; newly forward-capable: it has never been joined over the facts already stored
         (when (and (:chain? opts true)
@@ -186,13 +186,13 @@
   **`opts :strength` reaches the record here exactly as it does at the fact entry point**, and
   it is the rule's *own* defeat class — whether a contradicting default can defeat the
   rule itself.  What a firing confers on its conclusion is a different question with a
-  different authority: `chain/rule-view-of` reads it off `:defeasible`, so a rule stored
+  different authority: `chain/rule-fields-of` reads it off `:defeasible`, so a rule stored
   at `:monotonic` still concludes at its weakest antecedent unless it is bare.  Nothing
   in the engine defeats a rule, so the slot is one that reads back rather than one that
   moves belief — `docs/nmtms.md` states the absence.
 
   **Re-marking on the existing branch is the mark itself, not only its class.**  A rule
-  can be stored and not be a premise — a generator's stamped rule is a *conclusion*,
+  can be stored and not be a premise — a generator's generated rule is a *conclusion*,
   resting on the generator's justification — and asserting it is a second and
   independent ground for it, exactly as asserting an already-derived fact is at the
   other entry point.  Left unmarked, `assert` answered with a handle for a rule that the next
@@ -211,6 +211,7 @@
         [h s new?] (kb/find-or-create-sentex kb sentence context strength)]
     (if new?
       (do
+        (checks/hold-rule-conviction! kb s)
         (checks/force-sentex! kb s)
         (mark-premise kb h strength)
         (special/index-rule-sentex kb h s)
@@ -245,7 +246,7 @@
         ;; the second assertion carried, the same way it drops the direction the
         ;; reconcile above puts back — and the mark is worth making for a second reason
         ;; than the class: a stored rule need not be a premise at all (a generator's
-        ;; stamped rule is a *conclusion*, resting on the generator's justification), and
+        ;; generated rule is a *conclusion*, resting on the generator's justification), and
         ;; asserting one is an independent ground for it, exactly as asserting an
         ;; already-derived fact is at the fact entry point.
         ;;
@@ -429,25 +430,27 @@
       ;; about this sentence's arguments.  It is computed here — where the declarations
       ;; are already being read — and materialized below, because at this point the
       ;; sentex does not exist yet and there is no handle to justify a derived type
-      ;; against.  Empty unless assertive argument types are on.
-      (let [ents (when-not bulk?
-                   (nm/check! (:naming kb) sentence context)
-                   (checks/check-ground kb sentence context)
-                   (when-let [ps (seq (special/wff-problems (reasoning/taxonomy kb) sentence context))]
-                     (throw (ex-info (str "not well-formed: " (str/join "; " ps))
-                                     {:type :not-well-formed :sentence sentence})))
-                   (checks/check-except-target kb sentence)
-                   ;; the rule-set half of well-formedness, for the *other* thing that can
-                   ;; close a cycle through negation: a genl / genlCx edge arriving
-                   ;; underneath rules already stored (docs/exceptions.md).  Before anything
-                   ;; is written and before the taxonomy is touched, so a refusal leaves
-                   ;; nothing behind.
-                   (checks/check-edge-stratified kb sentence context)
-                   ;; ...and the third thing that can: a `closed_extent_predicate` grant
-                   ;; arriving underneath rules that read the predicate negatively, which
-                   ;; is what turns those reads into negation as failure (docs/naf.md)
-                   (checks/check-closed-extent-stratified kb sentence context)
-                   (checks/constraint-checks kb sentence context))
+      ;; against.  Empty unless assertive argument types are on.  The second value is
+      ;; the argument conviction the stored fact is held inert under, or nil.
+      (let [{ents :entailments held :conviction}
+            (when-not bulk?
+              (nm/check! (:naming kb) sentence context)
+              (checks/check-ground kb sentence context)
+              (when-let [ps (seq (special/wff-problems (reasoning/taxonomy kb) sentence context))]
+                (throw (ex-info (str "not well-formed: " (str/join "; " ps))
+                                {:type :not-well-formed :sentence sentence})))
+              (checks/check-except-target kb sentence)
+              ;; the rule-set half of well-formedness, for the *other* thing that can
+              ;; close a cycle through negation: a genl / genlCx edge arriving
+              ;; underneath rules already stored (docs/exceptions.md).  Before anything
+              ;; is written and before the taxonomy is touched, so a refusal leaves
+              ;; nothing behind.
+              (checks/check-edge-stratified kb sentence context)
+              ;; ...and the third thing that can: a `closed_extent_predicate` grant
+              ;; arriving underneath rules that read the predicate negatively, which
+              ;; is what turns those reads into negation as failure (docs/naf.md)
+              (checks/check-closed-extent-stratified kb sentence context)
+              (checks/constraint-checks kb sentence context))
             ;; Bulk load skips the dedup trie-walk: a distinct corpus never hits an
             ;; existing sentex, so `create-sentex` directly is the same result the
             ;; `find-or-create` miss branch would take.
@@ -481,7 +484,9 @@
             permuted? (integrate/permuting? kb (res/permuted-functor sentence))
             prior    (when permuted? (jtms/premise-strength (reasoning/tms kb) h))]
         ;; the labeller's forced memberships go in before the mark, so a denial of a
-        ;; roster literal is never IN (docs/nmtms.md, "The forced-monotonic roster")
+        ;; forced-monotonic literal and a fact an argument declaration convicts are never IN
+        ;; (docs/nmtms.md, "The forced-monotonic set")
+        (when held (checks/hold-argument-conviction! kb h (nm/functor (:sentence s))))
         (checks/force-sentex! kb s)
         (mark-premise kb h strength)
         (when permuted?
@@ -537,7 +542,7 @@
           ;; every entry the closure currently displaces, and an assert that merged
           ;; nothing cannot change one: an entry stops being displaced when its terms
           ;; stop rewriting (the closure shrank) or when its restatement stops being
-          ;; stored (a deletion), and an assert does neither.  Ungated it is O(merged)
+          ;; stored (a deletion), and an assert does neither.  Run unconditionally, it is O(merged)
           ;; per assertion — on OpenCyc, 1,489 merges re-examined 780,000 times.
           (when (seq (:superseded mig))
             (special/refresh-supersessions kb (:superseded mig)))
@@ -618,12 +623,13 @@
             ;; **After** the chain, so the entry carries the run that just ran: a
             ;; violation a merge created — the twin that would have made one individual
             ;; both a dog and a cat — is this assert's to report, and
-            ;; `violations/report` stamps each entry with `(:runs @chain-stats)`
+            ;; `violations/report` tags each entry with `(:runs @chain-stats)`
             ;; (docs/equality.md, "Interactions — Disjointness").  The ledger itself
             ;; accumulates and is emptied only by `clear-violations!`.
             (violations/report kb (:violations mig))))
         ;; an unchained assert seeds no chaining from the `genlCx` moves it settles, and a
         ;; bulk one draws no argument types over them
-        (binding [special/*entail-moves?* (not bulk?)]
+        (binding [special/*entail-moves?*      (not bulk?)
+                  special/*release-withheld?* (and special/*release-withheld?* (not bulk?))]
           (settle/settle-write kb (:chain? opts true)))
         h))))

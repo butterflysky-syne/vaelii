@@ -47,6 +47,21 @@
   (filterv #(str/starts-with? % "--")
            (.getInputArguments (ManagementFactory/getRuntimeMXBean))))
 
+(def ^:private default-signals
+  "A `python3` prefix that sets every ignored signal back to its default and then execs
+  the child in place, so the child keeps the pid the parent spawned.  An ignored signal
+  survives `exec`, and `nohup` starts a run with SIGHUP ignored.  HotSpot installs no
+  shutdown handler for a SIGHUP ignored at startup, so without the prefix a child under
+  such a run outlives `signal!`.  Python ignores SIGPIPE and SIGXFSZ itself, and the same
+  loop resets those."
+  ["python3" "-I" "-c"
+   (str "import os, signal, sys\n"
+        "for s in signal.valid_signals():\n"
+        "    try:\n"
+        "        if signal.getsignal(s) == signal.SIG_IGN: signal.signal(s, signal.SIG_DFL)\n"
+        "    except (OSError, ValueError): pass\n"
+        "os.execv(sys.argv[1], sys.argv[1:])\n")])
+
 (defn- pump!
   "Drain `proc`'s merged output into `queue`, keeping every line in `transcript`.  A
   daemon thread, so a child that outlives its test cannot hold the JVM open; the read
@@ -73,7 +88,8 @@
   [source & args]
   (let [script (File/createTempFile "vaelii-child-" ".clj")
         _      (spit script source)
-        cmd    (-> [(java-binary)]
+        cmd    (-> default-signals
+                   (conj (java-binary))
                    (into (inherited-options))
                    (into ["-cp" (System/getProperty "java.class.path")
                           "clojure.main" (.getPath script)])
@@ -144,6 +160,14 @@
   [child]
   (.destroyForcibly ^Process (:process child))
   (.waitFor ^Process (:process child) 30 TimeUnit/SECONDS))
+
+(defn signal!
+  "Send the child signal `sig`, a name `kill` takes (\"HUP\", \"TERM\").  A JVM runs its
+  shutdown hooks for either, so this is how a test stages a clean stop the child did not
+  ask for."
+  [child sig]
+  (let [argv (into-array String ["kill" (str "-" sig) (str (pid child))])]
+    (.waitFor (.start (ProcessBuilder. ^"[Ljava.lang.String;" argv)))))
 
 (defn close!
   "Kill the child if it is still up, and drop its script."

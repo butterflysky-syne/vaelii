@@ -4,10 +4,10 @@
   "Two reads recomputed per firing, measured — the class `lein perf` says in its own
   docstring it cannot see.
 
-  `perf` gates **growth between two sizes**, so a cost that is constant per operation
+  `perf` judges **growth between two sizes**, so a cost that is constant per operation
   moves both of its readings by the same amount and leaves every ratio alone.  A read
   rebuilt once per placement is exactly that shape: not an algorithmic regression
-  against any documented claim, and one that will never fail the gate.  What it *is* is
+  against any documented claim, and one that will never fail a perf check.  What it *is* is
   a per-firing constant nobody had a number for, and this harness is that number.
 
   So this one **reports**, like every `bench-*` beside `perf`.  Each arm gives three
@@ -89,7 +89,7 @@
 (defn- best-of
   "`build` run `reps` times over a KB each `setup` builds fresh, answering the **fastest**
   `[ns derived]`.  Best rather than mean, for `perf`'s reason: a GC pause landing in one
-  window is not a cost, and the run that avoided one is the one describing the code."
+  run is not a cost, and the run that avoided one is the one describing the code."
   [^long reps setup load! derived-fn]
   (reduce (fn [best _]
             (let [kb     (setup)
@@ -354,7 +354,7 @@
 ;; what the fan costs each.
 ;;
 ;; They come out opposite, and that is the finding.  Chaining pays it — and moves the
-;; change clock per placement, so a clock-stamped memo is retired between one plan and
+;; change clock per placement, so a clock-keyed memo is retired between one plan and
 ;; the next.  A query never moves the clock, so a memo would be served every time — and
 ;; there the fan is a rounding error against the search around it.  `plan.clj`'s "Why
 ;; the subtype fan is not memoized across plans" is these two numbers.
@@ -392,7 +392,7 @@
         (println (format "  %-30s %6d %9d %11.1f %9d %7.1f%%"
                          label d specs (/ (double elapsed) 1e6) costly
                          (* 100.0 (/ (double spent) (max 1 elapsed))))))))
-  (println (str "\n  A memo stamped on the change clock is retired by a placement, so it reaches the\n"
+  (println (str "\n  A memo keyed by the change clock is retired by a placement, so it reaches the\n"
                 "  first line never and the second where there is nothing to take.  Both readings\n"
                 "  are inside one instrumented run, as everywhere else here.")))
 
@@ -405,7 +405,7 @@
 
 (defn -main [& args]
   (let [opts (parse-args args)]
-    (println "vaelii hot reads — two per-firing costs the growth gate cannot see")
+    (println "vaelii hot reads — two per-firing costs the growth checks cannot see")
     (println (format "opts: %s" (pr-str opts)))
     (except-arm opts)
     (est-arm opts)

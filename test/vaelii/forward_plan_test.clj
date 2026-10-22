@@ -2,7 +2,7 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.forward-plan-test
   "Cost-ordering the forward-chain antecedent join (`plan/order` in
-  `chain/complete-antecedents` / `solve-rule`).  The semi-naive agenda pins one
+  `chain/complete-antecedents` / `solve-rule`).  The semi-naive agenda fixes one
   antecedent as the trigger; the planner orders the *rest* by estimated fan-out under
   the trigger's bindings.  The contract under test is the same one the backward
   chainers keep: reordering a conjunction changes only how fast the answer is reached,

@@ -11,10 +11,10 @@
   contrary claim and forms no nogood, while a reading known-true throughout is \"a
   contradiction to report rather than a refinement to defer to\".
 
-  What is pinned here is that the report exists, that it names enough to be acted on —
+  This namespace asserts that the report exists, that it names enough to be acted on —
   the claim nobody wrote, the sentex it was read off, the declaration and the edge — and
   that it is a function of the knowledge rather than of the order it arrived in.  The
-  belief consequence is pinned beside it, because the two are one decision: the nogood's
+  belief consequence is asserted beside it, because the two are one decision: the nogood's
   members are the stored claim and everything the reading rests on, so `decide/verdict`
   weighs them as it weighs any other nogood and the **weakest member decides**
   (docs/inherit.md).
@@ -28,6 +28,7 @@
             [vaelii.core :as v]
             [vaelii.impl.decide :as decide]
             [vaelii.impl.decide.inherited :as inherited]
+            [vaelii.impl.protocols :as p]
             [vaelii.test-util :as tu]))
 
 (use-fixtures :each (tu/neutral-fresh tu/fresh))
@@ -285,7 +286,7 @@
 
 (tu/deftest-kb a-declared-stored-claim-reads-and-stores-alike-in-every-arrival-order
   ;; The known-true reading of an inherited negation clashes with a :default stored claim
-  ;; of `carriesLoad`, which a declaration in the clash's own context puts on the roster.
+  ;; of `carriesLoad`, which a declaration in the clash's own context makes forced-monotonic.
   ;; The stored claim is never the loser there, so it stays believed, and the placed
   ;; sentences are the same whether the declaration arrives first or last.
   (let [readings
@@ -388,10 +389,10 @@
                            (list 'not (list outranks kind_b kind_b))])]))))]
     (is (= #{[:not-well-formed 0 [true true true]]} (set shapes)))))
 
-;; ---- the roster survives a rebuild ---------------------------------------
+;; ---- the declarations survive a rebuild ---------------------------------
 
 (tu/deftest-kb a-recover-reports-the-inherited-clash-again
-  ;; The discovery's gate reads the declarations off the index, so a KB that comes up
+  ;; The discovery's presence check reads the declarations off the index, so a KB that comes up
   ;; over the same records answers `contradictions` the same either side of a restart.
   (tu/with-terms [carriesLoad hauler_kind cart_kind]
     (let [terms {:pred carriesLoad :hauler hauler_kind :cart cart_kind}]
@@ -404,20 +405,33 @@
           "the recover reads the declarations from the index"))))
 
 (tu/deftest-kb a-recover-asks-the-preserved-claims-and-not-every-stored-sentex
-  ;; recover's settle reads the whole store as its region; its discovery asks the stored
-  ;; extent of the preserved predicate, read off the index, and reads no record of the
-  ;; facts beside it.  The `::asked` log line counts the questions.
-  (tu/with-terms [carriesLoad hauler_kind cart_kind]
+  ;; recover's settle asks the stored extent of the preserved predicate, read off the
+  ;; index, and reads no record of the facts beside it.  The `::asked` log line counts
+  ;; the questions.  One stored fact loses its premise mark in the store, and one record
+  ;; is inert, so the recover relabels neither and the region holds two handles fewer
+  ;; than the store.
+  (tu/with-terms [carriesLoad hauler_kind cart_kind Stray]
     (let [terms {:pred carriesLoad :hauler hauler_kind :cart cart_kind}
-          asked (atom [])]
+          asked (atom [])
+          recs  (:records kb)]
       (vocabulary! kb terms)
       (v/assert kb (list carriesLoad hauler_kind 'Bone1) U mono)
       (v/assert kb (list 'not (list carriesLoad cart_kind 'Bone1)) U mono)
       (dotimes [_ 40] (v/assert kb (list 'animal (tu/tmp-ind "Beast")) U))
-      (binding [trove/*log-fn* (fn [_ns _coords _level id payload]
-                                 (when (= :vaelii.impl.discovery/asked id)
-                                   (swap! asked conj (:data (force payload)))))]
-        (v/recover kb))
+      (v/assert kb (list 'animal Stray) U)
+      (let [stray (v/handle-of kb (list 'animal Stray) U)
+            inert (list 'animal (tu/tmp-ind "Inert"))]
+        (v/assert-inert kb inert U)
+        (p/unmark-premise! recs stray)
+        (binding [trove/*log-fn* (fn [_ns _coords _level id payload]
+                                   (when (= :vaelii.impl.discovery/asked id)
+                                     (swap! asked conj (:data (force payload)))))]
+          (v/recover kb))
+        (p/mark-premise recs stray :default)
+        (testing "the inert record is stored and OUT after the recover"
+          (let [h (v/handle-of kb inert U)]
+            (is (some? h))
+            (is (not (v/believed? kb h U))))))
       (let [{:keys [region fresh] n :asked} (first @asked)]
         (is (= :whole-store fresh))
         (is (< 40 region))
@@ -444,7 +458,7 @@
 ;; ---- a KB that declares no preservation ----------------------------------
 
 (tu/deftest-kb a-kb-declaring-no-preservation-reports-nothing-here
-  ;; The gate, from the outside: with no declaration the reach does not exist, so the two
+  ;; The presence check, from the outside: with no declaration the reach does not exist, so the two
   ;; claims are about two different tuples and neither denies the other.
   (tu/with-terms [carriesLoad hauler_kind cart_kind]
     (v/assert kb (list 'binary_predicate carriesLoad) U)

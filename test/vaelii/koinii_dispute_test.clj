@@ -18,7 +18,7 @@
 (def not-P '(not (reliable ProdCluster)))
 
 (defn- holds!
-  "`agent` asserts `claim` into its own context, stamped, at `strength` (default :default)."
+  "`agent` asserts `claim` into its own context, with its creator recorded, at `strength` (default :default)."
   ([kb agent claim] (holds! kb agent claim :default))
   ([kb agent claim strength]
    (v/assert kb claim (id/context-for agent) {:creator agent :strength strength})))

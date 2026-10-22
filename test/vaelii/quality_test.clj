@@ -158,7 +158,7 @@
   ;; honours the caller's `*print-length*` — a REPL's, typically — which elides both
   ;; sentences to the same `(implies ...)` prefix, collapses the key, and drops the tie
   ;; back onto handle order, i.e. the order the author happened to write the rules in.
-  ;; The guard is `nm/print-key` (naming.clj says why); this pins that the tie-break
+  ;; The guard is `nm/print-key` (naming.clj says why); this asserts that the tie-break
   ;; wears it.
   ;;
   ;; The discriminator: two same-signature rules asserted in reverse content order, a
@@ -205,7 +205,7 @@
 (deftest a-densely-cyclic-rule-graph-condenses-instead-of-re-exploring-it
   ;; The incident this guards against was not a wrong answer: memoizing the *path* rather
   ;; than the node re-explored the whole reachable subgraph along every one of them, which
-  ;; on a densely cyclic rule set is exponential and pinned two threads for hours with no
+  ;; on a densely cyclic rule set is exponential and occupied two threads for hours with no
   ;; termination.  So the assertion is a wall clock, and the bound is generous on purpose —
   ;; what it separates is milliseconds from never.
   (let [n      20000
@@ -337,12 +337,12 @@
       (is (str/includes? md "No `genl` edge anywhere, so there is no root"))
       (is (not (str/includes? md "reach ``")) "and never an empty name in a code span"))))
 
-(deftest every-reading-gets-its-own-heading-in-roster-order
+(deftest every-reading-gets-its-own-heading-in-table-order
   ;; What the load-time validator cannot see. It holds `readings` to `render-arms` — a row
   ;; with nothing to render it, an arm on no row — but it never renders anything, so it
   ;; cannot tell whether the heading a row declares is the heading the report actually
   ;; writes, or whether one arm's body quietly carries a `##` of its own. That is the
-  ;; whole boundary between the roster and the page.
+  ;; whole boundary between the table and the page.
   (let [readings @#'quality/readings
         full     {:rules    {:total 1 :never [] :never-count 0 :all-defeated []
                              :all-defeated-count 0 :fired 1 :firings 1 :truncated? false}
@@ -357,7 +357,7 @@
         md       (v/quality-report full)
         headings (map #(subs % 3) (re-seq #"(?m)^## .*$" md))]
     (is (= (map :title readings) headings)
-        "every reading writes its own title as a `##`, once, in the roster's order — and
+        "every reading writes its own title as a `##`, once, in the table's order — and
          no arm writes a second-level heading of its own")
     (testing "and a reading left out of the map takes its heading with it"
       (let [without (v/quality-report (dissoc full :subsumption))]
@@ -468,17 +468,20 @@
     (is (= 1 (:stranded-count (stranded kb))))
     (is (= 4 (:position (first (:stranded (stranded kb))))))))
 
-(tu/deftest-kb a-disbelieved-declaration-is-not-listed
-  ;; a stored declaration that nobody believes constrains nothing for a reason that has
-  ;; nothing to do with its position, and naming it here would report the wrong defect
+(tu/deftest-kb a-denied-declaration-stays-listed-and-a-retracted-one-does-not
+  ;; arg is forced-monotonic, so a denial of a stored declaration loses to
+  ;; it and the declaration stays in belief and in the census: it is still the
+  ;; stranded position its author wrote.  It leaves the census only by retraction.
   (tu/with-terms [parentOf a_type]
     (v/assert kb (list 'genl a_type 'thing) 'CxUniverse)
-    (v/assert kb (list 'arg parentOf 3 a_type) 'CxUniverse {:strength :default})
-    (v/assert kb (list 'binary_predicate parentOf) 'CxUniverse)
-    (is (= 1 (:stranded-count (stranded kb))))
-    (v/assert kb (list 'not (list 'arg parentOf 3 a_type)) 'CxUniverse
-              {:strength :monotonic})
-    (is (zero? (:stranded-count (stranded kb))) "out of belief, out of the census")))
+    (let [h (v/assert kb (list 'arg parentOf 3 a_type) 'CxUniverse {:strength :default})]
+      (v/assert kb (list 'binary_predicate parentOf) 'CxUniverse)
+      (is (= 1 (:stranded-count (stranded kb))))
+      (v/assert kb (list 'not (list 'arg parentOf 3 a_type)) 'CxUniverse
+                {:strength :monotonic})
+      (is (= 1 (:stranded-count (stranded kb))) "a denial loses to the declaration it denies")
+      (v/retract! kb h)
+      (is (zero? (:stranded-count (stranded kb))) "out of the store, out of the census"))))
 
 (tu/deftest-kb the-limit-caps-the-stranded-list-and-not-its-count
   (tu/with-terms [a_type]
@@ -831,9 +834,9 @@
       (is (= 1 (:pair-count (clashes kb)))))))
 
 (tu/deftest-kb antecedents-that-cannot-both-hold-are-not-a-clash-in-waiting
-  ;; The shallow satisfiability test, all three halves of it: a literal beside its own
-  ;; negation, one term claimed to be of two separated types, and one term bound to two
-  ;; arities.  None runs inference — they are the three things readable off the antecedent
+  ;; The shallow satisfiability test, all four halves of it: a literal beside its own
+  ;; negation, one term claimed to be of two separated types, one term bound to two
+  ;; arities, and a literal beside the negation of a predicate it is a spec of.  None runs inference — they are the three things readable off the antecedent
   ;; sets themselves.
   (testing "a literal and its negation"
     (tu/with-terms [bird_kind penguin_kind flies]
@@ -867,7 +870,37 @@
         (v/assert kb (list 'genl equiv_kind 'binary_predicate) 'CxUniverse)
         (v/assert-rule kb [(list equiv_kind '?p)] (list twoish '?p) 'CxUniverse {:direction :forward})
         (is (= 1 (:pair-count (clashes kb)))
-            "equiv_kind reaches binary_predicate up genl, so it claims arity 2")))))
+            "equiv_kind reaches binary_predicate up genl, so it claims arity 2"))))
+  (testing "and a literal beside the negation of a predicate it is a spec of"
+    (let [before (:pair-count (clashes kb))]
+      (tu/with-terms [coversOf properCoversOf]
+        (v/assert kb (list 'genl properCoversOf coversOf) 'CxUniverse)
+        (v/assert-rule kb [(list coversOf '?x '?y) (list 'not (list coversOf '?y '?x))]
+                       (list properCoversOf '?x '?y) 'CxUniverse {:direction :forward})
+        (v/assert-rule kb [(list properCoversOf '?x '?y)] (list 'not (list coversOf '?y '?x))
+                       'CxUniverse {:direction :forward})
+        (is (= before (:pair-count (clashes kb)))
+            "the second rule needs a proper tuple where the first denies its plain one")))))
+
+(tu/deftest-kb an-arity-floor-above-an-exact-arity-is-no-clash-in-waiting
+  ;; A floor rule reads `(arity ?p ?n)` or `(arityMin ?p ?n)` with `?n` above a bound.  The
+  ;; arity table is functional, so beside a claim of exactly n places `?n` is n, and a bound
+  ;; of n or more admits no ?p.  An arityMin above the exact arity admits none either.
+  (doseq [[floor-functor bound exact reachable?] '[[arity 2 2 false]
+                                                   [arity 1 2 true]
+                                                   [arityMin 3 2 false]]]
+    (tu/with-terms [lowish highish]
+      (v/assert kb (list 'genl lowish 'thing) 'CxUniverse)
+      (v/assert kb (list 'genl highish 'thing) 'CxUniverse)
+      (v/assert kb (list 'disjoint lowish highish) 'CxUniverse)
+      (let [before (:pair-count (clashes kb))]
+        (v/assert-rule kb [(list 'arity '?p exact)] (list lowish '?p) 'CxUniverse
+                       {:direction :forward})
+        (v/assert-rule kb [(list floor-functor '?p '?n) (list 'greaterThan '?n bound)]
+                       (list highish '?p) 'CxUniverse {:direction :forward})
+        (is (= (if reachable? (inc before) before) (:pair-count (clashes kb)))
+            (str "(" floor-functor " ?p ?n) above " bound " beside exactly " exact
+                 (if reachable? " can both hold" " admits no ?p")))))))
 
 (tu/deftest-kb an-arg-type-disjoint-from-the-other-conclusion-is-not-a-clash-in-waiting
   ;; The fourth half of the satisfiability test, the one `separated-antecedents?` cannot
@@ -897,8 +930,36 @@
       (is (zero? (:pair-count (clashes kb)))
           "a gauge is not a record, so measures and logged never both fire for one term"))))
 
+(tu/deftest-kb a-covering-declaration-prunes-as-arg-does
+  ;; `args` and `argAndRest` are `arg` over a run of positions, so whatever reads `arg`
+  ;; reads them too: `(argAndRest measures 2 gauge)` types position 2 and every later one,
+  ;; and `(args measures gauge)` is `(argAndRest measures 1 gauge)`.  A tail starting past
+  ;; the shared term's position says nothing about it.
+  (tu/with-terms [gauge record calibrated ledgered measures logged]
+    (v/assert kb (list 'genl gauge 'thing) 'CxUniverse)
+    (v/assert kb (list 'genl record 'thing) 'CxUniverse)
+    (v/assert kb (list 'genl calibrated gauge) 'CxUniverse)
+    (v/assert kb (list 'genl ledgered record) 'CxUniverse)
+    (v/assert kb (list 'disjoint gauge record) 'CxUniverse)
+    (v/assert-rule kb [(list measures '?v '?p)] (list calibrated '?p) 'CxUniverse {:direction :forward})
+    (v/assert-rule kb [(list logged '?p)] (list ledgered '?p) 'CxUniverse {:direction :forward})
+    (is (= 1 (:pair-count (clashes kb))) "nothing types measures yet")
+    (testing "a tail starting past the shared term's position leaves the pair a candidate"
+      (let [h (v/assert kb (list 'argAndRest measures 3 gauge) 'CxUniverse)]
+        (is (= 1 (:pair-count (clashes kb))))
+        (v/retract! kb h)))
+    (testing "a tail covering it prunes the pair"
+      (let [h (v/assert kb (list 'argAndRest measures 2 gauge) 'CxUniverse)]
+        (is (zero? (:pair-count (clashes kb)))
+            "a gauge is not a record, read off argAndRest as off arg")
+        (v/retract! kb h)))
+    (testing "and so does args, the tail from position 1"
+      (v/assert kb (list 'args measures gauge) 'CxUniverse)
+      (is (zero? (:pair-count (clashes kb)))
+          "a gauge is not a record, read off args as off arg"))))
+
 (tu/deftest-kb a-genlArg-typed-antecedent-is-not-read-and-so-not-pruned
-  ;; The scope boundary of the reading above, pinned as a limitation rather than fixed.
+  ;; The scope boundary of the reading above, asserted as a limitation rather than fixed.
   ;; `arg-type-conflicted?` reads `arg` and not `genlArg`: `(genlArg subGauge 1 gauge)`
   ;; demands the argument be a *subtype* of `gauge` rather than a member of it — a claim
   ;; one stratum up — so it is not compared against a membership conclusion through
@@ -982,12 +1043,12 @@
         (is (not (str/includes? old "already covers")))
         (is (not (str/includes? old "Contradictions in waiting")))))))
 
-(deftest the-roster-validator-refuses-a-roster-and-arms-that-disagree
-  ;; `check-readings!` runs at this namespace's load, over one roster that agrees with its
+(deftest the-readings-validator-refuses-a-table-and-arms-that-disagree
+  ;; `check-readings!` runs at this namespace's load, over one table that agrees with its
   ;; arms — so every branch it has taken is the one that throws nothing, and until
   ;; something drives it over halves that disagree, "it refuses" is a claim about code
   ;; that has never run.  The check it *cannot* see is the one above:
-  ;; `every-reading-gets-its-own-heading-in-roster-order` renders and reads the headings.
+  ;; `every-reading-gets-its-own-heading-in-table-order` renders and reads the headings.
   (let [check   @#'quality/check-readings!
         arms    @#'quality/render-arms
         rows    @#'quality/readings
@@ -1002,7 +1063,7 @@
         (is (= :unarmed-reading (:mismatch data)))
         (is (= :ghost (:reading data)))))
     (testing "an arm on no row, which `report`'s walk never reaches"
-      (is (= :unrostered-arm
+      (is (= :unlisted-arm
              (:mismatch (refusal rows (assoc arms :ghost (fn [_] "")))))))
     (testing "a blank heading, which is a `##` over nothing"
       (is (= :blank-title

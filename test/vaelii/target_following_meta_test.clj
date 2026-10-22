@@ -11,6 +11,7 @@
   (:require [clojure.test :refer [is use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.kb :as kb]
+            [vaelii.impl.profile :as prof]
             [vaelii.impl.sentex :as sx]
             [vaelii.test-util :as tu]))
 
@@ -34,7 +35,7 @@
   (is (not (v/has-prop? kb :target-following 'endorses)) "undeclared: not target-following")
   (mark-following! kb 'endorses)
   (is (v/has-prop? kb :target-following 'endorses) "declared: the property is marked")
-  (is (contains? (v/props kb :target-following) 'endorses) "and it shows in the roster"))
+  (is (contains? (v/props kb :target-following) 'endorses) "and it shows in the `:props` set"))
 
 ;; ---- the cascade: a reply edge does not outlive its target --------------
 
@@ -58,6 +59,27 @@
       (v/retract! kb p)
       (is (nil? (v/sentex kb e1)))
       (is (nil? (v/sentex kb e2)) "both endorsements went with the claim"))))
+
+;; ---- cost: the cascade reads the metas naming the removed handle alone ----
+
+(tu/deftest-kb the-cascade-fetches-no-meta-naming-another-handle
+  ;; Counted in record fetches, since the instrument tallies those whatever the load.  The
+  ;; cascade reads the removed handle's own term key; narrowing on the atom `sentexHandle`
+  ;; instead fetches every stored sentex that names any handle, once per removed handle.
+  (let [c (ctx! kb)]
+    (mark-following! kb 'endorses)
+    (let [claim!   #(v/assert kb (list 'trusts 'AgentAtlas (tu/tmp-ind)) c)
+          mention! (fn [n] (dotimes [_ n]
+                             (v/assert kb (list 'mentions 'AgentBoreas (sx/sentex-handle (claim!))) c)))
+          fetches  (fn [] (let [p (claim!)]
+                            (v/assert kb (list 'endorses 'AgentBoreas (sx/sentex-handle p)) c)
+                            (prof/start)
+                            (try (v/retract! kb p) (get-in (prof/stop) [:fetches :sentex])
+                                 (finally (prof/stop)))))]
+      (mention! 4)
+      (let [few (fetches)]
+        (mention! 40)
+        (is (= few (fetches)) "forty more metas naming other claims add no fetch")))))
 
 ;; ---- opt-in: an unmarked meta predicate still orphans harmlessly --------
 

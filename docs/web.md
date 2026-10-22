@@ -31,12 +31,11 @@ scripts/start-vaelii-server.sh [KB-DIR] [PORT]         # the daemon, token requi
 **`VAELII_KB_DIR` names a KB directory to load at startup.** The browser opens on the
 starter, loads the directory as a catalog job with belief recovered (`catalog/load-dir`),
 and makes it the active KB when the load finishes; `/kbs` shows the progress until then.
-A store is opened with `:recover? :trust` **under `VAELII_DEV` only**, so a store whose
+A store is opened with `open-kb`'s default, `:recover? :trust`, so a store whose
 reasoning image an earlier engine build wrote is active, and writable, once that image is
 installed; the running build's code moves belief wherever a settle reaches, and no rebuild
-runs (docs/storage.md, "Trusting an image") — a development prompt is browsable in seconds
-however often the engine changes. A served browser opens with `:auto` and waits for the
-recover, so the KB it makes active holds belief this build derived.
+runs (docs/storage.md, "Trusting an image") — the KB is browsable in seconds however often
+the engine changes. `lein cli upgrade` is how a store gets belief this build derived in full.
 The directory is classified as discovery classifies one, so a store, a dump and a corpus
 all load. A path holding no KB is logged and the browser stays on the starter.
 `start-vaelii.sh` and `start-vaelii-dev.sh` set it to their `KB-DIR` argument;
@@ -67,7 +66,15 @@ fn ([operations.md](operations.md)).
 active KB. A native client such as the vaelii-apple apps connects to
 `http://127.0.0.1:3000` with the same requests it sends `vaelii.serve`, and its writes
 take this process's `write-monitor` like the browser's own write routes
-([operations.md](operations.md), "The browser serves the protocol too").
+([operations.md](operations.md), "The browser serves the protocol too"). Two ops are the
+browser's own, `:kbs` (the catalog) and `:jobs` (the job registry), and they answer while
+a load holds the active KB and every other op is refused, so a program watches the
+browser here rather than scraping its pages:
+
+```sh
+curl -s -H 'content-type: application/edn' -d '{:op :kbs}' 127.0.0.1:3000/op
+curl -s -H 'content-type: application/edn' -d '{:op :sentex-count}' 127.0.0.1:3000/op
+```
 
 ### Working on it: `lein browser`
 
@@ -90,7 +97,10 @@ first place is `vaelii.browser.reload` (`hot-reloading`), layered over that hand
 `VAELII_DEV` is set: before each request it reloads the changed files under `src`,
 together with every loaded namespace that requires one of them, transitively, in
 dependency order. A plain file edit reaches the running server with no REPL, and an
-engine edit does too.
+engine edit does too. While a job runs, no request reloads anything; the first request
+after the last job settles reloads every edit made meanwhile. A job holds values built by
+the code it started with, and a reload mid-job runs redefined fns over them: a progress
+reporter built before an edit to its record lacks the field the reloaded fns read.
 An edit to a shipped KB file under `resources/kb/upper/` or `resources/kb/middle/` is
 synced into every loaded KB by a job the next request submits, and a write to the starter
 is written back into those files (`kb-file-syncing`;
@@ -108,7 +118,7 @@ the provers) depend on — and a method that calls a function reaches the reload
 through its var. An edit inside a record's definition is not loaded, and every page names
 it (`ns/Name`) until the process restarts. The protocols and the method-less records sit in
 **held namespaces** — `vaelii.impl.types.*`, `vaelii.impl.protocols`,
-`vaelii.impl.jtms-protocol`, `vaelii.impl.tokens`, `vaelii.impl.roster`,
+`vaelii.impl.jtms-protocol`, `vaelii.impl.tokens`, `vaelii.impl.handle-set`,
 `vaelii.impl.settle-phases` and `vaelii.koinii.types` — whose ns
 symbol carries `:clojure.tools.namespace.repl/load false`, which require only held
 namespaces, and which the reloader never re-evaluates; an edit to one is named the same way.
@@ -134,7 +144,7 @@ with nothing rebuilt. A served process never reloads: `-main` and `start` serve 
 built.
 
 **Both halves are loopback**, and the pairing is why it is not configurable from there
-[why](defenses.md#loopback-only-for-the-browser-plus-nrepl-pairing) — the profile pins
+[why](defenses.md#loopback-only-for-the-browser-plus-nrepl-pairing) — the profile binds
 nREPL to `127.0.0.1` rather than relying on Leiningen's default, and the browser binds
 loopback with no way to say otherwise. Exposing the browser stays the deliberate
 `--listen` on `-main`, which starts no REPL.
@@ -158,32 +168,44 @@ request log either, which [operations.md](operations.md) states as the trade it 
 
 | Route | Shows |
 |-------|-------|
-| `/` | the **upper ontology**: the reader's browsing history (the terms, literals and rules whose pages they opened, each list in visit order and capped at 50, held in the browser's localStorage by vaelii.js, a literal drawn by `/history/literals` with its badge, its colours and its belief now), what the KB is in four numbers, then the genlCx context lattice, the genl type tree (from `thing`), the documented terms (the `comment` sentexes), and its disjointness. Every one of them is **bounded**, and where the whole is too long to read the page shows the top of a ranking rather than the first fifty of an order nobody chose — this is the first page opened against a KB whose size the reader did not choose (below) |
-| `/stats` (`?clashes=1`) | **statistics**: headline counts (contexts, types, stored sentexes, and the contradiction / conflict / violation tallies), a contexts-by-size table ranked largest-first, and the actual dilemmas / conflicts / dropped-derivation violations when non-empty — each ledger violation naming the run that dropped it, and each `:forced-conclusion` entry, which `violations` reads off the stored firings, naming none. The contexts table and the three ledgers are one screen each and continue on scroll. `?clashes=1` additionally asks the **standing disjointness question** (below), which is computed on demand rather than filed; its clash list stops at 50 with a `showing 50 of N` line and does not continue |
+| `/` | the **upper ontology**: the reader's browsing history (the terms, literals and rules whose pages they opened, each list in visit order and capped at 50, held in the browser's localStorage by vaelii.js, a literal drawn by `/history/literals` with its badge, its colours and its belief now, and an entry the active KB does not hold forgotten through `/history/known`), what the KB is in four numbers, then the genlCx context lattice, the genl type tree (from `thing`), the documented terms (the `comment` sentexes), and its disjointness. Every one of them is **bounded**, and where the whole is too long to read the page shows the top of a ranking rather than the first fifty of an order nobody chose — this is the first page opened against a KB whose size the reader did not choose (below) |
+| `/stats` (`?nogoods=1`, `?clashes=1`) | **statistics**: headline counts (contexts, types, stored sentexes, the placed `contradicts` count and the violation tally), a contexts-by-size table ranked largest-first, and the dropped-derivation violations when non-empty — each ledger violation naming the run that dropped it, and each `:forced-conclusion` entry, which `violations` reads off the stored firings, naming none. Every count is a stored count, so a page load reads no belief. `?nogoods=1` reads what the placed nogoods come to, the dilemmas and conflicts, each placement read at its own context: a belief read per placement, which is minutes on a corpus holding tens of thousands. The contexts table and the ledgers are one screen each and continue on scroll. `?clashes=1` additionally asks the **standing disjointness question** (below), which is computed on demand rather than filed; its clash list stops at 50 with a `showing 50 of N` line and does not continue |
+| `/lists` | the **lists**: whole-KB lists, each read only when its button is pressed — every believed **defeat** (the sentex it takes out of belief and its context), every **contradiction** the last settle left standing (the dilemmas, then the conflicts), and every **unary predicate without a genl** but `thing`. A list runs as a read job (below) |
+| `/lists/run` (POST) | run one list (`list=defeats`, `contradictions` or `orphan-types`) as a job, and answer with its rows when it finishes inside 5 s, else with `/jobs`. Origin-checked: it starts work |
+| `/lists/result?job=`, `/lists/rows?job=&offset=` | a finished list's rows, 200 at a time, continuing on scroll; a job the registry has dropped (after an hour) says so |
+| `/closure?dir=genls\|specs&q=<term>` | **every supertype or every subtype** of a type, drawn as a layered picture of the reduced order, the term on the bottom row for genls and the top row for specs (below). The term page links both under its graph |
 | `/find?q=<pattern>` | **term search** over the KB's vocabulary: every term whose name matches (a query with no regex metacharacter is a case-insensitive substring match, so `DOG` finds `dog`; a query carrying one is a regular expression under `re-find`, so `^parent` anchors), each linked to its term page — the header search box points here. A pattern resolving to a single term (the only match, or an exact-name match) **jumps straight to that term's page** (`HX-Push-Url`) |
-| `/term?q=<term>` | a **term**: a drawn picture of where it sits (below), then every sentex containing it grouped by the **index root** that reaches it — functor `[:predicate-extent]`, argument-position `[:argument-slot pos]` (the roster the predicate-agnostic read unions the scoped roots over), context `[:context-root]`, and the term-index `[:term-index]` remainder (rules, deeper nestings) — each group carrying its cheap count (O(1) for the roots; one O(1) read per predicate at the slot for the argument groups) |
-| `/sentex/:id` | a **sentex** (atomic or rule): its **belief state** (IN, or the `why-not` reason — superseded / defeated / inert / unsupported — with the restatement, contradictors, the declarations a placed defeat convicts through, the grounds of the length an inert tuple breaks, or missing antecedents that explain it), its supporting justifications (justifications concluding it), its dependents (justifications using it as an argument), and its terms |
+| `/term?q=<term>` | a **term**: a drawn picture of where it sits (below), then every sentex containing it grouped by the **index root** that reaches it — functor `[:predicate-extent]`, argument-position `[:argument-slot pos]` (the slot predicate set the predicate-agnostic read unions the scoped roots over), context `[:context-root]`, and the term-index `[:term-index]` remainder (rules, deeper nestings) — each group carrying its cheap count (O(1) for the roots; one O(1) read per predicate at the slot for the argument groups) |
+| `/sentex/:id` | a **sentex** (atomic or rule): an action bar — Copy, Edit, Remove (below) — then its **belief state** (IN, or the `why-not` reason — superseded / defeated / inert / unsupported — with the restatement, contradictors, the declarations a placed defeat convicts through, the grounds of the length an inert tuple breaks, or missing antecedents that explain it), its supporting justifications (justifications concluding it), its dependents (justifications using it as an argument), and its terms |
 | `/why/:id` | the **proof tree**: `vaelii.core/why` rendered whole — every justification down to the premises it rests on, collapsible, cycle-guarded, with rule sentences in the author's variable names |
 | `/justification/:id` | a **justification**: its supports/arguments (antecedent sentexes) and its dependent sentex (the conclusion) |
 | `/levels?q=<goal>&ctx=<context>` | the **lookup-to-query stack**: what each of the eight levels answers for a goal, which level first does, and — above them — the **query plan**: the provers bearing on the goal with their estimates and which one runs. A **vector** goal is a conjunctive query and gets the join plan instead (below). Links across to `/inference` for the same goal |
 | `/inference?q=<goal>&ctx=<context>&d=<depth>` | the **inference debugger**: the run that plan predicted, one step past `/levels`. The **search tree** the node engine builds for a goal — every node the frontier reached (not only the path that answered), each with the itemized estimate that ordered it, the rewrite that produced it, and the answers that came off it — plus the same goal under several **tacticians side by side**, tabled by the work each did and the answers each found. The identity property (every complete tactician returns the same answer set) is **verified** on the page, not asserted: a differing row is marked. Reads through `search-tree` / `compare-tacticians`, both of which bound their own work (a node budget and a wall-clock), so the page holds no session and works under `--attach`. Needs a depth — the node engine's only termination |
 | `/network?ctx=<context>&calc=<calculus>` | the **constraint network** a qualitative calculus computes over a context: the tightened matrix (a cell is what still holds of row-to-column), whether the believed facts are satisfiable at all, and one scenario out of it. With no context, the six calculi and their vocabularies |
-| `/demo` (GET/POST) | the **non-monotonicity walkthrough**: three stepped writes to the reader's sandbox in which `(hasCapability Pingu flying)` is believed, stops being believed, and comes back — at a different handle. GET renders where the sandbox stands, POST runs one step. Every step writes, so every step is origin-checked (below) |
-| `/reasoning` (GET/POST) | the **worked examples**: every kind of inference the shipped ontology performs, each a question with a live answer, the level that answered it, and links to the stored sentexes it reasoned from. GET computes every read-only card on render; POST establishes one example's premises in the reader's sandbox (below) |
-| `/assert` (GET/POST) | the **new-sentex form**: sentences (one per line), a context, and the known-true switch. GET seeds it (`?q=<term>` from a term page); POST checks every line and applies them in one `edit!`, then says what followed (below) |
+| `/demo` (GET/POST) | the **non-monotonicity walkthrough**: three stepped writes to the reader's sandbox in which `(hasCapability Pingu flying)` is believed, stops being believed, and comes back — at the same handle. GET renders where the sandbox stands, POST runs one step. Every step writes, so every step is origin-checked (below) |
+| `/reasoning` (GET/POST) | the **worked examples**: every kind of inference the shipped ontology performs, each a question with a live answer, the level that answered it, and links to the stored sentexes it reasoned from. GET renders every card at once and asks nothing; POST establishes one example's premises in the reader's sandbox (below) |
+| `/reasoning/verdict?id=&ms=` (GET) | one card's verdict, which the gallery asks for after it renders, one card at a time (`hx-sync` queued on `#main`). `ms` is the climb's deadline (`escalate`'s `:max-ms`), 10 s from the page and up to 2 min from a card's "Give it 2.0 min" button; a stopped climb says **No answer within**, which is not a verdict |
+| `/assert` (GET/POST) | the **new-sentex form**: sentences (one per line), a context, and the known-true switch. GET seeds it — `?q=<term>` from a term page, `?copy=<handle>` with a stored sentex (Copy), or `?text=`, `?ctx=` and `?strength=monotonic` whole (Copy on `/removed`); POST checks every line and applies them in one `edit!` as a job, then says what followed (below) |
 | `/edit` (GET/POST) | the **sentex editor**: GET seeds it for a set of handles (`?handles=1,2`) or for a term's most direct index group (`?q=<term>`), POST checks and applies the save. htmx fragments swapped into the editor panel, not standalone pages. |
 | `/edit/preview` (POST) | what the open edit would do, through `vaelii.core/preview` — the same diff the save computes, and a read: the KB comes back at the same handles. Fills the lookahead under the editor's controls |
-| `/complete` (GET) | the terms a prefix could become, as the list the editor drops under the caret. `find-terms`' prefix match over the term roster, twelve at a time |
-| `/retract` (GET/POST) | the **retract confirmation**: GET previews the teardown (the named handles and what the sweep would take with them) and writes nothing; POST performs it |
+| `/complete` (GET) | the terms a prefix could become, as the list the editor drops under the caret. `find-terms`' prefix match over the term-name set, twelve at a time |
+| `/retract` (GET/POST) | the **retract confirmation**: GET previews the teardown (the named handles and what the sweep would take with them) and writes nothing; POST performs it, as a job |
+| `/sentex-actions?h=<handle>` | a sentex's **Copy / Edit / Remove** controls as a fragment: the menu a right-click on a badge opens (below) |
+| `/term-op` (GET/POST) | the **term bar**'s operations — `op=rename` (a merge when the new name is a term), `copy`, `remove` on `?q=<term>`: GET is the confirmation (how many asserted sentexes, roughly how long) and writes nothing; POST runs it as a job (below) |
+| `/term-op/name` | the new-name check under a rename or copy panel, `?op=&q=<term>&to=<name>`: whether the name is a term already and, for a rename, whether the two merge cleanly; a fragment, and a read |
+| `/removed` | the **removed list**: the last 50 sentexes the browser removed from the active KB, newest first, each with Put back and Copy (below) |
+| `/removed/restore` (POST) | **put back** one removal: assert its sentence in its context with its strength again, as a job, and drop it from the list |
 | `/chain` (POST) | run **forward chaining** as a job, up to the derivation bound the form names, and answer with the `/stats` page it changed — or, when the run outlasts 250 ms, with `/jobs` (below). POST-only: it derives and places conclusions |
-| `/funnel` (GET/POST) | the **chaining funnel**: every forward rule and what chaining did with it — how many firings it **placed**, how many it **refused** and why (`exception` / `naf` / `post-join` / `hidden`), or whether it stayed **silent** (no antecedent set ever completed). Ranked by what is wrong: no-placement rules first, refusals descending, firing rules last; each rule links to its sentex and carries the `violations` it filed. The per-rule breakdown behind `/stats`' headline, read `O(rules)` off the standing refusal ledger and the justification graph — no per-run instrumentation. GET reads the current state; POST runs the same chaining job as `/chain` but lands back here so the funnel fills in front of the reader |
+| `/funnel` (GET/POST) | the **chaining funnel**: every forward rule and what chaining did with it — how many firings it **placed**, how many it **refused** and why (`naf` for a closed extent, `separation`, `constraint`, `hidden`, `post-join`), or whether it stayed **silent** (no antecedent set ever completed). Ranked by what is wrong: no-placement rules first, refusals descending, firing rules last; each rule links to its sentex and carries the `violations` it filed. The per-rule breakdown behind `/stats`' headline, read `O(rules)` off the standing refusal ledger and the justification graph — no per-run instrumentation. GET reads the current state; POST runs the same chaining job as `/chain` but lands back here so the funnel fills in front of the reader |
 | `/jobs` | the **jobs screen**: every long run this process has made recently — a load, an export, a chaining run — with where it has got to, what it left behind, and the one control that stops it (below) |
+| `/inflight/poll?id=` | a waiting page's poll: 204 while its read runs, and `HX-Refresh` once it is done, which reloads the page from the finished read (below) |
 | `/jobs/rows` | the job list, on the same self-terminating poll as the KB panels, carrying the header's running count as an out-of-band swap |
 | `/jobs/cancel` (POST) | **stop** a running job at its next progress report. A write to this process's registry rather than to a KB, so it is origin-checked but not behind `writing` — cancelling a job has to stay reachable *because* one is running |
 | `/kbs` | the **knowledge bases**: what is loaded (with counts, an estimated footprint, and a progress bar for one still loading) and what can be — the shipped ontologies, a generated corpus with a slider per parameter, and every corpus / dump / store the catalog found. See [docs/catalog.md](catalog.md) |
 | `/kbs/load`, `/kbs/unload`, `/kbs/activate` (POST) | **load** a source, **unload** an entry (cancelling it if it is still loading), **switch** to one. Each changes what this process holds, so each is a write: POST-only and origin-checked |
 | `/kbs/export`, `/kbs/export/cancel` (POST) | **write the active KB out** as a portable dump — the variant and the compression, and a destination directory under `VAELII_REQUEST_PATHS` — and **stop** one that is running. POST-only and origin-checked, like every other write |
 | `/kbs/rows` | the loaded-KB panel, refetched once a second **while a load is running** — the trigger is in the answer, so an idle page stops asking |
+| `/kbs/backup` (POST) | **back up** a `:pg-snapshot` store: its directory cloned and its Postgres schema dumped, beside the store, as a job. POST-only and origin-checked, and confirmed in the browser first |
 | `/kbs/export/rows` | the export panel, on the same self-terminating poll: the last job's report, and whether what it wrote is now offered under **Available** |
 | `/kbs/banner` | the **provisional-KB strip** every page carries when the KB it reads is not finished (below). Like the memory strip it is a read of the *process* and swaps only itself; it answers with the empty element once there is nothing to say, which is what stops the polling |
 | `/sandbox/reset` (POST) | **discard this session's sandbox** — every sentex in it and the `genlCx` edge that made it a context. The only control in the browser whose purpose is to destroy knowledge, so POST-only and origin-checked |
@@ -191,8 +213,9 @@ request log either, which [operations.md](operations.md) states as the trade it 
 | `/caches/rows` | the cache table, on the same self-terminating poll as the KB panels — it asks only while a job is running, which is when these numbers move |
 | `/caches/clear` (POST) | **drop the derived caches** and say what went. Origin-checked like every write and deliberately not behind `writing`: it moves no belief, holds no writer, and is the one control here meant to be used *while* a load runs |
 | `/caches/scale` (POST) | **rescale the caches**: every count-bounded cache's shipped limit times the number the form sends (`v/set-cache-scale`, the dial `VAELII_CACHE_SCALE` sets at start). A write to the **whole process** — every KB loaded in it reads the one scale ([caches.md](caches.md#tuning-the-bounds)) — so a value that is not a finite number 0 or more, or no value, is a 400 (below) and changes nothing. Origin-checked and not behind `writing`, for `/caches/clear`'s reason |
-| `/kbs/memory` | the **memory strip** heading that panel, collapsed or (`?detail=1`) expanded into the per-KB breakdown. A read of the *process*, not of a KB, so it takes no view. Two requests reach it and they are different requests: the header line **toggles** (it asks for the state the panel is not in), while the panel **refreshes** at the state it is in, and only while a load is running — one element carrying both would poll the toggle and flip the breakdown open and shut every tick |
+| `/kbs/memory` | the **memory strip** heading that panel, collapsed or (`?detail=1`) expanded into the per-KB breakdown. A read of the *process*, not of a KB, so it takes no render env. Two requests reach it and they are different requests: the header line **toggles** (it asks for the state the panel is not in), while the panel **refreshes** at the state it is in, and only while a load is running — one element carrying both would poll the toggle and flip the breakdown open and shut every tick |
 | `/tree/rows?rel=<genl\|genlCx>&node=<term>` | one **level of a hierarchy**: that node's direct children, fetched the first time its disclosure is opened, and paged like any other list. `rel` reaches the index as a functor, so it is checked against the two transitivity relations rather than trusted |
+| `/history/known?t=&handles=` | which browsing-history entries the **active KB holds**, as JSON `{"terms": [q …], "handles": [h …]}`: of the `t` values (one per term, each a term page's `q`), those some stored sentex mentions, and of the handles, those naming a stored sentex. vaelii.js asks once per drawn front page and forgets what is left out, since the history was recorded against whichever KB was active at the visit. A `t` or `handles` that does not read is left out. While the active KB's load is running or stopped part-way the answer is `{"complete": false}` and nothing is forgotten; a load that is `:done` is judged, with belief built or not |
 | `/history/literals?handles=` | the browsing history's **literals**: one entry per handle, in the order given, each with its badge and remove button. vaelii.js keeps only the handles, so the panel builds no markup from localStorage. A `handles` that does not read is an empty row |
 | `/term/rows`, `/find/rows`, `/levels/rows`, `/front/rows`, `/stats/rows`, `/funnel/rows` | **continuations**: one more page of rows for a capped list. Not pages — bare `<li>`s (the funnel's `<div>` cards) a list's sentinel fetches for itself (below). `/front/rows` and `/stats/rows` take a `?section=` naming which list on the page is continuing |
 | `/health`, `/op` (POST) | the **daemon protocol** over the active KB (above): a native client connects here as it would to `vaelii.serve` |
@@ -222,14 +245,16 @@ with different chrome. The whole feature is one function called from one place.
 Being live is also what obliges the budget. **A picture nobody asked for may never be the
 reason a term page is slow**, so the bound is part of the work and not a follow-up:
 
-- **The taxonomy view's expansions cost at most 24 facade reads**, ever — twelve
-  expansions, six per side, at one or two reads each. The radial view spends at most twelve:
+- **The taxonomy graph's expansions cost at most 24 facade reads**, ever — twelve
+  expansions, six per side, at one or two reads each. The radial graph spends at most twelve:
   it expands three neighbours, and each costs two O(1) argument counts and two pattern
   reads. A taxonomy expansion reads the node's one-step neighbours through
   `(take (inc cap))`, so it costs the node's own fan-out and nothing more. A node with two
   to 500 one-step neighbours costs a second read, in which the engine makes one memoized
   closure read per neighbour: `min-genls` or `max-specs` for a `genl` node,
-  `min-context-parents` or `max-context-children` for a `genlCx` node. A radial expansion reads
+  `min-context-parents` or `max-context-children` for a `genlCx` node. The descending side of
+  a `genl` page spends one of its six on `covers-of`, the read its cover frames come from
+  (below). A radial expansion reads
   at most `ego-scan` (500) matches and orders them by handle before the cap cuts.
 - **Measured** twice. Over the shipped schema plus the test-world cast: **2–10 reads** and
   **0.7–2.9 ms** a page (`dog` +3 reads / +0.7 ms, `animal` +10, a synthetic 5,000-subtype
@@ -280,7 +305,7 @@ below `mammal`. Each expanded node's row is read the same way, not the centre's 
 The engine computes both sets over every believed edge of the closure, whatever installed
 the edge: a stated `(genl sub super)`, a `genl` sentex a rule derived (an `intersection`
 derives one to each type it intersects), and an edge a `covering`, `separating` or
-`partition` roster installs. A roster stores no `genl` sentence for its parts, and a
+`partition` declaration installs. A cover declaration stores no `genl` sentence for its parts, and a
 picture read off stored `genl` sentences alone would draw a part with no parent. Two
 supertypes that subsume each other are both drawn.
 
@@ -288,6 +313,31 @@ A row is a hop count from the centre. Two nodes of one row can therefore be comp
 when `dog`'s minimal supertypes are `mammal` and `pet`, and `animal` is minimal above
 `mammal` while `companion` is minimal above `pet` with `companion ⊂ animal`, the second
 row holds both `animal` and `companion`.
+
+**The first row below a type is framed by the covers over it.** `vaelii.core/covers-of`
+answers the believed `partition`, `covering` and `separating` sentexes whose whole is the
+centre, and each cover with a drawn part gets a frame around those parts, labelled with
+its kind and the claims the kind makes: `partition: covers, disjoint`, `covering: covers`,
+`separating: disjoint`. A type carrying two covers of one kind numbers them: `expression`
+carries three partitions, drawn as `partition 1` … `partition 3`. The frames are ordered
+by content, by kind in that order and then by the printed part list, so the numbering does
+not depend on which declaration arrived first. A cover that declares a part the row does
+not hold, because the part sits below another subtype or past the row cap, says how many
+of its parts the row drew (`1 of 2 parts in this row`). A subtype in two covers is one
+node, drawn in the first frame, and the caption names it for the later cover: `partition
+2 also names p (drawn under partition 1)`. A subtype no cover names is drawn outside
+every frame. The frames are a property of the centre: the rows further down, the rows
+above, a context page's `genlCx` rows and a cover an `intersection` implies are not
+framed.
+
+**Two edge kinds take a stroke colour.** A subsumption arrow, `genl` or `genlCx`, is blue
+(`--g-sub`), and a flank edge one of whose relations is `disjoint` is amber
+(`--g-disjoint`); every other flank edge keeps the muted stroke. In both modes the amber is
+the lighter of the two and the pair lies on the blue-yellow axis, so it separates under
+protanopia and deuteranopia: OKLab ΔE 27.0 dark and 27.6 light under simulation, and each
+colour is above 3:1 against the ground, by the `dataviz` validator. The colour repeats
+what the edge already says: a `genlCx` arrow keeps its dash, and a flank edge keeps its
+predicate label.
 
 **A `genlCx` row holds a context's nearest neighbours in the context lattice.** Above a
 context the row holds its minimal parents (`min-context-parents`): the contexts it reaches
@@ -426,8 +476,8 @@ horizon goes first whatever its history, and one left idle below the horizon fal
 as `L` rises past it. A script that keeps sandboxes alive by requesting through each is
 an admission problem the cap does not answer.
 
-The roster lives in the browser's process; the KB holds the sandboxes. The first admission
-after a start rebuilds the roster from the `CxSandbox…` contexts below `CxWell`, each
+The eviction table lives in the browser's process; the KB holds the sandboxes. The first
+admission after a start rebuilds the table from the `CxSandbox…` contexts below `CxWell`, each
 entered as a fresh sandbox of its stored size, so a restart forgets activity, and a KB
 holding more than the cap is brought down to it by that admission.
 
@@ -456,24 +506,23 @@ Two things it is careful to show rather than assert:
   and answerable again in step 3. `(not (hasCapability Pingu flying))` appears in step 2 —
   the KB does not merely fail to conclude flight, it concludes flightlessness, which is a
   different statement.
-- **The returning conclusion is a new record.** `exceptWhen` blocks rather than rebuts, so
-  the blocked justification is *invalid*, groundability goes with it, and the
-  dependency-directed sweep deletes the conclusion outright ([exceptions.md](exceptions.md)).
-  Revival is therefore a re-derivation: step 3's sentex has a handle that never existed
-  before, and step 1's handle resolves to nothing. The page names both side by side and
-  links the new one, because that is the sharpest evidence on it — the engine did not hide
-  the conclusion and put it back, it forgot it and re-earned it, and the proof being
-  identical while the record is not is a thing a slideshow could not fake.
+- **The returning conclusion is the same record.** `exceptWhen` blocks rather than rebuts:
+  the firing stays stored, and a guard defeat resting on `(penguin Pingu)` hides it
+  ([naf.md](naf.md#evaluated-in-the-placement-context-not-the-join)). Retracting the
+  penguin claim takes the defeat's support OUT, so step 3 believes the conclusion at step
+  1's handle with nothing re-derived. The page names the handle at both steps.
 
 The individual is the only content the demo creates; the rules are `CxBiology`'s
-shipped ones. Step 2 reads `why-not`'s **sentence** arity, which exists for exactly this
-case: a blocked conclusion has no handle to ask about.
+shipped ones. Step 2 reads `why-not`'s **sentence** arity.
 
 ### What the ontology can work out
 
 `/demo` argues one thing at length. `/reasoning` is the breadth: a card per kind of
 inference the shipped ontology performs, each a real question with the answer the KB gave
-when the page was drawn. The table is `vaelii.browser.examples`; the page is the rendering of
+once the page was drawn. The page asks nothing on render: each card fetches its own
+verdict after it, one at a time and under a 10 s deadline, so a goal the rule chainers
+search for minutes on a KB of millions of sentexes holds up one card for 10 s rather than
+the whole page. A card that runs out says so and offers a two-minute climb. The table is `vaelii.browser.examples`; the page is the rendering of
 it.
 
 Two properties keep it from being a brochure, and both are required:
@@ -572,7 +621,7 @@ the one that lasts:
 - **Belief from an earlier build.** A store opened with belief installs the image an
   earlier engine build wrote and rebuilds belief behind it. The banner says so while the
   rebuild runs, polls, and leaves the page when the rebuilt belief lands; a write in that
-  window renders the "rebuilding belief" refusal instead of the "not recovered" one. The
+  interval renders the "rebuilding belief" refusal instead of the "not recovered" one. The
   banner reads `core/rebuild-progress`: a bar filled against the recover the image records
   (striped when it records none), the step and the time spent, when the image was written
   and under which engine source beside this build's, and how the rebuild is avoided on the
@@ -703,7 +752,8 @@ read is the 400**.
   A handle that reads and names nothing stored is `check-edit`'s `:unknown-handle`, shown
   in the editor with nothing written (below); an id that names nothing is the page's own
   "No sentex #n", quoting the number.
-- A **choice** outside what the page offers: `do` on `/demo`, `id` on `POST /reasoning`,
+- A **choice** outside what the page offers: `do` on `/demo`, `id` on `POST /reasoning`
+  and on `/reasoning/verdict` (and an `ms` there that is not 1 to 120000),
   `variant` and `compression` on `/kbs/export` (the form is rendered from the same table
   the route checks), and `scale` on `/caches/scale` when it is not a finite number 0 or
   more.
@@ -749,7 +799,7 @@ route answers it too rather than an empty list: htmx swaps only a 2xx, so a read
 scrolling keeps the rows they had.
 
 `&offset=` is capped rather than refused when it is too large. A continuation cursor is
-*arithmetic* — `/find/rows` asks the term roster for `offset + find-cap + 1` names — so an
+*arithmetic* — `/find/rows` asks the term-name set for `offset + find-cap + 1` names — so an
 unbounded one overflows that addition into an `ArithmeticException` and the same 500. One
 ceiling in `->offset` covers all seven continuation routes, a billion rows past anything a
 sentinel writes. An offset past the end is not a bad request but a cursor pointing past the
@@ -765,10 +815,74 @@ The query context above is the one refusal a continuation answers with the 400 i
 since it is a value the page's own context box sends and the rows already on screen are
 the answer the reader keeps.
 
+## Page loads that read long
+
+A page is a read, and over a KB of millions of sentexes some reads run for minutes or for
+hours: `/stats` computing `violations`, or a sentence layout colouring every term it shows.
+A read cannot be stopped from outside, since interrupting a thread inside a disk store's
+read closes the store's file channel. Before this, each reload of a slow page started
+another read of it beside the first, and nothing showed what was running.
+
+`vaelii.browser.inflight` guards every **page load**: a GET that is a plain navigation or an
+htmx boosted one. A part of a page fetched on its own (a panel, a card's verdict, a poll)
+has its own place to land and is not guarded.
+
+- The read runs on a thread of its own, and the request waits for it
+  `vaelii.browser.detach-ms` (5 s). A page done by then is answered as usual.
+- Past that, the answer is a **Still reading** page naming the address and how long it has
+  read. It polls `/inflight/poll` every 2 s, and once the read is done it reloads the
+  page, which is answered from the finished read.
+- A second load of the same address in the same session while the read runs **joins** it
+  instead of starting another. The read always computes the whole document, so a boosted
+  load and a plain reload share one read.
+- A finished read nobody was waiting for is kept 5 minutes for the load that comes back for
+  it, then dropped.
+- `/jobs` lists the reads running under **Pages still reading**: the address, how long it
+  has read, and the innermost engine frame its thread is in.
+
+A read still runs to its end. Restarting the browser is what stops one.
+
+## Whole-KB lists
+
+`/lists` holds one kind of thing across the whole KB per list. On a corpus of millions
+of sentexes each is a walk of minutes, so the page reads nothing until a list's button is
+pressed, and the list then runs as a job:
+
+- **Defeats** reads the believed `defeat` sentexes (`sentexes-with-functor`), each naming
+  the sentex it takes out of belief at its context.
+- **Contradictions** is `contradictions` followed by `conflicts`, each row tagged
+  `dilemma` or `conflict`, both read with `{:grounds? false}`: the rows do not show the
+  grounds, and reading them is a taxonomy walk an entry, which over tens of thousands of
+  clashes costs far more than the two reads alone.
+- **Unary predicates without a genl** reads the stored members of `unary_predicate` and
+  of each of its subtypes (`specs`) off the index (`stored-first-args`, one read a
+  subtype), and keeps those whose direct genls (`direct-genls`, KB-wide) are `thing`
+  alone or nothing and whose membership is believed (`isa?`). `thing` itself is left
+  out.
+
+A list job writes nothing, so it claims no writer and runs beside a write. It reports
+progress every 1,000 sentexes and stops at a report when cancelled; it is never
+interrupted, since an interrupt inside a disk store's read closes the store's file
+channel. Its rows ride in the job's summary metadata, so the jobs screen prints a count,
+and they are kept for the hour a finished job's report is. The lists page links each
+list's last run over the active KB.
+
+## A type's whole closure
+
+A type's page draws a few rows of its neighbourhood each way. **All genls** and **All
+specs**, under that graph, open `/closure`, which draws one direction whole: the types
+reachable by `min-genls` (or `max-specs`), so no arrow is one two others imply. Each type
+sits on the row of its longest path from the term. In a well-built taxonomy every genl
+closure narrows to `thing` alone on its top row, a diamond, and a spec closure only widens
+downward, a triangle; a different shape points at the edges to read. The walk is
+breadth-first and stops at 250 types, the nearest by steps, and the page then says "more
+than". Below the picture the same types are listed row by row.
+
 ## Long work as jobs
 
 Three things here take minutes rather than milliseconds — filling a KB from a corpus,
-writing one back out, and joining every rule over everything stored — and they are **one
+writing one back out, and joining every rule over everything stored — and every edit of a
+KB's content can, since one settle on a large KB runs for minutes. They are **one
 mechanism** (`vaelii.browser.jobs`) with one status vocabulary, one progress reading and one
 cancel. `/jobs` is that registry rendered; the `/kbs` panels are the same registry
 filtered to the two kinds that belong beside a KB, which is why neither is a second list
@@ -790,9 +904,17 @@ nothing happened rather than reporting a cancellation over work already done.
 **The 250 ms fast path is the detail that makes this usable.** A job that settles inside
 `jobs/fast-path-ms` is answered with its *result* — `/chain` on the shipped schema still
 answers with the `/stats` page and its derivation count, exactly as it did when it was a
-synchronous request. Only a run that outlasts the window is answered with the jobs screen.
+synchronous request. Only a run that outlasts that time window is answered with the jobs screen.
 Without it every small operation acquires a spinner and a second round trip, and a tool
 where that is true feels slower than the one it replaced.
+
+**An edit waits longer: 5 s** (`edit-wait-ms`). An assert, a save, a retraction and a
+put-back each run as an `:edit` job (`edit-job`), and the reader is looking at the panel
+the result replaces, so the result lands there whenever the settle fits in 5 s. One
+that does not is answered with a panel naming the job (the editor) or with the jobs
+screen (`/assert`, `/removed`); its rows update when the page is reloaded after it
+finishes. The rendered answer rides in the job summary's metadata, so `/jobs` and `/op
+:jobs` print the summary without it.
 
 **A job outlives the request that started it**, and that is the point: closing the tab
 cancels nothing, and reopening `/jobs` finds the run still going. The list is watched by
@@ -861,6 +983,31 @@ will never offer, and silently not appearing under Available is the confusing ou
 when the active entry is an **attached daemon** the form is replaced by a sentence saying
 so — its dump would be written on that daemon's host, and a path field that quietly named
 a directory on the wrong machine is the one failure mode here worth designing out.
+
+## Backing up a store kept in Postgres
+
+A `:pg-snapshot` store's card on `/kbs` has a **Back up** button, which the browser
+confirms first. The store is in two places: its directory holds the index and reasoning
+images and the operation log, and a Postgres schema holds the records. The backup is both,
+in a new directory beside the store named for the time (`<store>-backup-20261020-163005`):
+
+| file | |
+|---|---|
+| `store/` | an APFS clone (`cp -c`) of the store directory, without its lock file |
+| `records.dump` | `pg_dump --format=custom` of the schema `index/records.edn` names |
+| `backup.edn` | the source, the seal, the time, and the restore commands |
+
+The job seals the KB first, so the images name the records as they stand, and holds the
+writer claim and the write monitor until the dump is done, so nothing writes in between.
+`pg_dump` reads its schema in one snapshot. A backup that fails or is cancelled deletes its
+own directory. The card shows where the newest one went, or how a running one is getting on.
+
+Restoring is by hand and takes the KB offline: unload it, rename its schema aside,
+`pg_restore` the dump (which recreates the schema under its own name), put `store/` back in
+the store directory's place, and load the store. `backup.edn` lists the commands. The images
+open against the restored records, since the dump keeps the fingerprint row they were
+sealed against. The dump runs the `pg_dump` on the server process's PATH, which must be at
+least the Postgres server's version. The code is `vaelii.browser.backup`.
 
 ## What this process is holding
 
@@ -969,7 +1116,7 @@ round-trip under `--attach`.
   document, which is what keeps the browser working with JavaScript off; so does an
   `HX-History-Restore-Request`, since htmx is repopulating a history entry and replaces
   the whole history element with it.
-- **A `view` is built once per request** and threaded through every render fn in place
+- **A render env (`render-env`) is built once per request** and threaded through every render fn in place
   of a bare KB. It holds the type set (one `v/types` for the page, not one per render),
   whether the answer is a fragment, and a **belief cache**: a listing calls
   `prime-belief!` with the handles it is about to render and `vaelii.core/believed`
@@ -1093,7 +1240,7 @@ round-trip under `--attach`.
   from one hard budget — twelve, six a side — so the picture costs at most 24 reads
   whatever the fan-out. Capping what is *drawn* is not capping what is *read*, and a page
   that draws eight of forty thousand subtypes by reading forty thousand looks identical on
-  the shipped schema. The radial view's second hop is bounded the same way twice over: it
+  the shipped schema. The radial graph's second hop is bounded the same way twice over: it
   reads at most `ego-scan` (500) matches before ordering them, and it does not expand a
   neighbour whose own argument counts put it past `ego-expand-cap` (2,000) — that read
   unions the scoped roots over an open functor, which a prefix of the answer does not make
@@ -1105,8 +1252,8 @@ round-trip under `--attach`.
   `char-w` move together or the boxes stop fitting their labels. A node is a **box** (a
   3px corner, `.g-box`) rather than a pill: a fully-rounded end eats the width a long term
   needs, and two adjacent nodes read as one capsule.
-- **Search reads the vocabulary, never the sentexes.** `/find` filters the index's term
-  roster through `vaelii.core/find-terms`, so it costs the number of distinct terms.
+- **Search reads the vocabulary, never the sentexes.** `/find` filters the index's term-name
+  set through `vaelii.core/find-terms`, so it costs the number of distinct terms.
   A query carrying no regex metacharacter is matched as a **case-insensitive substring**,
   so `transitiveinarg` finds `transitiveInArg` and the type-ahead path compiles no
   pattern at all;
@@ -1138,7 +1285,7 @@ The browser is not read-only: sentexes can be **asserted, edited, and retracted*
 write goes through `vaelii.core/edit!` via the access facade, so each is **one settle**
 and works the same in-process or attached to a daemon.
 
-A row's `[edit]` opens the **editor panel**, with **Save**, **Retract…** and Cancel. The
+A row's `[edit]` opens the **editor panel**, with **Save**, **Retract** and Cancel. The
 panel takes a *set* of handles, so `/edit?handles=1,2,3` edits a batch in one settle —
 what a row's control hands it is a set of one. A **term** carries an `[edit]` of its own,
 beside its name at the top of its page: `/edit?q=<term>` opens the panel on the head of
@@ -1193,7 +1340,7 @@ renders first.
   the functor, an individual as an argument, a context in the context field. Every line
   is checked first and the form is all-or-nothing: one bad line stores none of it, so
   the page is safe to retry.
-- **Retract…** opens a confirmation that says what will go *before* it goes. Retraction
+- **Retract** opens a confirmation that says what will go *before* it goes. Retraction
   is dependency-directed, so the panel lists the named handles **and** the stored sentexes
   that would lose their last witness — computed to a fixpoint from the justification
   graph, the same criterion the sweep applies (a datum goes when it is not a premise in
@@ -1209,6 +1356,40 @@ renders first.
   "Retracted" only when a named handle is gone, "Nothing retracted" otherwise, a named
   handle still stored listed with why — and it deletes every row that is actually gone
   out of band.
+- **Copy, Edit and Remove** are on every sentex: as the action bar at the top of its
+  page, and as the menu a **right-click on its badge** opens at the pointer (vaelii.js
+  fetches `/sentex-actions`, so the bar and the menu are one definition). Copy opens
+  `/assert` seeded with the sentence, its context and its strength; Edit opens the editor
+  panel on it; Remove opens the retraction's confirmation, which writes nothing until its
+  own button is pressed.
+- **The term bar** sits under a term's heading: **Rename**, **Copy** and **Remove**.
+  Each opens its confirmation in the editor panel (`GET /term-op`): what it
+  does, how many **asserted** sentexes mention the term (`find-sentexes`, walked to
+  `term-op-scan`, past which it says "more than"), and a run time estimated from the last
+  term operation timed on that KB (50 ms a sentex until one has been). A rename or a copy
+  takes the new name, which must be spelled for the same role. A pause in typing it asks
+  `GET /term-op/name`, which says under the field whether the name reads, keeps the role,
+  and is a term already; for a rename into an existing term, that the rename merges the
+  two and whether they are **compatible**: not disjoint, both types or both relations of
+  one arity, and the first 50 rewritten sentexes admitted by `check-edit`. A run estimated
+  past a minute also needs a box ticked that says how long it is, and a rename or a remove
+  asks once more in a browser dialog (`hx-confirm`) after its button. The POST is a job that walks
+  the handles read up front, `term-op-chunk` (500) to a settle, with progress and a
+  cancel between two settles. Rename asserts each sentence with the new name in the old
+  one's place — in the context too, for a context — and retracts the old; when the new
+  name is already a term that is a **merge**, and a sentence both held stays as the one
+  handle. Copy asserts and retracts nothing. Remove retracts and notes what went in the
+  removed list. A replacement `check-edit` refuses is dropped with the retraction it
+  pairs with, so a rename never loses a sentex; the result page lists them. Derived
+  sentexes are not touched: they follow what they rest on.
+- **What a removal took is kept, to put back.** Before a retraction or a save writes,
+  the sentences it would remove are read (`removal-rows`); after the settle, the ones
+  that actually went are noted in the KB's **removed list** (`vaelii.browser.removed`):
+  the sentence as the editor prints it, its context and its strength, the newest 50 per
+  KB, in an EDN file per KB under `~/.vaelii/removed/` (`vaelii.removed.dir`), outside
+  the store it describes. `/removed` lists them; **Put back** asserts one again through
+  `check-edit` and `edit!` and drops it from the list only once the assert went through.
+  The derived sentexes the sweep took are not noted: they return with what they rest on.
 - **Forward chaining** is a POST form on `/stats`, beside the run counter, the last
   run's derived count, and the violations ledger it fills — so what a load did and what
   it dropped read together.
@@ -1244,14 +1425,15 @@ renders first.
   name — a reverse proxy preserving the original `Host`, a local alias. A request
   with **no** `Host` header passes: every browser sends one, so its absence marks a
   non-browser client with no ambient browser context to ride.
-  The second layer is the write guard. Nine routes go through it, and every
-  extension's `:write` route besides: seven through `writing` above — `/edit`,
-  `/assert`, `/retract`, `/demo`, `/reasoning`, `/sandbox/reset`, and `/edit/preview`
-  (a writer for the length of the rollback it does) — and `/chain` and POST `/funnel`
-  through `writing-job`, which submits the same run from either page. An extension's
+  The second layer is the write guard. Eleven routes go through it, and every
+  extension's `:write` route besides: four through `writing` above — `/demo`,
+  `/reasoning`, `/sandbox/reset`, and `/edit/preview` (a writer for the length of the
+  rollback it does) — and seven through `writing-job`: the edits `/edit`, `/assert`,
+  `/retract`, `/removed/restore` and POST `/term-op`, and `/chain` and POST `/funnel`,
+  which submit the same run from either page. An extension's
   `:post` route gets the origin check alone. Nothing authenticates them, so each compares the request's
   `Origin` (falling back to `Referer`) to its own `Host` and answers 403 on a mismatch.
-  A browser stamps that header on a form or fetch
+  A browser sets that header on a form or fetch
   POST and a page on another site cannot forge it, so another tab cannot drive the
   editor. `Origin: null` — a sandboxed frame — is a real origin claim that matches
   nothing, and is refused. A request carrying **neither** header is a non-browser
@@ -1289,9 +1471,9 @@ none by itself.
 
 (web/register-extension
  :notes
- {:routes     [["/ext/notes/count" {:get (fn [view _req]
-                                           [:p (vaelii.core/sentex-count (web/local-kb view))])}]]
-  :term-panel (fn [view term] [:div [:h3 "Notes on " (web/term-link view term)]])
+ {:routes     [["/ext/notes/count" {:get (fn [env _req]
+                                           [:p (vaelii.core/sentex-count (web/local-kb env))])}]]
+  :term-panel (fn [env term] [:div [:h3 "Notes on " (web/term-link env term)]])
   :on-start   (fn [] (println "notes ready"))
   :stylesheet "notes/notes.css"     ; classpath resources
   :script     "notes/notes.js"})
@@ -1300,27 +1482,29 @@ none by itself.
 | Key | What the browser does with it |
 |---|---|
 | `:routes` | serves each `[path methods]`; every path sits under `/ext/<name>/`, so two extensions, or an extension and a page of the browser's own, never claim one path |
-| `:term-panel` | `(fn [view term] hiccup)`, drawn last on every term page, in name order |
+| `:menu` | `[[label href] …]`, links in the menubar after the browser's own items, in name order; each `href` sits under `/ext/<name>/` like a route |
+| `:term-actions` | `(fn [env term] hiccup)`, drawn beside the heading of every term page, in name order: links, or forms posting to the extension's `:write` routes |
+| `:term-panel` | `(fn [env term] hiccup)`, drawn last on every term page, in name order |
 | `:on-start` | `(fn [])`, run when `-main` or `dev-repl` starts the server; a hook that throws is logged and the others still run. Work that must not delay the bind starts its own thread |
 | `:stylesheet`, `:script` | classpath resources, served at `/ext/<name>.css` and `/ext/<name>.js` and linked from every page's `<head>` (the script deferred) |
 
 **The guard is the method's, not the handler's.** A route's methods are `:get`, `:post`
-and `:write`, each `(fn [view req] …)`. `:get` runs as written. `:post` gets the origin
+and `:write`, each `(fn [env req] …)`. `:get` runs as written. `:post` gets the origin
 check every POST here gets, and a cross-origin one is answered 403 before the handler
 runs. `:write` is a POST that runs under `writing` — the origin check, the refusal states
 (a KB still loading, being exported, or never recovered) and the write monitor — with
-`view` over the KB the guard judged. So an extension cannot forget either check, and a
+`env` over the KB the guard judged. So an extension cannot forget either check, and a
 handler that previews (`v/preview` asserts and rolls back) is a `:write` like one that
 stores. A route naming both `:post` and `:write` is refused, since both are a POST.
 
 A handler answers hiccup, which the browser sends as a fragment, or a ring response map.
-`view` is the value every page renders from — opaque but for `:kb`, the KB it reads, and
+`env`, the render env, is the value every page renders from — opaque but for `:kb`, the KB it reads, and
 `:sandbox`, this session's scratch context. The shim publishes the helpers an extension
 renders with, each the one the browser's own pages call:
 
 | Helper | |
 |---|---|
-| `local-kb` | the in-process KB behind `view`, or nil under `--attach` — the check before work that needs the KB in this process |
+| `local-kb` | the in-process KB behind `env`, or nil under `--attach` — the check before work that needs the KB in this process |
 | `read-form` | a request parameter read as EDN, nil when it does not read |
 | `render-form`, `term-link` | a sentence or term as every page draws it |
 | `consequences` | the panel the editor's lookahead renders, for any batch ([Editing sentexes](#editing-sentexes)) — from a `:write` route |
@@ -1349,7 +1533,7 @@ not a term, so there is nothing to click your way to. With no goal it documents 
 one it runs all eight levels and shows what each returns, headed by the `escalate`
 verdict ("Answered at level 4 `typed`").
 
-It is the clearest view of what the levels are *for*. Ask it `(genl dog thing)`
+The `/levels` page shows what the levels are *for*. Ask it `(genl dog thing)`
 against the starter and you see the whole argument at once:
 
 - level 1 returns 25+ unrelated `genl` facts — it retrieves by context and functor
@@ -1400,7 +1584,7 @@ above it produce*, which is sideways information passing and is the thing worth 
 **block** is the group of literals it moved with: literals sharing a variable are one
 block and run together, and a whole block is held back the way a single literal is.
 A literal whose position is operational rather than costed is
-marked **pinned** — an evaluable may not outrun what binds it, and a recursive rule's
+marked **fixed** — an evaluable may not outrun what binds it, and a recursive rule's
 recursive literal stays last so right-recursion survives. A literal is marked
 **cartesian** when it shares no variable with the rest *and* was ranked behind a block
 that does: it multiplies the row count of everything after it wherever it runs, so the
@@ -1462,8 +1646,8 @@ it may be proportional to the KB.
 
 The **hierarchy trees** open one level at a time. A node with children carries a caret
 that fetches them on its first `change`. A `genl` level is the closure's one-step
-adjacency (`direct-specs`), which includes the parts a cover roster installs; a `genlCx`
-level is read by pinning the parent (`(genlCx ?sub node)`), which the index answers from
+adjacency (`direct-specs`), which includes the parts a cover declaration installs; a `genlCx`
+level is read by binding the parent (`(genlCx ?sub node)`), which the index answers from
 the predicate-scoped argument root (the node `[genlCx 2 node]`). Either way the cost
 is that node's own fan-out rather than the number of edges in the KB. A `genl` level is
 always sorted, and a `genl` node gets a disclosure when `direct-specs` holds a child. A
@@ -1482,7 +1666,7 @@ a reader with no script still works the tree. The checkbox's id keys on the edge
 different disclosure under each.
 
 The **flat lists** read their predicate's extent rather than a wholly-open pattern. `(comment
-?term ?text)` pins nothing, so the trie fans over every child token at every level: a
+?term ?text)` binds no argument, so the trie fans over every child token at every level: a
 `take` would bound the records fetched and not the candidates enumerated, which is a walk
 of the whole extent to show fifty rows. Sorting is bounded the same way — alphabetical
 order is worth having and adds no work at the shipped schema's size, so a list sorts
@@ -1578,7 +1762,7 @@ the index read it in, which is reproducible for an unchanged store and is theref
 one property paging needs. Ordering means realizing the whole group and printing a context
 per member to show sixty rows: at `genl`, whose predicate extent on a large store holds
 millions of sentexes, that cost grows with the extent and is paid twice per page. The same
-cap governs the graph's flank window (`flank-scan`), where the alternative was sorting
+cap governs the graph's flank prefix (`flank-scan`), where the alternative was sorting
 millions of records to pick forty.
 
 ### A term page reads from what the term IS to what uses it
@@ -1695,7 +1879,9 @@ A sentence is rendered structurally, not as one opaque string:
   an individual, or the context independently (nested compound subterms are also
   listed individually under a sentex's *Subterms*);
 - terms are **colored by role** — type (pale amber), individual (violet), predicate
-  (yellow-orange), context (blue), literal (white: a number or a string), variable
+  (yellow-orange; red-orange for one whose `relation-arity` is three or more), logical
+  connective (green: a stored `logical_connective` member, as `and`, `or`, `not` and
+  `implies` are), context (blue), literal (white: a number or a string), variable
   (grey). The word `in` between a sentence and its context is white too, and a no-break
   space joins it to the context, so a line never ends between the two. A node of the
   genl taxonomy colors by stored content: a predicate when `relation?` reads it as a relation of two or
@@ -1727,10 +1913,10 @@ anybody wrote and says nothing to a reader, so **no page shows one**. Every term
 
 The **bold parens are the whole of the notation**, and they are required rather than
 decorative. A reified term is a *term* that happens to have structure, and it sits in
-sentences beside ordinary compounds — on the constant's own page `(termOfUnit K E)`
+sentences beside ordinary compounds — on the constant's own page `(natFormula K E)`
 renders K and E identically otherwise, so the constant and the literal expression it is
 mapped to would read as the same thing said twice. Weight is what separates them. The
-**opening paren links to the constant's page**, the one place its `termOfUnit` map, its
+**opening paren links to the constant's page**, the one place its `natFormula` map, its
 materialized result types and its uses are listed — so the reified term stays reachable
 without ever being spelled out. Nesting works the same way at every level, and each
 level's paren links to its own constant. A ground compound term left structural, headed
@@ -1746,15 +1932,15 @@ identity. The constant is held by what a machine reads back: the `href` of
 the link to its own page, and a hidden field a form posts back.
 
 Two things the display cannot assume, both tested by injecting at the access facade.
-A constant whose `termOfUnit` map is **not believed** renders `(…)` rather than falling
+A constant whose `natFormula` map is **not believed** renders `(…)` rather than falling
 back to the raw symbol — the map can be defeated while a use of the constant survives,
 and the page cannot say what it denotes. And the expansion
 **carries the constants already on its path**: the write path cannot build a term that
 reaches itself (inner NATs mint first), but a restored dump can, and an unguarded walk
-over `(termOfUnit K (F K))` is a stack overflow rather than a page.
+over `(natFormula K (F K))` is a stack overflow rather than a page.
 
 The cost is one `term-expression` read per **distinct** constant on the page, cached on
-the view — there is no batched read for the map, so the cache is the whole budget, and a
+the render env: there is no batched read for the map, so the cache is the whole budget, and a
 page listing one reified NAT in a dozen rows is one round-trip under `--attach` rather than
 twelve. A KB that has minted none never touches it: `reified-term?` is a pure test on the
 symbol's namespace.
@@ -1812,7 +1998,7 @@ accent pair, the term-role colours (`--t-*`) and the nine-step spectrum (`--rb1`
   resolves to a **single term** — the only match, or one it names exactly — jumps
   straight to that term's page (so `parentOf` lands on it even though it is a substring
   of `grandparentOf`), setting `HX-Push-Url` so the address bar follows.
-- A **request indicator** — a hairline bar across the top of the window, which htmx
+- A **request indicator** — a hairline bar across the top of the viewport, which htmx
   marks `.htmx-request` for the life of a request (`hx-indicator`, set on the body and
   so inherited by every navigation, search, and continuation). It is `position: fixed`
   and takes no layout space, so nothing shifts when it appears, and it holds still under
@@ -1845,7 +2031,7 @@ accent pair, the term-role colours (`--t-*`) and the nine-step spectrum (`--rb1`
   into ajax swaps with history (degrading to plain navigation when htmx is absent),
   scoped to `#main` — which is what lets the server answer with the fragment that lands,
   and what keeps the header and an open editor from being torn down by a navigation. Scoping it costs one thing back, which the swap pays explicitly: a
-  boosted swap whose target is not the body scrolls that target *into view*, so `#main`
+  boosted swap whose target is not the body scrolls that target *into the viewport*, so `#main`
   alone would land every navigation with the header — logo, search box, menubar — scrolled
   off the top of a page the reader never scrolled. `show:window:top` says where to land
   instead, which is where an unboosted navigation lands. A continuation sentinel sets its
@@ -1888,13 +2074,13 @@ accent pair, the term-role colours (`--t-*`) and the nine-step spectrum (`--rb1`
     `:root:not([data-theme])` switches to the light palette and needs no JS, so a page
     that has never been clicked **follows the OS**. Clicking sets
     `:root[data-theme="dark"|"light"]`, which **overrides** the media query — so a
-    pinned theme outranks the OS, and only a stored value counts as pinned. The click
+    chosen theme outranks the OS, and only a stored value counts as chosen. The click
     flips whatever is on screen, OS-chosen or not. A stored value the script does not
     **recognise** is ignored rather than written through: *any* attribute value switches
     the media query off, so one no rule matches would leave the page on the dark base and
     deaf to the OS. `color-scheme: dark light` pulls scrollbars and native widgets along.
     The logo and favicon each carry their own `prefers-color-scheme: light` rule and read
-    no `data-theme`, so they follow the OS and a theme pinned with the dot does not reach
+    no `data-theme`, so they follow the OS and a theme chosen with the dot does not reach
     them.
   - a **palette dot** cycling **violet → red → green → rainbow** through
     `:root[data-palette]`, and painted in the pair it selects. A palette is an accent
@@ -1946,7 +2132,7 @@ Four jobs, all of them keyed on the caret and none of them htmx-expressible:
   re-indents the line the caret is on. Both walk the same scan the painter does, so the
   picture and the indentation can never disagree about where a string ends.
 - **Completion.** The symbol before the caret is a prefix, and `/complete` answers the
-  terms it could become — `find-terms`' prefix match over the **term roster**, so a
+  terms it could become — `find-terms`' prefix match over the **term-name set**, so a
   keystroke costs the size of the vocabulary and never a scan of the KB. Twelve at a
   time, each in its role colour. Tab and Enter take the highlighted one, the arrows move,
   Escape closes the list without closing the editor. It is the one plain `fetch` on the

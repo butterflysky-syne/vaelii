@@ -53,7 +53,7 @@
 
 ;; ---- switch-value ------------------------------------------------------------
 
-(deftest switch-value-reads-a-rostered-switch-through-its-reader
+(deftest switch-value-reads-a-listed-switch-through-its-reader
   (is (= (config/profiler-port) (v/switch-value "VAELII_PROFILER_PORT")))
   (is (= (config/web-dev?) (v/switch-value "VAELII_DEV"))))
 

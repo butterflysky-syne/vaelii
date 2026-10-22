@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.koinii.dispute
-  "Koinii dispute reads: two context-scoped views over the engine's
+  "Koinii dispute reads: two context-scoped reads over the engine's
   whole-KB contradiction surface, plus the small dispute-STATE surface the
   adjudication driver drives.
 
@@ -106,7 +106,7 @@
   (`:disjoint` / `:functional` / `:asymmetric` / `:anti-transitive`, nil for a plain
   rebuttal) rides along unchanged.
 
-  This is the per-channel view the whole-KB `contradictions` cannot give: 'what is
+  This is the per-channel reading the whole-KB `contradictions` cannot give: 'what is
   disputed *here*'.  It hides nothing and invents nothing — the union of `disputes-in`
   over every context equals `(contradictions kb)` + `(conflicts kb)`, because the
   common-descendant context that raised each clash sees both of its sides and so reports

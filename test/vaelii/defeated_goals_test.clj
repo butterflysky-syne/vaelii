@@ -11,7 +11,7 @@
   The backward chainers filter *rules* by belief and *facts* by belief, and until an
   answer is one of those two they filter nothing — so opening the rule that concluded the
   defeated side and proving it again would answer yes, and `prove` / `query` would
-  disagree with `ask` about the same KB.  What is pinned here is that they do not:
+  disagree with `ask` about the same KB.  This namespace asserts that they do not:
 
     * `prove`, `query` at a depth, `provable?` and `argue` all answer the believed side
       and only that one, on both query engines;

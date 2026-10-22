@@ -61,7 +61,7 @@
   `[:not f]` for a negation whose body has functor `f`.
 
   Keyed under the bare `not` every negated antecedent of every rule shares one bucket,
-  and each arriving negation builds the view of, and tries to match, every one of them;
+  and each arriving negation decodes, and tries to match, every one of them;
   keyed by the body's predicate an arriving `(not (p a))` reaches the rules with a
   negated antecedent on `p` — and, through `trigger-keys`' genl walk, those on a genl of
   `p`, which is the direction subsumption runs in under a negation.  A vector, so the key
@@ -168,10 +168,10 @@
   "The predicate a rule concludes.
 
   A **generator** concludes a rule, so its key is `implies` — reached by peeling the
-  `set/*Rule` wrapper first, because that wrapper belongs to the rule being stamped
+  `set/*Rule` wrapper first, because that wrapper belongs to the rule being generated
   rather than to the generator (docs/generators.md).  Without the peel one generator
   files under `set/defaultRule` and the next under `implies`, by nothing more than how
-  its stamped rule happened to be written, and the single cell that answers *which rules
+  its generated rule happened to be written, and the single cell that answers *which rules
   are generators* would answer for some of them."
   [sentence]
   (consequent-key (consequent sentence)))
@@ -275,7 +275,7 @@
 
   `different` is negation as failure over two things: the equality closure, and the
   `indeterminate_term` category whose members are exempt from the unique-name assumption.
-  A merge makes a difference stop holding, and pinning an indeterminate term makes one
+  A merge makes a difference stop holding, and identifying an indeterminate term makes one
   start — so a rule reading `different` owes a re-check on both, in both directions.
 
   A subkind of the category needs no entry: `special/recheck-on-predicate` fans an
@@ -470,8 +470,8 @@
   correctly anyway: it asks the full level-6 question in the conclusion's context, which a
   context without the grant answers exactly as it does today.
 
-  Gated on the KB declaring any closed extent at all, so a KB not using the feature pays
-  two set reads on the join path and stops."
+  It runs only when the KB declares any closed extent at all, so a KB not using the
+  feature pays two set reads on the join path and stops."
   [tx antes]
   (if (and (empty? (tax/props tx :closed-extent)) (empty? (tax/props tx :closed-extent-arg)))
     []
@@ -582,7 +582,7 @@
 
 (defn rechecked?
   "Does this rule carry a re-check condition of its **own** — an `unknown` antecedent, an
-  aggregate, or a `different` antecedent?  The gate on registering it in the re-check
+  aggregate, or a `different` antecedent?  The check on registering it in the re-check
   index; an exceptWhen exception is registered by its own meta-sentex and is not read off
   the rule."
   [sentex]
@@ -1070,9 +1070,9 @@
   `[(implies (and A D) C) (implies (and B D) C)]`; anything else — a non-rule, a rule
   with no `or`, an `or` in an argument slot — returns `[sentence]` unchanged.
 
-  **Only the level written here.**  A generator's stamped rule keeps its `or` until the
+  **Only the level written here.**  A generator's generated rule keeps its `or` until the
   mint substitutes the holes, and `chain/mint-rule` expands what it is about to store —
-  so the alternatives a generator stamps are the alternatives of the rule it stamped,
+  so the alternatives a generator generates are the alternatives of the rule it generated,
   and each is checked and indexed in its own right.
 
   Returns `[sentence]` unexpanded for a rule the cap refuses or an empty `(or)`, which
@@ -1125,24 +1125,24 @@
 
 ;; ---- generators: a rule whose consequent is a rule -----------------------
 ;; `(implies <antes> (implies <inner-antes> <inner-conseq>))` — a **generator**, whose
-;; firing stamps the inner rule out with its holes filled.  The scoping rule is
+;; firing generates the inner rule with its holes filled.  The scoping rule is
 ;; computed, not annotated: the inner rule's variables that its enclosing antecedents
 ;; also mention are **holes**, bound by the join and ground at mint; the rest are the
-;; stamped rule's own, and belong to it.
+;; generated rule's own, and belong to it.
 ;;
-;; The nesting is not capped.  A stamped rule may itself be a generator, and then the
-;; mint stamps in turn — each level's firing grounds that level's holes and stores the
+;; The nesting is not capped.  A generated rule may itself be a generator, and then the
+;; mint generates in turn — each level's firing grounds that level's holes and stores the
 ;; level below it.  One reading decides every level, because the scoping rule composes:
 ;; a variable belongs to the **outermost** level whose antecedents mention it, which is
 ;; the level whose firing makes it ground.  See docs/generators.md.
 
 (defn generated-rule
-  "The bare rule form a generator's `consequent` stamps out — the `(implies …)` inside
+  "The bare rule form a generator's `consequent` generates — the `(implies …)` inside
   whatever `set/*Rule` wrapper the author put on it — or nil when the consequent
   concludes a fact, which is every ordinary rule.
 
   The wrapper is peeled here and *kept* by the caller that mints: it sets the
-  **stamped** rule's direction, which is the only place a direction can be written for
+  **generated** rule's direction, which is the only place a direction can be written for
   a rule nobody types out."
   [consequent]
   (let [inner (peek (sx/peel-rule-wrapper consequent))]
@@ -1160,12 +1160,12 @@
   (boolean (some-> (:consequent sentex) generated-rule)))
 
 (defn holes
-  "The variables a generator's stamped rule takes from the firing — those its
+  "The variables a generator's generated rule takes from the firing — those its
   enclosing `antecedents` also mention, as a set.
 
   Computed rather than declared, which is the whole reason a generator needs no
   vocabulary of its own: sharing a variable name with the antecedents *is* how an
-  author says \"fill this in\", and the remaining variables are the stamped rule's own
+  author says \"fill this in\", and the remaining variables are the generated rule's own
   by the same token.  Two spellings cannot disagree, because there is only one.
 
   One level's question.  Under nesting each level asks it of the level below, and
@@ -1179,11 +1179,11 @@
 
       {:antecedents …  ; that level's antecedent patterns
        :consequent  …  ; what it concludes, wrapper and all
-       :generated   …  ; the bare rule it stamps, nil at the innermost level
+       :generated   …  ; the bare rule it generates, nil at the innermost level
        :bound       …} ; the variables an *enclosing* level's antecedents bind
 
   An ordinary rule is one level with no `:generated`; a generator is two; a generator
-  that stamps a generator is three, and so on with no cap.
+  that generates a generator is three, and so on with no cap.
 
   `:bound` is the whole of the scoping rule, accumulated on the way down: by the time a
   level's rule is stored, every enclosing level has fired and substituted its own holes,
@@ -1196,7 +1196,7 @@
   the range restriction are all read off these levels, so they cannot disagree about
   which level owns a variable.
 
-  An ordinary rule stops after one level, so a rule that stamps nothing pays one peel
+  An ordinary rule stops after one level, so a rule that generates nothing pays one peel
   and one map for being read this way."
   [sentence]
   (loop [r (inner-rule sentence) bound #{} acc []]
@@ -1211,7 +1211,7 @@
 (defn innermost-rule
   "The rule at the bottom of a generator's nesting — the one whose consequent is a
   **conclusion** rather than another rule, and so the only level of a generator that
-  ever concludes a fact.  `inner-rule` for a rule that stamps nothing."
+  ever concludes a fact.  `inner-rule` for a rule that generates nothing."
   [sentence]
   (let [{:keys [antecedents consequent]} (peek (nesting sentence))]
     (rule-sentence antecedents consequent)))
@@ -1219,7 +1219,7 @@
 (defn- ordinary-range-problems
   "`range-problems` for a rule that concludes a *fact* — every rule but a generator.
   `bound` is what counts as bound beside the antecedents' own variables: empty for a
-  written rule, and a generator's holes for the rule it stamps out."
+  written rule, and a generator's holes for the rule it generates."
   [antecedents consequent bound]
   (let [exists?   (sx/head-exists? consequent)
         evars     (if exists? (sx/head-exists-vars consequent) #{})
@@ -1255,16 +1255,16 @@
 
   A **generator** is checked at its innermost level, and the two claims are about
   *different* rules.  Every generator level's own range restriction is vacuous — its
-  consequent is a rule rather than a conclusion, and what it stamps has free variables on
+  consequent is a rule rather than a conclusion, and what it generates has free variables on
   purpose — so what is checked is the **innermost** rule's, with every enclosing level's
   holes counted as bound because substitution makes them ground before anything is
   stored.  Checking it here rather than at firing is what makes the refusal reach the
-  author: a generator that can only ever stamp junk is refused where it is written, not
+  author: a generator that can only ever generate junk is refused where it is written, not
   once per binding at the far end of a fixpoint.
 
   Each generator level owes one claim of its own: it must fill a hole **no enclosing
   level has already filled**.  A level whose every shared variable is already ground
-  stamps the same rule at every firing, which is a rule its author could have written —
+  generates the same rule at every firing, which is a rule its author could have written —
   and under nesting that is a mistake the outer fill *creates*, so saying it here is
   what keeps the refusal at the sentence instead of once per mint in the ledger."
   [antecedents consequent]
@@ -1278,10 +1278,10 @@
                                 (str "rule generator at nesting level " (inc i)
                                      " shares no variable with the rule it generates"
                                      " that a level further out has not already filled,"
-                                     " so every firing stamps the same rule: share a"
+                                     " so every firing generates the same rule: share a"
                                      " variable the levels above it do not")
                                 (str "rule generator shares no variable with the rule it"
-                                     " generates, so every firing stamps the same rule:"
+                                     " generates, so every firing generates the same rule:"
                                      " share the variable that is meant to vary, or"
                                      " write the rule itself"))))))
               (butlast levels))
@@ -1477,7 +1477,7 @@
   the mint expands what it stores, and only the innermost level's consequent is a
   conclusion.  The innermost range check counts an enclosing level's variables as bound
   whether or not the alternative taken there binds them — the mint's own
-  `checks/rule-violation` answers for the rule that is actually stamped."
+  `checks/rule-violation` answers for the rule that is actually generated."
   [sentence]
   (if-not (some-disjunction sentence)
     []
@@ -1532,9 +1532,9 @@
   level at a time, so the frames descended into are the ones the naming check descends:
   a negated antecedent, a head existential, an aggregate's body.
 
-  Inside a generator's stamped rule the question is asked of **non-holes only**, and
+  Inside a generator's generated rule the question is asked of **non-holes only**, and
   that is the carve the whole feature rests on.  The index's claim is on what gets
-  stored as a rule; a stamped rule is a pattern, and what gets stored is the mint —
+  stored as a rule; a generated rule is a pattern, and what gets stored is the mint —
   checked in its own right, by this function, when it is minted.  A variable an
   **enclosing** level binds is therefore fine in functor position, because that level's
   firing makes it concrete before anything is keyed on it, and that is what lets one
@@ -1542,7 +1542,7 @@
   concrete functor.
 
   **Enclosing, not same-level**, and the distinction is the whole of what nesting buys.
-  `(implies (and (?tpred ?type ?cap) (?type ?instance)) …)` stamped by a generator that
+  `(implies (and (?tpred ?type ?cap) (?type ?instance)) …)` generated by a generator that
   binds `?tpred` fills the first functor and not the second: `?type` is bound by a
   literal of the rule *being stored*, so the mint is a rule the index cannot key, and
   refusing it is refusing exactly what would otherwise be stored inert.  Written a level
@@ -1550,7 +1550,7 @@
   a hole of the middle level, ground before its rule is stored, and both functors are
   concrete by the time anything is indexed.
 
-  A stamped variable functor no enclosing level binds is refused as loudly as any other,
+  A generated variable functor no enclosing level binds is refused as loudly as any other,
   and it has to be: nothing will ever bind it, so every mint it produces is the
   accepted-and-inert rule this check exists to keep out — and refusing it here names
   the generator, where refusing it at the mint would name a rule the author never
@@ -1591,9 +1591,9 @@
 
   The workaround the message names is the instantiated rule: one rule per predicate the
   metarule was meant to range over, each with a functor the index can read — written by
-  hand, or by the **generator** that stamps them, which is what a variable antecedent
+  hand, or by the **generator** that generates them, which is what a variable antecedent
   functor usually wants to be (docs/generators.md).  So the message names the level to
-  move it to when the rule is one a generator stamps: a functor a level *further out*
+  move it to when the rule is one a generator generates: a functor a level *further out*
   binds is ground before its rule is stored, and only the ones nothing binds are left.
 
   An `:inert` rule is exempt at the caller (`checks/check-rule!`): it runs in neither
@@ -1602,20 +1602,20 @@
   (when-let [bad (seq (filter (comp #{:antecedent :generated-antecedent} first)
                               (variable-functor-literals sentence)))]
     (let [[role lit] (first bad)
-          stamped?   (= :generated-antecedent role)]
+          generated? (= :generated-antecedent role)]
       (throw (ex-info (str "a rule's antecedent predicate cannot be a variable: "
                            (pr-str lit)
-                           (when stamped? " in the generated rule's antecedent")
+                           (when generated? " in the generated rule's antecedent")
                            " — the rule index is keyed by predicate, so a variable"
                            " functor there names none for an arriving fact to trigger,"
                            " and the rule would fire over whatever is stored when a"
                            " concrete antecedent beside it arrives.  "
-                           (if stamped?
+                           (if generated?
                              (str "Nothing an enclosing generator binds fills it: move"
                                   " the literal that binds it out one level, so the"
-                                  " functor is ground before the rule is stamped.")
+                                  " functor is ground before the rule is generated.")
                              (str "Assert the instantiated rules, one per predicate it"
-                                  " ranges over, or stamp them from a generator whose"
+                                  " ranges over, or generate them from a generator whose"
                                   " antecedent binds the predicate.")))
                       {:type :not-indexable :role role :literal lit
                        :literals (mapv second bad) :sentence sentence})))))
@@ -1644,7 +1644,7 @@
 ;; A rule is posted under each antecedent key in the `:rule-antecedent` count trie and under
 ;; its consequent key in `:rule-consequent`, each ending in the rule's context; a watched
 ;; rule is posted in the `:exception-index` set of each predicate its re-check condition
-;; mentions and in the `[:rules]` roster.  Each is one `p/family-apply!` batch, and a post
+;; mentions and in the `[:rules]` set.  Each is one `p/family-apply!` batch, and a post
 ;; of a handle already filed (or a retire of one not filed) changes nothing.
 
 (defn- rule-family-ops
@@ -1672,14 +1672,14 @@
 
 (defn index-exception
   "Post rule `handle` under each predicate of `preds` in the re-check index, and into the
-  `[:rules]` roster whatever `preds` holds."
+  `[:rules]` set whatever `preds` holds."
   [index handle preds]
   (p/family-apply! index (watched-ops :post handle preds))
   nil)
 
 (defn unindex-exception!
   "Retire rule `handle` from each predicate of `preds` in the re-check index and from the
-  `[:rules]` roster."
+  `[:rules]` set."
   [index handle preds]
   (p/family-apply! index (watched-ops :retire handle preds))
   nil)

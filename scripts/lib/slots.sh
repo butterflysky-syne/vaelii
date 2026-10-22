@@ -19,7 +19,7 @@
 #     `perflevel` key and falls back to `ncpu` / `nproc`, where `− 2` just leaves two cores
 #     for everything else.
 #   - **minus the vaelii JVMs already up.**  This is a shared checkout (several writers in one
-#     tree) beside sibling checkouts, so a bench, a dev REPL or another gate is often already
+#     tree) beside sibling checkouts, so a bench, a dev REPL or another `lein gate` is often already
 #     eating cores.  Each such JVM is a slot this run should not also claim, so the count is
 #     load-aware rather than a constant.
 #
@@ -89,7 +89,7 @@ default_slots() {
 # these run from the primary, which also owns the one matrix lock below.  `lein perf --only`,
 # limited to the checks a change needs, runs anywhere (scripts/perf.sh).  A separate
 # clone is not a linked worktree and is not refused.  `ALLOW_WORKTREE_RUN=1` runs one
-# anyway, for a release gated in a scratch worktree at the carved sha.
+# anyway, for a release checked in a scratch worktree at the carved sha.
 
 # The repository's shared git directory, absolute: the primary's `.git`, from any worktree.
 common_git_dir() {
@@ -293,20 +293,20 @@ matrix_red_recent() {
   return 0
 }
 
-# ---- one perf run at a time, and a cap on concurrent gate test stages ----------------------
+# ---- one perf run at a time, and a cap on concurrent `lein gate` test stages ---------------
 #
 # `lein perf` and `lein perf-ab` time code, and a second perf run beside the first loads the
 # cores both are timing: each reads the other's JVMs as its own regression, and the suites
-# other sessions run beside them drop to one slot. So every perf run, `--only` and a gate's
+# other sessions run beside them drop to one slot. So every perf run, `--only` and `lein gate`'s
 # perf stage included, from any worktree, holds `perf-lock` in the shared state directory
 # while it measures.
 #
-# A gate's test stage sizes its shard count from the vaelii JVMs already running
-# (`default_slots`), so seven gates started together each run at one shard. So `lein gate`
+# `lein gate`'s test stage sizes its shard count from the vaelii JVMs already running
+# (`default_slots`), so seven `lein gate` runs started together each run at one shard. So `lein gate`
 # holds one of GATE_MAX_CONCURRENT gate slots (2 by default, `0` for no cap),
 # `gate-lock.1` … `gate-lock.<n>`, for its test stage alone. The test stage starts after the
-# take, so its shard count reads the box as it is at admission. Lint runs while the gate
-# waits, and the gate releases its slot before its perf stage takes `perf-lock`, so no
+# take, so its shard count reads the box as it is at admission. Lint runs while `lein gate`
+# waits, and `lein gate` releases its slot before its perf stage takes `perf-lock`, so no
 # process holds both.
 #
 # A run that finds every slot of its lock held waits, naming the holders once a minute;

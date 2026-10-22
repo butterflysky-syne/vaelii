@@ -13,6 +13,7 @@
             [vaelii.impl.naming :as nm]
             [vaelii.impl.predall :as predall]
             [vaelii.impl.predicates :as predicates]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.provers :as provers]
             [vaelii.impl.reads :as reads]
@@ -32,17 +33,20 @@
   "Audit one declared predicate at a time, stopping after the first finding beyond
   `remaining` proves that the result bound truncated the sweep."
   [kb context remaining]
-  (loop [audits (predall/specified-declaration-audits kb context)
-         findings {}]
-    (if-let [[declaration result] (first audits)]
-      (if (or (= :gap (:status result)) (seq (:violations result)))
-        (if (and remaining (>= (count findings) remaining))
-          {:status :truncated :reason :max-results :findings findings}
-          (do
-            (budget/record! :all-specified-violations [declaration result])
-            (recur (rest audits) (assoc findings declaration result))))
-        (recur (rest audits) findings))
-      {:status :complete :findings findings})))
+  (with-open [r (progress/start ::specified "integrity: audit the specified declarations" nil)]
+    (loop [audits (predall/specified-declaration-audits kb context)
+           findings {}]
+      (if-let [[declaration result] (first audits)]
+        (do
+          (progress/tick! r)
+          (if (or (= :gap (:status result)) (seq (:violations result)))
+            (if (and remaining (>= (count findings) remaining))
+              {:status :truncated :reason :max-results :findings findings}
+              (do
+                (budget/record! :all-specified-violations [declaration result])
+                (recur (rest audits) (assoc findings declaration result))))
+            (recur (rest audits) findings)))
+        {:status :complete :findings findings}))))
 
 ;; ---- genl-arg-widening: a predicate genl edge that widens an argument type ----
 
@@ -104,22 +108,25 @@
   argument types, one edge at a time, stopping after the first finding beyond
   `remaining` proves that the result bound truncated the sweep."
   [kb context remaining]
-  (let [tx (reasoning/taxonomy kb)]
-    (loop [findings []
-           units    (for [spec  (declared-predicates kb context)
-                          :let  [own (own-arg-types kb spec context)]
-                          super (sort-by nm/print-key (tax/direct-genls tx spec context))
-                          :when (not= super spec)
-                          finding (do (budget/spend!)
-                                      (edge-widenings kb tx spec own super context))]
-                      finding)]
-      (if-let [finding (first units)]
-        (if (and remaining (>= (count findings) remaining))
-          {:status :truncated :reason :max-results :findings findings}
-          (do
-            (budget/record! :genl-arg-widening finding)
-            (recur (conj findings finding) (rest units))))
-        {:status :complete :findings findings}))))
+  (let [tx    (reasoning/taxonomy kb)
+        preds (declared-predicates kb context)]
+    (with-open [r (progress/start ::genl-arg-widening "integrity: audit the predicate genl edges"
+                                  (count preds))]
+      (loop [findings []
+             units    (for [spec  (progress/each r preds)
+                            :let  [own (own-arg-types kb spec context)]
+                            super (sort-by nm/print-key (tax/direct-genls tx spec context))
+                            :when (not= super spec)
+                            finding (do (budget/spend!)
+                                        (edge-widenings kb tx spec own super context))]
+                        finding)]
+        (if-let [finding (first units)]
+          (if (and remaining (>= (count findings) remaining))
+            {:status :truncated :reason :max-results :findings findings}
+            (do
+              (budget/record! :genl-arg-widening finding)
+              (recur (conj findings finding) (rest units))))
+          {:status :complete :findings findings})))))
 
 ;; ---- not-under-thing: a candidate type with no genl path to thing ----
 
@@ -138,20 +145,23 @@
   stopping after the first finding beyond `remaining` proves that the result bound
   truncated the sweep."
   [kb candidate-terms context remaining]
-  (let [tx (reasoning/taxonomy kb)]
-    (loop [findings []
-           units    (for [term (->> candidate-terms
-                                    (filter #(and (symbol? %) (not (sx/variable? %))))
-                                    (sort-by nm/print-key))
-                          :when (unrooted-type? kb tx term context)]
-                      {:term term})]
-      (if-let [finding (first units)]
-        (if (and remaining (>= (count findings) remaining))
-          {:status :truncated :reason :max-results :findings findings}
-          (do
-            (budget/record! :not-under-thing finding)
-            (recur (conj findings finding) (rest units))))
-        {:status :complete :findings findings}))))
+  (let [tx    (reasoning/taxonomy kb)
+        terms (->> candidate-terms
+                   (filter #(and (symbol? %) (not (sx/variable? %))))
+                   (sort-by nm/print-key))]
+    (with-open [r (progress/start ::not-under-thing "integrity: find the types not under thing"
+                                  (count terms))]
+      (loop [findings []
+             units    (for [term  (progress/each r terms)
+                            :when (unrooted-type? kb tx term context)]
+                        {:term term})]
+        (if-let [finding (first units)]
+          (if (and remaining (>= (count findings) remaining))
+            {:status :truncated :reason :max-results :findings findings}
+            (do
+              (budget/record! :not-under-thing finding)
+              (recur (conj findings finding) (rest units))))
+          {:status :complete :findings findings})))))
 
 ;; ---- implicit-genl: a genl edge a cover forces but the closure does not hold ----
 
@@ -228,22 +238,85 @@
   in print order, against each visible cover over it, one cover at a time, stopping after
   the first finding beyond `remaining` proves that the result bound truncated the sweep."
   [kb candidate-terms context remaining]
-  (let [tx (reasoning/taxonomy kb)]
+  (let [tx    (reasoning/taxonomy kb)
+        terms (->> candidate-terms
+                   (filter #(and (symbol? %) (not (sx/variable? %))))
+                   (sort-by nm/print-key))]
+    (with-open [r (progress/start ::implicit-genl "integrity: find the implicit genl edges"
+                                  (count terms))]
+      (loop [findings []
+             units    (for [term  (progress/each r terms)
+                            :when (suggestible-type? kb tx term context)
+                            cover (visible-covers tx term context)
+                            :let  [finding (do (budget/spend!)
+                                               (cover-suggestion kb tx term cover context))]
+                            :when finding]
+                        finding)]
+        (if-let [finding (first units)]
+          (if (and remaining (>= (count findings) remaining))
+            {:status :truncated :reason :max-results :findings findings}
+            (do
+              (budget/record! :implicit-genl finding)
+              (recur (conj findings finding) (rest units))))
+          {:status :complete :findings findings})))))
+
+;; ---- implicit-arity-class: an exact-arity class a kind and an arity force ----
+
+(def ^:private arity-class-mappings
+  "Each kind the pass reads, with the mapping predicate whose facts name its exact-arity
+  classes: the two generators whose generated rules core.txt writes inert."
+  [['predicate 'predicateTypeByArity]
+   ['function 'functionTypeByArity]])
+
+(defn- arity-class-table
+  "`[[kind mapping {arity #{class …}}] …]` from the mapping facts `context` sees, in
+  `arity-class-mappings` order: the one census this pass reads."
+  [kb context]
+  (vec (for [[kind mapping] arity-class-mappings]
+         [kind mapping
+          (reduce (fn [m [_ b]]
+                    (budget/spend!)
+                    (let [t (get b '?t) n (get b '?n)]
+                      (if (and (symbol? t) (not (sx/variable? t)) (integer? n))
+                        (update m n (fnil conj #{}) t)
+                        m)))
+                  {}
+                  (res/matches-visible kb (list mapping '?t '?n) context))])))
+
+(defn- arity-class-units
+  "The findings for `term`: for each kind in `table` that `term` is an instance of, the
+  class its mapping names for `term`'s exact length that `term` is not an instance of.
+  The length is `arity/relation-length`'s, read the same at every context; the kind and
+  the class are the memberships `context` sees, through the `genl` closure."
+  [kb table term context]
+  (when-let [n (do (budget/spend!) (:exact (arity/relation-length kb term)))]
+    (for [[kind mapping classes] table
+          :let  [cs (get classes n)]
+          :when (seq cs)
+          :when (do (budget/spend!) (kb/isa? kb term kind context))
+          class (sort-by nm/print-key cs)
+          :when (not (do (budget/spend!) (kb/isa? kb term class context)))]
+      {:term term :kind kind :arity n :class class
+       :mapping (list mapping class n)})))
+
+(defn- implicit-arity-class-findings
+  "Audit each ground symbol candidate, in print order, against the visible
+  `predicateTypeByArity` and `functionTypeByArity` facts, one term at a time, stopping
+  after the first finding beyond `remaining` proves that the result bound truncated the
+  sweep."
+  [kb candidate-terms context remaining]
+  (let [table (arity-class-table kb context)]
     (loop [findings []
-           units    (for [term (->> candidate-terms
-                                    (filter #(and (symbol? %) (not (sx/variable? %))))
-                                    (sort-by nm/print-key))
-                          :when (suggestible-type? kb tx term context)
-                          cover (visible-covers tx term context)
-                          :let  [finding (do (budget/spend!)
-                                             (cover-suggestion kb tx term cover context))]
-                          :when finding]
+           units    (for [term    (->> candidate-terms
+                                       (filter #(and (symbol? %) (not (sx/variable? %))))
+                                       (sort-by nm/print-key))
+                          finding (arity-class-units kb table term context)]
                       finding)]
       (if-let [finding (first units)]
         (if (and remaining (>= (count findings) remaining))
           {:status :truncated :reason :max-results :findings findings}
           (do
-            (budget/record! :implicit-genl finding)
+            (budget/record! :implicit-arity-class finding)
             (recur (conj findings finding) (rest units))))
         {:status :complete :findings findings}))))
 
@@ -290,7 +363,7 @@
 (defn- orthogonal-separation
   "The finding for one visible orthogonal declaration over `a` and `b`, or nil: the stated
   separations `context` sees over the pair with no exception exempting any of them — an
-  explicit `disjoint`, a `partition` or `separating` roster, a `sibling_disjoint` parent or
+  explicit `disjoint`, a `partition` or `separating` declaration, a `sibling_disjoint` parent or
   a `disjoint_metatype` — over `a` and `b` or over a supertype of each.  A
   `siblingDisjointException` lifts the marks among these, so `disjoint?` reads the pair
   apart and cannot show them."
@@ -306,17 +379,19 @@
   "Audit every visible `orthogonal` declaration, one at a time, stopping after the first
   finding beyond `remaining` proves that the result bound truncated the sweep."
   [kb context remaining]
-  (let [tx (reasoning/taxonomy kb)]
-    (loop [findings []
-           units    (keep #(orthogonal-separation kb tx % context)
-                          (visible-orthogonals kb context))]
-      (if-let [finding (first units)]
-        (if (and remaining (>= (count findings) remaining))
-          {:status :truncated :reason :max-results :findings findings}
-          (do
-            (budget/record! :orthogonal-over-separation finding)
-            (recur (conj findings finding) (rest units))))
-        {:status :complete :findings findings}))))
+  (let [tx    (reasoning/taxonomy kb)
+        decls (visible-orthogonals kb context)]
+    (with-open [r (progress/start ::orthogonal-over-separation
+                                  "integrity: check the orthogonal declarations" (count decls))]
+      (loop [findings []
+             units    (keep #(orthogonal-separation kb tx % context) (progress/each r decls))]
+        (if-let [finding (first units)]
+          (if (and remaining (>= (count findings) remaining))
+            {:status :truncated :reason :max-results :findings findings}
+            (do
+              (budget/record! :orthogonal-over-separation finding)
+              (recur (conj findings finding) (rest units))))
+          {:status :complete :findings findings})))))
 
 ;; ---- shared by the three ontology-engineering passes below ----
 
@@ -378,15 +453,19 @@
   `context` reads it, names two types or more besides `thing`.  A type is read as
   `suggestible-type?` reads one."
   [kb tx context]
-  (reduce (fn [groups t]
-            (budget/spend!)
-            (let [gs (when (symbol? t) (tax/direct-genls tx t context))]
-              (if (and (>= (count (disj (set gs) 'thing)) 2)
-                       (suggestible-type? kb tx t context))
-                (update groups (set gs) (fnil conj #{}) t)
-                groups)))
-          {}
-          (tax/types tx)))
+  (let [ts (tax/types tx)]
+    (with-open [r (progress/start ::twin-genls "integrity: group the types by direct genls"
+                                  (count ts))]
+      (reduce (fn [groups t]
+                (budget/spend!)
+                (progress/tick! r)
+                (let [gs (when (symbol? t) (tax/direct-genls tx t context))]
+                  (if (and (>= (count (disj (set gs) 'thing)) 2)
+                           (suggestible-type? kb tx t context))
+                    (update groups (set gs) (fnil conj #{}) t)
+                    groups)))
+              {}
+              ts))))
 
 (defn- twin-genls-findings
   "Group every type by its direct `genl` set, and report each set two types or more
@@ -424,7 +503,7 @@
 
 (defn- derivable-genl
   "The finding for one stated `(genl a b)`, or nil: another believed supporter of the
-  edge (the same sentence stated again, a rule's derivation, a roster installing it), or
+  edge (the same sentence stated again, a rule's derivation, a cover declaration installing it), or
   another `genl` path from `a` to `b` that does not walk the edge."
   [kb tx [a b stated] context]
   (budget/spend!)
@@ -443,7 +522,7 @@
   "The finding for one stated `(disjoint a b)`, or nil: the separations `context` sees
   over the pair, or over a supertype of each, besides this one statement — another
   supporter of the same pair, a separation of two supertypes, a `partition` or
-  `separating` roster, a `sibling_disjoint` parent or a `disjoint_metatype`."
+  `separating` declaration, a `sibling_disjoint` parent or a `disjoint_metatype`."
   [kb tx [a b stated] context]
   (budget/spend!)
   (let [k    [:disjoint #{a b}]
@@ -457,12 +536,16 @@
   "Audit every visible stated `genl`, then every visible stated `disjoint`, one at a
   time, in content order."
   [kb context remaining]
-  (let [tx (reasoning/taxonomy kb)]
-    (bounded-findings
-     :derivable-stated-edge
-     (concat (keep #(derivable-genl kb tx % context) (stated-pairs kb 'genl context))
-             (keep #(derivable-disjoint kb tx % context) (stated-pairs kb 'disjoint context)))
-     remaining)))
+  (let [tx        (reasoning/taxonomy kb)
+        genls     (stated-pairs kb 'genl context)
+        disjoints (stated-pairs kb 'disjoint context)]
+    (with-open [r (progress/start ::derivable-stated-edge "integrity: find the derivable stated edges"
+                                  (+ (count genls) (count disjoints)))]
+      (bounded-findings
+       :derivable-stated-edge
+       (concat (keep #(derivable-genl kb tx % context) (progress/each r genls))
+               (keep #(derivable-disjoint kb tx % context) (progress/each r disjoints)))
+       remaining))))
 
 ;; ---- disjoint-could-be-partition: a disjoint whose pair a known cover exhausts ----
 
@@ -512,11 +595,15 @@
 (defn- disjoint-could-be-partition-findings
   "Audit every visible stated `disjoint`, one at a time, in content order."
   [kb context remaining]
-  (let [tx (reasoning/taxonomy kb)]
-    (bounded-findings
-     :disjoint-could-be-partition
-     (mapcat #(partition-candidates kb tx % context) (stated-pairs kb 'disjoint context))
-     remaining)))
+  (let [tx        (reasoning/taxonomy kb)
+        disjoints (stated-pairs kb 'disjoint context)]
+    (with-open [r (progress/start ::disjoint-could-be-partition
+                                  "integrity: find the disjoints that could be partitions"
+                                  (count disjoints))]
+      (bounded-findings
+       :disjoint-could-be-partition
+       (mapcat #(partition-candidates kb tx % context) (progress/each r disjoints))
+       remaining))))
 
 ;; ---- missing-arg: a declared argument position no declaration types ----
 
@@ -548,11 +635,11 @@
 (defn- typed-positions
   "`{:at #{n …} :from n-or-nil :every? bool}` for `pred` as `context` reads its
   declarations: the positions one declaration types, the first position a rest form
-  types onward, and whether a form types them all.  The binary `arg1`/`arg2`/`arg3`
+  types onward, and whether a form types them all.  The binary `arg1` through `arg5`
   projections are read on `pred` itself."
   [kb pred context]
   {:at     (into (set (for [k positional-kinds [n _] (declared-rows kb k pred true context)] n))
-                 (for [[k n] '[[arg1 1] [arg2 2] [arg3 3]]
+                 (for [[k n] sx/arg-projections
                        :when (do (budget/spend!)
                                  (seq (res/matches-visible kb (list k pred '?t) context)))]
                    n))
@@ -611,12 +698,15 @@
 (defn- missing-arg-findings
   "Audit every predicate `context` sees declared an arity, one at a time, in print order."
   [kb context remaining]
-  (let [tx (reasoning/taxonomy kb)]
-    (bounded-findings
-     :missing-arg
-     (keep (fn [[pred arity]] (missing-positions kb tx pred arity context))
-           (sort-by (comp nm/print-key key) (arity-census kb context)))
-     remaining)))
+  (let [tx    (reasoning/taxonomy kb)
+        preds (sort-by (comp nm/print-key key) (arity-census kb context))]
+    (with-open [r (progress/start ::missing-arg "integrity: find the untyped argument positions"
+                                  (count preds))]
+      (bounded-findings
+       :missing-arg
+       (keep (fn [[pred arity]] (missing-positions kb tx pred arity context))
+             (progress/each r preds))
+       remaining))))
 
 ;; ---- rule-macro: a stored rule a declaration the engine implements states ----
 
@@ -826,7 +916,7 @@
   "May the stored rule `rsx` at handle `h` be read as a macro's spelling: a believed
   premise, visible from `context`, run by a chainer to derive its head, with no
   `exceptWhen`, `unknown`, aggregate or other re-checked condition?  A rule a generator
-  stamped is a conclusion, not a premise, and is skipped."
+  generated is a conclusion, not a premise, and is skipped."
   [kb context h rsx]
   (let [tms (reasoning/tms kb)]
     (and (rules/rule? rsx)
@@ -926,26 +1016,32 @@
   [kb context remaining]
   (let [idx  (:index kb)
         recs (:records kb)
-        rows (->> (into (sorted-set) (reads/as-stored-rules-in-global idx :rule))
-                  (keep (fn [h]
-                          (budget/spend!)
-                          (when-let [rsx (p/get-sentex recs h)]
-                            (when (macro-candidate? kb context h rsx)
-                              [h rsx]))))
-                  (sort-by (fn [[h rsx]]
-                             [(nm/print-key (sx/authored-sentence rsx))
-                              (nm/print-key (:context rsx)) h])))]
-    (loop [findings []
-           units    (for [[h rsx] rows
-                          finding (rule-macro-units kb context h rsx)]
-                      finding)]
-      (if-let [finding (first units)]
-        (if (and remaining (>= (count findings) remaining))
-          {:status :truncated :reason :max-results :findings findings}
-          (do
-            (budget/record! :rule-macro finding)
-            (recur (conj findings finding) (rest units))))
-        {:status :complete :findings findings}))))
+        hs   (into (sorted-set) (reads/as-stored-rules-in-global idx :rule))
+        rows (with-open [r (progress/start ::rule-macro-candidates
+                                           "integrity: select the macro candidate rules" (count hs))]
+               (->> hs
+                    (keep (fn [h]
+                            (budget/spend!)
+                            (progress/tick! r)
+                            (when-let [rsx (p/get-sentex recs h)]
+                              (when (macro-candidate? kb context h rsx)
+                                [h rsx]))))
+                    (sort-by (fn [[h rsx]]
+                               [(nm/print-key (sx/authored-sentence rsx))
+                                (nm/print-key (:context rsx)) h]))))]
+    (with-open [r (progress/start ::rule-macro "integrity: match the rules against the macro shapes"
+                                  (count rows))]
+      (loop [findings []
+             units    (for [[h rsx] (progress/each r rows)
+                            finding (rule-macro-units kb context h rsx)]
+                        finding)]
+        (if-let [finding (first units)]
+          (if (and remaining (>= (count findings) remaining))
+            {:status :truncated :reason :max-results :findings findings}
+            (do
+              (budget/record! :rule-macro finding)
+              (recur (conj findings finding) (rest units))))
+          {:status :complete :findings findings})))))
 
 ;; ---- undeclared-arity: a genl node no length binds ----
 
@@ -974,17 +1070,20 @@
   after the first finding beyond `remaining` proves that the result bound truncated the
   sweep."
   [kb context remaining]
-  (loop [findings []
-         units    (for [term  (genl-nodes kb context)
-                        :when (undeclared-arity? kb term)]
-                    {:term term})]
-    (if-let [finding (first units)]
-      (if (and remaining (>= (count findings) remaining))
-        {:status :truncated :reason :max-results :findings findings}
-        (do
-          (budget/record! :undeclared-arity finding)
-          (recur (conj findings finding) (rest units))))
-      {:status :complete :findings findings})))
+  (let [nodes (genl-nodes kb context)]
+    (with-open [r (progress/start ::undeclared-arity "integrity: find the genl nodes with no arity"
+                                  (count nodes))]
+      (loop [findings []
+             units    (for [term  (progress/each r nodes)
+                            :when (undeclared-arity? kb term)]
+                        {:term term})]
+        (if-let [finding (first units)]
+          (if (and remaining (>= (count findings) remaining))
+            {:status :truncated :reason :max-results :findings findings}
+            (do
+              (budget/record! :undeclared-arity finding)
+              (recur (conj findings finding) (rest units))))
+          {:status :complete :findings findings})))))
 
 (def ^:private passes
   "The passes in run order, `[category audit]`: `audit` takes `kb candidate-terms context
@@ -997,6 +1096,7 @@
                          (widening-findings kb context remaining))]
    [:not-under-thing not-under-thing-findings]
    [:implicit-genl implicit-genl-findings]
+   [:implicit-arity-class implicit-arity-class-findings]
    [:orthogonal-over-separation (fn [kb _ context remaining]
                                   (orthogonal-over-separation-findings kb context remaining))]
    [:rule-macro (fn [kb _ context remaining]
@@ -1039,16 +1139,19 @@
   nil) in order, each with what is left of `max-results`: nil when every pass completed,
   `:max-results` when one stopped at the cap."
   [kb candidate-terms context max-results categories]
-  (loop [[[_ audit] & more] (filter #(if (nil? categories)
-                                       (not (review-categories (first %)))
-                                       (categories (first %)))
-                                    passes)
-         remaining          max-results]
-    (when audit
-      (let [result (audit kb candidate-terms context remaining)]
-        (if (= :truncated (:status result))
-          :max-results
-          (recur more (some-> remaining (- (count (:findings result))))))))))
+  (let [selected (filterv #(if (nil? categories)
+                             (not (review-categories (first %)))
+                             (categories (first %)))
+                          passes)]
+    (with-open [r (progress/start ::run-passes "integrity: run the passes" (count selected))]
+      (loop [[[_ audit] & more] selected
+             remaining          max-results]
+        (when audit
+          (let [result (audit kb candidate-terms context remaining)]
+            (progress/tick! r)
+            (if (= :truncated (:status result))
+              :max-results
+              (recur more (some-> remaining (- (count (:findings result))))))))))))
 
 (defn- report-categories
   "The non-empty categories of a meter's findings, the specified category as a map."

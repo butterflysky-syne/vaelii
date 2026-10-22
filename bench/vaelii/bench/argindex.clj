@@ -5,7 +5,7 @@
   measuring stick for the index-layout experiment, phase 1.
 
   The definitional checks read a term's memberships through the argument roots — the
-  candidate index's unary-roster read, and a `matches-visible` read with the term bound —
+  candidate index's unary-set read, and a `matches-visible` read with the term bound —
   which narrow on the **argument roots**, a count trie over `[pred pos term ctx]`: the node
   `[:argument-root :children [pred pos term]]` lists the contexts stating such a fact, and
   the leaf `[:argument-root :handles [pred pos term ctx]]` holds the handles stated in one.
@@ -32,7 +32,7 @@
 
   Returned-vs-matched is captured by `vaelii.impl.profile/record-sift`, an opt-in hook at
   `resolution/matches-hierarchical` — off during timing (a bare deref), on only inside a
-  `prof/start`…`prof/stop` window, where it realizes the candidate seq to count it.
+  `prof/start`…`prof/stop` span, where it realizes the candidate seq to count it.
 
   * **join** — the v3 metric.  A probe with TWO ground argument columns, where the
     non-leading column is locally selective, run under each `res/*arg-intersect*`
@@ -320,14 +320,14 @@
                    (long (:subjects opts)) (long (:fanout opts)) (long (:objects opts))
                    (long (:contexts opts)) (long (:samples opts))))
   (println "  probe (relT Subj Obj ?z) — column 1 (Subj) wide, column 2 (Obj) locally 1/objects selective")
-  (println "  :off = pre-v3 single leading column; :two/:all/:gated intersect the argument roots")
+  (println "  :off = pre-v3 single leading column; :two/:all/:above-floor intersect the argument roots")
   (println "  unified = candidates reaching unify (the metric v3 moves); matched = survivors")
   (let [kb  (doto (v/open-kb {:backend :memory :space 50 :recover? false}) (v/clear!))
         ctx (build-join! kb opts)
         obj (obj-name 0)]
     (v/reindex kb)
     (println (format "  built %,d sentexes\n" (long (v/sentex-count kb))))
-    (let [rows (doall (map #(run-join-strategy kb ctx opts obj %) [:off :two :all :gated]))
+    (let [rows (doall (map #(run-join-strategy kb ctx opts obj %) [:off :two :all :above-floor]))
           base (first (filter #(= :off (:strat %)) rows))
           two  (first (filter #(= :two (:strat %)) rows))]
       (when (zero? (long (:matched base)))
@@ -430,7 +430,7 @@
       (println (format "  matches-hierarchical returned/matched: %,d / %,d = %.1f×"
                        (long (:returned sift)) (long (:matched sift)) (:ratio sift)))
       (when (zero? (long argument-root))
-        (println "  WARNING: zero argument-root reads — the clash sweep did not probe the roots (gate closed?)"))
+        (println "  WARNING: zero argument-root reads — the clash sweep did not probe the roots (did a presence check skip it?)"))
       (println)
       {:reindex-s (/ ix-ns 1e9) :recover-s (/ rec-ns 1e9) :recover-bytes rec-bytes
        :sentexes n :contradictions contras :violations viols
@@ -464,7 +464,7 @@
 (defn run-macro-columnar
   "The macro on `:memory-columnar` — memory records, the native columnar trie, and the
   argument-root reads through `DenseRoots` (its int-keyed roots backend), where a scoped
-  key packs into a long and the predicate-agnostic reads union over the slot roster."
+  key packs into a long and the predicate-agnostic reads union over the slot predicate set."
   [opts]
   (run-macro-open "memory-columnar → DenseRoots" {:backend :memory-columnar :space 51} opts))
 

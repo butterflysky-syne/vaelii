@@ -13,8 +13,10 @@
             [vaelii.host.starter :as starter]
             [vaelii.impl.chain :as chain]
             [vaelii.impl.checks :as checks]
+            [vaelii.impl.disk.durability :as dur]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.reads :as reads]
+            [vaelii.impl.recovery :as recovery]
             [vaelii.impl.sentex :as sx]
             [vaelii.impl.special :as special]
             [vaelii.impl.taxonomy :as tax]
@@ -49,6 +51,8 @@
         (is (not (v/in? kb2 gp))))                        ; jtms not rebuilt yet
       (v/recover kb2)
       (testing "after recover, the taxonomy answers isa? again"
+        (is (= {:n 0 :handles []} (v/unsupported kb2))
+            "every record of the loaded world has a premise mark or a justification")
         (is (v/isa? kb2 'Muffet 'animal))
         (is (v/disjoint? kb2 'dog 'cat)))
       (testing "the JTMS is rebuilt: the derived grandparent is IN with its support"
@@ -302,10 +306,10 @@
           "and the mark it excepts still separates a non-exempted pair"))))
 
 (tu/deftest-kb recover-agrees-about-a-denied-exemption
-  ;; `siblingDisjointException` is on the engine's baseline roster, so on this bare KB a `:default`
-  ;; declaration is never a loser and a denial of it is held OUT: the exemption stands.
-  ;; rebuild-taxonomy replays the stored declaration and the denial's premise, and
-  ;; `force-roster!` holds the denial OUT again — the same answer either side of a restart.
+  ;; `siblingDisjointException` is in the baseline forced-monotonic set, so on this bare KB a `:default`
+  ;; declaration is never a loser and a :monotonic denial of it loses to it: the exemption
+  ;; stands.  rebuild-taxonomy replays the stored declaration and the denial's premise, and
+  ;; the negation nogood is decided again — the same answer either side of a restart.
   (let [collection (tu/tmp-type) a (tu/tmp-type) b (tu/tmp-type)]
     (v/assert kb (list 'genl a collection) 'CxUniverse)
     (v/assert kb (list 'genl b collection) 'CxUniverse)
@@ -315,14 +319,14 @@
                         {:strength :monotonic})
           kb2 (restart)]
       (is (= [false false] [(v/disjoint? kb a b) (v/in? kb d)])
-          "the denial is OUT, so the exemption stands in memory")
+          "the denial loses, so the exemption stands in memory")
       (v/recover kb2)
       (is (= [false false] [(v/disjoint? kb2 a b) (v/in? kb2 d)]) "and after a restart"))))
 
 (tu/deftest-kb recover-agrees-about-a-denied-declaration
-  ;; `disjoint` is on the engine's baseline roster, so on this bare KB a `:default`
-  ;; declaration is never a loser and a denial of it is held OUT, and a restart must give the
-  ;; same answer: the denial's premise is replayed, and `force-roster!` holds it OUT again.
+  ;; `disjoint` is in the baseline forced-monotonic set, so on this bare KB a `:default`
+  ;; declaration is never a loser and a :monotonic denial of it loses to it, and a restart
+  ;; must give the same answer: the denial's premise is replayed and loses again.
   (let [dog (tu/tmp-type) cat (tu/tmp-type)]
     (v/assert kb (list 'disjoint dog cat) 'CxUniverse {:strength :default})
     (let [d   (v/assert kb (list 'not (list 'disjoint dog cat)) 'CxUniverse {:strength :monotonic})
@@ -361,7 +365,7 @@
             caresFor (tu/tmp-pred "caresFor")
             Tom      (tu/tmp-ind "Tom")
             [lo hi]  (sort [(tu/tmp-ind "Ann") (tu/tmp-ind "Ann")])]
-        ;; a firing concludes an equality only from roster antecedents
+        ;; a firing concludes an equality only from forced-monotonic antecedents
         (v/assert kb (list 'forced_monotonic_predicate aliasOf) 'CxUniverse)
         (v/assert-rule kb [(list aliasOf '?x '?y)] (list rel '?x '?y) 'CxUniverse {:direction :forward})
         (v/assert kb (list caresFor hi Tom) 'CxUniverse)
@@ -383,10 +387,10 @@
                 "a restart changed whether the retired spelling is believed")))))))
 
 (tu/deftest-kb a-void-firing-installs-its-conclusion-in-no-cache-live-or-recovered
-  ;; A rule whose antecedent is off the roster concludes a roster literal, so each firing
+  ;; A rule whose antecedent is not forced-monotonic concludes a forced-monotonic literal, so each firing
   ;; is held void: the conclusion is stored and OUT.  `recover` replays the record into
   ;; its cache and narrows the cache to belief; the live KB has to hold the same.  One
-  ;; row per cache a roster literal installs into.  A `genl` edge is on the roster only
+  ;; row per cache a forced-monotonic literal installs into.  A `genl` edge is forced-monotonic only
   ;; between camelCase predicates, which `tu/tmp-pred` does not spell.
   (let [merged? (fn [kb a b] (contains? (set (v/equiv-class kb b)) a))
         tx      #(reasoning/taxonomy %)
@@ -454,14 +458,14 @@
 (tu/deftest-kb the-recover-option-selects-rebuild-warn-or-silence
   ;; open-kb over non-empty databases without recovery returns a KB whose empty TMS
   ;; and taxonomy make every query silently answer nothing.  `:recover?` defaults to
-  ;; `:auto` — rebuild at construction (the test below pins the default itself);
+  ;; `:auto` — rebuild at construction (the test below asserts the default itself);
   ;; `false` opts out silently, and `:warn` opts out with a log, leaving recovery to
   ;; the caller.
   (tu/with-terms [dog animal Muffet]
     (v/assert kb (list 'genl dog animal) 'CxUniverse)
     (v/assert kb (list dog Muffet) 'CxUniverse)
     (testing "{:recover? false} constructs an empty-memory KB (recovery is the caller's)"
-      (let [kb2 (restart)]                       ; tu/test-kb pins :recover? false
+      (let [kb2 (restart)]                       ; tu/test-kb sets :recover? false
         (is (empty? (v/sentexes-matching kb2 (list dog Muffet) 'CxUniverse)))))
     (testing "{:recover? :warn} likewise — it logs instead of rebuilding"
       (let [kbw (v/open-kb (assoc (tu/scratch-space) :recover? :warn))]
@@ -473,8 +477,8 @@
         (is (v/isa? kb3 Muffet animal))))))
 
 (tu/deftest-kb recover-defaults-to-auto-when-unstated
-  ;; The pin for the default itself.  The suite states `:recover?` on every KB it
-  ;; builds (`tu/scratch-space` pins false, the tests above spell :warn / :auto out), so
+  ;; The test of the default itself.  The suite states `:recover?` on every KB it
+  ;; builds (`tu/scratch-space` sets false, the tests above spell :warn / :auto out), so
   ;; only this open does what a user's does — a non-empty durable store, no
   ;; `:recover?` at all.  The contract: an unstated policy behaves as `:auto`, so the
   ;; KB answers at construction rather than handing back one whose queries silently
@@ -508,11 +512,12 @@
           (is (not (v/in? kb2 orig)))
           (is (seq (v/sentexes-matching kb2 (list chainR (list gpp Nn)) 'CxUniverse))))))))
 
-(tu/deftest-kb recover-keeps-a-denial-of-an-equation-instance-inert
-  ;; A denial of a roster literal is a record with no premise mark, and `recover` premises
-  ;; what the store marks, so the denial stays inert after a restart and the equation
-  ;; rewrites the denied instance as it did before.  This KB loads no upper layer, so the
-  ;; test puts `equals` on the roster itself.
+(tu/deftest-kb recover-reads-a-denial-of-an-equation-instance-as-before
+  ;; The equation answers its instance without storing it, so no negation nogood pairs the
+  ;; instance with its denial, and the denial is believed beside it (docs/nmtms.md, "A
+  ;; denial of a forced-monotonic literal is believed until the literal is").  A restart
+  ;; reads both as before, and the equation rewrites the denied instance as it did before.
+  ;; This KB loads no upper layer, so the test makes `equals` forced-monotonic itself.
   (tu/with-terms [pp gpp chainR Nn Mm]
     (v/assert kb '(forced_monotonic_predicate equals) 'CxUniverse)
     (v/assert kb (list 'equals (list pp (list pp '?x)) (list gpp '?x)) 'CxUniverse)
@@ -526,14 +531,15 @@
                          (v/in? k d)
                          (v/ask? k (list chainR (list gpp Mm)) 'CxUniverse)
                          (v/ask? k (list chainR (list gpp Nn)) 'CxUniverse)])]
-      (is (= [true false false true true] (reads kb)) "before the restart")
+      (is (= [true false true true true] (reads kb)) "before the restart")
       (let [kb2 (restart)]
         (v/recover kb2)
-        (is (= [true false false true true] (reads kb2)) "after recover")))))
+        (is (= [true false true true true] (reads kb2)) "after recover")))))
 
-(tu/deftest-kb a-store-with-no-roster-declarations-recovers-under-the-engine-baseline
-  ;; this KB loads no upper layer and declares no roster: the engine's baseline alone holds a
-  ;; denial of an equality OUT, and a roster literal reads back at its written strength
+(tu/deftest-kb a-store-with-no-forced-monotonic-declarations-recovers-under-the-engine-baseline
+  ;; this KB loads no upper layer and declares nothing forced-monotonic: the engine's baseline alone
+  ;; makes a :monotonic denial of an equality lose to it, and a forced-monotonic literal reads
+  ;; back at its written strength
   (tu/with-terms [likes Ann Bob]
     (let [same   (v/assert kb (list 'sameAs Ann Bob) 'CxUniverse)
           arity  (v/assert kb (list 'arity likes 2) 'CxUniverse)
@@ -691,10 +697,10 @@
   ;; obligation — and `rebuild-tms` must leave such a justification out of the network
   ;; rather than believe a conclusion resting on a handle that names nothing.
   ;;
-  ;; Storedness is read off the live-handle roster first and the record fetch is the
-  ;; fallback, since a store rosters a handle only once the record is there.  That makes
-  ;; the roster the fast answer and the fetch the one that settles a handle the roster does
-  ;; **not** name — which is exactly this case, so it is the case worth pinning.
+  ;; Storedness is read off the live-handle set first and the record fetch is the
+  ;; fallback, since a store adds a handle to the set only once the record is there.  That
+  ;; makes the set the fast answer and the fetch the one that settles a handle the set does
+  ;; **not** name — which is exactly this case, so this test asserts it.
   (tu/with-terms [p1 q1 Ind]
     (v/assert-rule kb [(list p1 '?x)] (list q1 '?x) 'CxUniverse {:direction :forward})
     (v/assert kb (list p1 Ind) 'CxUniverse)
@@ -781,10 +787,10 @@
                      (pr-str (remove back live)) ", recovered only "
                      (pr-str (remove live back))))))))))
 
-(tu/deftest-kb a-recover-moves-the-stamp-a-waiting-entry-is-decided-under
+(tu/deftest-kb a-recover-moves-the-generations-a-waiting-entry-is-decided-under
   ;; `recover` restarts the relation generations at 0 and replays the stored edges, so
   ;; the replay reaches the counts a KB that only added edges had already reached.  A
-  ;; refused mint, lift or conviction stamped before the recover would then compare equal
+  ;; refused mint, lift or conviction recorded before the recover would then compare equal
   ;; and never be asked again under the rebuilt hierarchy (`special/taxonomy-generations`).
   (tu/with-terms [dog_ cat_ CxQ]
     (v/assert kb (list 'genl dog_ 'animal) 'CxUniverse)
@@ -793,3 +799,139 @@
     (let [before (special/taxonomy-generations kb)]
       (v/recover kb)
       (is (not= before (special/taxonomy-generations kb))))))
+
+(tu/deftest-kb a-recover-holds-out-what-the-live-kb-holds-out-before-its-settle-reads-a-label
+  ;; `(livesIn Ann 5)` puts a number where a place is declared, and the `knows` rule asks
+  ;; ?y to be a place and a person, so the live KB holds both inert.  A recover decides the holds in
+  ;; its rebuild settle, so at the step after it (`:refusals`) every record the live KB
+  ;; reads OUT reads OUT, and the recovered KB ends equal to the live one.
+  (tu/with-terms [place person livesIn employs knows sheltered Fido Tom Ann CxHousing]
+    (doseq [[s c o] [[(list 'genlCx CxHousing 'CxUniverse) 'CxUniverse]
+                     [(list 'genl place 'thing) 'CxUniverse]
+                     [(list 'genl person 'thing) 'CxUniverse]
+                     [(list 'disjoint place person) 'CxUniverse {:strength :monotonic}]
+                     [(list 'arg livesIn 2 place) CxHousing {:strength :monotonic}]
+                     [(list 'arg employs 1 person) CxHousing {:strength :monotonic}]
+                     [(list person Tom) CxHousing {:strength :monotonic}]
+                     [(list employs Tom Ann) CxHousing]
+                     [(list 'implies (list livesIn '?x '?y) (list sheltered '?x)) CxHousing]
+                     [(list livesIn Fido Tom) CxHousing]
+                     [(list livesIn Ann 5) CxHousing]
+                     [(list 'implies (list 'and (list livesIn '?x '?y) (list employs '?y '?z))
+                            (list knows '?x '?z))
+                      CxHousing]]]
+      (v/assert kb s c (or o {})))
+    (let [live     (stored-records kb)
+          rule     (list 'implies (list 'and (list livesIn '?x '?y) (list employs '?y '?z))
+                         (list knows '?x '?z))
+          held     [(list livesIn Ann 5)
+                    (sx/sentence-of (p/get-sentex (:records kb) (v/handle-of kb rule CxHousing)))]
+          kb2      (restart)
+          at-step5 (volatile! nil)]
+      (is (every? #(contains? live [% CxHousing false]) held) "the live KB holds the fact and a rule inert")
+      (with-bindings {#'recovery/*on-step* #(when (= :refusals %) (vreset! at-step5 (stored-records kb2)))}
+        (v/recover kb2))
+      (is (= #{} (into #{} (filter (fn [[s c in?]] (and (not in?) (contains? @at-step5 [s c true]))))
+                       live))
+          "no record the live KB reads OUT reads IN once the rebuild settle ends")
+      (is (= live (stored-records kb2)) "and the recovered KB holds the live KB's records at the live labels"))))
+
+(tu/deftest-kb an-open-reports-a-record-nothing-supports-and-changes-nothing
+  ;; a record whose premise mark never landed stands in for the write a crash cut short;
+  ;; the inert record beside it carries its :inert mark and is not counted
+  (tu/with-terms [dog Fido Rex Inky Newt]
+    (v/assert kb (list dog Fido) 'CxUniverse)
+    (v/assert kb (list dog Rex) 'CxUniverse)
+    (let [fido  (v/handle-of kb (list dog Fido) 'CxUniverse)
+          rex   (v/handle-of kb (list dog Rex) 'CxUniverse)
+          inky  (v/assert-inert kb (list dog Inky) 'CxUniverse)]
+      (p/unmark-premise! (:records kb) rex)
+      (let [before (tu/content-count kb)
+            kb2    (restart)]
+        (v/recover kb2)
+        (is (= {:n 1 :handles [rex]} (v/unsupported kb2)))
+        (is (= before (tu/content-count kb2)) "the open deleted nothing")
+        (is (some? (p/get-sentex (:records kb2) rex)) "and kept the record")
+        (is (not (contains? (p/premise-ids (:records kb2)) rex)) "and marked no premise")
+        (is (= {} (v/write-hazards kb2)) "the report is no write hazard")
+        (is (integer? (v/assert kb2 (list dog Newt) 'CxUniverse)) "and a write succeeds")
+        (is (= :unsupported-unattested
+               (try (v/remove-unsupported! kb2 {}) nil
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (= {:unsupported-removed 1 :handles [rex]}
+               (v/remove-unsupported! kb2 {:handles [rex fido inky]}))
+            "only the unsupported record among the handles named goes")
+        (is (nil? (p/get-sentex (:records kb2) rex)))
+        (is (nil? (v/handle-of kb2 (list dog Rex) 'CxUniverse)) "with its postings")
+        (is (some? (p/get-sentex (:records kb2) inky)))
+        (is (= {:n 0 :handles []} (v/unsupported kb2)))))))
+
+(tu/deftest-kb mark-inert-marks-an-earlier-builds-inert-record
+  ;; an inert record with its `:inert` mark taken off is the record an earlier build wrote
+  (tu/with-terms [dog Inky CxInk]
+    (v/assert kb (list 'genlCx CxInk 'CxUniverse) 'CxUniverse)
+    (let [inky (v/assert-inert kb (list dog Inky) CxInk)
+          recs (:records kb)]
+      (is (true? (:inert (v/provenance kb inky))))
+      (p/put-provenance recs inky (dissoc (p/get-provenance recs inky) :inert))
+      (let [kb2 (restart)]
+        (v/recover kb2)
+        (is (= [inky] (:handles (v/unsupported kb2))))
+        (is (= [:unsupported-unattested :unknown-option]
+               (for [opts [{} {:force? true}]]
+                 (try (v/mark-inert! kb2 opts) nil
+                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+            "a mark takes handles or contexts, never every reported record")
+        (is (= {:marked 1 :handles [inky]} (v/mark-inert! kb2 {:contexts [CxInk]})))
+        (is (= 0 (:n (v/unsupported kb2))))
+        (let [kb3 (restart)]
+          (v/recover kb3)
+          (is (= 0 (:n (v/unsupported kb3))) "the mark is stored"))))))
+
+(defn- slowed
+  "Run `f` with every call of the fn var `v` slowed by `ms`, delivering `started` at the
+  first."
+  [v ms started f]
+  (let [orig @v]
+    (with-redefs-fn {v (fn [& args] (deliver started true) (Thread/sleep (long ms)) (apply orig args))}
+      f)))
+
+(defn- stopped-during
+  "Run `(v/edit! kb batch)` on another thread with `v` slowed, run `dur/quiesce-writes!`
+  with `quiesce` once `v` is first called, and return its answer and the edit's: `:done`,
+  or the refusal's `:type` and `:rolled-back`."
+  [kb v batch quiesce]
+  (let [started (promise)]
+    (slowed v 20 started
+            #(let [w (future (try (v/edit! kb batch) :done
+                                  (catch clojure.lang.ExceptionInfo e
+                                    (select-keys (ex-data e) [:type :rolled-back]))))]
+               @started
+               [(dur/quiesce-writes! (assoc quiesce :release? true)) @w]))))
+
+(tu/deftest-kb a-shutdown-waits-for-a-running-write-and-stops-one-past-its-bound
+  (tu/with-terms [widget gadget]
+    (let [rule  (list 'implies (list widget '?x) (list gadget '?x))
+          adds  {:add [[rule 'CxUniverse {:direction :forward}]]}
+          fire  #'chain/derive-conclusion
+          ws    (vec (for [_ (range 30)]
+                       (v/assert kb (list widget (tu/tmp-ind "Wid")) 'CxUniverse)))]
+      (testing "within the bound the shutdown waits for the write to finish"
+        (is (= [true :done] (stopped-during kb fire adds {:wait-ms 10000 :unwind-ms 1000})))
+        (is (= 30 (v/count-with-functor kb gadget))))
+      (testing "a stop requested during an edit's removals waits for them, so no batch is left in part"
+        (is (= [true :done] (stopped-during kb #'v/retract-storage! {:remove ws}
+                                            {:wait-ms 50 :unwind-ms 10000})))
+        (is (zero? (v/count-with-functor kb widget)))
+        (is (zero? (v/count-with-functor kb gadget)))
+        (v/retract! kb (v/handle-of kb rule 'CxUniverse)))
+      (testing "past the bound an edit's adds stop at a firing and are rolled back"
+        (dotimes [_ 30] (v/assert kb (list widget (tu/tmp-ind "Wid")) 'CxUniverse))
+        (is (= [true {:type :shutdown-abort :rolled-back true}]
+               (stopped-during kb fire adds {:wait-ms 50 :unwind-ms 10000})))
+        (is (zero? (v/count-with-functor kb gadget)))
+        (is (nil? (v/handle-of kb rule 'CxUniverse))))
+      (testing "and leaves no unsupported record after a reopen"
+        (let [kb2 (restart)]
+          (v/recover kb2)
+          (is (= {:n 0 :handles []} (v/unsupported kb2))))))))

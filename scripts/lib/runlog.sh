@@ -24,7 +24,7 @@
 #   epoch      the same instant, sortable and diffable without a date parser
 #   seconds    wall clock; a run killed halfway is `interrupted`, not a fast pass
 #   kind       lint | test | perf | matrix | reflect
-#   variant    the selector or roster this run was: `:default`, `:all`, `full`,
+#   variant    the selector or configuration set this run was: `:default`, `:all`, `full`,
 #              `owed`, or `-` where the kind has no axis.  A `:default` suite and
 #              an `:all` suite are different verdicts and must not overwrite
 #              each other's "last run"
@@ -48,7 +48,7 @@
 #              changing what a value means, raises it.  A row with no value
 #              reads as format 1.
 #
-# test/vaelii/runlog_format_test.clj pins the column list and the format, so a
+# test/vaelii/runlog_format_test.clj asserts the column list and the format, so a
 # change to either fails the suite until the test, and vaelii-top, are changed
 # with it.
 #
@@ -57,7 +57,7 @@
 # It sources `revision.sh` itself when the caller has not.
 #
 #   . scripts/lib/runlog.sh
-#   runlog_start                       # stamps the revision and the clock
+#   runlog_start                       # records the revision and the clock
 #   … run the thing …
 #   runlog_record <kind> <variant> <state> <summary> <log>
 
@@ -94,13 +94,13 @@ runlog_clean() {
 # runlog_record <kind> <variant> <state> <summary> <log>
 #
 # Never fails the caller: a run's verdict does not depend on whether its row got
-# written, and a ledger write that could fail a green gate is a ledger nobody
-# keeps.  Every step is guarded and the function always returns 0.
+# written, and a ledger write that could fail a green `lein gate` run is a ledger
+# nobody keeps.  Every step is guarded and the function always returns 0.
 runlog_record() {
   local kind="${1:-?}" variant="${2:--}" state="${3:-?}" summary="${4:-}" log="${5:--}"
   local secs
   [[ -n "${RUNLOG_EPOCH:-}" ]] || runlog_start
-  # Wall clock from the epoch stamp, never from `$SECONDS`: several of these
+  # Wall clock from the start epoch, never from `$SECONDS`: several of these
   # runners reset `SECONDS` to time an inner step (`scripts/lint.sh`'s `check`
   # does it per check), so a duration read from it is the last step's, not the
   # run's.
@@ -132,7 +132,7 @@ runlog_record() {
 # known eleven-column header, so a header this file did not write is left alone.
 # Rewritten through a temporary file and a `mv`, runlog-backfill.sh's pattern;
 # a row another runner appends between the read and the rename is lost, and the
-# window is one `sed` over a file of a few hundred rows, once per ledger.
+# race window is one `sed` over a file of a few hundred rows, once per ledger.
 runlog_upgrade_header() {
   local first
   first=$(head -1 "$RUNLOG_FILE" 2>/dev/null) || return 0

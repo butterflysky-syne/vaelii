@@ -166,7 +166,7 @@
             (is (= 2 (:index d)))
             (is (= (nth (:add batch) 2) (:entry d)))
             (is (some? (ex-cause e)) "with the original hung off it as the cause")))
-        (testing "and the KB is exactly what it was — count, roster, belief, dilemmas"
+        (testing "and the KB is exactly what it was — count, handle set, belief, dilemmas"
           (is (= (:count before) (v/sentex-count kb)))
           (is (= (:sentexes before) (tu/sentex-ids kb)))
           (is (= (:premises before) (tu/premise-ids kb)))

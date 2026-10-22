@@ -98,6 +98,12 @@ Seven **derived** predicates each name a disjunction:
 usually mean by "before". `subintervalOf` contains `:equal`, so it holds of an interval
 and itself, where `properSubintervalOf` does not. The last two are exact complements.
 
+`subintervalOf` and `properSubintervalOf` take two time intervals, and the other eighteen
+take any temporal thing. The network answers the two only over arguments that hold no
+type disjoint from `time_interval`. So `(during S1 S2)` between two situations answers
+`(hasSubinterval S2 S1)`, and answers neither `(subintervalOf S1 S2)` nor
+`(properSubintervalOf S1 S2)`. An argument with no type is admitted.
+
 All twenty are declared `binary_predicate` in `resources/kb/upper/time.txt`, beside the
 six instant predicates and the metric ones, each with its own `comment` sentex, in a domain file
 rather than `core.txt`, because they are *about* time and `core.txt` holds only the
@@ -125,9 +131,9 @@ nothing, so they can only agree by both being right — which is what makes a mi
 a test failure rather than a wrong answer.
 
 The table is written out of thirteen named blocks rather than 169 loose sets, because that
-is what its entries are. Composing two relations pins some of the four endpoint
+is what its entries are. Composing two relations determines some of the four endpoint
 comparisons between the outer intervals and leaves the rest free; each block is the set of
-relations agreeing on what got pinned. `ends-first` is the five relations with
+relations agreeing on the determined comparisons. `ends-first` is the five relations with
 `a-end < c-end`, `same-start` the three with `a-start = c-start`, `concurrent` the nine
 that share any time at all. An entry therefore says *which comparison survived*, and can
 be read back against the endpoint definitions instead of merely trusted.
@@ -145,15 +151,15 @@ entailment; both are exactly the shape [qcn.md](qcn.md) describes. So `(before A
 and `(during A B)` with `(during B C)` entails `(during A C)` and the weaker
 `(subintervalOf A C)` and `(sharesTimeWith A C)` with it.
 
-The derived predicates entail something no base predicate does in a network that pins
-something without pinning a base relation. `(meets A B)` and `(metBy B D)` force A and D
+The derived predicates entail something no base predicate does in a network that determines
+something without determining a base relation. `(meets A B)` and `(metBy B D)` force A and D
 to end at the same moment and say nothing about where they start, leaving
 `#{:finishes :finished-by :equal}`: no base predicate is entailed, and `sharesTimeWith` is.
 
 `core/possible-relations kb :allen ctx i1 i2` is the algebra read directly rather than
 through a goal — the base relations still possible between two intervals, `#{}` when the
 network is inconsistent. That is the call for a consumer that needs to know *how much* is
-pinned down rather than whether one named relation is entailed: a singleton is a pinned
+determined rather than whether one named relation is entailed: a singleton is a determined
 ordering, and several members are a genuinely open one.
 
 For one concrete arrangement rather than the sets — a timeline to draw, an example to show —

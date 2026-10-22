@@ -19,8 +19,8 @@
   not a defect.
 
   It is deliberately a *default-suite* test.  Running the whole suite under
-  `VAELII_TEST_BACKEND=…` is the thorough gate, but it is a thing someone has to
-  remember; this one fails in an ordinary `lein test` the day a backend diverges."
+  `VAELII_TEST_BACKEND=…` is the thorough check, but someone has to remember to run
+  it; this one fails in an ordinary `lein test` the day a backend diverges."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
             [vaelii.impl.checks :as checks]
@@ -52,14 +52,14 @@
    {:backend :disk-columnar   :dir (disk-dir)}
    ;; the fork decorator over an EMPTY base (docs/overlay.md): every merge rule
    ;; degenerates, so the session must come out identical to the plain one it decorates.
-   ;; The thorough gate is the whole suite under `VAELII_TEST_BACKEND=overlay`; this is
+   ;; The thorough check is the whole suite under `VAELII_TEST_BACKEND=overlay`; this is
    ;; the one that fails in an ordinary `lein test`.
    {:backend :overlay
     :base    {:backend :memory :space 96}
     :overlay {:backend :memory :space 98}}])
 
 (defn- sentences
-  "The `[sentence context]` pairs behind a seq of handles — the handle-free view."
+  "The `[sentence context]` pairs behind a seq of handles — the handle-free form."
   [kb handles]
   (->> handles
        (keep #(p/get-sentex (:records kb) %))
@@ -146,7 +146,7 @@
     ;; animal)` and `(ownerOf Ann Rex)` both sit in CxParity, so Rex would carry a
     ;; second, independent `animal` membership and retracting `(dog Rex)` would no
     ;; longer take his type with it.  That is the feature working, and it is tested
-    ;; where it belongs (`vaelii.argtype-entail-test`); pinned off here so the parity
+    ;; where it belongs (`vaelii.argtype-entail-test`); forced off here so the parity
     ;; script means the same thing however the engine is configured.
     (try (binding [checks/*assertive-arg-types?* false] (session kb))
          (finally
@@ -162,8 +162,8 @@
                (.delete ^java.io.File f)))))))
 
 (def ^:private parity-exempt
-  "The `:backend` names this gate does not run, each with what covers it instead.  A
-  recorded exception rather than a shorter list: `kb/backend-names` is the roster, and a
+  "The `:backend` names this test does not run, each with what covers it instead.  A
+  recorded exception rather than a shorter list: `kb/backend-names` is the list, and a
   backend added to it reaches this namespace as a failing test rather than as a session
   nobody ran.
 
@@ -172,7 +172,7 @@
    (str "the image is an index representation over :disk records, and a first session on"
         " a fresh directory builds the columnar store and reindexes — which is exactly"
         " what :disk-columnar does here. The image adds the map-back on a LATER"
-        " open, which needs two sessions and a stamp to check, and that is"
+        " open, which needs two sessions and a records fingerprint to check, and that is"
         " index_snapshot_test's whole subject.")
    :sqlite      "an Apache-2.0 sibling adapter, not on this repository's classpath"
    :pg-memory   "an Apache-2.0 sibling adapter, and it wants a server"
@@ -180,25 +180,25 @@
    :pg-snapshot "an Apache-2.0 sibling adapter, and it wants a server"})
 
 (deftest every-backend-is-run-or-excused
-  ;; The roster is `kb/backend-names` and this gate covers part of it, so the part it does
+  ;; The list is `kb/backend-names` and this namespace covers part of it, so the part it does
   ;; not cover has to be named. Without this, adding a backend is adding a name that opens
   ;; — `check-backends!` sees to that — and reasons however it likes, because the test
   ;; that says every backend answers alike would simply not be running it.
   (let [run     (into #{} (map :backend) (backends))
-        roster  (set kb/backend-names)]
-    (is (= roster (into run (keys parity-exempt)))
+        names   (set kb/backend-names)]
+    (is (= names (into run (keys parity-exempt)))
         (str "every name on kb/backend-names is either run here or in `parity-exempt`"
              " with what covers it instead"))
     (is (empty? (filter run (keys parity-exempt)))
         "a backend cannot be both run and excused — the excuse describes nothing")
-    (is (empty? (remove roster (keys parity-exempt)))
+    (is (empty? (remove names (keys parity-exempt)))
         "an excuse for a name that is not a backend has outlived what it excused")))
 
 (deftest every-backend-reasons-alike
   (let [bs        (backends)
         reference (run-session (first bs))]
-    ;; parity between backends that all did nothing is worthless, so pin the session
-    ;; down first: it must have matched, subsumed, derived, believed, and retracted.
+    ;; parity between backends that all did nothing is worthless, so check the session
+    ;; first: it must have matched, subsumed, derived, believed, and retracted.
     (testing "the session is not vacuous"
       (is (= 2 (count (:query-dog reference))) "matched the stored dogs")
       (is (seq (:ask-animal reference)) "the genl spec walk reached dog from animal")

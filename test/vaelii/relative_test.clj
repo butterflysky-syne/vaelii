@@ -105,7 +105,7 @@
     (v/assert kb (list 'leftOf Lion Rock) C)
     (testing "left∘left = left, so the mouse is left of the rock though nobody said so"
       (is (v/ask? kb (list 'leftOf Mouse Rock) C)))
-    (testing "and the computed table pins it to exactly that"
+    (testing "and the computed table narrows it to exactly that"
       (is (= #{:left} (qkb/possible rel/relative kb C Mouse Rock)))
       (is (= :left (qkb/definite rel/relative kb C Mouse Rock))))
     (testing "so a relation the network excludes is not answered"

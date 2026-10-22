@@ -111,7 +111,7 @@
   The two argument reads are here because they descend differently and an image can carry
   one without the other.  A named functor takes the predicate-scoped key, which the
   packed long carries through its scope id; a variable functor takes the agnostic read,
-  which descends the slot roster in the fallback blob and then reads the scoped postings
+  which descends the slot predicate set in the fallback blob and then reads the scoped postings
   it names.  `SnapMuffet` occupies position 1 under three predicates, so the agnostic read
   is a genuine union rather than a single set handed back."
   [kb]
@@ -157,10 +157,10 @@
 
 ;; ---- which records an image can be about --------------------------------
 
-(deftest the-image-pairs-with-records-that-stamp-it
-  ;; An image is stamped with what its record store answers to `p/ImageStamping`: the
+(deftest the-image-pairs-with-records-that-fingerprint-it
+  ;; An image records what its record store answers to `p/ImageFingerprinting`: the
   ;; `:disk` store reads its slot file, and the `:pg` adapter one row its trigger moves.
-  (testing ":pg records, whose adapter stamps images, take the image as :pg-snapshot"
+  (testing ":pg records, whose adapter fingerprints images, take the image as :pg-snapshot"
     (is (= {:records :pg :index :snapshot} (kb/backend-axes {:backend :pg-snapshot})))
     (is (= {:records :pg :index :snapshot} (kb/backend-axes {:records :pg :index :snapshot}))))
   (testing ":sqlite records, which may not persist an index beside them, are refused it"
@@ -281,13 +281,13 @@
           (build! (v/open-kb {:records :disk :index :snapshot :dir dir :recover? false}))
           (backend/close-dir! dir)
           (let [[kb2 _] (opening dir)
-                stamp   #(drs/slot-fingerprint (:records kb2))]
+                slot-fp #(drs/slot-fingerprint (:records kb2))]
             (is (= {:index :skipped :reason :unchanged}
-                   (select-keys (snap/save! dir (:index kb2) stamp) [:index :reason]))
+                   (select-keys (snap/save! dir (:index kb2) slot-fp) [:index :reason]))
                 "the image already *is* this index — writing it would thaw the roots to read them")
             ;; and a write puts it back in play
             (v/assert kb2 '(cat SnapTom) 'CxUniverse {:strength :monotonic})
-            (is (= :saved (:index (snap/save! dir (:index kb2) stamp))))))))))
+            (is (= :saved (:index (snap/save! dir (:index kb2) slot-fp))))))))))
 
 (deftest a-save-that-fails-part-way-takes-its-temp-sections-with-it
   (tu/with-snapshot-platform
@@ -300,7 +300,7 @@
         (build! (v/open-kb {:records :disk :index :snapshot :dir dir :recover? false}))
         (backend/close-dir! dir)
         (let [[kb2 _] (opening dir)
-              stamp   #(drs/slot-fingerprint (:records kb2))
+              slot-fp #(drs/slot-fingerprint (:records kb2))
               ^String root (snap/snapshot-root dir)
               temps   (fn [] (->> (.listFiles (File. root))
                                   (filter #(.endsWith (.getName ^File %) ".tmp"))
@@ -314,7 +314,7 @@
           (is (thrown? java.io.IOException
                        (with-redefs-fn
                          {#'snap/write-roots! (fn [& _] (throw (java.io.IOException. "the disk filled")))}
-                         (fn [] (snap/save! dir (:index kb2) stamp))))
+                         (fn [] (snap/save! dir (:index kb2) slot-fp))))
               "the failure travels rather than being reported as a written image")
           (is (= [] (temps))
               (str "a failed save left its sections behind: " (pr-str (temps))))
@@ -376,7 +376,7 @@
                 ;; put the older image back: self-consistent, and about a KB that is gone
                 (copy-tree! aside (snap/snapshot-root dir))
                 (let [[kb4 rebuilds] (opening dir)]
-                  (is (= 1 rebuilds) "the stamp caught it")
+                  (is (= 1 rebuilds) "the records fingerprint caught it")
                   (is (= want (answers kb4)) "and the records answered instead")
                   (is (v/ask? kb4 '(fish SnapNemo) 'CxUniverse)
                       "including the fact the stale image had never heard of")))
@@ -386,7 +386,7 @@
   (tu/with-snapshot-platform
     ;; `clear!` truncates the logs, so a record of the same byte length refills an old slot
     ;; exactly, and the store below differs from the one the older image describes in
-    ;; content alone.  The epoch the wipe mints is the part of the stamp that separates the
+    ;; content alone.  The epoch the wipe mints is the part of the fingerprint that separates the
     ;; two.
     (with-snapshot-dir
       (fn [dir]
@@ -402,7 +402,7 @@
             (backend/close-dir! dir)
             (copy-tree! aside (snap/snapshot-root dir))
             (let [[kb3 rebuilds] (opening dir)]
-              (is (= 1 rebuilds) "the stamp caught it")
+              (is (= 1 rebuilds) "the records fingerprint caught it")
               (is (v/ask? kb3 '(cat SnapTiddle) 'CxUniverse))
               (is (empty? (v/sentexes-matching kb3 '(dog ?x) 'CxUniverse))))
             (finally (rm-rf! aside))))))))
@@ -420,7 +420,7 @@
         (.setLength raf (max 0 (- (.length raf) 64))))
       m)
     :entries-truncated]
-   ;; the fallback blob holds the slot roster, which the predicate-agnostic argument
+   ;; the fallback blob holds the slot predicate set, which the predicate-agnostic argument
    ;; reads descend through — so losing it must discard the image, never open with
    ;; every `sentexes-with-arg` empty
    ["a missing roots fallback blob"
@@ -541,7 +541,7 @@
               (is (.exists (meta-file dir))
                   "the write entry point wrote one: drift from an absent image is total")
               ;; and it describes the records, which is the only thing that makes it worth
-              ;; having — a mid-life image stamped against a store that has moved on is one
+              ;; having — a mid-life image written against a store that has moved on is one
               ;; the next open discards
               (let [want (answers kb)]
                 (backend/close-dir! dir)
@@ -621,7 +621,7 @@
 
 (deftest a-drift-threshold-of-zero-is-the-most-eager-setting-and-not-the-off-one
   (tu/with-snapshot-platform
-    ;; The trap worth pinning: an operator reaching for 0 to mean "never" gets a whole CSR
+    ;; The trap asserted here: an operator reaching for 0 to mean "never" gets a whole CSR
     ;; rewrite on every write past the floor.  The switch is `vaelii.disk.auto-compact`
     ;; above; this is what the low end of the ratio actually does.
     (with-properties {"vaelii.disk.compact-min-interval-ms" "0"
@@ -641,7 +641,7 @@
 
 (deftest a-refresh-attempt-restarts-the-floor-without-moving-the-baseline
   ;; A save that throws — a full disk, a directory gone read-only — writes no image, so the
-  ;; drift it was called on is still there when it returns.  A cadence stamped only by a
+  ;; drift it was called on is still there when it returns.  A cadence reset only by a
   ;; completed save would therefore read due again on the very next write, and a broken
   ;; directory would be re-attempted per assert forever.  The attempt restarts the floor;
   ;; only a completed save moves the baseline.
@@ -921,7 +921,7 @@
 
 (deftest a-fallback-blob-that-does-not-thaw-whole-is-refused-rather-than-defaulted
   (tu/with-snapshot-platform
-    ;; The fallback blob carries the slot roster — the predicates present at a
+    ;; The fallback blob carries the slot predicate set — the predicates present at a
     ;; `(pos, term)`, which the agnostic argument reads descend through — so a thaw that
     ;; comes back torn has to condemn the image.  A default of the empty value would open an
     ;; index answering `#{}` to every `sentexes-with-arg`, which is indistinguishable from a KB that holds

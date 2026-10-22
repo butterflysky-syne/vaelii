@@ -159,7 +159,7 @@ a stored fact and no rule concludes one, so it is the sole complete method and t
 dispatcher runs it alone).
 
 The five comparisons are **deferred predicates** (`vaelii.impl.sentex/deferred-predicates`),
-so in a rule antecedent the planner pins each after the literal that binds its measure
+so in a rule antecedent the planner places each after the literal that binds its measure
 variable — like `evaluate` / `lessThan`:
 
 ```clojure

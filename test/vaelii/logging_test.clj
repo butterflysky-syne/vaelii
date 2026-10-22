@@ -77,13 +77,26 @@
     (is (re-find #"a fatal line" out))
     (is (re-find #"a report line" out))))
 
+(deftest the-installed-backend-prints-one-short-line-per-call
+  (v/set-log-level :debug)
+  (is (re-matches #"\d\d:\d\d:\d\d an info line\n"
+                  (with-out-str (trove/log! {:level :info :id ::probe :data {:k 1} :msg "an info line"})))
+      ":info is the time and the message, without the id or the data")
+  (is (re-matches #"\d\d:\d\d:\d\d WARN logging-test: a warn line\n"
+                  (with-out-str (trove/log! {:level :warn :id ::probe :data {:k 1} :msg "a warn line"}))))
+  (is (re-matches #"\d\d:\d\d:\d\d DEBUG logging-test: a debug line ::probe \{:k 1\}\n"
+                  (with-out-str (trove/log! {:level :debug :id ::probe :data {:k 1} :msg "a debug line"}))))
+  (is (re-matches #"\d\d:\d\d:\d\d WARN logging-test: ::probe \{:k 1\}\n"
+                  (with-out-str (trove/log! {:level :warn :id ::probe :data {:k 1}})))
+      "a call without a message prints its id and data at any level"))
+
 (deftest an-illegal-level-is-refused-and-the-dial-does-not-move
   (v/set-log-level :warn)
   (doseq [bad [:verbose "debug" :DEBUG nil :off]]
     (testing (str "set-log-level " (pr-str bad))
       (let [e (is (thrown? clojure.lang.ExceptionInfo (v/set-log-level bad)))
             d (ex-data e)]
-        (is (= :unknown-option (:type d)) "the roster's own type, not a new one")
+        (is (= :unknown-option (:type d)) "the key check's own type, not a new one")
         (is (= [:error :warn :info :debug :trace] (:known d)))
         (is (re-find #"want one of" (ex-message e))
             "and the message names the five, since a refusal an operator cannot act on
@@ -120,7 +133,7 @@
 
 (deftest the-environment-and-the-function-take-the-same-five-levels
   (is (= (set logging/dial-levels) (set (vals config/log-level-spellings)))
-      "two rosters for one dial is one of them wrong")
+      "two lists for one dial is one of them wrong")
   (is (= ["debug" "error" "info" "trace" "warn"] (sort (keys config/log-level-spellings)))
       "and the spellings are the level names themselves")
   (testing "each spelling reads as its level, case-insensitively"

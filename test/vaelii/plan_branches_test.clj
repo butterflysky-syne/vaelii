@@ -9,7 +9,7 @@
   is nothing to *choose* between when at most one generator is reorderable — but it
   still has work to do, and the work is exactly the thing the arm's comment names:
   the deferred literals can be pulled forward **past the recursive one**, which is
-  pinned last.  `plan-test` reaches that arm only with `recs` empty, so the
+  placed last.  `plan-test` reaches that arm only with `recs` empty, so the
   `(concat gens early recs (drop-i defs early))` assembly — the only place the four
   groups are spliced back together — is never checked with all four non-trivial.  A
   reassembly that emitted `recs` before `early` would lose the early prune the branch
@@ -19,9 +19,9 @@
   run before its arguments are bound \"does not throw, it quietly yields *no*
   solutions\".  Everything in the suite tests that as an *ordering* fact — the
   evaluable ends up last, so it never runs unbound — and with `plan/*enabled*` false
-  the antecedents are still in canonical order, which pins evaluables last anyway.
+  the antecedents are still in canonical order, which places evaluables last anyway.
   Nothing executes one unbound.  The tests at the bottom do, because the whole
-  justification for treating deferred literals as reorderable-but-pinned rests on the
+  justification for treating deferred literals as reorderable-but-fixed-in-position rests on the
   failure mode being empty rather than an exception."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
@@ -81,7 +81,7 @@
 ;; DECISION (vaelii.impl.plan's docstring): "(evaluate ?z (+ ?x ?y)) run before ?x is
 ;; bound does not throw, it quietly yields *no* solutions."  That is what licenses the
 ;; planner to treat deferred literals as ordinary reorderable literals that happen to
-;; be pinned — if the failure mode were an exception, a planning bug would take the
+;; be fixed in position — if the failure mode were an exception, a planning bug would take the
 ;; query down instead of returning a wrong (empty) answer.
 
 (tu/deftest-kb an-unbound-evaluate-yields-no-solutions-rather-than-throwing
@@ -168,7 +168,7 @@
 
 (tu/deftest-kb one-evaluate-may-feed-another-but-only-downhill
   ;; A deferred literal's output binds the ones written *after* it, because that is the
-  ;; order the join runs them in: `plan/order` pins deferred literals where the author
+  ;; order the join runs them in: `plan/order` keeps deferred literals where the author
   ;; put them.  The placement phase that runs an aggregate keeps written order too.
   (tu/with-terms [age chained Tom CxPlan]
     (v/assert kb (list age Tom 30) CxPlan)

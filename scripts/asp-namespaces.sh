@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The test namespaces whose bodies gate on an answer-set solver being present.
+# The test namespaces whose bodies are conditional on an answer-set solver being present.
 #
 # Every such namespace reads `solver/available?` (or `clasp/available?`, for the one
 # that asserts the refusal an absent binary earns) at load, and wraps the solver tests
@@ -8,16 +8,16 @@
 # exactly this list.
 #
 # DERIVED, not written down: the list is recomputed from the tree on every run, so a
-# namespace that starts gating on the solver is covered the day it lands rather than
-# the day somebody remembers to add it here. `vaelii.asp-roster-test` pins the same
-# scan against a committed roster, so the set changing is visible in review.
+# namespace that starts reading the solver's availability is covered the day it lands rather than
+# the day somebody remembers to add it here. `vaelii.asp-namespaces-test` checks the same
+# scan against a committed list, so the set changing is visible in review.
 #
 # Prints one namespace per line, sorted.
 { # one brace group, read whole before it runs: scripts/lint-shellcheck.sh says why
 set -euo pipefail
 cd "$(dirname "$0")/.."
 grep -rlE '\((solver|clasp)/available\?\)' test/ \
-  | grep -v '/asp_roster_test\.clj$' \
+  | grep -v '/asp_namespaces_test\.clj$' \
   | sed -e 's|^test/||' -e 's|\.clj$||' -e 's|/|.|g' -e 's|_|-|g' \
   | sort
 exit

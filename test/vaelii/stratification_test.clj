@@ -9,7 +9,7 @@
   `exceptWhen` is negation as failure, so if one rule's exception depends on what
   another rule concludes and vice versa, the program admits zero or several stable
   models and which one you land in depends on arrival order — exactly what
-  `docs/nmtms.md` forbids.  The two things this namespace has to pin are therefore
+  `docs/nmtms.md` forbids.  The two things this namespace has to assert are therefore
   symmetrical: every cycle crossing a negative edge is caught (including one that
   only closes through a genl subtype), and **no purely positive cycle is** —
   ordinary recursion is a supported feature, not a violation.
@@ -197,8 +197,8 @@
 
 (tu/deftest-kb a-refused-rule-leaves-no-partial-state
   ;; The check runs before anything is written, so there is nothing to unwind.  The
-  ;; neutral fixture makes the same claim for the namespace as a whole; this pins it
-  ;; to the refusal itself, where a half-stored rule would also leave a stale posting
+  ;; neutral fixture makes the same claim for the namespace as a whole; this asserts it
+  ;; of the refusal itself, where a half-stored rule would also leave a stale posting
   ;; in the rule and exception indexes.
   (tu/with-terms [base p q CxCyc]
     (v/assert kb (except-rule (list q '?x) [(list base '?x)] (list p '?x)) CxCyc)

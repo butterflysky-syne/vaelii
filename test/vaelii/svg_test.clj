@@ -51,6 +51,30 @@
     (is (= [0] (map :x (svg/row (nodes '[only]) 0 0 20))))
     (is (empty? (svg/row [] 0 0 20)))))
 
+(deftest a-grouped-row-frames-each-labelled-run-and-keeps-runs-apart
+  (let [{ns :nodes fs :frames}
+        (svg/grouped-row [{:nodes (nodes '[a bb]) :label "partition 1: covers, disjoint"}
+                          {:nodes (nodes '[ccc]) :label "covering: covers"}
+                          {:nodes (nodes '[dd])}]
+                         0 76 20 32)
+        [left right] [(fn [n] (- (:x n) (/ (:w n) 2))) (fn [n] (+ (:x n) (/ (:w n) 2)))]
+        inside?      (fn [f n] (<= (:x f) (left n) (right n) (+ (:x f) (:w f))))]
+    (is (= [76 76 76 76] (map :y ns)) "one row")
+    (is (= 2 (count fs)) "the unlabelled run has no frame")
+    (testing "each frame encloses its own nodes and no other"
+      (is (every? #(inside? (first fs) %) (take 2 ns)))
+      (is (inside? (second fs) (nth ns 2)))
+      (is (not-any? #(inside? % (nth ns 3)) fs)))
+    (testing "a frame is as wide as its label needs, wider than its one short node"
+      (is (> (:w (second fs)) (* 8 (count "covering: covers")))))
+    (testing "the runs are the group gap apart, and the row is centred"
+      (is (= 32 (- (:x (second fs)) (+ (:x (first fs)) (:w (first fs))))))
+      (is (< (Math/abs (double (+ (:x (first fs)) (right (nth ns 3))))) 2))))
+  (let [s (html (svg/scene {:nodes (svg/row (nodes '[a]) 0 0 20) :edges []
+                            :frames [{:x -20 :y -20 :w 40 :h 40 :label "separating: disjoint"}]}))]
+    (is (re-find #"<rect class=\"g-frame\"" s))
+    (is (re-find #">separating: disjoint</text>" s))))
+
 (deftest a-column-mirrors-around-the-centre
   (let [right (svg/column (nodes '[a bb]) 100 0 12 1)
         left  (svg/column (nodes '[a bb]) -100 0 12 -1)]

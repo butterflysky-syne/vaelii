@@ -82,7 +82,7 @@
       (is (= pt/all-relations (set (keys pt/point-composition))))
       (doseq [[_ row] pt/point-composition]
         (is (= pt/all-relations (set (keys row)))))))
-  (testing "the two unconstrained entries are the ones where the middle instant pins nothing"
+  (testing "the two unconstrained entries are the ones where the middle instant constrains nothing"
     (is (= #{[:before :after] [:after :before]}
            (set (for [[r1 row] pt/point-composition
                       [r2 rels] row
@@ -186,7 +186,7 @@
     (testing "the converse derived predicate holds the other way round"
       (is (v/ask? kb (list 'instantNotBefore R P) C)))))
 
-(tu/deftest-kb a-derived-assertion-constrains-without-pinning
+(tu/deftest-kb a-derived-assertion-constrains-without-determining
   (tu/with-terms [P Q]
     (v/assert kb (list 'instantNotAfter P Q) C)
     (is (= #{:before :equal} (pt/possible-point-relations kb C P Q)))

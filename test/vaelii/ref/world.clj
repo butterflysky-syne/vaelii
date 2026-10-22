@@ -22,20 +22,22 @@
     constant symbol or an integer. A `transitiveInArgInverse` declaration is `(transitiveInArgInverse
     P k genl)`, `P` an ordinary predicate and `k` a positive integer.
   - **denial**: `(not S)` with `S` a fact, a `genl` edge, or a write of the
-    forced-monotonic roster.
+    forced-monotonic set.
   - **rule**: the shapes `parse-rule` accepts.
 
-  **The forced-monotonic roster** (`forced?`, docs/reference.md D1, D7, D10–D13 and
+  **The forced-monotonic set** (`forced?`, docs/reference.md D1, D7, D10–D13 and
   D17): `genlCx`, the relation marks, the function classes, the definitional
   declarations, `except`, the equality predicates, and a `genl` between two predicates
   (`predicate-genl?`). A write of one keeps the strength it was written at and is never
   the loser of a nogood (`vaelii.ref.believe/decide`), except a `genlCx` write, which is
   read `:monotonic` whatever strength it was written at (`force-monotonic`, D1), as the
-  engine's labeller holds it. A write the roster rules out is stored and inert, never
-  refused (`inert-write?`): a denial of a roster literal, and a rule concluding one, whose
-  antecedents in v1 are never roster literals. `check-world` sets the inert writes aside
-  under `:inert`. v1 admits `genlCx`, the marks, `disjoint`, `covering` and a predicate
-  `genl`; the rest of the roster is outside v1.
+  engine's labeller holds it. A denial of a forced-monotonic literal is an ordinary write, the
+  loser of its negation nogood at either strength (`vaelii.ref.believe/decide`). A write the
+  forced-monotonic set rules out is stored and inert, never refused (`inert-write?`): a rule
+  concluding a forced-monotonic literal or its denial, whose antecedents in v1 are never
+  forced-monotonic literals. `check-world` sets the inert writes aside
+  under `:inert`. v1 admits `genlCx`, the marks, `negates`, `disjoint`, `covering` and a
+  predicate `genl`; the rest of the forced-monotonic set is outside v1.
 
   Refused besides (`check-computed-reads`): a rule that reads a predicate some write
   declares `transitiveInArgInverse`, or a positive literal on a predicate the written `genl`
@@ -44,10 +46,10 @@
   `exceptWhen` conjunct on a part of some `covering`, which level 6 answers through
   `CoveringProver`. The reference models neither reading.
 
-  **A roster declaration** `(forced_monotonic_predicate T)` of an ordinary type `T`
-  (`roster-declaration?`) puts `T` on the roster at the contexts that see it and nowhere
+  **A forced-monotonic declaration** `(forced_monotonic_predicate T)` of an ordinary type `T`
+  (`forced-declaration?`) makes `T` forced-monotonic at the contexts that see it and nowhere
   else (docs/reference.md D17): there a membership of `T` is never a loser and a denial of
-  one is inert, and a rule concluding one fires there only as a roster rule
+  one loses its negation nogood at either strength, and a rule concluding one fires there only as a forced-monotonic rule
   (`vaelii.ref.believe/derive-at`)."
   (:require [clojure.set :as set]
             [clojure.string :as str]
@@ -65,17 +67,18 @@
   "The definitional declarations v1 admits. Each is read by a nogood family
   (`vaelii.ref.nogoods`), never by derivation."
   '#{disjoint covering functional functionalInArg irreflexive anti_symmetric asymmetric
-     anti_transitive transitiveInArgInverse})
+     anti_transitive negates transitiveInArgInverse})
 
 (def forced-monotonic
-  "The functors whose every write is never a loser, whose denial is inert, and which a v1
+  "The functors whose every write is never a loser, whose denial loses its negation nogood
+  at either strength, and which a v1
   rule concludes only inertly: `genlCx` (docs/reference.md D1), the relation marks and the
   function classes (D7, D17), the definitional declarations and the arity bindings (D11),
   `except` (D12) and the equality predicates (D13).  `injection`, `surjection`,
   `bijection`, `partition`, `sibling_disjoint`, the arity bindings, `except`, `rewriteOf`,
   `sameAs` and `equals` are outside v1, and `write-kind` refuses a write of one."
   '#{genlCx irreflexive anti_symmetric asymmetric functional functionalInArg
-     anti_transitive injection surjection bijection disjoint covering
+     anti_transitive negates injection surjection bijection disjoint covering
      partition sibling_disjoint arity unary binary ternary unary_predicate
      binary_predicate ternary_predicate unary_function binary_function ternary_function
      variable_arity variable_arity_predicate variable_arity_function arityMin except
@@ -145,18 +148,17 @@
   (and (symbol? x) (boolean (re-matches #"[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*" (name x)))))
 
 (defn predicate-genl?
-  "Is `s` a `(genl P Q)` edge between two `camel-case-predicate?` terms. Such an edge is on
-  the forced-monotonic roster (docs/reference.md D10); a `genl` between types is not."
+  "Is `s` a `(genl P Q)` edge between two `camel-case-predicate?` terms. Such an edge is forced-monotonic (docs/reference.md D10); a `genl` between types is not."
   [s]
   (and (genl-edge? s) (every? camel-case-predicate? (rest s))))
 
 (defn forced?
-  "Is the sentence `s` on the global forced-monotonic roster: its functor is in
+  "Is the sentence `s` in the baseline forced-monotonic set: its functor is in
   `forced-monotonic`, or `s` is a `predicate-genl?` edge."
   [s]
   (and (seq? s) (or (contains? forced-monotonic (first s)) (predicate-genl? s))))
 
-(defn roster-declaration?
+(defn forced-declaration?
   "Is `s` a `(forced_monotonic_predicate T)` declaration of an ordinary predicate `T`."
   [s]
   (and (seq? s) (= 'forced_monotonic_predicate (first s)) (= 2 (count s))
@@ -239,9 +241,9 @@
     inside `unknown` or `exceptWhen` is refused: the engine answers one there through
     level-6 provers (disjointness among them) the reference does not model.
   - `C` is a literal or its denial over an ordinary predicate, or a member of the
-    forced-monotonic roster (`forced?`) or its denial. A rule concluding a roster member
+    forced-monotonic set (`forced?`) or its denial. A rule concluding a forced-monotonic member
     parses with `:inert? true` (docs/reference.md D17): its antecedents are v1 literals,
-    never roster literals, so each firing of it is inert. A rule concluding a type-level
+    never forced-monotonic literals, so each firing of it is inert. A rule concluding a type-level
     `genl` or a rule is refused as outside v1.
   - at least one join antecedent; every variable of `C`, of each `unknown` and of the
     exception occurs in a join antecedent (range restriction and closure)."
@@ -289,7 +291,7 @@
 
 (defn write-kind
   "The kind of the sentence `s`: `:rule`, `:genlCx`, `:genl`, `:declaration`,
-  `:roster-declaration`, `:denial` or `:fact`. Throws `:unsupported` for a sentence outside the v1 fragment."
+  `:forced-declaration`, `:denial` or `:fact`. Throws `:unsupported` for a sentence outside the v1 fragment."
   [s]
   (cond
     (rule-form? s) (do (parse-rule s) :rule)
@@ -301,7 +303,7 @@
     (if (every? #(and (symbol? %) (not (variable? %))) (rest s))
       :genl
       (unsupported "a genl edge between non-constant terms" {:sentence s}))
-    (roster-declaration? s) :roster-declaration
+    (forced-declaration? s) :forced-declaration
     (declaration? s)
     (if (every? #(or (integer? %) (and (symbol? %) (not (variable? %)) (not= 'genlCx %)))
                 (rest s))
@@ -413,14 +415,12 @@
                      {:sentence s :predicate f})))))
 
 (defn inert-write?
-  "Is write `w` one the forced-monotonic roster makes inert (docs/reference.md D1, D7,
-  D10–D13, D17): a denial of a `forced?` sentence, which the engine stores and never
-  believes, or a rule concluding one or its denial, whose every firing the engine drops.
-  The engine stores both rather than refusing them, so the stored set is a function of the
-  offered set in every order."
+  "Is write `w` one the forced-monotonic set makes inert (docs/reference.md D17): a rule
+  concluding a `forced?` sentence or its denial, whose every firing the engine drops.  The
+  engine stores it rather than refusing it, so the stored set is a function of the offered
+  set in every order."
   [{:keys [sentence]}]
-  (or (and (denial? sentence) (forced? (second sentence)))
-      (and (rule-form? sentence) (:inert? (parse-rule sentence)))))
+  (and (rule-form? sentence) (:inert? (parse-rule sentence))))
 
 (defn- check-transitive-in-arg
   "Throw `:unsupported` when write `w` is a `transitiveInArgInverse` declaration other than

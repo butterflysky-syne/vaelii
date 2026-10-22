@@ -143,7 +143,7 @@
   ;; a negative fact
   (v/assert kb (list 'not (list happy Rex)) ctx)
   ;; a reified NAT in argument position: the function is declared, so the application
-  ;; mints a constant and stores its termOfUnit map — all premises, all text
+  ;; mints a constant and stores its natFormula map — all premises, all text
   (v/assert kb (list 'reifiable_function 'QuantityFn) 'CxUniverse)
   (v/assert kb (list heightOf Nest1 (list 'QuantityFn 5 'Meter)) ctx))
 
@@ -245,18 +245,18 @@
           "and the rest keep their own order — the partition is stable, not a sort")))
 
   (testing "an entry refused because what it needs has not arrived yet is retried"
-    ;; the docstring's own case: `(transitiveInArgInverse largerThan 1 partOf)` files under
-    ;; `largerThan` and `(transitive partOf)` under `partOf`, and `l` sorts before `p`
+    ;; the docstring's own case: `(transitiveInArgInverse largerThan 1 tangiblePartOf)` files under
+    ;; `largerThan` and `(transitive tangiblePartOf)` under `tangiblePartOf`, and `l` sorts before `t`
     (let [seen    (atom [])
           assert! (fn [sen _ _]
                     (when (and (= 'transitiveInArgInverse (first sen))
-                               (not (some #{'(transitive partOf)} @seen)))
-                      (throw (ex-info "partOf is not transitive yet" {:type :arg-type})))
+                               (not (some #{'(transitive tangiblePartOf)} @seen)))
+                      (throw (ex-info "tangiblePartOf is not transitive yet" {:type :arg-type})))
                     (swap! seen conj sen))
-          entries '[[(transitiveInArgInverse largerThan 1 partOf) CxA]
-                    [(transitive partOf) CxA]]]
+          entries '[[(transitiveInArgInverse largerThan 1 tangiblePartOf) CxA]
+                    [(transitive tangiblePartOf) CxA]]]
       (is (= 2 (text/load-entries! assert! nil entries)) "both entries were read")
-      (is (= '[(transitive partOf) (transitiveInArgInverse largerThan 1 partOf)] @seen)
+      (is (= '[(transitive tangiblePartOf) (transitiveInArgInverse largerThan 1 tangiblePartOf)] @seen)
           "the refused one landed on the retry round, after what it needed")))
 
   (testing "and one nothing can help still throws, carrying its own refusal"

@@ -4,7 +4,7 @@
   "A nogood places its conclusions as a firing does: `(contradicts …)` and the `defeat` of
   a unique weakest member at the maximal common descendants of its members and grounds,
   justified by them (`chain/place-nogood!`).  A `defeat` is a meta-sentex only the engine
-  derives, kept in a roster by the handle it names (docs/glossary.md, `defeat`).
+  derives, indexed under the handle it names (docs/glossary.md, `defeat`).
 
   Every test states its lattice in a comment, since the answer is a function of it."
   (:require [clojure.test :refer [is testing use-fixtures]]
@@ -1025,3 +1025,45 @@
         (when (even? m)
           (is (every? (fn [[l i]] (= (r l i) (not (r l (mod (inc i) m)))))
                       (for [l (range d) i (range m)] [l i]))))))))
+
+(tu/deftest-kb an-empty-answer-builds-no-reader-state
+  ;; a probe matching nothing has no handle to hide, so the visibility filter reads no
+  ;; walk state for it; a non-empty answer reads it
+  (let [asked (atom 0), orig @#'exc/hidden-fn]
+    (with-redefs-fn {#'exc/hidden-fn (fn [& args] (swap! asked inc) (apply orig args))}
+      #(do (is (empty? (exc/without-excepted kb 'CxUniverse ())))
+           (is (zero? @asked))
+           (is (= 1 (count (exc/without-excepted kb 'CxUniverse [[1 {} nil]]))))
+           (is (= 1 @asked))))))
+
+(tu/deftest-kb a-pass-builds-a-context-s-reader-state-once-while-the-clock-stands
+  ;; a declaration CxA does not see and a rule stated in CxA reading its predicate, so a
+  ;; read at CxA owes the walk (`exc/walk-reads?`)
+  (tu/with-terms [pf qf Ann Bob Cy CxA CxB]
+    (v/assert kb (list 'forced_monotonic_predicate pf) CxB)
+    (v/assert-rule kb [(list pf '?x '?y)] (list qf '?x '?y) CxA)
+    (let [h     (v/assert kb (list pf Ann Bob) CxA)
+          built (atom 0)
+          orig  @#'exc/build-reader-state
+          read  #(exc/excepted? kb h CxA)]
+      (with-redefs-fn {#'exc/build-reader-state (fn [& args] (swap! built inc) (apply orig args))}
+        #(let [plain (vec (repeatedly 3 read))
+               n     @built]
+           (binding [exc/*reader-states* (volatile! {})]
+             (is (= plain (vec (repeatedly 3 read))))
+             (is (= 1 (- @built n)))
+             (v/assert kb (list pf Cy Bob) CxA)
+             (let [m @built]
+               (is (= (first plain) (read)))
+               (is (= 1 (- @built m)))))
+           (is (= 3 n)))))))
+
+(tu/deftest-kb a-declaration-every-reader-of-its-rule-sees-owes-no-walk
+  ;; the declaration and the rule reading its predicate are stated in one context, so a
+  ;; reader seeing the rule sees the declaration, until an except naming it is stored
+  (tu/with-terms [pf qf CxA CxB]
+    (let [d (v/assert kb (list 'forced_monotonic_predicate pf) CxA)]
+      (v/assert-rule kb [(list pf '?x '?y)] (list qf '?x '?y) CxA)
+      (is (false? (exc/walk-reads? kb)))
+      (v/assert kb (list 'except (v/sentex-handle d)) CxB)
+      (is (true? (exc/walk-reads? kb))))))

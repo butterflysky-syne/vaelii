@@ -630,12 +630,12 @@
       (is (= [3] (map '?n (v/ask kb g 'CxWell))) "ask"))))
 
 (tu/deftest-kb a-backward-rule-may-join-on-a-count
-  (tu/with-terms [scoreOf Team roster tallied]
+  (tu/with-terms [scoreOf Team squad tallied]
     (extent! kb scoreOf Team [1 2])
-    (v/assert kb (list roster Team) 'CxWell)
+    (v/assert kb (list squad Team) 'CxWell)
     (v/assert kb (list 'set/backwardRule
                        (list 'implies
-                             (list 'and (list roster '?t)
+                             (list 'and (list squad '?t)
                                    (list 'agg/count '?n '?v (list scoreOf '?t '?v)))
                              (list tallied '?t '?n)))
               'CxWell)
@@ -810,7 +810,7 @@
 (tu/deftest-kb a-family-grouped-on-a-merged-term-stays-large-under-the-representative
   ;; both directions of which spelling wins.  The merge restates the grouping fact, so
   ;; the rule re-fires under the representative whether or not the old firing's stored
-  ;; bindings are rewritten (`chain/settled-bindings`); this pins the belief only.
+  ;; bindings are rewritten (`chain/settled-bindings`); this asserts the belief only.
   (doseq [prefix ["Aaa" "Zzz"]]
     (tu/with-terms [person childOf large_family Ann Bob]
       (family! kb {:person person :childOf childOf :Ann Ann :Bob Bob})

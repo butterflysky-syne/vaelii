@@ -22,7 +22,7 @@
   (pcontains? [p h]
     "Is handle h present?  A binary search on the `int[]`, or the bitmap's own test —
     the O(log n) / O(1) probe that answers membership without building the set
-    `pmembers` builds, which is what an index gate calling it per firing needs.")
+    `pmembers` builds, which is what an index check calling it per firing needs.")
   (pmembers [p]   "A fresh Clojure set of the handles (as Longs).")
   (pints    [p]
     "A fresh sorted `int[]` of the handles — the boxing-free read, for a caller that
@@ -76,7 +76,7 @@
 
 (defn- ints-probe
   "The entries of ascending `small` that ascending `big` holds, each found by binary search
-  with the window advancing — `big` is never walked, only searched.  This is the no-bitmap
+  with the search lower bound advancing — `big` is never walked, only searched.  This is the no-bitmap
   form of the same idea `ints-in-roaring` has, and it is what a mapped root run needs,
   since a snapshot's postings are plain sorted runs with no hot tier to probe."
   ^ints [^ints small ^ints big]

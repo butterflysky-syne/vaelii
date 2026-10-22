@@ -268,7 +268,7 @@
 
 (tu/deftest-kb an-equality-merge-agrees-with-the-consequence-report
   ;; The contract is that a feed event and `edit-with-consequences` are the same answer,
-  ;; and a merge is where that is worth pinning: the displaced spelling loses belief with
+  ;; and a merge is where that is tested: the displaced spelling loses belief with
   ;; no relabel to record it, and both read the supersession moves the settle publishes
   ;; (`special/take-supersession-moves!`), which name a spelling the assert path's
   ;; reconcile displaced with the entry it had before.
@@ -395,7 +395,7 @@
   ;; A listener's `assert` settles, and that settle would fold its region into whatever
   ;; sink the *original* caller bound — so an `edit-with-consequences` would report the
   ;; listener's assertions as consequences of the batch.  The sinks are closed for the
-  ;; duration of delivery, which is what this pins.
+  ;; duration of delivery, which is what this asserts.
   (tu/with-terms [dog Muffet sideEffect Yes]
     (let [wrote? (atom false)]
       (v/watch kb (fn [_] (when (compare-and-set! wrote? false true)
@@ -481,7 +481,7 @@
 
 (deftest a-fork-starts-with-no-listeners-and-tells-its-base-nothing
   ;; A fork is a new KB over the base's stores, so its registry is its own — and taking
-  ;; one is a `recover` over the merged view, which is silent for the usual reason.
+  ;; one is a `recover` over the merged contents, which is silent for the usual reason.
   ;;
   ;; Its own base rather than the fixture's, following `overlay_test`: a fork needs an
   ;; index written over the `KvBackend` protocol, so forking whatever `VAELII_TEST_BACKEND`
@@ -765,7 +765,7 @@
 (tu/deftest-kb a-verdict-a-reader-reaches-arrives-in-every-order
   ;; CxJ sees CxA, CxB and CxD, so it decides the membership nogood and takes (cat Rex)
   ;; OUT, and (meows Rex), stored at CxJ, rests only on it.  Neither member's own context
-  ;; sees the other, so no label moves: the window has to carry the move.  Each write,
+  ;; sees the other, so no label moves: the published set has to carry the move.  Each write,
   ;; and each retraction after them, is made in every order twice: once previewed first,
   ;; once through `edit-with-consequences!` under a listener.  Each report names what the
   ;; readings of belief at each sentence's own context before and after differ by; a
@@ -854,11 +854,11 @@
       @out
       (finally (gen/close-kb! loaded)))))
 
-(defn- window-disagreements
+(defn- event-disagreements
   "Each write of `world` in `order`, then each retraction in `removals` (`order` when
   not given), made under a listener on a KB of its own, as one entry per step whose event
   differs from the diff of `own-belief` around it."
-  ([world order] (window-disagreements world order order))
+  ([world order] (event-disagreements world order order))
   ([world order removals]
    (let [loaded (gen/load-world! world [] {})
          kb     (:kb loaded)
@@ -887,12 +887,12 @@
        @out
        (finally (gen/close-kb! loaded))))))
 
-(defn- random-window-check [seeds]
+(defn- random-event-check [seeds]
   (let [bad (for [seed  seeds
                   :let  [world (gen/gen-world seed {})
                          ws    (vec (:writes world))]
                   order [ws (vec (rseq ws))]
-                  d     (window-disagreements world order)]
+                  d     (event-disagreements world order)]
               (assoc d :seed seed))]
     (is (= [] (vec (take 4 bad))))))
 
@@ -916,7 +916,7 @@
                           :strength :monotonic}
                          (w '(functional relb) :monotonic) (w '(relb IndA IndA) :monotonic)]
                         writes)]
-        (is (= [] (window-disagreements {:contexts #{'CxA}} order [removal])) label)))))
+        (is (= [] (event-disagreements {:contexts #{'CxA}} order [removal])) label)))))
 
 (deftest a-deferred-batch-reports-against-the-belief-before-its-first-write
   ;; (cat Rex) loses to the :monotonic (dog Rex) in CxA.  An except of the winner hides it
@@ -964,24 +964,66 @@
     (is (= [] (step-disagreements order [["the except stored" hide]
                                          ["the winner retracted" #(v/retract! % (v/handle-of % '(dog Rex) 'CxB))]])))))
 
-(deftest a-genlcx-edge-to-a-declaring-context-reports-the-denials-it-makes-inert
-  ;; (not (dog Rex)) is a default denial at CxA.  The edge (genlCx CxA D) puts dog on the
-  ;; roster at CxA, which makes the denial inert there, and its retraction takes it off
-  ;; again; no label moves either way.  D is CxUniverse in the second row.
+(deftest a-genlcx-edge-to-a-declaring-context-reports-the-denials-it-defeats
+  ;; (not (dog Rex)) and (dog Rex) are a default dilemma at CxA.  The edge (genlCx CxA D)
+  ;; makes dog forced-monotonic at CxA, so the denial loses there, and its retraction
+  ;; undoes that; no label moves either way.  D is CxUniverse in the second row.
   (doseq [d ['CxD 'CxUniverse]]
     (let [m     (fn [s c] {:sentence s :context c :strength :monotonic})
           edge  (list 'genlCx 'CxA d)
           order [(m '(genlCx CxA CxUniverse) 'CxUniverse)
                  (m '(genlCx CxD CxUniverse) 'CxUniverse)
                  {:sentence '(forced_monotonic_predicate dog) :context d :strength :default}
-                 {:sentence '(not (dog Rex)) :context 'CxA :strength :default}]]
+                 {:sentence '(not (dog Rex)) :context 'CxA :strength :default}
+                 {:sentence '(dog Rex) :context 'CxA :strength :default}]]
       (is (= [] (step-disagreements order [["the edge stored" #(v/assert % edge 'CxUniverse {:strength :monotonic})]
                                            ["the edge retracted" #(v/retract! % (v/handle-of % edge 'CxUniverse))]]))
           (str d)))))
 
+;; (flies Opus) rests on (bird Opus), which the :monotonic denial defeats at CxA, and on
+;; (winged Opus) through a second rule.  Removing the second support leaves (flies Opus)
+;; IN in the network and hidden at CxA; adding it back believes it with no label moving.
+(deftest a-support-beside-a-defeated-one-reports-its-conclusion-when-it-goes-and-comes
+  (let [m      (fn [s] {:sentence s :context 'CxA :strength :monotonic})
+        order  [{:sentence '(genlCx CxA CxUniverse) :context 'CxUniverse :strength :monotonic}
+                (m '(implies (bird ?x) (flies ?x))) (m '(implies (winged ?x) (flies ?x)))
+                {:sentence '(bird Opus) :context 'CxA :strength :default} (m '(not (bird Opus)))]
+        winged (fn [kb] (v/handle-of kb '(winged Opus) 'CxA))]
+    (is (= [] (step-disagreements (conj order (m '(winged Opus)))
+                                  [["the second support retracted" #(v/retract! % (winged %))]])))
+    (is (= [] (step-disagreements order
+                                  [["the second support asserted"
+                                    #(v/assert % '(winged Opus) 'CxA {:strength :monotonic})]])))))
+
+;; (dog Rex) and (cat Rex) are :default in CxA under (disjoint dog cat).  A :monotonic
+;; support for (dog Rex) through a rule raises its class with no label moving, and the
+;; conflict's verdict turns from a dilemma to a defeat of (cat Rex); its retraction turns
+;; it back.
+(deftest a-class-a-write-moves-reports-the-verdict-it-turns
+  (let [m     (fn [s] {:sentence s :context 'CxA :strength :monotonic})
+        d     (fn [s] {:sentence s :context 'CxA :strength :default})
+        order [{:sentence '(genlCx CxA CxUniverse) :context 'CxUniverse :strength :monotonic}
+               (m '(disjoint dog cat)) (m '(implies (dog_src ?x) (dog ?x)))
+               (d '(dog Rex)) (d '(cat Rex))]
+        src   #(v/handle-of % '(dog_src Rex) 'CxA)]
+    (is (= [] (step-disagreements order [["the support asserted" #(v/assert % '(dog_src Rex) 'CxA {:strength :monotonic})]
+                                         ["the support retracted" #(v/retract! % (src %))]])))))
+
+;; (t1 Pip) :default and (t2 Pip) :monotonic in CxB under (sibling_disjoint col): the
+;; separation defeats (t1 Pip) at CxB.  A `siblingDisjointException` stated in CxB exempts
+;; the pair there, so (t1 Pip) is believed with no label moving; its retraction hides it.
+(deftest an-exemption-a-write-moves-reports-the-member-it-releases
+  (let [u     (fn [s] {:sentence s :context 'CxUniverse :strength :monotonic})
+        order [(u '(genlCx CxB CxUniverse)) (u '(genl t1 col)) (u '(genl t2 col)) (u '(sibling_disjoint col))
+               {:sentence '(t1 Pip) :context 'CxB :strength :default}
+               {:sentence '(t2 Pip) :context 'CxB :strength :monotonic}]
+        exc   '(siblingDisjointException t1 t2)]
+    (is (= [] (step-disagreements order [["the exception stored" #(v/assert % exc 'CxB {:strength :monotonic})]
+                                         ["the exception retracted" #(v/retract! % (v/handle-of % exc 'CxB))]])))))
+
 (deftest every-event-is-the-diff-of-own-context-belief-in-random-worlds
-  (random-window-check (range 40)))
+  (random-event-check (range 40)))
 
 (deftest ^:slow every-event-is-the-diff-of-own-context-belief-in-400-random-worlds
-  (random-window-check (range 400)))
+  (random-event-check (range 400)))
 

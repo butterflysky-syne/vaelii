@@ -39,7 +39,7 @@
   and hoping for the same answer set back. A re-solve would usually agree, and
   \"usually\" is not a property worth building on.
 
-  So the invariants hold by construction, and `asp_label_test` pins them:
+  So the invariants hold by construction, and `asp_label_test` asserts them:
 
       :true        ⊆ believed        (cautious holds in the committed model)
       :false       ∩ believed = ∅    (excluded holds in no model, including that one)
@@ -615,7 +615,7 @@
   arbitrated in, or a dilemma it declined — the `genlCx` edge is written and `:handles`
   comes back empty: a specialization that sees its base and records nothing is what \"the
   engine committed to nothing\" materializes as, and it gives a caller that asked to see
-  one arbitration an empty view rather than an invented one. `label-dilemmas` *makes* a
+  one arbitration an empty answer rather than an invented one. `label-dilemmas` *makes* a
   choice rather than reporting one, so minting a context for a choice it did not make
   would assert that one happened.
 

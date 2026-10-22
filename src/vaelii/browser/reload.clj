@@ -195,10 +195,10 @@
   [st dirs]
   (locking st
     (let [{old :entries queue :queue} @st
-          stamps  (into {} (map (fn [^File f] [f (.lastModified f)])) (source-files dirs))
-          fresh   (into {} (keep (fn [f] (when (not= (stamps f) (get-in old [f :time]))
+          mtimes  (into {} (map (fn [^File f] [f (.lastModified f)])) (source-files dirs))
+          fresh   (into {} (keep (fn [f] (when (not= (mtimes f) (get-in old [f :time]))
                                            (some->> (read-entry f) (vector f)))))
-                        (keys stamps))
+                        (keys mtimes))
           entries (merge old fresh)
           queue   (vec (distinct (concat queue (affected entries (map :ns (vals fresh))))))
           edited  (into {} (keep (fn [[f e]]
@@ -217,11 +217,14 @@
 
 (defn wrap-reload
   "Ring middleware that reloads the changed sources under `:dirs` before each request
-  (see the namespace docstring).  Throws when tools.namespace is not on the classpath,
-  which is what `vaelii.browser.web/hot-reloading` catches to serve without reloading."
-  [handler {:keys [dirs]}]
+  (see the namespace docstring).  While `(busy?)` is truthy it reloads nothing, and the
+  first request after it turns false reloads every edit made meanwhile.  Throws when
+  tools.namespace is not on the classpath, which is what
+  `vaelii.browser.web/hot-reloading` catches to serve without reloading."
+  [handler {:keys [dirs busy?] :or {busy? (constantly false)}}]
   (tn 'clojure.tools.namespace.dependency/graph)
   (let [st (atom {:entries (scan dirs) :queue []})]
     (fn [req]
-      (reload-changed! st dirs)
+      (when-not (busy?)
+        (reload-changed! st dirs))
       (handler req))))

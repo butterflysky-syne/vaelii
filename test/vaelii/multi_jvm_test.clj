@@ -20,6 +20,7 @@
   | a killed writer leaves no lock to reap | `disk/lock.clj` | the OS releases on exit, and a JVM cannot watch its own |
   | a KB another process wrote opens cold | `docs/storage.md` | two KBs over one directory **share** the store in-process, and every process-global cache survives a `close-dir!` |
   | daemon and CLI cannot own one directory | `docs/operations.md` | the daemon is the other process |
+  | a writer ended by SIGTERM or SIGHUP leaves images the next open installs | `disk/durability.clj`'s shutdown hook | a JVM runs the hook only on its way out, and cannot open the directory after it |
   | a killed logged writer restores to a prefix of its operations | `open-kb`'s `:oplog?`, `vaelii.impl.seal` | SIGKILL stops the writer inside an operation, a frame append or a seal, and a process cannot do that to itself and read the result |
 
   **These own their directories and touch no shared space.**  Every KB here is a fresh
@@ -30,12 +31,13 @@
 
   **The last test in this file carries no mark on purpose.**  It is a source scan, it
   forks nothing, and it runs in `:default` — where it has to run, since what it checks is
-  that nobody added a forking test *without* the mark and dropped a JVM fork into the
-  fast gate."
+  that nobody added a forking test *without* the mark and dropped a JVM fork into
+  `lein gate`."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [taoensso.trove :as trove]
             [vaelii.cli :as cli]
             [vaelii.client :as vc]
             [vaelii.core :as v]
@@ -96,6 +98,21 @@
      (println \"##vaelii## closed\")
      (flush))")
 
+(def ^:private signalled-writer-program
+  "Build a `:disk-snapshot` KB and close it, so both images are current, then reopen it,
+  store one fact and wait for the signal that ends the process."
+  "(require '[vaelii.core :as v])
+   (v/set-log-level :error)
+   (let [dir (first *command-line-args*)]
+     (let [kb (v/open-kb {:backend :disk-snapshot :dir dir})]
+       (v/assert kb '(genl mj_dog mj_animal) 'CxUniverse {:strength :monotonic})
+       (v/close! kb))
+     (let [kb (v/open-kb {:backend :disk-snapshot :dir dir})]
+       (v/assert kb '(mj_dog MjFido) 'CxUniverse {:strength :monotonic})
+       (println \"##vaelii## wrote\")
+       (flush)
+       (read-line)))")
+
 (def ^:private daemon-program
   "Own a directory and serve it, the posture `docs/operations.md` calls the canonical
   single writer.  Binds port 0 and reports what it got, so nothing here guesses a port."
@@ -115,7 +132,7 @@
 
 (deftest ^:multi-jvm a-second-jvm-holding-the-directory-is-refused-by-name
   ;; `disk_backend_test` stages the overlapping-lock branch with a second FileChannel and
-  ;; pins the cross-process message as a string, saying in its own comment that no
+  ;; asserts the cross-process message as a string, saying in its own comment that no
   ;; single-JVM test can stage the branch that matters.  This is that branch: `tryLock`
   ;; returning nil, the diagnosis reading the holder tag off the file, and the tag naming
   ;; a process that really exists.  A regression here is two writers appending to one log.
@@ -192,6 +209,34 @@
               (is (v/isa? kb 'MjFido 'mjAnimal)
                   "with the taxonomy rebuilt from a store this JVM did not derive")
               (finally (v/close! kb)))))))))
+
+(defn- open-noting
+  "Open a KB over `opts`, and the ids of the log lines the open emitted."
+  [opts]
+  (let [ids (atom #{})
+        kb  (binding [trove/*log-fn* (fn [_ns _coords _level id _payload] (swap! ids conj id))]
+              (v/open-kb opts))]
+    [kb @ids]))
+
+(deftest ^:multi-jvm a-writer-ended-by-a-signal-leaves-images-the-next-open-installs
+  ;; the write after the reopen moves the records past both images, so an open that
+  ;; installs them shows the shutdown hook wrote them again
+  (tu/with-snapshot-platform
+    (doseq [[sig status] [["TERM" 143] ["HUP" 129]]]
+      (testing (str "SIG" sig)
+        (with-tmp
+          (fn [dir]
+            (mj/with-child [child signalled-writer-program dir]
+              (mj/await-marker! child "wrote")
+              (mj/signal! child sig)
+              (is (= status (mj/await-exit! child)) "the child ended on the signal"))
+            (let [[kb ids] (open-noting {:backend :disk-snapshot :dir dir :recover? :auto})]
+              (try
+                (is (not (ids :vaelii.impl.kb/reindexed-on-open)) "the index image is mapped")
+                (is (ids :vaelii.impl.recovery/reasoning-image-installed)
+                    "the reasoning image is installed")
+                (is (v/in? kb (v/handle-of kb '(mj_dog MjFido) 'CxUniverse)))
+                (finally (v/close! kb))))))))))
 
 (deftest ^:multi-jvm a-daemon-in-another-process-answers-this-one-s-client
   ;; Every daemon test in the suite runs jetty in the test JVM: a real socket, a real
@@ -285,7 +330,7 @@
      (flush)
      (read-line))"))
 
-(defn- logged-view
+(defn- logged-contents
   "Every sentex `kb`'s records hold, as `[sentence context believed?]`."
   [kb]
   (into #{} (keep (fn [h]
@@ -295,7 +340,7 @@
 
 (defn- matching-prefix
   "The number m of `crash-workload` operations, `from` <= m <= `crash-ops`, after which a
-  fresh directory's view is `want`, or nil when no such m exists."
+  fresh directory's contents are `want`, or nil when no such m exists."
   [want from]
   (let [{:keys [setup op]} (eval (read-string crash-workload))]
     (with-tmp
@@ -305,7 +350,7 @@
             (setup kb)
             (dotimes [i from] (op kb i))
             (loop [m from]
-              (cond (= want (logged-view kb)) m
+              (cond (= want (logged-contents kb)) m
                     (>= m crash-ops)          nil
                     :else                     (do (op kb m) (recur (inc m)))))
             (finally (v/close! kb))))))))
@@ -329,7 +374,7 @@
               r  (oplog/opened (:oplog kb))]
           (try
             (if (:restored r)
-              (let [m (matching-prefix (logged-view kb) done)]
+              (let [m (matching-prefix (logged-contents kb) done)]
                 (is (some? m)
                     "the restored records and belief are those of a prefix of the operations")
                 (is (and m (>= (long m) (long done)))
@@ -342,9 +387,9 @@
 ;; ---- the mark, checked over the sources ----------------------------------
 ;;
 ;; A mark is a promise, and a promise nothing checks is kept until the first time it is
-;; not.  Here the promise is required twice over — an unmarked test forks JVMs inside `lein
-;; gate`, and a marked one nothing names never runs at all — so both directions are
-;; checked: every forking test carries the mark, and the marked set is a roster.
+;; not.  Here the promise is required twice over — an unmarked test forks JVMs inside
+;; `lein gate`, and a marked one nothing names never runs at all — so both directions are
+;; checked: every forking test carries the mark, and the marked set is a fixed list of names.
 ;;
 ;; The patterns live in `def`s rather than inside a test body, so this scan does not
 ;; flag itself.  A scanner that fails on its own source is worse than no scanner.
@@ -362,18 +407,19 @@
 
 (def ^:private mark-pattern
   "The mark as it is written on a `deftest` name.  With the caret, since a test whose
-  NAME contains the words — the roster test below does — is not a marked test."
+  NAME contains the words — the mark test below does — is not a marked test."
   #"\^:multi-jvm")
 
-(def ^:private roster
-  "Every test that forks a JVM, by name.  A roster rather than a count, so adding one is
+(def ^:private forking-names
+  "Every test that forks a JVM, by name.  A set rather than a count, so adding one is
   a visible change in this file: these run under no selector but their own, and a
   cross-process test nobody can see is a cross-process test nobody runs."
   #{"a-second-jvm-holding-the-directory-is-refused-by-name"
     "a-killed-writer-leaves-no-lock-to-reap"
     "a-kb-another-process-wrote-opens-cold-and-recovers"
     "a-daemon-in-another-process-answers-this-one-s-client"
-    "a-killed-logged-writer-restores-to-a-prefix-of-its-operations"})
+    "a-killed-logged-writer-restores-to-a-prefix-of-its-operations"
+    "a-writer-ended-by-a-signal-leaves-images-the-next-open-installs"})
 
 (defn- test-sources
   "Every test namespace's source, as `path -> text`."
@@ -425,5 +471,5 @@
         (str "these fork a JVM without `^:multi-jvm`, so `lein test` would run them: "
              (pr-str (map (juxt :path :name) unmarked))))
     (testing "and the marked tests are the ones we think they are"
-      (is (= roster (into #{} (map :name) forking))
-          "a forking test was added or renamed without updating the roster above"))))
+      (is (= forking-names (into #{} (map :name) forking))
+          "a forking test was added or renamed without updating `forking-names` above"))))

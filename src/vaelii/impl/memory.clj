@@ -26,6 +26,7 @@
   and are lock-free.  Interleaved *writers* would not be serializable."
   (:require [clojure.set :as set]
             [vaelii.impl.kv :as kv]
+            [vaelii.impl.observe :as observe]
             [vaelii.impl.profile :as prof]
             [vaelii.impl.protocols :as p]))
 
@@ -89,6 +90,7 @@
   (next-id [_] (long (swap! counter inc)))
   (put-sentex [this sentex]
     (let [id (or (:id sentex) (p/next-id this))]
+      (observe/keep-before! this [:sentex id] #(get (:sentexes @state) id))
       (store-record state counter :sentexes id (assoc sentex :id id))))
   ;; Every fetch is tallied by kind (`vaelii.impl.profile`), which is the record-store
   ;; half of the read tally the index keeps — a deref and a `nil?` check when nobody is
@@ -96,8 +98,9 @@
   ;; store and the durable one count the same events (`mark-premise` reaches into the
   ;; state map here and re-`fetch`es there, and a tally that counted both would be a
   ;; reading of which backend is running).
-  (get-sentex [_ id] (prof/record-fetch :sentex) (get (:sentexes @state) id))
-  (delete-sentex! [_ id]
+  (get-sentex [_ id] (prof/record-fetch :sentex id) (get (:sentexes @state) id))
+  (delete-sentex! [this id]
+    (observe/keep-before! this [:sentex id] #(get (:sentexes @state) id))
     (swap! state (fn [st] (-> st
                               (update :sentexes dissoc id)
                               (update :premises disj id)
@@ -105,9 +108,11 @@
     nil)
   (put-justification [this justification]
     (let [id (or (:id justification) (p/next-id this))]
+      (observe/keep-before! this [:justification id] #(get (:justifications @state) id))
       (store-record state counter :justifications id (assoc justification :id id))))
   (get-justification [_ id] (prof/record-fetch :justification) (get (:justifications @state) id))
-  (delete-justification! [_ id]
+  (delete-justification! [this id]
+    (observe/keep-before! this [:justification id] #(get (:justifications @state) id))
     (swap! state (fn [st] (-> st
                               (update :justifications dissoc id)
                               (update :provenance dissoc id))))

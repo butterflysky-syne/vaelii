@@ -76,7 +76,7 @@
           (is (= {:clock 42 :creator 'tester}
                  (select-keys (:in (first frames)) [:clock :creator])))
           (is (= 42 (:created (v/provenance lkb h)))
-              "the call stamps the clock its frame records"))))))
+              "the call records the clock value its frame holds"))))))
 
 (tu/deftest-kb a-write-nested-in-another-appends-no-frame
   (tu/with-terms [dog Fido Rex CxPets]
@@ -97,6 +97,15 @@
           (is (= [:assert :assert :settle] (mapv :op frames)))
           (is (= [true true] (mapv (comp :defer-settle? :in) (take 2 frames)))
               "each assert records that its settle was deferred"))))))
+
+;; `:stamp-inert` is the keyword an `ops.log` of a development build holds for the
+;; `:mark-inert` operation.
+(tu/deftest-kb both-keywords-of-the-inert-mark-operation-replay-through-mark-inert
+  (let [seen (atom [])]
+    (with-redefs [v/mark-inert! (fn [_ opts] (swap! seen conj opts))]
+      (oplog/replay! kb [{:op :stamp-inert :args [{:handles [7]}] :in {}}
+                         {:op :mark-inert :args [{:handles [8]}] :in {}}]))
+    (is (= [{:handles [7]} {:handles [8]}] @seen))))
 
 (tu/deftest-kb a-configuration-call-marks-the-log-unusable
   (with-log kb

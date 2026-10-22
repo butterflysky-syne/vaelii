@@ -31,7 +31,7 @@
     (testing "and the width at a level is its own read, agreeing with the child set"
       ;; `reads/stored-count-children` is what the query planner's cost model divides by,
       ;; and it is asked once per literal per plan — so it answers off a cardinality rather than
-      ;; by building the children (`perf`'s `plan-scaling` is the gate on that).  The
+      ;; by building the children (`perf`'s `plan-scaling` is the perf check on that).  The
       ;; two must not drift: a width that disagreed with the set it counts would make
       ;; the planner divide by a number the matcher never sees.
       (let [ix (:index kb)]
@@ -150,9 +150,9 @@
       (v/retract! kb m)
       (is (= #{} (bound))))))
 
-(tu/deftest-kb the-kept-terms-by-type-follow-the-unary-roster
-  ;; `[:unary-kept t]` lists a term under each predicate of its unary roster while the
-  ;; roster lists two or more, in either polarity; one predicate in two contexts is one
+(tu/deftest-kb the-kept-terms-by-type-follow-the-unary-predicate-set
+  ;; `[:unary-kept t]` lists a term under each predicate of its unary predicate set while the
+  ;; set lists two or more, in either polarity; one predicate in two contexts is one
   (tu/with-terms [dog cat pet Rex Tom CxA CxB]
     (let [idx  (:index kb)
           ts   #{dog cat pet}
@@ -205,6 +205,48 @@
       (doseq [h [tc td]] (v/retract! kb h))
       (is (= {} (denied)))
       (is (= #{} (listed))))))
+
+(tu/deftest-kb the-opposed-bodies-by-functor-follow-the-opposed-bodies
+  ;; `[:opposed-between f]` and `[:opposed-functor f]` split the opposed bodies of `f` by
+  ;; `nm/between-predicates?`, and the two reads answer as a scan of every opposed body does
+  (tu/with-terms [relatesTo parentOf Ann Bob CxA CxB]
+    (let [idx      (:index kb)
+          ;; `tu/with-terms` folds a predicate temp to bare lowercase, a type's spelling
+          [fatherOf kinOf] (map #(gensym (str "tmp" %)) ["FatherOf" "KinOf"])
+          fs       #{relatesTo parentOf}
+          filed    (fn [tag] (into {} (keep (fn [f] (let [bs (p/family-leaf idx tag [f])]
+                                                      (when (seq bs) [f bs]))))
+                                   fs))
+          scanned  #(into #{} (filter (comp fs first)) (reads/as-stored-opposed-bodies idx))
+          agrees?  #(and (= (scanned) (into #{} cat [(mapcat val (filed :opposed-functor))
+                                                     (mapcat val (filed :opposed-between))]))
+                         (every? (fn [f] (= (boolean (some (fn [b] (= f (first b))) (scanned)))
+                                            (reads/stores-opposed-with-functor? idx f)))
+                                 fs))
+          between  (list relatesTo fatherOf kinOf)
+          mixed    (list relatesTo fatherOf Ann)
+          fact     (list parentOf Ann Bob)
+          a        (fn [s c] (v/assert kb s c))
+          hs       (mapv #(a % CxA) [between mixed fact])
+          _        (is (= {} (filed :opposed-functor) (filed :opposed-between)) "one polarity files nothing")
+          ns1      (mapv #(a (list 'not %) CxB) [between mixed fact])]
+      (is (= {relatesTo #{mixed} parentOf #{fact}} (filed :opposed-functor)))
+      (is (= {relatesTo #{between}} (filed :opposed-between)))
+      (is (reads/stores-opposed-between? idx relatesTo))
+      (is (not (reads/stores-opposed-between? idx parentOf)))
+      (is (agrees?))
+      (let [ns2 (a (list 'not between) CxA)]
+        (v/retract! kb (first ns1))
+        (is (= {relatesTo #{between}} (filed :opposed-between)) "a denial in another context keeps the body")
+        (v/retract! kb ns2))
+      (is (= {} (filed :opposed-between)) "the last denial takes the body out")
+      (is (not (reads/stores-opposed-between? idx relatesTo)))
+      (v/retract! kb (nth hs 2))
+      (is (= {relatesTo #{mixed}} (filed :opposed-functor)) "the last positive takes the body out")
+      (is (agrees?))
+      (doseq [h (into [(first hs) (second hs)] (rest ns1))] (v/retract! kb h))
+      (is (= {} (filed :opposed-functor) (filed :opposed-between)))
+      (is (not (reads/stores-opposed-with-functor? idx relatesTo))))))
 
 (tu/deftest-kb the-argument-root-discriminates-by-position
   (let [bornIn (tu/tmp-pred) likes (tu/tmp-pred)
@@ -346,10 +388,10 @@
       (testing "the rule is findable from each predicate its exception mentions"
         (is (contains? (reads/watched-rules-on idx flightless_bird) h))
         (is (contains? (reads/watched-rules-on idx adult) h)))
-      (testing "and lands in the roster the taxonomy trigger enumerates"
+      (testing "and lands in the watched-rule set the taxonomy trigger enumerates"
         (is (contains? (reads/watched-rules idx) h))))))
 
-(tu/deftest-kb the-roster-accumulates-across-rules
+(tu/deftest-kb the-watched-rule-set-accumulates-across-rules
   (tu/with-terms [penguin ostrich]
     (let [idx (:index kb) h1 4002 h2 4003]
       (rules/index-exception idx h1 [penguin])
@@ -358,7 +400,7 @@
       (testing "handles keep their type through nippy — ints, not strings"
         (is (every? integer? (reads/watched-rules idx)))))))
 
-(tu/deftest-kb unindexing-clears-every-predicate-key-and-the-roster
+(tu/deftest-kb unindexing-clears-every-predicate-key-and-the-watched-rule-set
   (tu/with-terms [flightless_bird adult]
     (let [idx (:index kb) h 4004]
       (rules/index-exception idx h [flightless_bird adult])
@@ -426,7 +468,7 @@
     (tu/clear-kb! kb)))
 
 (defn- named-reading
-  "`[rel functor family trie]` per relation and roster functor: the `:tax-named` entries
+  "`[rel functor family trie]` per relation and naming functor (`except`, `defeat`): the `:tax-named` entries
   `[ctx handle]` the family holds, and those the naming trie and the installed keys give."
   [kb]
   (let [ix (:index kb)]
@@ -573,7 +615,7 @@
                [[:family-handles :shape-tuple [rel 2] #{CxB}] #{h2}]
                [[:family-leaf :shape-lengths [rel]] #{2}]
                [[:family-leaf :term-index [Ann]] #{h1 h3}]
-               [[:family-member? :term-roster [] Ann] true]]]
+               [[:family-member? :term-names [] Ann] true]]]
         (is (= want (as (apply (ns-resolve 'vaelii.impl.protocols (symbol (name (first read))))
                                ix (rest read))))
             (pr-str read)))
@@ -593,7 +635,7 @@
           "a flat set's retire names its context"))))
 
 (defn- family-state
-  "What a `:mint` leaf under `t` in `c` and its node and root roster, and the `:tax-installs`
+  "What a `:mint` leaf under `t` in `c` and its node and root set, and the `:tax-installs`
   set of `h`, hold."
   [ix t c h]
   {:leaf     (p/family-leaf ix :mint [t c])

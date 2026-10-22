@@ -41,7 +41,7 @@
 
   Additive, like the sibling koinii modules: the public core API, `vaelii.client`, koinii
   `identity`, and Trove for the two subscription defaults.  Every write goes through the
-  provenance-stamping `assert` path — never `bulk-assert-facts!`."
+  provenance-recording `assert` path — never `bulk-assert-facts!`."
   (:refer-clojure :exclude [assert])
   (:require [taoensso.trove :as trove]
             [vaelii.client :as c]
@@ -322,7 +322,7 @@
   respond, the two ballots are counted).  A sentence with one of these functors is a
   claim ABOUT who spoke, so `assert` refuses one that names anyone but the handle's own
   agent: otherwise `speaker-of` (read off the sentence) and the `:creator` provenance the
-  entry point stamps would disagree, and an agent could sign another's name."
+  entry point records would disagree, and an agent could sign another's name."
   '#{queries answers endorses justifies disputes votesFor votesAgainst notUnderstood refuse})
 
 (defn- check-write-entry-points
@@ -339,12 +339,12 @@
   - **a `:creator` that disagrees with the handle's agent** is refused
     (`:koinii/creator-mismatch`).  Ownership is required — `belief/disregard` will only
     withdraw a statement whose creator is the withdrawing agent — so neither silent outcome
-    is acceptable: honouring it lets an agent sign another's name, dropping it leaves a stamp
-    that looks like it took.
+    is acceptable: honouring it lets an agent sign another's name, dropping it leaves a
+    creator that looks like it took.
   - **a speech act naming someone else as its speaker** is refused
     (`:koinii/speaker-mismatch`).  `speaker-of` reads the speaker off the sentence's first
-    argument while the entry point stamps the creator off the handle, so an act naming another
-    agent would say one agent spoke while the provenance says another.
+    argument while the entry point records the creator off the handle, so an act naming
+    another agent would say one agent spoke while the provenance says another.
 
   `opts` is the map that will be WRITTEN, not the one a caller typed, so `reply-many` —
   which builds its own `{:creator agent}` — hands over a map the creator arm cannot
@@ -355,8 +355,8 @@
     (id/check-registry-write! agent (:context handle))
     (when (and (contains? opts :creator) (not= (:creator opts) agent))
       (throw (ex-info (str "koinii: " agent " cannot assert as " (pr-str (:creator opts))
-                           " — a claim originated through an agent handle is stamped that"
-                           " agent's, which is what makes the write boundary an identity")
+                           " — a claim originated through an agent handle records that"
+                           " agent as its creator, which is what makes the write boundary an identity")
                       {:type :koinii/creator-mismatch
                        :agent agent :creator (:creator opts)})))
     (when (and (seq? sentence) (contains? agent-first-acts (first sentence))
@@ -368,17 +368,17 @@
                        :agent agent :named (second sentence) :act (first sentence)})))))
 
 (defn assert
-  "Originate a claim: assert `sentence` into the agent's OWN context, stamped `:creator`
-  the agent, through the medium — for a `wire` handle that is through the daemon, the
-  single writer.  The agent CANNOT write another agent's context from here: the destination
-  is fixed by identity, and a speech act it asserts names that agent as its speaker
-  (`:koinii/speaker-mismatch` otherwise).  Returns the handle.
+  "Originate a claim: assert `sentence` into the agent's OWN context, recording `:creator`
+  as the agent, through the medium — for a `wire` handle that is through the daemon, the
+  single writer.  The agent CANNOT write another agent's context from here: the
+  destination is fixed by identity, and a speech act it asserts names that agent as its
+  speaker (`:koinii/speaker-mismatch` otherwise).  Returns the handle.
 
   **The creator is the agent's, and a conflicting one is refused**
   (`:koinii/creator-mismatch`).  Ownership is required — `belief/disregard` refuses to
   withdraw a statement whose creator is not the agent (`:koinii/not-own-statement`), and the
   whole write boundary is 'an agent writes as itself' (D8) — so a caller passing someone
-  else's `:creator` is asking for something this entry point does not grant.  Dropping it silently would look like a stamp that took, and honouring
+  else's `:creator` is asking for something this entry point does not grant.  Dropping it silently would look like a creator that took, and honouring
   it would let an agent sign another's name; the refusal says which it is.  Passing the
   agent's own id is redundant and allowed.  Every other `opts` key passes through.
 
@@ -400,7 +400,7 @@
 ;; ---- reply: the response act as a meta-sentex on its target --------------
 ;;
 ;; The sugar that turns "respond to target T" into asserting a speech-act response
-;; meta-sentex ON T, in the replying agent's own context, stamped creator.  Two
+;; meta-sentex ON T, in the replying agent's own context, with its creator recorded.  Two
 ;; properties fall out of the shape and are why it is a meta-sentex rather than a bare
 ;; assertion (koinii.md, *Reply is an assertion*):
 ;;
@@ -414,7 +414,7 @@
 
 (defn answer
   "`answers`: reply to the query at `target-handle` with `content`.  A ternary meta-sentex
-  `(answers agent content (sentexHandle T))` in the agent's own context, creator stamped.
+  `(answers agent content (sentexHandle T))` in the agent's own context, creator recorded.
   The answerer's identity is read off THIS sentex, never off the query.  Returns the
   answer's handle; a re-answer with the same content returns that same handle."
   [handle content target-handle]
@@ -436,10 +436,11 @@
 
 (defn dispute
   "`disputes`: challenge the claim at `target-handle`.  Two writes in the agent's own
-  context, both creator-stamped: the REBUTTING claim — the negation of the target's
-  sentence, so the pair surfaces in `(contradictions kb)` for the dispute reads to scope —
-  and a `disputes` meta-sentex naming the target.  Represents the challenge only;
-  adjudication is a separate policy layer.  Returns the dispute edge's handle (write 2).
+  context, both with the creator recorded: the REBUTTING claim — the negation of the
+  target's sentence, so the pair surfaces in `(contradictions kb)` for the dispute reads
+  to scope — and a `disputes` meta-sentex naming the target.  Represents the challenge
+  only; adjudication is a separate policy layer.  Returns the dispute edge's handle (write
+  2).
 
   **A handle that names no record is refused** (`:koinii/no-such-handle`), as `deref`'s
   `marker` refuses one.  The rebuttal is built from the target's own sentence, so a
@@ -458,7 +459,7 @@
 (defn vote
   "Cast a ballot on the claim at `target-handle`: `stance` `:for` -> `(votesFor agent
   (sentexHandle T))`, `:against` -> `(votesAgainst agent (sentexHandle T))`.  A meta-sentex
-  in the agent's own context, creator stamped — a coordination move like `endorse`, but
+  in the agent's own context, creator recorded — a coordination move like `endorse`, but
   one a resolution policy COUNTS rather than merely records:
   `adjudication/tally` counts these ballots.  This entry point authenticates nobody, so
   its ballot carries no attestation, and `adjudication/resolve-by-majority` refuses a
@@ -491,7 +492,7 @@
   `check-edit` first, then commit it with `edit!` in one settle.  `edit!` is not atomic
   on a throw (docs/feed.md), so a mid-batch failure would leave a HALF-reply in the shared
   truth; the dry run refuses an inadmissible batch before anything lands.  Each of
-  `sentences` is asserted into the agent's own context, creator stamped.
+  `sentences` is asserted into the agent's own context, creator recorded.
 
   **Every entry point `assert` holds, this entry point holds too, and for the whole batch before the
   first write** — the registry is not writable through it (`:koinii/registry-forbidden`)
@@ -591,7 +592,7 @@
 (defn speaker-of
   "Who made the response move `sentex` — its `?agent`, the FIRST argument of the
   meta-sentex.  Read off the reply's own sentence (so it crosses the wire without a
-  provenance op) and equal to the `:creator` provenance the daemon stamped: the
+  provenance op) and equal to the `:creator` provenance the daemon recorded: the
   conversation is in the graph, not in the client."
   [sentex]
   (second (:sentence sentex)))

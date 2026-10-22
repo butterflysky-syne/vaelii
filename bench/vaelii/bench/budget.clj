@@ -53,7 +53,7 @@
 
   ## The extrapolation
 
-  Stated as a shape, and **gated on every step**: a row is called linear only when each
+  Stated as a shape, and **checked at every step**: a row is called linear only when each
   of the three growths agrees with its own fact ratio, flat only when all three are flat,
   and affine only when a fit through the outer two samples predicts both middle ones it
   was not fitted through.  A row that fits none of the three is reported unextrapolated,
@@ -64,7 +64,7 @@
   A row whose ceiling is a **configured constant** is read rather than fitted — see
   `capped-rows`.
 
-  **What the target is not.**  The vocabulary is pinned, so a row that tracks it is
+  **What the target is not.**  The vocabulary is fixed, so a row that tracks it is
   reported flat and carried to the target unchanged.  A real 100,000,000-fact KB does not
   hold 8,000 individuals, so every flat row is a floor and the total that includes them is
   a floor too.  This bench prices the **extent**; it does not price a KB that large.
@@ -296,7 +296,7 @@
     (keep #(get % k) (vals kinds))))
 
 (def ^:private other-fields
-  "The KB fields that are none of the four big structures — the caches, rosters, memos and
+  "The KB fields that are none of the four big structures — the caches, key sets, memos and
   statistics a KB carries beside its two stores, its network and its taxonomy, on the
   `KB` record and on its `Reasoning` value.  Named exhaustively rather than derived by subtraction: jol dedupes shared
   structure *within* a call, so `retained [kb]` is strictly less than the sum of its
@@ -380,13 +380,13 @@
         ;; A field that reaches code rather than data kills the walk (see
         ;; `other-fields`), so a new one is reported as unmeasured instead of taking the
         ;; run down — a bench that dies on the last row has measured nothing.
-        ;; the roster object itself — `vaelii.impl.roster`'s `LiveRoster`, whose retained
+        ;; the handle-set object itself — `vaelii.impl.handle-set`'s `LiveHandleSet`, whose retained
         ;; size is the bitmap it wraps
-        roster-o (kind-objs records :live-ids)
+        handle-set-o (kind-objs records :live-ids)
         cache-o  (kind-objs records :cache)
         ;; `premises` is a `DiskRecordStore` field, not a per-`Kind` one — the derived
         ;; set of sentex handles with a non-nil `:strength`, one boxed `Long` per premise
-        ;; until it is converted the way `roster-o` already was.
+        ;; until it is converted the way `handle-set-o` already was.
         premises-o [(:premises records)]
         ;; A field that reaches code rather than data kills the walk (see
         ;; `other-fields`), so a new one is reported as unmeasured instead of taking the
@@ -400,7 +400,7 @@
             :sections (dissoc idx :whole)}
            (cumulative [[:taxonomy       [(reasoning/taxonomy kb)]]
                         [:jtms           [(reasoning/tms kb)]]
-                        [:record-rosters roster-o]
+                        [:record-handle-sets handle-set-o]
                         [:record-cache   cache-o]
                         [:record-premises premises-o]
                         [:record-other   [records]]
@@ -433,7 +433,7 @@
   fractional one reaches j/n ≈ k + fraction.
 
   The head is `(derives<i> ?x ?x)` rather than `(derives<i> ?x ?y)` deliberately: a head
-  that keeps both variables mints a conclusion per fact, which pins the ratio at 0.5 (one
+  that keeps both variables mints a conclusion per fact, which fixes the ratio at 0.5 (one
   justification per new node) however many families are stated.  Collapsing it is what
   makes the ratio a knob.  Returns a seq of `[antecedent consequent]` pairs."
   [target]
@@ -508,7 +508,7 @@
 
 (defn- fmt-bytes
   "Bytes at three scales, because the rows now span nine orders of magnitude: the index
-  reads in GB and a compressed roster reads in KB, and a row printed as `0.0 MB` is one a
+  reads in GB and a compressed handle set reads in KB, and a row printed as `0.0 MB` is one a
   reader cannot check the shape verdict against — the verdict is computed on the raw
   bytes either way, so the print floor would hide the growth rather than deny it."
   [b]
@@ -521,12 +521,12 @@
 (def ^:private row-order
   "Printed — and **measured** — in this order; see `cumulative` for why the index is
   last."
-  [:taxonomy :jtms :record-rosters :record-cache :record-premises :record-other :other :index])
+  [:taxonomy :jtms :record-handle-sets :record-cache :record-premises :record-other :other :index])
 
 (def ^:private row-labels
   {:index          "index store (what paging it would release)"
    :jtms           "jtms (dense)"
-   :record-rosters "record rosters"
+   :record-handle-sets "record handle sets"
    :record-cache   "record cache (bounded)"
    :record-premises "record premises (boxed set)"
    :record-other   "record store, rest"
@@ -548,11 +548,11 @@
    :roots-handles  "roots handle column"
    :roots-routed   "roots routed map"
    :roots-argfam   "argument-root scope table"
-   :roots-fallback "roots fallback blob  <- term + slot rosters"})
+   :roots-fallback "roots fallback blob  <- term + slot name sets"})
 
 (def ^:private growth-tolerance
   "How far a structure's growth may sit from the fact ratio and still be called linear.
-  Wide, deliberately: the question this gates is *\"does this row track the extent?\"*,
+  Wide, deliberately: the question this decides is *\"does this row track the extent?\"*,
   and a row that grows 1.8× where the facts grew 2× is linear enough to extrapolate and
   say so.  A row that grows 1.2× is not tracking the extent at all, which is the answer
   rather than a failure.  Applied to **each** step, so a row buys its shape three times."
@@ -599,7 +599,7 @@
   two samples predicts *every* sample in between — each point held back from the fit is
   what makes it a test, and N-2 of them is a stronger test than one.
 
-  Affine is the form the old two-point gate had no name for and dropped: a fixed
+  Affine is the form a two-point growth check has no name for and drops: a fixed
   baseline plus a per-fact part reads as neither flat nor linear, and `record store, rest`
   sat in that gap at 1.65× against facts at 2.75×."
   [pts target]
@@ -749,7 +749,7 @@
                 "  baseline over it is affine; one bounded by config is read off its cap.  Each\n"
                 "  shape is confirmed on every step, and a row that fits none is refused rather\n"
                 "  than multiplied out.\n\n"
-                "  The total is a FLOOR even when no row is refused.  The corpus pins the\n"
+                "  The total is a FLOOR even when no row is refused.  The corpus fixes the\n"
                 "  vocabulary, so every flat row is carried to the target at the value a small\n"
                 "  vocabulary gave it — and a KB of that many facts does not have this one.\n"
                 "  What is priced here is the extent, not a KB of the target size.")))

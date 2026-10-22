@@ -125,6 +125,10 @@ A type says what a thing *is*, not what it's for. A type defined by purpose, cap
 
 **Audit:** if a type's comment defines membership by purpose or role, make it a relation (`bodyPartRoleOf ?thing ?body`), put the role's rules on the relation, and type its args by what the fillers are.
 
+**Verb test:** read the verb that defines membership. A process or agency verb (operates, is used, serves, does work) brings purpose in. A stative verb (contains, has as a part, is made of) defines by structure, and the type it defines is rigid.
+
+**Example:** a candidate `device` defined as "operates when powered" admits a brick warming in sunlight and a one-piece whistle. A `tool` defined as "used to perform work" admits a rock used as a hammer. `electronic_device`, "contains an electronic circuit", admits a dead phone and excludes the whistle. `machine`, "has parts that move relative to each other, driven by an energy source", admits a stopped clock.
+
 **Examples:** a type `necessarily_part_of_something` is purpose in disguise. A broad `body_part` meaning "anything that can do the work of a body part" takes in every prosthetic; the kind plus a role relation keeps the two apart.
 
 ## beware entity
@@ -137,6 +141,14 @@ It looks like a natural kind and is far slipperier. Temporal and spatial slices 
 *Find a type's differentia from its complement*
 **genlPrinciple:** no OE calligraphy
 List the members, then the near-misses: things under the same parent that aren't members. A property is the differentia only if every member has it and no near-miss does. If none survives, the type has no differentia and isn't worth reifying. The near-miss list is often a list of sibling types waiting to be named.
+
+**Refinement audit:** before accepting a proposed classifier:
+1. State what membership means under its parent, not just a list of familiar members. Fix the intended reading and context where a word has episodic, habitual or modal uses.
+2. Give positive controls and close non-members under that parent, with a reason each belongs or does not. Challenge the proposed differentia with cases sharing its arity, argument types or temporal variation; those features need not capture its meaning.
+3. Separate essential meaning from accidental association. A relation may be asserted, learned or changed in a happening without that relation itself describing a happening. For a proposed happening classifier, contrast an occurrence with a held state, not merely a changing truth value with a fixed one.
+4. Ask what each classification would let the KB conclude or rule out (**does it have rules?**). Examples test a proposed definition; a finite list does not establish its necessity or sufficiency. Revise the definition when a real counterexample defeats it.
+5. State the defining facts or rules where possible (**represent the definition**). For two encodings, make their argument/role mapping and context or temporal correspondence explicit; do not substitute an unrelated existential witness or assume a unique occurrence from the same participants.
+6. Distinguish the semantic criterion from what the current engine can check (**truth, not provability**). Record which expected conclusions are derivable, which exclusions have explicit support, and which cases remain open. Failure to derive membership is not a negative control's proof of non-membership.
 
 ## no naked terms
 *Hypothesized vocabulary comes with its definitional assertions*
@@ -165,9 +177,18 @@ When choosing between a default rule with exceptions and an explicit list of eve
 - If you hypothesized something, would you want the default rule to apply?
 - In a fictional or counterfactual context, would you expect the default rule to apply?
 
-These are considerations, not a gate. The more you'd expect or want the default to reach new, hypothesized and fictional members, the better a default with stated exceptions fits. Where it shouldn't reach them, enumerate the known cases and conclude nothing about new ones.
+These are considerations, not a required check. The more you'd expect or want the default to reach new, hypothesized and fictional members, the better a default with stated exceptions fits. Where it shouldn't reach them, enumerate the known cases and conclude nothing about new ones.
 
-**Example:** metal is a `solid` by default, with mercury as the stated exception. A newly found, hypothesized or fictional metal should come out solid.
+**Example:** `metal_stuff` is a `solid` by default, with mercury as the stated exception. A newly found, hypothesized or fictional metal should come out solid.
+
+## catbus principle
+*Monotonic until a real fiction needs the overlap*
+**specPrinciple:** default or enumerate
+State a separation `:monotonic` in CxUniverse unless an existing fictional work shows a member of both types. One such example is enough: weaken the CxUniverse statement to default strength and restate it `:monotonic` in CxRealWorld, which fiction contexts do not inherit. A hypothetical example is not enough.
+
+**Example:** the Catbus in *My Neighbor Totoro* is both a cat and a bus, so `(disjoint animal vehicle)` is a default in CxUniverse and monotonic in CxRealWorld.
+
+**Audit:** for every default-strength separation that has a monotonic copy in CxRealWorld, name the fictional work and the member that justify it.
 
 ## no OE calligraphy
 *True and useful, not OE calligraphy*
@@ -195,3 +216,11 @@ An inferentially inert defining rule is still better than text, because it is mo
 - Run `kb-integrity` over the new terms.
 
 **Audit:** apply those three steps to every new term.
+
+## bank the decision
+*If you think about something and decide not to do it, bank that decision*
+When a modelling question is weighed and answered no, state the no in the KB as an explicit negation. A relation decided not transitive gets `(not (transitive R))`. The decision is then visible to the engine and to the next reviewer, and a later PR that would reverse it meets the stated decision instead of a silence. The negation belongs in the KB rather than in a code comment or a review thread, as **OE over code over text** has it. Absence is not negation: a missing `(transitive R)` says only that nobody stated it. So a `(not …)` is asserted only for a decision actually made, never to fill a gap.
+
+**Audit:** for each property, edge or declaration a vocab PR weighed and declined, the KB states its negation. Behind each `(not …)` mark stands a decision someone made.
+
+**Example:** `partOf` is not antisymmetric, since two coextensive regions stay two regions, so abstract.txt states `(not (anti_symmetric partOf))`. `anti_symmetric` is forced-monotonic, so that denial is believed while no `(anti_symmetric partOf)` is, and loses to one that is. core.txt's `(not (transitiveInArg orthogonal 1 genl))` is another.

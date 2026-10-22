@@ -31,7 +31,7 @@
     carries a digest of the token rather than the token, because every reader sees every
     context's name (`/find`, `CxWell`'s term page, `/op :contexts`).
   - **A process keeps at most `max-sandboxes` per KB.**  Opening one more resets the
-    lowest-priority sandbox on the roster below (docs/web.md).
+    lowest-priority sandbox on the eviction table below (docs/web.md).
   - **Reset is a real teardown**, not a flag: every sentex in the extent goes through
     `edit`'s `:remove`, and the `genlCx` edge with them.  The edge is not in the
     extent — `genlCx` is a forced-decontextualized predicate, so it is stored in
@@ -159,7 +159,7 @@
                      (string? prior) [prior c]
                      :else           (conj (vec prior) c)))))
 
-;; ---- the roster ------------------------------------------------------------
+;; ---- the eviction table ----------------------------------------------------
 ;; The sandboxes a KB holds, with each one's activity, so an admission past the cap
 ;; knows which to reset.  The priority is GreedyDual's aged form: `L` (`:level`) plus
 ;; `value`, restarted from the current `L` at each use; an eviction raises `L` to the
@@ -183,7 +183,7 @@
   []
   (* 60000 (v/switch-value "VAELII_SANDBOX_IDLE_MINUTES")))
 
-(def ^:private empty-roster {:level 0.0 :seq 0 :entries {}})
+(def ^:private empty-eviction-table {:level 0.0 :seq 0 :entries {}})
 
 (defn- value
   "What keeping a sandbox is worth: its active minutes past the first, times one plus the
@@ -193,61 +193,61 @@
   (/ (* (dec minutes) (inc (Math/log (max 1 writes))))
      (inc (Math/log (inc size)))))
 
-(defn- stamp
-  "`roster` with `ctx` used at `t`: its last use and use order set, one more active minute
+(defn- note-use
+  "`table` with `ctx` used at `t`: its last use and use order set, one more active minute
   when `t` falls in a minute it had none in, and its priority restarted from the level."
-  [roster ctx t]
-  (let [n (inc (:seq roster))
+  [table ctx t]
+  (let [n (inc (:seq table))
         m (quot t 60000)]
-    (-> roster
+    (-> table
         (assoc :seq n)
         (update-in [:entries ctx]
                    (fn [e]
                      (let [e (cond-> (assoc e :last t :seq n)
                                (not= m (:minute e)) (-> (assoc :minute m) (update :minutes inc)))]
-                       (assoc e :h (+ (:level roster) (value e)))))))))
+                       (assoc e :h (+ (:level table) (value e)))))))))
 
 (defn- enter
-  "`roster` with `ctx` opened at `t` holding `size` sentexes."
-  [roster ctx size t]
-  (stamp (assoc-in roster [:entries ctx] {:minutes 0 :minute -1 :writes 0 :size size}) ctx t))
+  "`table` with `ctx` opened at `t` holding `size` sentexes."
+  [table ctx size t]
+  (note-use (assoc-in table [:entries ctx] {:minutes 0 :minute -1 :writes 0 :size size}) ctx t))
 
 (defn- used
-  "`roster` with `ctx` used at `t`, when it is on the roster."
-  [roster ctx t]
-  (if (get-in roster [:entries ctx]) (stamp roster ctx t) roster))
+  "`table` with `ctx` used at `t`, when it is in the table."
+  [table ctx t]
+  (if (get-in table [:entries ctx]) (note-use table ctx t) table))
 
 (defn- wrote
-  "`roster` with one more write by `ctx`'s session at `t`, after which it holds `size`."
-  [roster ctx size t]
-  (if (get-in roster [:entries ctx])
-    (stamp (update-in roster [:entries ctx] #(-> % (update :writes inc) (assoc :size size)))
-           ctx t)
-    roster))
+  "`table` with one more write by `ctx`'s session at `t`, after which it holds `size`."
+  [table ctx size t]
+  (if (get-in table [:entries ctx])
+    (note-use (update-in table [:entries ctx] #(-> % (update :writes inc) (assoc :size size)))
+              ctx t)
+    table))
 
 (defn- idle? [e t horizon] (> (- t (:last e)) horizon))
 
 (defn- victim
   "The context an admission resets: of those idle past `horizon`, the longest idle; else
   the lowest priority, and of equal priorities the one used least recently."
-  [roster t horizon]
+  [table t horizon]
   (let [rank (fn [[_ e]] (if (idle? e t horizon) [0 (:last e) (:seq e)] [1 (:h e) (:seq e)]))]
     (key (reduce (fn [best kv] (if (neg? (compare (rank kv) (rank best))) kv best))
-                 (:entries roster)))))
+                 (:entries table)))))
 
 (defn- evict
-  "`roster` without `ctx`.  The level rises to its priority unless it was idle past
+  "`table` without `ctx`.  The level rises to its priority unless it was idle past
   `horizon`, since an idle sandbox's priority records activity that has stopped."
-  [roster ctx t horizon]
-  (let [e (get-in roster [:entries ctx])]
-    (cond-> (update roster :entries dissoc ctx)
+  [table ctx t horizon]
+  (let [e (get-in table [:entries ctx])]
+    (cond-> (update table :entries dissoc ctx)
       (and e (not (idle? e t horizon))) (update :level max (:h e)))))
 
 (defn- room
-  "`[roster' evicted]`: `roster` with contexts evicted until fewer than `cap` remain, and
+  "`[table' evicted]`: `table` with contexts evicted until fewer than `cap` remain, and
   those contexts in eviction order."
-  [roster cap t horizon]
-  (loop [r roster out []]
+  [table cap t horizon]
+  (loop [r table out []]
     (if (< (count (:entries r)) cap)
       [r out]
       (let [c (victim r t horizon)]
@@ -262,42 +262,42 @@
   (boolean (and ctx (v/handle-of target (edge ctx) 'CxUniverse))))
 
 (defn- rebuilt
-  "The roster for the sandboxes `target` holds, each entered at `t` as a fresh sandbox of
+  "The eviction table for the sandboxes `target` holds, each entered at `t` as a fresh sandbox of
   its size: the activity signals live in this process and a restart loses them."
   [target t]
   (reduce (fn [r ctx] (enter r ctx (v/count-in-context target ctx) t))
-          empty-roster
+          empty-eviction-table
           (sort (filter #(and (str/starts-with? (name %) "CxSandbox") (live? target %))
                         (v/contexts target)))))
 
 ;; one `[WeakReference atom]` pair per KB, compared by identity: a KB's hash reads its
 ;; stores, which change under it
-(defonce ^:private rosters (atom []))
+(defonce ^:private eviction-tables (atom []))
 
-(defn- roster-of [target]
-  (some (fn [[^WeakReference r a]] (when (identical? target (.get r)) a)) @rosters))
+(defn- eviction-table-of [target]
+  (some (fn [[^WeakReference r a]] (when (identical? target (.get r)) a)) @eviction-tables))
 
-(defn- roster!
-  "`target`'s roster atom, built from the KB the first time it is asked for."
+(defn- eviction-table!
+  "`target`'s eviction-table atom, built from the KB the first time it is asked for."
   [target]
-  (or (roster-of target)
-      (locking rosters
-        (or (roster-of target)
+  (or (eviction-table-of target)
+      (locking eviction-tables
+        (or (eviction-table-of target)
             (let [a (atom (rebuilt target (System/currentTimeMillis)))]
-              (swap! rosters (fn [rs] (conj (filterv (fn [[^WeakReference r]] (.get r)) rs)
-                                            [(WeakReference. target) a])))
+              (swap! eviction-tables (fn [rs] (conj (filterv (fn [[^WeakReference r]] (.get r)) rs)
+                                                    [(WeakReference. target) a])))
               a)))))
 
 (defn note-use!
   "Record a request by the session whose sandbox is `ctx`."
   [target ctx]
-  (when-let [a (and ctx (roster-of target))]
+  (when-let [a (and ctx (eviction-table-of target))]
     (swap! a used ctx (System/currentTimeMillis))))
 
 (defn note-write!
   "Record a write request by the session whose sandbox is `ctx`, and its size after."
   [target ctx]
-  (when-let [a (and ctx (roster-of target))]
+  (when-let [a (and ctx (eviction-table-of target))]
     (when (contains? (:entries @a) ctx)
       (swap! a wrote ctx (v/count-in-context target ctx) (System/currentTimeMillis)))))
 
@@ -321,7 +321,7 @@
 
 (defn reset!
   "Discard the whole sandbox: every sentex in it, then the edge that made it a context,
-  and its roster entry.
+  and its eviction-table entry.
 
   One `edit`, so it is one settle, and the dependency-directed sweep does the rest — a
   conclusion derived into the sandbox goes with the premises it rested on, and its
@@ -331,7 +331,7 @@
   Answers `{:removed-sentexes n :removed-justifications n}`.  Irreversible, hence the
   `!` — that is the whole point of the control."
   [target ctx]
-  (when-let [a (and ctx (roster-of target))]
+  (when-let [a (and ctx (eviction-table-of target))]
     (swap! a update :entries dissoc ctx))
   (if-not (and ctx (live? target ctx))
     {:removed-sentexes 0 :removed-justifications 0}
@@ -345,10 +345,10 @@
       (merge-with + gone gone2))))
 
 (defn- make-room!
-  "Reset sandboxes until `target` holds fewer than `max-sandboxes`.  A roster entry whose
+  "Reset sandboxes until `target` holds fewer than `max-sandboxes`.  An eviction-table entry whose
   sandbox is gone by another path is dropped first."
   [target]
-  (let [a   (roster! target)
+  (let [a   (eviction-table! target)
         cap (max-sandboxes)]
     (when (>= (count (:entries @a)) cap)
       (let [dead (remove #(live? target %) (keys (:entries @a)))
@@ -366,7 +366,7 @@
     (when-not (live? target ctx)
       (make-room! target)
       (v/edit! target {:add [[(edge ctx) 'CxUniverse {:strength :monotonic}]]})
-      (swap! (roster! target) enter ctx 0 (System/currentTimeMillis)))
+      (swap! (eviction-table! target) enter ctx 0 (System/currentTimeMillis)))
     ctx))
 
 (defn extent

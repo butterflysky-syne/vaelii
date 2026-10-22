@@ -26,7 +26,7 @@
 # is a break everywhere, and proving that the dense index or the node engine agrees
 # with a suite that does not itself pass is time spent to learn nothing.  So memory
 # leads, and the shuffle is over everything behind it.  (Give explicit names and it
-# shuffles exactly those, memory included — the pin is only for the default walk.)
+# shuffles exactly those, memory included — memory leads only in the default walk.)
 #
 # This is FAIL-FAST by nature — "until one fails" is the whole point — where
 # `test-backends.sh`/`test-sweeps.sh` run to the end and tally.  Reach for those, or
@@ -34,7 +34,7 @@
 # you want to know, quickly and from a fresh angle each time, whether they still all
 # pass.
 #
-# The roster, the env that selects each configuration, and the per-namespace
+# The configuration set, the env that selects each configuration, and the per-namespace
 # progress graph are the shared libraries the sibling scripts use
 # (scripts/lib/suite-configs.sh, scripts/lib/suite-marks.sh) — a run here reads
 # exactly as a run there.
@@ -105,7 +105,7 @@ SEED="${TEST_SHUFFLE_SEED:-$RANDOM}"
 RANDOM=$SEED
 
 # `shuffle_inplace` shuffles the global array SHUF, and lives in
-# scripts/lib/suite-configs.sh because `test-matrix.sh` shuffles its roster too.  That
+# scripts/lib/suite-configs.sh because `test-matrix.sh` shuffles its configurations too.  That
 # file carries why the shuffle runs in this shell rather than in a subshell, which is
 # what makes TEST_SHUFFLE_SEED name the order it actually produces.
 
@@ -117,7 +117,7 @@ if [[ ${#WANTED[@]} -gt 0 ]]; then
   shuffle_inplace
   CONFIGS=("${SHUF[@]}")
 else
-  # memory pinned first; everything else — the other backends and every sweep —
+  # memory placed first; everything else — the other backends and every sweep —
   # shuffled behind it
   for c in "${ALL_BACKENDS[@]}" "${ALL_SWEEPS[@]}"; do
     [[ "$c" == memory ]] || SHUF+=("$c")
@@ -226,7 +226,7 @@ for cfg in "${CONFIGS[@]}"; do
   echo "  ${DIM}env ${envv[*]} lein test $SELECTOR  # $log${OFF}"
   echo "  ${DIM}loading a JVM and all $NS_COUNT test namespaces; the first namespace waits on that${OFF}"
   start=$SECONDS
-  revision_stamp "config $cfg" > "$log"
+  revision_header "config $cfg" > "$log"
   RUN_START=$start
   # `< /dev/null`: `set -m` puts this job outside the terminal's foreground group, so
   # a run that reads the tty from there takes SIGTTIN and the whole group stops —

@@ -7,10 +7,10 @@
   start 1, and CxUniverse's two forward rules derive each spelling from the other.
 
   Open-world as `interArg` is: the trigger must be positively established, and a target
-  is convicted only when the KB places it in the hierarchy outside `T`.  An application
+  is convicted only when it believes a type the taxonomy separates from `T`.  An application
   whose arguments all lie outside `T` is unconstrained.  The refusal is `interArg`'s
   `:inter-arg-type`, under the constraint-only reading every test here but the last
-  pins; the entailing reading derives the type instead (docs/argtypes.md)."
+  forces; the entailing reading derives the type instead (docs/argtypes.md)."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
@@ -27,20 +27,19 @@
   (tu/neutral-fresh #(doto (tu/fresh) (tu/load-core!))))
 
 (defn- ex-type
-  "The `:type` on the ex-info a thunk throws, or nil if it does not throw."
+  "The `:type` a write thunk meets: its refusal, or the argument conviction its fact is
+  held inert under (`tu/write-type`)."
   [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (tu/write-type tu/*kb* f))
 
 (defn- check-message
-  "The message of the first check violation `v/check` reports for a sentence, or nil.
-  `v/check` runs the checks `assert` runs and stores nothing, so the message is read
-  without the dedup a second identical assert would hit."
+  "The message of the first problem `tu/check-or-conviction` reads for a sentence, or nil."
   [kb sentence context]
-  (:message (first (v/check kb sentence context))))
+  (:message (first (tu/check-or-conviction kb sentence context))))
 
 (defn- world
-  "A `variable_arity_predicate` with an `arityMin` of 2, the types `animal` and `plant`
-  under `thing` with `dog` under `animal`, and five individuals: three dogs and two
+  "A `variable_arity_predicate` with an `arityMin` of 2, the disjoint types `animal` and
+  `plant` under `thing` with `dog` under `animal`, and five individuals: three dogs and two
   plants.  Returns `{:rel :animal :dog :plant :dogs [A B C] :plants [P Q]}`."
   [kb]
   (let [rel (tu/tmp-pred) animal (tu/tmp-type) dog (tu/tmp-type) plant (tu/tmp-type)
@@ -49,6 +48,7 @@
     (v/assert kb (list 'genl animal 'thing) 'CxUniverse)
     (v/assert kb (list 'genl dog animal) 'CxUniverse)
     (v/assert kb (list 'genl plant 'thing) 'CxUniverse)
+    (v/assert kb (list 'disjoint animal plant) 'CxUniverse)
     (v/assert kb (list 'variable_arity_predicate rel) 'CxUniverse)
     (v/assert kb (list 'arityMin rel 2) 'CxUniverse)
     (doseq [d dogs] (v/assert kb (list dog d) 'CxUniverse))
@@ -79,15 +79,15 @@
   (let [{:keys [rel animal plant dogs plants]} (world kb)
         [a b] dogs [p] plants]
     (v/assert kb (list 'interArgs rel animal) 'CxUniverse)
-    (let [problem (first (v/check kb (list rel a b p) 'CxUniverse))]
+    (let [problem (first (tu/check-or-conviction kb (list rel a b p) 'CxUniverse))]
       (is (= :inter-arg-type (:type problem)))
       (is (= [p animal 3] ((juxt :arg :expected :position) problem)))
       (is (= [a animal 1] ((juxt :trigger :trigger-type :trigger-position) problem))
           "the first trigger in position order, a choice keyed on the sentence")
-      (is (= (str "arg constraint: " p " must be a " animal " (interArgs, position 3 of "
+      (is (= (str "arg constraint: " p " must be a " animal " — " p " is a " plant
+                  ", disjoint from " animal " (interArgs, position 3 of "
                   rel ", because position 1 is a " animal ")")
-             (:message problem))))
-    (is plant)))
+             (:message problem))))))
 
 (tu/deftest-kb interArgs-is-open-world-on-both-sides
   (let [{:keys [rel animal dogs plants]} (world kb)
@@ -127,6 +127,7 @@
   (tu/with-terms [rel animal plant A B P]
     (v/assert kb (list 'genl animal 'thing) 'CxUniverse)
     (v/assert kb (list 'genl plant 'thing) 'CxUniverse)
+    (v/assert kb (list 'disjoint animal plant) 'CxUniverse)
     (v/assert kb (list 'binary_predicate rel) 'CxUniverse)
     (v/assert kb (list 'interArgs rel animal) 'CxUniverse)
     (v/assert kb (list animal A) 'CxUniverse)
@@ -162,7 +163,7 @@
         mixed (list rel a p)
         refusal-under (fn [decl]
                         (let [h (v/assert kb decl 'CxUniverse)
-                              r (v/check kb mixed 'CxUniverse)]
+                              r (tu/check-or-conviction kb mixed 'CxUniverse)]
                           (v/retract! kb h)
                           r))
         by-sugar (refusal-under (list 'interArgs rel animal))
@@ -210,19 +211,19 @@
         [a] dogs [p] plants
         mixed (list rel a p)
         h (v/assert kb (list 'interArgs rel animal) 'CxUniverse)
-        live (first (v/check kb mixed 'CxUniverse))]
+        live (first (tu/check-or-conviction kb mixed 'CxUniverse))]
     (testing "with the declaration stated, the restarted KB holds both spellings and refuses alike"
       (let [back (restarted)]
         (is (v/ask? back (list 'interArgAndRest rel 1 animal) 'CxUniverse))
         (is (v/has-prop? back :declares-inter-args-isa rel))
         (is (v/has-prop? back :declares-inter-arg-and-rest-isa rel))
-        (is (= (:message live) (:message (first (v/check back mixed 'CxUniverse)))))))
+        (is (= (:message live) (:message (first (tu/check-or-conviction back mixed 'CxUniverse)))))))
     (v/retract! kb h)
     (testing "with it retracted, the restarted KB holds neither spelling and admits the application"
       (let [back (restarted)]
         (is (not (v/ask? back (list 'interArgs rel animal) 'CxUniverse)))
         (is (not (v/ask? back (list 'interArgAndRest rel 1 animal) 'CxUniverse)))
-        (is (empty? (v/check back mixed 'CxUniverse)))))))
+        (is (empty? (tu/check-or-conviction back mixed 'CxUniverse)))))))
 
 ;; A stated declaration and its derived twin are one constraint.  The check reads both
 ;; spellings, so the reader is held here to merging them: were it not, the twin would
@@ -307,6 +308,7 @@
            (tu/with-terms [rel animal plant A P]
              (v/assert kb (list 'genl animal 'thing) 'CxUniverse)
              (v/assert kb (list 'genl plant 'thing) 'CxUniverse)
+             (v/assert kb (list 'disjoint animal plant) 'CxUniverse)
              (v/assert kb (list 'variable_arity_predicate rel) 'CxUniverse)
              (doseq [step order]
                (v/assert kb (case step
@@ -314,14 +316,15 @@
                               :trigger (list animal A)
                               :target  (list plant P))
                          'CxUniverse))
-             (let [problem (first (v/check kb (list rel A P) 'CxUniverse))]
+             (let [problem (first (tu/check-or-conviction kb (list rel A P) 'CxUniverse))]
                [(:type problem)
                 (-> (:message problem)
                     (str/replace (str rel) "R") (str/replace (str animal) "T")
+                    (str/replace (str plant) "U")
                     (str/replace (str A) "A") (str/replace (str P) "P"))]))))]
     (is (= 6 (count messages)))
     (is (= #{[:inter-arg-type
-              "arg constraint: P must be a T (interArgs, position 2 of R, because position 1 is a T)"]}
+              "arg constraint: P must be a T — P is a U, disjoint from T (interArgs, position 2 of R, because position 1 is a T)"]}
            (set messages)))))
 
 ;; ---- the derivation path ---------------------------------------------------
@@ -344,11 +347,11 @@
 ;; ---- a dropped firing, lifted one target at a time -------------------------
 
 (tu/deftest-kb a-firing-dropped-on-two-targets-is-placed-in-either-lifting-order
-  ;; A rule concludes an application with two targets outside the type.  The drop is
-  ;; convicted on one target; lifting that one leaves it convicted on the other, and the
-  ;; record has to watch the second from then on.  Both lifting orders reach the same
-  ;; belief, for the homogeneity form and for a pair of interArg declarations whose
-  ;; targets differ.
+  ;; A rule concludes an application with two targets of a type disjoint from the
+  ;; declared one.  The drop is convicted on one target; retracting that target's
+  ;; membership leaves it convicted on the other, and the record has to watch the second
+  ;; from then on.  Both lifting orders reach the same belief, for the homogeneity form
+  ;; and for a pair of interArg declarations whose targets differ.
   (let [placed
         (vec
          (for [[label decls] [[:interArgs (fn [rel t] [(list 'interArgs rel t)])]
@@ -358,6 +361,7 @@
            (tu/with-terms [rel trig animal plant A P Q]
              (v/assert kb (list 'genl animal 'thing) 'CxUniverse)
              (v/assert kb (list 'genl plant 'thing) 'CxUniverse)
+             (v/assert kb (list 'disjoint animal plant) 'CxUniverse)
              (v/assert kb (list 'ternary_predicate rel) 'CxUniverse)
              (v/assert kb (list 'ternary_predicate trig) 'CxUniverse)
              (doseq [d (decls rel animal)] (v/assert kb d 'CxUniverse))
@@ -365,16 +369,16 @@
                                 (list 'implies (list trig '?x '?y '?z) (list rel '?x '?y '?z)))
                        'CxUniverse)
              (v/assert kb (list animal A) 'CxUniverse)
-             (v/assert kb (list plant P) 'CxUniverse)
-             (v/assert kb (list plant Q) 'CxUniverse)
-             (v/assert kb (list trig A P Q) 'CxUniverse)
-             (let [dropped? (not (v/ask? kb (list rel A P Q) 'CxUniverse))]
-               (doseq [i lift-order] (v/assert kb (list animal ([P Q] i)) 'CxUniverse))
-               [label lift-order dropped? (boolean (v/ask? kb (list rel A P Q) 'CxUniverse))]))))]
+             (let [held [(v/assert kb (list plant P) 'CxUniverse)
+                         (v/assert kb (list plant Q) 'CxUniverse)]]
+               (v/assert kb (list trig A P Q) 'CxUniverse)
+               (let [dropped? (not (v/ask? kb (list rel A P Q) 'CxUniverse))]
+                 (doseq [i lift-order] (v/retract! kb (held i)))
+                 [label lift-order dropped? (boolean (v/ask? kb (list rel A P Q) 'CxUniverse))])))))]
     (is (= [[:interArgs [0 1] true true] [:interArgs [1 0] true true]
             [:interArg-pair [0 1] true true] [:interArg-pair [1 0] true true]]
            placed)
-        "dropped while a target is outside the type, placed once both are inside it")))
+        "dropped while a target is a plant, placed once neither is")))
 
 (tu/deftest-kb the-entailing-reading-derives-the-suffix-type
   ;; With a dog in the suffix, the entailing reading derives `animal` of the plant beside

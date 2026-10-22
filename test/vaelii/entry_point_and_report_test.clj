@@ -13,8 +13,8 @@
   `fatherOf takes 2 arguments through parentOf` and the entry point that credited `fatherOf` with
   a declaration of its own sent an author looking for a sentence nobody wrote.
 
-  So this is a **roster** rather than one assertion each, on `vector-spelling-test`'s
-  model: the defect is never in one half, it is in two halves disagreeing, and a roster is
+  So this is a **table** rather than one assertion each, on `vector-spelling-test`'s
+  model: the defect is never in one half, it is in two halves disagreeing, and a table is
   what fails when the next pair is added on one side only.  The rows are
   [docs/taxonomy.md](../../docs/taxonomy.md)'s \"What each constraint does in each arrival
   order\" table, **including the cells that read \"nothing\"** — a check documented as
@@ -176,7 +176,7 @@
 ;; ---- functional and asymmetric: a pair, not a message -------------------
 ;;
 ;; The retroactive half is a nogood re-derived through the entry point's own check, so
-;; the roster pins that it names the two sentences the entry point named.  Both rows put
+;; the table checks that it names the two sentences the entry point named.  Both rows put
 ;; the mark on a super-predicate, and either the mark or the `genl` edge arrives last.
 
 (deftest a-descended-mark-weighs-the-same-pair-in-every-arrival-order
@@ -249,23 +249,22 @@
                  (set (map :sentence (:sides d)))
                  (set (map :sentence (:sides c))))))))))
 
-;; ---- the cells that read "nothing" --------------------------------------
+;; ---- the argument constraints' held facts --------------------------------
 ;;
-;; An absence belongs in the roster the way a pair does.  The argument constraints convict
-;; on the *absence* of a path to the constraint type — open-world negation as failure — so
-;; there is no second sentex to weigh, and a retroactive pass would have to decide whether
-;; pre-existing silence is a violation.  Nobody has answered that, and answering it by
-;; accident inside a sweep is what turns an open-world check into a closed-world one.  The
-;; test below is what fails the day a sweep answers it.
+;; `assert` of an argument constraint's last ingredient holds the content stored before it
+;; inert, and the next claim is held alike (docs/argtypes.md, "An argument that fails its
+;; declared type is held inert").  `try-assert` of a declaration arriving last refuses it
+;; over the stored tuples it breaks (constraint_nogood_test); the test below covers `assert`.
 
-(deftest the-argument-constraints-reach-back-over-nothing-and-refuse-what-follows
-  ;; Pinned to the constraint reading: the rows here say which arrival order *refuses*, and
-  ;; with the entailment on a symbol argument is minted rather than convicted
+(deftest the-argument-constraints-hold-what-came-before-and-what-follows
+  ;; Forced to the constraint reading: the rows here convict a symbol argument, and with
+  ;; the entailment on a symbol argument is minted rather than convicted
   ;; (docs/argtypes.md).  The entailment's own three arrival orders are held by
   ;; argtype_entail_test, which is where that reading answers the same question.
   (tu/without-entailing
    (tu/with-terms [person_t rock_t parentOf fatherOf eats grouped Rock Mary Pebble Bert Stone]
      (let [ground [(list 'genl person_t 'thing) (list 'genl rock_t 'thing)
+                   (list 'disjoint person_t rock_t)
                    (list rock_t Rock) (list person_t Mary) (list rock_t Pebble)
                    (list 'variable_arity_predicate grouped)]
            rows
@@ -279,21 +278,19 @@
              :closing (list 'genlArg parentOf 1 person_t)
              :next    (list parentOf Pebble Mary)
              :type    :arg-genl}
-            ;; the conditional constraint has *three* ingredients, and it is the third that
-            ;; nothing reaches: the fact and the declaration are stored, and the membership
-            ;; arming the trigger arrives afterwards
+            ;; the conditional constraint has *three* ingredients: the fact and the
+            ;; declaration are stored, and the membership arming the trigger arrives
+            ;; afterwards
             {:row     "interArg, the trigger's type arriving last"
-             :fact    (list eats Rock Mary)
+             :fact    (list eats Bert Pebble)
              :extra   [(list 'interArg eats 1 person_t 2 person_t)]
-             :closing (list person_t Rock)
-             :next    (list eats Rock Pebble)
+             :closing (list person_t Bert)
+             :next    (list eats Bert Rock)
              :type    :inter-arg-type}
-            ;; `quotedArg` takes the same non-reach, and it is the row worth reading twice:
-            ;; the mention twin convicts the *written* term, whose syntactic kind every term
-            ;; has, so the "merely silence" half of the family's argument does not reach it —
-            ;; what remains is that the conviction is still the absence of a `genl` path,
-            ;; from `integer` to `string` here rather than from an argument's type. Pinned so
-            ;; the cell is examined rather than inherited from the three rows above.
+            ;; `quotedArg` takes the same reach: the mention twin convicts the *written*
+            ;; term by the absence of a `genl` path, from `integer` to `string` here rather
+            ;; than from an argument's type. Asserted so the cell is examined rather than
+            ;; inherited from the three rows above.
             {:row     "quotedArg, the declaration arriving last"
              :fact    (list parentOf Mary 5)
              :closing (list 'quotedArg parentOf 2 'string)
@@ -305,8 +302,8 @@
              :closing (list 'genl fatherOf parentOf)
              :next    (list fatherOf Rock 7)
              :type    :quoted-arg-type}
-            ;; the family's non-reach, one ingredient further out: the edge is admitted, the
-            ;; fact it now convicts stays stored and believed, and the next claim is refused
+            ;; one ingredient further out: the edge is admitted, and the fact it now convicts
+            ;; is held inert
             {:row     "a predicate-level genl edge under an argument constraint"
              :fact    (list fatherOf Rock Mary)
              :extra   [(list 'arg parentOf 1 person_t)]
@@ -314,7 +311,7 @@
              :next    (list fatherOf Pebble Mary)
              :type    :arg-type}
             ;; the covering forms type every position a sentence has, or every one from a
-            ;; start, with `arg`'s per-argument conviction, so they take its non-reach
+            ;; start, with `arg`'s per-argument conviction, so they take its reach
             {:row     "args, the declaration arriving last"
              :fact    (list parentOf Rock Mary)
              :closing (list 'args parentOf person_t)
@@ -355,13 +352,16 @@
            (tu/with-cleared-kb [kb tu/fresh]
              (doseq [s (concat ground [fact] extra [closing])]
                (v/assert kb s 'CxUniverse))
-             (is (empty? (v/violations kb))
-                 "nothing is filed against content admitted before the constraint existed")
+             (is (= [[fact type]]
+                    (into [] (comp (filter #(= :inert-argument (:violation %)))
+                                   (map (juxt :sentence (comp :type :detail))))
+                          (v/violations kb)))
+                 "the content admitted before the constraint existed is held and reported")
              (is (empty? (v/contradictions kb))
-                 "and no pair is opened — the conviction rests on an absence, not a sentex")
-             (is (v/ask? kb fact 'CxUniverse) "the stored fact keeps its belief")
-             (is (= type (:type (first (v/check kb next 'CxUniverse))))
-                 "while the identical claim one line later is refused"))))))))
+                 "and no pair is opened")
+             (is (not (v/ask? kb fact 'CxUniverse)) "the stored fact is not believed")
+             (is (= type (:type (tu/write-conviction kb next 'CxUniverse)))
+                 "and the identical claim one line later is held alike"))))))))
 
 (deftest a-stranded-declaration-is-a-census-finding-and-the-census-says-what-the-entry-point-says
   ;; The other documented absence, and the one whose retroactive half lives somewhere else
@@ -392,7 +392,7 @@
 
 (deftest two-declared-arities-across-one-edge-read-the-same-whichever-arrives-last
   ;; The pair is a nogood of the two declarations (a hard clash under CxUniverse, whose
-  ;; roster stores both `:monotonic`), and the report is a fact about the pair rather than
+  ;; forced-monotonic set stores both `:monotonic`), and the report is a fact about the pair rather than
   ;; about the arrival.
   (tu/with-terms [parentOf fatherOf]
     (let [sentence {:edge (list 'genl fatherOf parentOf)

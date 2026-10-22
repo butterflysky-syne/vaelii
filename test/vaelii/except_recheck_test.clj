@@ -128,7 +128,7 @@
 
 (deftest a-genlCx-edge-rechecks-only-the-exceptions-in-its-ancestor-set
   (testing "a genlCx edge outside every excepted rule's placement ancestor set re-checks
-            none of them, instead of the whole excepted-rule roster"
+            none of them, instead of the whole watched-rule set"
     ;; A genlCx edge can flip only an exception evaluated in a context the edge's `sub`
     ;; reaches (`context-down`), so an edge elsewhere re-checks nothing.  Re-checking
     ;; every fired excepted rule would cost one level-6 query per rule.
@@ -316,7 +316,7 @@
 ;;
 ;; Preservation and `arg` inference move an exception's answer with a fact that agrees
 ;; with the conjunct on no argument (docs/exceptions.md, "Five channels a declaration or
-;; a fact reaches an exception through sideways").  Both directions are pinned.
+;; a fact reaches an exception through sideways").  Both directions are asserted.
 
 (deftest a-preserved-argument-position-still-withdraws-the-conclusion
   (testing "a claim stated at the supertypes satisfies an exception written at the subtypes"
@@ -505,7 +505,7 @@
           "so the exception is released and the conclusion comes back"))))
 
 (deftest a-declaration-does-not-re-check-a-kb-that-declares-no-exception
-  (testing "the declaration channel is gated on some rule carrying an exceptWhen"
+  (testing "the declaration channel runs only when some rule carries an exceptWhen"
     ;; Declarations beside standing firings of an unexcepted rule cost no level-6
     ;; evaluations.
     (let [cost (fn [n]

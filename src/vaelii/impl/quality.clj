@@ -2,15 +2,16 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.quality
   "Readings about the **knowledge**, where the rest of the instrumentation reads the
-  engine — `readings` below is the roster, and what each one asks is: which rules never fire, how skewed the predicate extents are, how deep the rule
+  engine — `readings` below is the table, and what each one asks is: which rules never fire, how skewed the predicate extents are, how deep the rule
   graph's chains reach, how much of the taxonomy is connected to anything, which argument
   declarations name a position their predicate does not have, which rules another rule
   already covers, and which rule pairs would contradict each other if both fired.
 
   `settle-stats` and `chain-stats` answer *how the engine ran*.  These answer *whether the
   knowledge is any good*, which is the question the author of a large KB has and the one
-  nothing else here asks.  None of it is a gate: a threshold on somebody's ontology is not
-  a build failure, and `lein perf` gates the engine while this reports on the content.
+  nothing else here asks.  None of it is a required check: a threshold on somebody's ontology
+  is not a build failure, and `lein perf` checks the engine while this reports on the
+  content.
 
   **Every reading comes off state that already exists, and nothing new is indexed.**  A
   `rule -> firings` index would be a second copy of the JTMS adjacency to keep in step,
@@ -25,8 +26,8 @@
   the root, so a chain of V types costs Θ(V²) where it has V−1 edges.  Vocabulary-sized on
   any ontology anybody writes, which is the claim that matters, and not an edge count:
 
-  - **One walk over the term roster**, and one is the number: the functor names come off it
-    by filter, and the type-shaped names come off *those* rather than off the roster a
+  - **One walk over the term-name set**, and one is the number: the functor names come off it
+    by filter, and the type-shaped names come off *those* rather than off the term-name set a
     second time.  Measured at 8x the terms for 8x the cost, so the walk is the term the
     formula above leads with.
   - **Three O(1) index reads per functor name** — the stored extent off the count-aware
@@ -51,7 +52,7 @@
     *rule*: a rule's antecedents, its consequent and its four availability slots live on
     the record and nowhere else, so `+ rules + candidate pairs` is what they add.  A pair
     is a candidate only where the consequent index says one rule could conclude what the
-    other does, and the two properties they read are gated on the KB declaring any
+    other does, and the two properties they read run only when the KB declares any
     (`marked-groups`), so a KB whose rules conclude different things pays the grouping and
     stops.
 
@@ -71,6 +72,7 @@
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.naming :as nm]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.provers :as provers]
             [vaelii.impl.reads :as reads]
@@ -109,8 +111,8 @@
   `rule -> consequent predicate`, in one walk over the vocabulary's functor names.
 
   `:type-names` rides along: every type-shaped name is lowercase-initial and so is already
-  in this filter's answer, which is what keeps the taxonomy reading from walking the term
-  roster a second time — the roster is the report's one superlinear term and it is walked
+  in this filter's answer, which is what keeps the taxonomy reading from walking the term-name
+  set a second time — the set is the report's one superlinear term and it is walked
   once.
 
   **Every read here is an as-stored one, and both halves need to be.**  The extent is a
@@ -129,23 +131,25 @@
     ;; watching the phases is watching for where a long report is, and \"skipped because
     ;; empty\" and \"not reached\" must not read the same
     (progress! {:phase :extents :done 0 :total total})
-    (loop [i 0, extents (transient {}), ante (transient {}), conseq (transient {})]
-      (if (= i total)
-        {:predicates total
-         :type-names (into #{} (filter nm/type-symbol?) preds)
-         :extents    (persistent! extents)
-         :ante       (persistent! ante)
-         :conseq     (persistent! conseq)}
-        (let [pred (nth preds i)
-              n    (reads/stored-count-with-functor idx pred)]
-          (when (and (pos? i) (zero? (mod i progress-every)))
-            (progress! {:phase :extents :done i :total total}))
-          (recur (inc i)
-                 (if (pos? n) (assoc! extents pred n) extents)
-                 (reduce (fn [m h] (assoc! m h (conj (get m h #{}) pred)))
-                         ante (reads/as-stored-rules-by-antecedent-global idx pred))
-                 (reduce (fn [m h] (assoc! m h pred))
-                         conseq (reads/as-stored-rules-by-consequent-global idx pred))))))))
+    (with-open [r (progress/start ::extents "quality: read the predicate extents" total)]
+      (loop [i 0, extents (transient {}), ante (transient {}), conseq (transient {})]
+        (if (= i total)
+          {:predicates total
+           :type-names (into #{} (filter nm/type-symbol?) preds)
+           :extents    (persistent! extents)
+           :ante       (persistent! ante)
+           :conseq     (persistent! conseq)}
+          (let [pred (nth preds i)
+                n    (reads/stored-count-with-functor idx pred)]
+            (when (and (pos? i) (zero? (mod i progress-every)))
+              (progress! {:phase :extents :done i :total total}))
+            (progress/tick! r)
+            (recur (inc i)
+                   (if (pos? n) (assoc! extents pred n) extents)
+                   (reduce (fn [m h] (assoc! m h (conj (get m h #{}) pred)))
+                           ante (reads/as-stored-rules-by-antecedent-global idx pred))
+                   (reduce (fn [m h] (assoc! m h pred))
+                           conseq (reads/as-stored-rules-by-consequent-global idx pred)))))))))
 
 ;; ---- which rules never fire ----------------------------------------------
 
@@ -215,31 +219,33 @@
         hs    (vec handles)
         total (count hs)]
     (progress! {:phase :rules :done 0 :total total})
-    (loop [i 0, never [], defeated [], fired 0, firings 0]
-      (if (= i total)
-        (let [listed (fn [hs] (rule-line-order kb pass hs limit))]
-          {:total              total
-           :never              (listed never)
-           :never-count        (count never)
-           :all-defeated       (listed defeated)
-           :all-defeated-count (count defeated)
-           :fired              fired
-           :firings            firings
-           :truncated?         (boolean (or (> (count never) limit)
-                                            (> (count defeated) limit)))})
-        (let [h    (nth hs i)
-              js   (into [] (comp (keep #(jtms/justification tms %))
-                                  (filter #(= h (:informant %))))
-                         (jtms/dependents tms h))
-              ;; a conclusion as its own context believes it
-              live (count (filter #(exc/believed-own? kb (:consequence %)) js))]
-          (when (and (pos? i) (zero? (mod i progress-every)))
-            (progress! {:phase :rules :done i :total total}))
-          (recur (inc i)
-                 (if (empty? js) (conj never h) never)
-                 (if (and (seq js) (zero? live)) (conj defeated h) defeated)
-                 (if (pos? live) (inc fired) fired)
-                 (+ firings (count js))))))))
+    (with-open [r (progress/start ::rules "quality: census the rule firings" total)]
+      (loop [i 0, never [], defeated [], fired 0, firings 0]
+        (if (= i total)
+          (let [listed (fn [hs] (rule-line-order kb pass hs limit))]
+            {:total              total
+             :never              (listed never)
+             :never-count        (count never)
+             :all-defeated       (listed defeated)
+             :all-defeated-count (count defeated)
+             :fired              fired
+             :firings            firings
+             :truncated?         (boolean (or (> (count never) limit)
+                                              (> (count defeated) limit)))})
+          (let [h    (nth hs i)
+                js   (into [] (comp (keep #(jtms/justification tms %))
+                                    (filter #(= h (:informant %))))
+                           (jtms/dependents tms h))
+                ;; a conclusion as its own context believes it
+                live (count (filter #(exc/believed-own? kb (:consequence %)) js))]
+            (when (and (pos? i) (zero? (mod i progress-every)))
+              (progress! {:phase :rules :done i :total total}))
+            (progress/tick! r)
+            (recur (inc i)
+                   (if (empty? js) (conj never h) never)
+                   (if (and (seq js) (zero? live)) (conj defeated h) defeated)
+                   (if (pos? live) (inc fired) fired)
+                   (+ firings (count js)))))))))
 
 ;; ---- how skewed the extents are ------------------------------------------
 
@@ -406,7 +412,10 @@
         nodes (into #{} (filter type-candidate?) (tax/types taxo))
         named (into #{} (filter type-candidate?) (:type-names pass))]
     (progress! {:phase :taxonomy :done 0 :total (count nodes)})
-    (let [reach (frequencies (mapcat #(filter type-candidate? (tax/genls-global taxo %)) nodes))
+    (let [reach (with-open [r (progress/start ::taxonomy "quality: walk the type ancestor sets"
+                                              (count nodes))]
+                  (frequencies (mapcat #(filter type-candidate? (tax/genls-global taxo %))
+                                       (progress/each r nodes))))
           [root rooted] (first (sort-by (juxt (comp - val) (comp nm/print-key key)) reach))]
       {:names   (count (into named nodes))
        :edged   (count nodes)
@@ -440,11 +449,20 @@
 
 (def ^:private declaration-functors
   "The argument constraints, in the order this walks them.  A vector rather than the
-  roster in `checks`, because this is a walk order and that is a membership test."
+  set in `checks`, because this is a walk order and that is a membership test."
   '[arg genlArg interArg])
 
+(defn- thing-typed
+  "The type a declaration's `sentence` mints in is `thing`: the last argument of `arg` and
+  `genlArg`, the fifth of `interArg`."
+  [sentence]
+  (= 'thing (if (= 'interArg (nm/functor sentence)) (nth sentence 5 nil) (last sentence))))
+
 (defn- stranded-declarations
-  "Which argument constraints name a position their predicate does not have.
+  "Which argument constraints name a position their predicate does not have, and which
+  type a position `thing` (`:typed-thing`, each with `:facts`, its predicate's stored
+  extent).  A declaration typing `thing` mints nothing (`checks/mintable-type?`), so the
+  remedy is a narrower type in the declaration.
 
   **Enumerated, not probed per predicate.**  Declarations are vocabulary and vocabulary is
   small — the whole bundled ontology has 298 — so reading all of them and asking each
@@ -480,29 +498,42 @@
                            (filter #(exc/believed-own? kb (:id %))))
                      declaration-functors)]
     (progress! {:phase :declarations :done 0 :total (count stored)})
-    (let [found   (into []
-                        (keep (fn [sx]
-                                (let [ctx (:context sx)]
-                                  (when-let [v (checks/arg-position-violation
-                                                kb (:sentence sx) ctx (reader ctx))]
-                                    {:handle    (:id sx)
-                                     :sentence  (:sentence sx)
-                                     :context   ctx
-                                     :predicate (:predicate v)
-                                     :position  (:position v)
-                                     :arity     (:arity v)
-                                     :via       (:via v)
-                                     :message   (:message v)}))))
-                        stored)
+    (let [found   (with-open [r (progress/start ::declarations
+                                                "quality: check the argument declarations"
+                                                (count stored))]
+                    (into []
+                          (keep (fn [sx]
+                                  (progress/tick! r)
+                                  (let [ctx (:context sx)]
+                                    (when-let [v (checks/arg-position-violation
+                                                  kb (:sentence sx) ctx (reader ctx))]
+                                      {:handle    (:id sx)
+                                       :sentence  (:sentence sx)
+                                       :context   ctx
+                                       :predicate (:predicate v)
+                                       :position  (:position v)
+                                       :arity     (:arity v)
+                                       :via       (:via v)
+                                       :message   (:message v)}))))
+                          stored))
           ;; content order, so the listed set is a function of the vocabulary rather than
           ;; of the handle order the index walked
-          ordered (nm/sort-by-content-key
-                   (juxt (comp nm/print-key :sentence) (comp nm/print-key :context))
-                   compare found)]
-      {:total          (count stored)
-       :stranded       (vec (take limit ordered))
-       :stranded-count (count found)
-       :truncated?     (> (count found) limit)})))
+          order   #(nm/sort-by-content-key
+                    (juxt (comp nm/print-key :sentence) (comp nm/print-key :context))
+                    compare %)
+          ordered (order found)
+          things  (order (for [sx stored :when (thing-typed (:sentence sx))]
+                           {:handle   (:id sx)
+                            :sentence (:sentence sx)
+                            :context  (:context sx)
+                            :facts    (reads/stored-count-with-functor
+                                       (:index kb) (second (:sentence sx)))}))]
+      {:total             (count stored)
+       :stranded          (vec (take limit ordered))
+       :stranded-count    (count found)
+       :truncated?        (> (count found) limit)
+       :typed-thing       (vec (take limit things))
+       :typed-thing-count (count things)})))
 
 ;; ---- rules read against each other ---------------------------------------
 ;;
@@ -565,7 +596,7 @@
         (map-indexed (fn [i v] [v (symbol (str "?other" i))]))
         (rule-variables forms)))
 
-(defn- rule-view
+(defn- rule-row
   "One rule as these two readings read it: the decomposition off the record, the
   consequent split into polarity and body, and the sentence as its author wrote it."
   [sx]
@@ -588,8 +619,8 @@
      :defeasible (boolean (:defeasible sx))
      :effect     (:effect sx)}))
 
-(defn- rule-views
-  "Every rule the census enumerated, as a `rule-view` — the one record read per rule these
+(defn- rule-rows
+  "Every rule the census enumerated, as a `rule-row`: the one record read per rule these
   readings pay, and the phase both of them are announced under.
 
   A negated implication and a variable-functor consequent are dropped here: the first
@@ -598,29 +629,31 @@
   (let [hs    (vec handles)
         total (count hs)]
     (progress! {:phase :subsumption :done 0 :total total})
-    (loop [i 0, out (transient [])]
-      (if (= i total)
-        (persistent! out)
-        (let [sx (p/get-sentex (:records kb) (nth hs i))
-              v  (when (and sx (some? (:antecedent sx)))
-                   (rule-view sx))]
-          (when (and (pos? i) (zero? (mod i progress-every)))
-            (progress! {:phase :subsumption :done i :total total}))
-          (recur (inc i)
-                 (if (and v (symbol? (:functor v)) (not (sx/variable? (:functor v))))
-                   (conj! out v)
-                   out)))))))
+    (with-open [r (progress/start ::rule-rows "quality: read the rule records" total)]
+      (loop [i 0, out (transient [])]
+        (if (= i total)
+          (persistent! out)
+          (let [sx (p/get-sentex (:records kb) (nth hs i))
+                v  (when (and sx (some? (:antecedent sx)))
+                     (rule-row sx))]
+            (when (and (pos? i) (zero? (mod i progress-every)))
+              (progress! {:phase :subsumption :done i :total total}))
+            (progress/tick! r)
+            (recur (inc i)
+                   (if (and v (symbol? (:functor v)) (not (sx/variable? (:functor v))))
+                     (conj! out v)
+                     out))))))))
 
 (defn- by-consequent
-  "`[polarity functor] -> views` — the pruning index both readings pair over, and the
+  "`[polarity functor] -> rule rows` — the pruning index both readings pair over, and the
   reason neither is a cross product over the rule set."
-  [views]
-  (group-by (juxt :polarity :functor) views))
+  [rows]
+  (group-by (juxt :polarity :functor) rows))
 
 (defn- rule-exception-conjuncts
-  "The `exceptWhen` conjunctions in force for a rule, or nil.  Gated on the watched-rule
-  roster, so an ordinary rule — every rule, on nearly every KB — pays one O(1) membership
-  read and no term lookup."
+  "The `exceptWhen` conjunctions in force for a rule, or nil.  Read only for a rule the
+  watched-rule set holds, so an ordinary rule — every rule, on nearly every KB — pays one
+  O(1) membership read and no term lookup."
   [kb handle]
   (when (reads/watched-rule? (:index kb) handle)
     (seq (provers/rule-exceptions kb handle))))
@@ -760,28 +793,30 @@
 
   Content-ordered on both loops, so the capped list is a function of the rules and not of
   the order they were written in."
-  [kb views limit progress!]
-  (let [index   (by-consequent views)
-        ordered (nm/sort-by-content-key :sort-key compare views)
+  [kb rows limit progress!]
+  (let [index   (by-consequent rows)
+        ordered (nm/sort-by-content-key :sort-key compare rows)
         total   (count ordered)
-        found   (loop [i 0, out (transient [])]
-                  (if (= i total)
-                    (persistent! out)
-                    (let [r2   (nth ordered i)
-                          hits (into []
-                                     (keep (fn [r1]
-                                             (when-let [s (subsumption kb r1 r2)]
-                                               {:subsumed     (:handle r2)
-                                                :by           (:handle r1)
-                                                :substitution s
-                                                :context      (:context r2)
-                                                :sentence     (:sentence r2)
-                                                :by-sentence  (:sentence r1)})))
-                                     (nm/sort-by-content-key
-                                      :sort-key compare (covering-candidates kb index r2)))]
-                      (when (and (pos? i) (zero? (mod i progress-every)))
-                        (progress! {:phase :subsumption :done i :total total}))
-                      (recur (inc i) (reduce conj! out hits)))))]
+        found   (with-open [r (progress/start ::subsumption "quality: find the subsumed rules" total)]
+                  (loop [i 0, out (transient [])]
+                    (if (= i total)
+                      (persistent! out)
+                      (let [r2   (nth ordered i)
+                            hits (into []
+                                       (keep (fn [r1]
+                                               (when-let [s (subsumption kb r1 r2)]
+                                                 {:subsumed     (:handle r2)
+                                                  :by           (:handle r1)
+                                                  :substitution s
+                                                  :context      (:context r2)
+                                                  :sentence     (:sentence r2)
+                                                  :by-sentence  (:sentence r1)})))
+                                       (nm/sort-by-content-key
+                                        :sort-key compare (covering-candidates kb index r2)))]
+                        (when (and (pos? i) (zero? (mod i progress-every)))
+                          (progress! {:phase :subsumption :done i :total total}))
+                        (progress/tick! r)
+                        (recur (inc i) (reduce conj! out hits))))))]
     {:total          total
      :subsumed       (vec (take limit found))
      :subsumed-count (count found)
@@ -790,7 +825,7 @@
 ;; ---- reading seven: contradictions in waiting -----------------------------
 
 (defn- renamed
-  "`view` with its patterns renamed apart, for a pairing that unifies two rules rather
+  "The rule row `v` with its patterns renamed apart, for a pairing that unifies two rules rather
   than matching one against the other."
   [v]
   (let [m (renaming (cons (:consequent v) (:antecedent v)))]
@@ -847,18 +882,18 @@
   and up are genuinely out of reach here, constraining a slot these literals do not have.
 
   Unioned rather than kept apart because this answers *candidate* questions: which pairs
-  are formed and which groups a view joins.  An over-approximated candidate merely fails
+  are formed and which groups a rule row joins.  An over-approximated candidate merely fails
   `consequent-clash` and yields nothing, where a missing one is never asked at all.  The
   pairwise test is the caller that has to know which position it is looking at, and it
   reads the split map directly.
 
   **Three callers, which is why this is a function and not three expressions.**  The
-  reach is asked at the candidate gate (`marked-groups`, does the KB declare any and which
-  group does a view join), at the lookup (`clash-partners`, which groups does this rule's
+  reach is asked at the candidate filter (`marked-groups`, does the KB declare any and
+  which group does a binary conclusion join), at the lookup (`clash-partners`, which groups does this rule's
   functor reach) and at the pairwise test (`consequent-clash`, do these two share one).
   #56 was found and half-fixed twice before that was noticed: widening the pairwise test
-  alone left the gate answering nil, and widening the gate too left the lookup finding no
-  group.  A mark family reaches a pass through every one of its reads or through none."
+  alone left the candidate filter answering nil, and widening the filter too left the
+  lookup finding no group.  A mark family reaches a pass through every one of its reads or through none."
   [tax kind f context]
   (if (= :functional kind)
     (let [by-pos (functional-marks-by-position tax f context)]
@@ -866,15 +901,15 @@
     (tax/props-over tax kind f context)))
 
 (defn- marks-declared?
-  "Does the KB declare any `kind` mark at all — the O(1) gate `marked-groups` opens on,
-  reading the same two rosters `marks-over` reads.
+  "Does the KB declare any `kind` mark at all?  `marked-groups` runs this O(1) check
+  first, and the check reads the same two `:props` sets `marks-over` reads.
 
   The `:functional` arm is `tax/functional-family-declared?` rather than the `or` written
   out here, because that question — does the taxonomy hold a functional mark of *either*
   spelling — is asked by every entry point of the family (`special`'s three `equate-*` lanes as
   well as this pass), and spelling it per caller is what #52, #54 and #56 each were: one
   reader of a two-spelling family that had only learned one.  A third spelling joins the
-  roster there and reaches all of them."
+  family there and reaches all of them."
   [tax kind]
   (if (= :functional kind)
     (tax/functional-family-declared? tax)
@@ -976,9 +1011,9 @@
 
   `(arity ?p n)` says it outright.  A unary `(T ?p)` says it whenever `T` reaches one of
   the exact-arity classes up `genl`, which is what makes `(symmetric ?p)` a claim of arity
-  2: `symmetric` is a kind of `binary_predicate`.  The roster is
-  `tax/exact-arity-classes`, read here rather than copied, since a roster read twice
-  is a roster that drifts, and read in key order so a term reaching two that disagree —
+  2: `symmetric` is a kind of `binary_predicate`.  The table is
+  `tax/exact-arity-classes`, read here rather than copied, since a table copied twice
+  is a table that drifts, and read in key order so a term reaching two that disagree —
   itself incoherent — reports the same one every run."
   [tax lit context]
   (let [f (nm/functor lit)]
@@ -1010,19 +1045,55 @@
                         {} lits)]
     (boolean (some (fn [[_ ns]] (> (count ns) 1)) by-term))))
 
+(defn- lower-bounds
+  "The integers `k` the literals `lits` state `v` exceeds: `(lessThan k v)` and
+  `(greaterThan v k)`."
+  [lits v]
+  (keep (fn [l]
+          (let [[f x y] l]
+            (when (= 3 (count l))
+              (cond (and (= 'lessThan f) (= v y) (integer? x))    x
+                    (and (= 'greaterThan f) (= v x) (integer? y)) y))))
+        lits))
+
+(defn- arity-floor-conflicted?
+  "Does a literal bound a term's length above the exact arity another literal claims?
+  `(arity ?p ?n)` beside `(lessThan k ?n)` says ?p takes more than k places, and
+  `(arityMin ?p ?n)` beside it says ?p requires more than k.  A term `literal-arity-claim`
+  binds to exactly n places, with n at most k, satisfies neither: the arity table is
+  functional, and a minimum above the exact length admits no application.  The floor
+  rules core.txt states over `arity` and `arityMin` read that way beside every rule that
+  concludes an exact class.
+
+  A declaration read, as `arity-conflicted?` is beside it."
+  [kb lits context]
+  (let [tax   (reasoning/taxonomy kb)
+        exact (reduce (fn [m l]
+                        (if-let [n (literal-arity-claim tax l context)]
+                          (update m (second l) (fnil conj #{}) n)
+                          m))
+                      {} lits)]
+    (boolean
+     (some (fn [l]
+             (let [[f p v] l]
+               (when (and (#{'arity 'arityMin} f) (= 3 (count l)) (sx/variable? v))
+                 (some (fn [n] (some #(>= % n) (lower-bounds lits v)))
+                       (get exact p)))))
+           lits))))
+
 (defn- declared-arg-types
-  "The `[position type]` pairs an `arg` declaration binds `pred`'s tuples to, read up the
-  predicate hierarchy the reader `assert` uses (`res/constraining-predicates`), so a
-  super-predicate's declaration types a sub-predicate's tuple.  A declaration read, not an
-  inference: nothing is derived and no fact is consulted, the same standing
-  `separated-antecedents?` and `arity-conflicted?` have beside it."
-  [kb pred context]
-  (when (and (symbol? pred) (not (sx/variable? pred)))
-    (for [p     (res/constraining-predicates kb 'arg pred context)
-          [_ b] (res/matches-visible kb (list 'arg p '?n '?t) context)
-          :let  [n (get b '?n) t (get b '?t)]
-          :when (and (integer? n) (symbol? t) (not (sx/variable? t)))]
-      [n t])))
+  "The `[position type]` pairs the instance-type declarations bind a `pred` literal of
+  `arity` arguments to: `arg`, and the covering `args` / `argAndRest` at every position
+  of the literal they reach.  Read through `checks/instance-type-declarations`, the one
+  reading of the three spellings, so a declaration the entry point honors is one this
+  honors; up the predicate hierarchy, so a super-predicate's declaration types a
+  sub-predicate's tuple.  A declaration read, not an inference: nothing is derived and no
+  fact is consulted, the same standing `separated-antecedents?` and `arity-conflicted?`
+  have beside it."
+  [kb pred arity context]
+  (for [{:keys [from to type]} (checks/instance-type-declarations kb pred context)
+        n (range from (inc (min (or to arity) arity)))]
+    [n type]))
 
 (defn- arg-type-conflicted?
   "Does an antecedent `arg` declaration demand a term be of a type disjoint from another
@@ -1041,8 +1112,12 @@
   Two stated types clashing is the clash the pair already reports, not a reason to hide it,
   so at least one side of a disjoint pair must be a declared arg type.
 
-  **`arg` alone is read, not `genlArg` or the covering forms `args` / `argAndRest`.**
-  `genlArg` demands the argument be a *subtype* of the named type rather than a member of
+  **The instance-type declarations are read, `arg` and its covering forms `args` /
+  `argAndRest` alike** (`declared-arg-types`): each says a position holds an instance of
+  a type, and a reader honoring one spelling and not another would prune a pair under
+  one way of writing the declaration and report it under the other.
+
+  **`genlArg` is not read.**  `genlArg` demands the argument be a *subtype* of the named type rather than a member of
   it — a claim one stratum up — so reading a `genlArg` bound against a membership type
   through `disjoint?` would compare two different levels.  A sound `genlArg` reading is its
   own check, over two subtype bounds a term cannot satisfy at once, and nothing needs it:
@@ -1060,10 +1135,8 @@
                                  (update m (first as) (fnil conj #{}) [f :stated])
                                  m)]
                          (reduce (fn [m [n t]]
-                                   (if (<= 1 n (count as))
-                                     (update m (nth as (dec n)) (fnil conj #{}) [t :declared])
-                                     m))
-                                 m (declared-arg-types kb f context))))))
+                                   (update m (nth as (dec n)) (fnil conj #{}) [t :declared]))
+                                 m (declared-arg-types kb f (count as) context))))))
                  {} lits)]
     (boolean
      (some (fn [[_ ts]]
@@ -1076,18 +1149,38 @@
                      (for [i (range (count ts)), j (range (inc i) (count ts))] [i j]))))
            demands))))
 
+(defn- negation-met-by-a-spec?
+  "Does a positive literal over a spec of `P` stand beside `(not (P …))` with the same
+  arguments?  A tuple of a spec is a tuple of `P` (`genl` between predicates), so the two
+  cannot both hold: `(properPartOf a b)` beside `(not (partOf a b))`.  The equal-literal case
+  is the reflexive edge of the same read."
+  [kb pos neg context]
+  (let [tax (reasoning/taxonomy kb)]
+    (boolean
+     (some (fn [n]
+             (let [p (nm/functor n)]
+               (and (symbol? p) (not (sx/variable? p))
+                    (some (fn [l]
+                            (let [q (nm/functor l)]
+                              (and (symbol? q) (not (sx/variable? q))
+                                   (= (nm/args l) (nm/args n))
+                                   (contains? (tax/genls tax q context) p))))
+                          pos))))
+           neg))))
+
 (defn- jointly-satisfiable?
   "Could both antecedent sets hold at once — **shallowly**?
 
-  Four things rule it out and nothing else does: a literal appearing under σ together with
-  its own negation, one term claimed to be of two separated types, one term bound to two
-  arities, and one term an `arg` declaration demands be of a type disjoint from one the two
-  rules place it in.  **No inference is run and no fact is consulted** — each of the four is
-  a declaration read.  This is what the rules say about each other, and a pair it admits
+  Five things rule it out and nothing else does: a literal appearing under σ together with
+  its own negation, or with the negation of a predicate it is a spec of; one term claimed to
+  be of two separated types; one term bound to two arities; one term bounded above the
+  exact arity it is claimed to have; and one term an `arg` declaration demands be of a type
+  disjoint from one the two rules place it in.  **No
+  inference is run and no fact is consulted** — each of the five is a declaration read.  This is what the rules say about each other, and a pair it admits
   is a clash that *could* form rather than one that will — which is the whole reading,
   since a clash that had already formed would be in `(contradictions kb)` instead.
 
-  The fourth reads the consequents beside the antecedents, since the type an `arg`
+  The fifth reads the consequents beside the antecedents, since the type an `arg`
   declaration demands of one rule's variable is disjoint from the type the **other** rule
   *concludes* about the unified term (`arg-type-conflicted?`)."
   [kb a b sigma context]
@@ -1097,8 +1190,10 @@
         neg   (into #{} (comp (filter sx/negation?) (map second)) lits)
         heads (conj pos (subst (:consequent a)) (subst (:consequent b)))]
     (and (empty? (set/intersection pos neg))
+         (not (negation-met-by-a-spec? kb pos neg context))
          (not (separated-antecedents? kb pos context))
          (not (arity-conflicted? kb pos context))
+         (not (arity-floor-conflicted? kb pos context))
          (not (arg-type-conflicted? kb heads context)))))
 
 (defn- rule-functors
@@ -1138,32 +1233,32 @@
           sigma)))
 
 (defn- marked-groups
-  "`marked predicate -> the binary-conclusion views under it`, for one property.  nil when
-  the KB declares none, which is the gate that keeps the pairing off a KB with nothing to
-  say — one map read.
+  "`marked predicate -> the binary-conclusion rule rows under it`, for one property.  nil
+  when the KB declares none, which is the presence check that keeps the pairing off a KB with
+  nothing to say — one map read.
 
   **`:functional` reads both spellings, here as well as in `consequent-clash`** (#56).
-  This is the gate that decides which pairs are ever *formed*, so widening only the
+  This is the candidate filter that decides which pairs are ever *formed*, so widening only the
   pairwise test left it answering nil for a KB whose sole mark is `(functionalInArg P 2)`
   — no candidate pair, and nothing for the widened test to run on.  The reach is
   `marks-over`, which is where the two spellings and the position-2 filter are
   stated once; `:asymmetric` has one spelling and keeps the plain read."
-  [tax kind views]
+  [tax kind rows]
   (when (marks-declared? tax kind)
     (reduce (fn [m v]
               (reduce (fn [m q] (update m q (fnil conj []) v)) m
                       (marks-over tax kind (:functor v) nil)))
             {}
-            (filter #(and (= :positive (:polarity %)) (= 2 (:arity %))) views))))
+            (filter #(and (= :positive (:polarity %)) (= 2 (:arity %))) rows))))
 
 (defn- clash-index
   "What `clash-partners` looks a rule's candidates up in — the consequent index, the
   distinct unary conclusion functors (only where the KB declares some separation at all),
   and the marked groups for the two predicate properties."
-  [kb views]
+  [kb rows]
   (let [tax (reasoning/taxonomy kb)
-        pos (filterv #(= :positive (:polarity %)) views)]
-    {:by-key   (by-consequent views)
+        pos (filterv #(= :positive (:polarity %)) rows)]
+    {:by-key   (by-consequent rows)
      :unary-fs (when (or (seq (tax/disjoint-pairs tax))
                          (seq (tax/disjoint-metatypes tax))
                          (seq (tax/sibling-disjoints tax)))
@@ -1227,24 +1322,26 @@
 
   A pair is taken once, in content order, and a rule is never paired with itself — the
   reading is about two rules disagreeing."
-  [kb views limit progress!]
-  (let [index   (clash-index kb views)
-        ordered (nm/sort-by-content-key :sort-key compare views)
+  [kb rows limit progress!]
+  (let [index   (clash-index kb rows)
+        ordered (nm/sort-by-content-key :sort-key compare rows)
         total   (count ordered)]
     (progress! {:phase :clashes :done 0 :total total})
-    (let [found (loop [i 0, out (transient [])]
-                  (if (= i total)
-                    (persistent! out)
-                    (let [a    (nth ordered i)
-                          hits (into []
-                                     (keep (fn [b] (clash-entry kb a b)))
-                                     (nm/sort-by-content-key
-                                      :sort-key compare
-                                      (filter #(neg? (compare (:sort-key a) (:sort-key %)))
-                                              (clash-partners kb index a))))]
-                      (when (and (pos? i) (zero? (mod i progress-every)))
-                        (progress! {:phase :clashes :done i :total total}))
-                      (recur (inc i) (reduce conj! out hits)))))]
+    (let [found (with-open [r (progress/start ::clashes "quality: find the rule clashes" total)]
+                  (loop [i 0, out (transient [])]
+                    (if (= i total)
+                      (persistent! out)
+                      (let [a    (nth ordered i)
+                            hits (into []
+                                       (keep (fn [b] (clash-entry kb a b)))
+                                       (nm/sort-by-content-key
+                                        :sort-key compare
+                                        (filter #(neg? (compare (:sort-key a) (:sort-key %)))
+                                                (clash-partners kb index a))))]
+                        (when (and (pos? i) (zero? (mod i progress-every)))
+                          (progress! {:phase :clashes :done i :total total}))
+                        (progress/tick! r)
+                        (recur (inc i) (reduce conj! out hits))))))]
       {:total      total
        :pairs      (vec (take limit found))
        :pair-count (count found)
@@ -1252,7 +1349,7 @@
 
 ;; ---- the report ----------------------------------------------------------
 
-;; ---- the readings, as a roster -------------------------------------------
+;; ---- the readings, as a table --------------------------------------------
 
 (def ^:private readings
   "One row per reading, in the order the report prints them — the data half, holding what
@@ -1283,14 +1380,14 @@
 (def ^:private reading-keys (into #{} (map :key) readings))
 
 (defn- reading-map
-  "The census answer, held to the roster: a reading with no row is refused here rather
+  "The census answer, held to the table: a reading with no row is refused here rather
   than dropped by `report`, and a row `census` does not answer is refused rather than
   rendering as a section that is simply never there.
 
   `opts/check!`'s argument at the other end of the same namespace — a key nothing reads is
   not a key — and the reason it runs here rather than at load is that `census` builds its
   map in a `let` whose *order* is part of what it answers (the phases an `:on-progress`
-  caller sees), so the map literal is written out and cannot be folded from the roster."
+  caller sees), so the map literal is written out and cannot be folded from the table."
   [m]
   (let [given (set (keys m))]
     (when-not (= reading-keys given)
@@ -1303,7 +1400,7 @@
   m)
 
 (defn census
-  "The readings as one map, keyed by `readings`' `:key` and held to that roster on the way
+  "The readings as one map, keyed by `readings`' `:key` and held to that table on the way
   out (`reading-map`).  `vaelii.core/kb-quality` is the entry point and documents the options."
   [kb {:keys [limit on-progress]}]
   ;; sequenced in a `let` rather than left to a map literal's argument order: the phases a
@@ -1320,9 +1417,9 @@
         decls     (stranded-declarations kb limit progress!)
         ;; one record read per rule, shared by the two readings that need the rules
         ;; themselves rather than their postings
-        views     (rule-views kb handles progress!)
-        subsumed  (subsumed-rules kb views limit progress!)
-        clashes   (rule-clashes kb views limit progress!)]
+        rows      (rule-rows kb handles progress!)
+        subsumed  (subsumed-rules kb rows limit progress!)
+        clashes   (rule-clashes kb rows limit progress!)]
     (reading-map
      {:rules rules :extents extents :chains chains :taxonomy taxonomy
       :declarations decls :subsumption subsumed :clashes clashes})))
@@ -1344,7 +1441,7 @@
 
 ;; Each arm renders its reading's **body** and nothing else: the `##` heading is
 ;; `readings`' `:title`, written once by `report`, so a section cannot be headed one thing
-;; in the roster and another where it is emitted.  Every body ends in exactly one newline,
+;; in the table and another where it is emitted.  Every body ends in exactly one newline,
 ;; which is what puts a blank line before the next heading and what makes the sections
 ;; composable in any subset.
 
@@ -1420,7 +1517,17 @@
                                (when message (str " — " message)))))
               "\n"))
        (when (:truncated? d)
-         "\nThe list is capped; the count above is not.\n")))
+         "\nThe list is capped; the count above is not.\n")
+       (when (pos? (:typed-thing-count d 0))
+         (str "\n**" (commas (:typed-thing-count d))
+              (if (= 1 (:typed-thing-count d)) " declaration types" " declarations type")
+              " a position `thing`**, which mints nothing; a narrower type in the\n"
+              "declaration types the facts listed beside it.\n\n"
+              (str/join "\n"
+                        (for [{:keys [sentence context facts]} (:typed-thing d)]
+                          (str "- `" (pr-str sentence) "` in `" context "` — "
+                               (commas facts) " stored fact" (when (not= 1 facts) "s"))))
+              "\n"))))
 
 (defn- render-subsumption [s]
   (str (commas (:total s)) " rules — **"
@@ -1481,18 +1588,18 @@
    :clashes      render-clashes})
 
 (defn- check-readings!
-  "Refuse at load a roster and a set of arms that do not agree.
+  "Refuse at load a readings table and a set of arms that do not agree.
 
   A reading with a row and no arm would print a heading over nothing; an arm with no row
-  would never be reached, since `report` walks the roster.  Neither is visible from a test
+  would never be reached, since `report` walks the table.  Neither is visible from a test
   that renders a KB, because both are about a reading the suite does not have — which is
   every reading on the day it is added.
 
   **Takes both halves**, rather than reading the two vars beside it, so a test can drive
   it over halves that disagree.  A validator called only by its own namespace's load has
   run every branch it will ever run against a table that passes, and nothing then says it
-  would refuse: a `remove` written the wrong way round reads exactly like a roster with
-  nothing wrong.  Returns the roster, as `predicates/check-facets` does.
+  would refuse: a `remove` written the wrong way round reads exactly like a table with
+  nothing wrong.  Returns the table, as `predicates/check-facets` does.
 
   Refuses under `:bad-table-entry` discriminated by `:mismatch`, as
   `predicates/check-facets`, `config/check-switches!` and `kb/check-backends!` do."
@@ -1504,10 +1611,10 @@
                       {:type :bad-table-entry :mismatch :unarmed-reading :reading k})))
     (doseq [k (sort (remove keys-of (keys render-arms)))]
       (throw (ex-info (str "`render-arms` renders " k ", which is on no row of `readings`"
-                           " — `report` walks the roster, so the arm is never reached and"
+                           " — `report` walks the table, so the arm is never reached and"
                            " the reading has no title, no place in the order and no say in"
                            " the shape test.")
-                      {:type :bad-table-entry :mismatch :unrostered-arm :reading k})))
+                      {:type :bad-table-entry :mismatch :unlisted-arm :reading k})))
     (doseq [{:keys [key title]} readings]
       (when (str/blank? title)
         (throw (ex-info (str "reading " key " has no title, and `report` writes the title as"
@@ -1559,7 +1666,7 @@
   refused (`:not-a-report`); which readings decide that is `check-report-shape!`.
 
   A section is written when its key is there and omitted when it is not, so a stored
-  answer from before a reading existed still renders.  The roster is what makes the
+  answer from before a reading existed still renders.  The table is what makes the
   omission a *decision*: a key `census` answers reaches this walk or is refused at
   `census` (`reading-map`), and a row with nothing to render it fails the build
   (`check-readings!`).  Neither was true when the sections were written out — a reading

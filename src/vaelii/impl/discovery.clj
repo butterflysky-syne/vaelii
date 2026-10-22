@@ -8,12 +8,12 @@
   \"The inherited-clash memo\"."
   (:require [taoensso.trove :as trove]
             [vaelii.impl.caches :as caches]
-            [vaelii.impl.capabilities :as cap]
             [vaelii.impl.decide.inherited :as inherited]
             [vaelii.impl.inherit :as inherit]
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.naming :as nm]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.reads :as reads]
             [vaelii.impl.resolution :as res]
@@ -24,10 +24,10 @@
             [vaelii.impl.types.reasoning :as reasoning]))
 
 (def ^:dynamic *whole-store-region?*
-  "True while `recover` runs the settle that follows `rebuild-tms`, whose region is the
-  whole store.  `preserving-entries` skips its store-wide sweep under it, and only
-  when the region is also at least the store's sentex count (docs/nmtms.md, \"Which
-  entry point the content came through\")."
+  "True while `recover` runs the settle that follows `rebuild-tms`, over the memo
+  `recover` emptied.  Under it, the `preserving-entries` call whose memo holds no `:mark`
+  asks the whole store's questions off the index and reads no region handle
+  (docs/nmtms.md, \"The inherited-clash memo\")."
   false)
 
 (def ^:dynamic *incremental-preserving*
@@ -145,13 +145,13 @@
     (when (seq (:entries @memo))
       (swap! memo assoc-in [:left (:id sentex)] (sx/sentence-of sentex)))))
 
-(defn note-window!
+(defn note-touched!
   "Add to `:moved` in `:preserved-clashes`, while the memo holds an entry, the handles the
-  touched window recorded since the memo's mark and `extra`, the region members no
+  touched set recorded since the memo's mark and `extra`, the region members no
   relabel recorded (supersessions among them), so the next `preserving-entries` reads the
-  belief moves after this settle's last question, which the emptied window and the taken
+  belief moves after this settle's last question, which the emptied touched set and the taken
   supersession moves no longer name.  Called from `settle/settle-finish` before it
-  empties the window."
+  empties the touched set."
   [kb extra]
   (let [memo (reasoning/preserved-clashes kb)
         {:keys [entries mark]} @memo]
@@ -190,18 +190,29 @@
           by es))
 
 (defn- separation-ends
-  "The types whose separations the stored `sen` (handle `h`, nil for one with no record)
-  can move, as a set, or nil for none: the ends of a `genl` edge between symbols, and the
-  ends of each separation key `h` supports (`tax/separation-ends`).  A `genl` edge
-  supports no separation key, and its keys are not read."
-  [tax h sen]
-  (let [body  (kb/body-under-not sen)
-        genl? (= 'genl (nm/functor body))]
-    (cond-> (into #{} (comp (keep #(tax/separation-ends tax %)) cat)
-                  (when (and h (not genl?)) (tax/supported-keys tax [h])))
-      (and genl? (every? symbol? (nm/args body)))
-      (into (nm/args body))
-      true not-empty)))
+  "The types at or below which the stored `sen` (handle `h`, nil for one with no record)
+  can move separations, as a set, or nil for none: the lower end of a `genl` edge whose
+  upper end a separation reaches (`tax/sentence-separation-ends`), both ends of one between
+  symbols when `narrow?` is false, and the ends of each separation key `h` supports
+  (`tax/separation-ends`).  A `genl` edge supports no separation key, and its keys are not
+  read."
+  [tax h sen narrow?]
+  (let [body (kb/body-under-not sen)]
+    (not-empty
+     (cond (not= 'genl (nm/functor body))
+           (into #{} (comp (keep #(tax/separation-ends tax %)) cat)
+                 (when h (tax/supported-keys tax [h])))
+           narrow?                          (tax/sentence-separation-ends tax body)
+           (every? symbol? (nm/args body))  (set (nm/args body))))))
+
+(defn- preserved-below
+  "The predicates of the set `preds` at or below the type `t`, read over whichever of
+  `t`'s unscoped spec closure and `preds` is smaller.  The unscoped closure is a superset
+  over every reader, since each asker re-reads its own."
+  [tax preds t]
+  (if-some [below (tax/specs-global-within tax t (count preds))]
+    (filter preds below)
+    (filter #(contains? (tax/genls-global tax %) t) preds)))
 
 (defn- separated-reach
   "The stored memberships the stored claims of the preserved `preds` can deny, read from the
@@ -237,19 +248,22 @@
   and the memberships it can deny, `inherit/claim-reach-separated`).
   A claim reaches when it is believed and known-true,
   and, moved in the region, when `vantaged` (a delay) holds its predicate: the claims of every
-  class decide which vantages ask.  `narrow?` false re-opens the stored extent of every
-  predicate a claim moves.  A handle with no record is read from `left`, the sentences
-  `note-removed!` recorded: it is OUT, so it reaches as a claim moved in the region.  The
-  `genl` closures are global, since what a moved edge re-opens is asked from every context
-  that reads it.
+  class decide which vantages ask.  A `genl` edge re-opens the facts `inherit/edge-reach`
+  names for a predicate preserved along `genl` and along no relation above it.  `narrow?`
+  false re-opens the stored extent of every predicate a claim or an edge moves, and the
+  memberships below both ends of an edge.  A handle with no record is read from `left`,
+  the sentences `note-removed!` recorded: it is OUT, so it reaches as a claim moved in the
+  region.  The `genl` closures are global, since what a moved edge re-opens is asked from
+  every context that reads it.
 
   A preserved predicate's extent re-opens the memberships of the types separated from it
-  (`inherit/separated-types`) when a stored claim states it (`inherit/claims-stored?`),
-  and a type a moved `genl` edge or separation reaches (`separation-ends`) that is
-  separated from such a predicate (`inherit/separated-preserved`) re-opens the
-  memberships of every type at or below it.  `sep-moved?` is true when a handle has no
-  record or a `genl` edge or separation moved, for the caller to re-ask the memberships
-  `inherit/separated-claims` answered."
+  (`inherit/separated-types`) when a stored claim states it (`inherit/claims-stored?`).
+  A type a moved `genl` edge or separation moves separations below (`separation-ends`)
+  re-opens the memberships of every type at or below it when it is separated from such a
+  predicate (`inherit/separated-preserved`), and the extent of each preserved predicate at
+  or below it.  `sep-moved?` is true when a handle has no record or a `genl` edge or
+  separation moved, for the caller to re-ask the memberships `inherit/separated-claims`
+  answered."
   [kb pairs left moves vantaged narrow?]
   (let [recs   (:records kb)
         tms    (reasoning/tms kb)
@@ -257,7 +271,10 @@
         extent (memoize #(reads/as-stored-with-functor (:index kb) %))
         preds  (into #{} (map first) pairs)
         ;; a functor whose channels read no argument answers once per call
-        by-f   (memoize #(inherit/moved-channels kb (list %) pairs any?))]
+        by-f   (memoize #(inherit/moved-channels kb (list %) pairs any?))
+        ;; preserved along a relation above `genl`, which `inherit/edge-reach` does not read
+        wide   (let [rs (disj (tax/genls-global tax 'genl) 'genl)]
+                 (into #{} (keep (fn [[p r]] (when (contains? rs r) p))) pairs))]
     (inherit/with-memo
       (let [[whole reached sep-moved?]
             (reduce
@@ -273,20 +290,31 @@
                            (inherit/moved-channels
                             kb sen pairs #(and (not (contains? whole %)) (seq (extent %))))
                            (by-f f))
-                         ends  (separation-ends tax (when s h) sen)
+                         edge? (and (= 'genl f) (every? symbol? (nm/args body)))
+                         ;; an edge moves a predicate preserved along `genl` at the facts
+                         ;; holding a term of its closure alone
+                         cross (when (and edge? narrow?)
+                                 (let [[a b] (nm/args body)]
+                                   (into {} (keep #(when-not (contains? wide %)
+                                                     (some->> (inherit/edge-reach kb a b %) (vector %))))
+                                         other)))
+                         ends  (separation-ends tax (when s h) sen narrow?)
                          ;; a `genl` edge between predicates makes one's claims the other's, and
                          ;; carries a mark over to a sub-predicate (`tax/props-over`)
-                         whole (cond-> (into whole other)
-                                 (and (= 'genl f) (every? symbol? (nm/args body)))
+                         whole (cond-> (into whole (remove #(contains? cross %)) other)
+                                 edge?
                                  (into (filter preds) (mapcat #(tax/genls-global tax %) (nm/args body)))
                                  ends
-                                 (into (comp (filter #(seq (inherit/separated-preserved kb % '?ctx)))
-                                             (mapcat #(conj (tax/specs-global tax %) %)))
-                                       ends))
+                                 (-> (into (comp (filter #(seq (inherit/separated-preserved kb % '?ctx)))
+                                                 (mapcat #(tax/specs-global tax %)))
+                                           ends)
+                                     ;; a preserved predicate at or below an end is separated
+                                     ;; from types no end is above
+                                     (into (mapcat #(preserved-below tax preds %)) ends)))
                          kt?   (delay (and (jtms/in? tms h)
                                            (strength/known-true? (jtms/defeat-class tms h))))]
                      [whole
-                      (into reached
+                      (into (into reached cat (vals cross))
                             (comp (remove whole)
                                   (filter #(or (not narrow?) (and region? (contains? @vantaged %)) @kt?))
                                   (mapcat #(concat
@@ -296,7 +324,7 @@
                                               (inherit/claim-reach-separated kb sen %)
                                               (mapcat extent (inherit/separated-types kb %))))))
                             claimed)
-                      (boolean (or sep-moved? (nil? s) ends))]))))
+                      (boolean (or sep-moved? (nil? s) edge? ends))]))))
              [#{} #{} false]
              moves)]
         [(into whole (comp (filter #(inherit/claims-stored? kb %)) (mapcat #(inherit/separated-types kb %)))
@@ -325,8 +353,10 @@
        (into #{} (mapcat #(take-while some? (iterate target %))) roots)))))
 
 (defn- preserving-entries
-  "The standing inherited clashes after this call, `[{handle entry} by]`
-  (`preserving-entry`), `by` their inverted index (`file-entries`).  An entry is carried
+  "The standing inherited clashes after this call, `{:entries {handle entry} :by by :asked
+  hs :moved hs}` (`preserving-entry`), `by` their inverted index (`file-entries`),
+  `:asked` the handles whose entries were dropped or found, and `:moved` the handles whose
+  belief moved since the last call; both nil when nothing was carried.  An entry is carried
   when the `genlCx` relation was not rebuilt and the placement cursor
   was read since the candidate index was emptied (`first?` false), the flat-cache keys that
   moved are known (`flat-reading`'s `moved`), every handle in the region without a record
@@ -336,17 +366,17 @@
   handle it reads (`except-reach`), no `genlCx` move since the last pass reaches it
   (`reach`: a context it reads is in `:below`, or one it asked is in `:under`), and its
   members hold the classes it recorded.  Each test looks up in `by` the entries it names,
-  so a call reads no entry nothing names.  A member's belief moves in a relabel the window
+  so a call reads no entry nothing names.  A member's belief moves in a relabel the touched set
   records, in a supersession `special/pending-supersession-moves` names, or after the
-  last settle's last question, which `:moved` records (`note-window!`).  Every other entry, the region, and what the moves re-open are asked.  An
-  entry whose candidate is OUT is kept and publishes nothing.  The region is what the touched window recorded since the
+  last settle's last question, which `:moved` records (`note-touched!`).  Every other entry, the region, and what the moves re-open are asked.  An
+  entry whose candidate is OUT is kept and publishes nothing.  The region is what the touched set recorded since the
   last call's mark (`jtms/touched-since`), so a later pass of one settle asks only what the
-  passes before it moved, and `region`, the settle's whole window, when the mark is from an
-  earlier window.  Under `*whole-store-region?*` with a region the store's size, nothing is
+  passes before it moved, and `region`, the settle's whole touched set, when the mark predates
+  the last reset.  Under `*whole-store-region?*` with no `:mark` in `prev`, nothing is
   carried, no extent is swept, and the questions are the preserved predicates' stored
   extents and the memberships their stored claims reach (`separated-reach`; docs/nmtms.md,
   \"The inherited-clash memo\").  An entry keyed by or reading a
-  handle of `declared`, the facts a roster declaration that moved reaches, is asked
+  handle of `declared`, the facts a forced-monotonic declaration that moved reaches, is asked
   again: the declaration moves which claims the vantage believes."
   [kb pairs region prev reach first? moved declared]
   (let [recs    (:records kb)
@@ -359,7 +389,9 @@
         left    (:left prev {})
         ;; built from the entries when an image written without it installed them
         by      (delay (or (:by prev) (file-entries {} entries true)))
-        whole?  (and *whole-store-region?* (>= (count handles) (cap/count-sentexes recs)))
+        ;; not a count of `handles`: a stored sentex with no premise and no justification
+        ;; is never relabelled, so the region can miss a handle the store holds
+        whole?  (and *whole-store-region?* (nil? (:mark prev)))
         why     (cond whole?                          :whole-store
                       (not *incremental-preserving*)  :exhaustive
                       (or (:all? reach) (nil? moved)) :rebuilt
@@ -369,6 +401,10 @@
                       (some #(and (not (contains? left %)) (nil? (p/get-sentex recs %))) handles)
                       :retraction)
         fresh?  (some? why)
+        moved-belief (when-not fresh?
+                       (-> (set handles)
+                           (into (:moved prev))
+                           (into (special/pending-supersession-moves kb))))
         [whole reached sep-moved?]
         (if whole?
           [#{} #{} false]
@@ -405,9 +441,7 @@
                                           (filter #(contains? (:sep b) %) (named :read handles)))))]
                     (into moves
                           (comp (remove moves) (remove #(entry-live? tms (get entries %))))
-                          (set (named :member (-> (set handles)
-                                                  (into (:moved prev))
-                                                  (into (special/pending-supersession-moves kb))))))))
+                          (set (named :member moved-belief)))))
         kept    (if fresh? {} (persistent! (reduce dissoc! (transient entries) dropped)))
         idx     (:index kb)
         preds   (into #{} (map first) pairs)
@@ -427,21 +461,45 @@
                                      :fresh why}})
         ;; one memo over every question: belief does not move while they are asked
         found   (inherit/with-memo
-                  (into []
-                        (keep (fn [h]
-                                (when (jtms/in? tms h)
-                                  (when-let [s (p/get-sentex recs h)]
-                                    (when (or (contains? preds (nm/functor (kb/body-under-not (:sentence s))))
-                                              (separated-membership? kb (:sentence s)))
-                                      (when-let [e (preserving-entry kb s)] [h e]))))))
-                        ;; sorted so the queries run in a reproducible order
-                        (sort ask)))]
-    [(into kept found)
-     (if fresh?
-       (file-entries {} found true)
-       (-> @by
-           (file-entries (map #(vector % (get entries %)) dropped) false)
-           (file-entries found true)))]))
+                  (with-open [r (progress/start ::preserving-entries "settle: ask the preserved predicates' questions"
+                                                (count ask))]
+                    (into []
+                          (keep (fn [h]
+                                  (when (jtms/in? tms h)
+                                    (when-let [s (p/get-sentex recs h)]
+                                      (when (or (contains? preds (nm/functor (kb/body-under-not (:sentence s))))
+                                                (separated-membership? kb (:sentence s)))
+                                        (when-let [e (preserving-entry kb s)] [h e]))))))
+                          ;; sorted so the queries run in a reproducible order
+                          (progress/each r (sort ask)))))]
+    {:entries (into kept found)
+     :by      (if fresh?
+                (file-entries {} found true)
+                (-> @by
+                    (file-entries (map #(vector % (get entries %)) dropped) false)
+                    (file-entries found true)))
+     :asked   (when-not fresh? (into (set dropped) (map first) found))
+     :moved   moved-belief}))
+
+(defn- entry-nogoods
+  "The nogood maps the entry of `h` in `entries` publishes: none while `h` is OUT, and
+  each with its `:priority` read again when `h`'s class moved since the entry recorded it
+  (the other members hold the classes it recorded)."
+  [tms entries h]
+  (when (jtms/in? tms h)
+    (let [e (get entries h)]
+      (if (= (:class e) (jtms/defeat-class tms h))
+        (:nogoods e)
+        (map #(assoc % :priority (member-priority tms (:nogood %))) (:nogoods e))))))
+
+(defn- member-sets
+  "Every member set holding `h` among the nogoods of the entries of `entries` that can
+  hold it: `h`'s own and those `by` files `h` under as a member."
+  [entries by h]
+  (into #{} (comp (mapcat #(:nogoods (get entries %)))
+                  (map :nogood)
+                  (filter #(contains? % h)))
+        (cons h (get-in by [:member h]))))
 
 (defn preserving-nogoods
   "The clashes between a stored claim and a known-true claim argument preservation reads
@@ -454,57 +512,77 @@
   polarities is a negation pair (`chain/place-negations!`), excluded by
   `clashing-claim`.  Behind `inherit/preserved-pairs`, two predicate-extent counts on a KB
   that declares none (docs/nmtms.md, \"What qualifies as a nogood\";
-  docs/inherit.md).  The memo keeps a mark of the touched window taken before the
+  docs/inherit.md).  The memo keeps a mark of the touched set taken before the
   questions (`jtms/touch-mark`), where the next call's region starts.  `reach` (a delay,
   forced only when a pair is preserved) and `first?` are the pass's `genlCx` moves
-  (`special/drain-context-moves!`).  `declared` is the facts a roster declaration that
-  moved reaches (`preserving-entries`)."
+  (`special/drain-context-moves!`).  `declared` is the facts a forced-monotonic declaration that
+  moved reaches (`preserving-entries`).
+
+  Answers `{:nogoods #{ngmap}}`, every entry's clashes, when no entry was carried.
+  Otherwise `:nogoods` holds the clashes of the entries this call dropped or found and of
+  those holding one of their handles as a member, and `:sets` every member set whose
+  clashes can differ from the last call's: those of the changed entries before and after,
+  and those holding a handle whose belief moved."
   [kb region reach first? declared]
   (let [pairs (inherit/preserved-pairs kb)]
     (if (empty? pairs)
-      (do (reset! (reasoning/preserved-clashes kb) {}) #{})
+      (do (reset! (reasoning/preserved-clashes kb) {}) {:nogoods #{}})
       (let [tms          (reasoning/tms kb)
             mark         (jtms/touch-mark tms)
             prev         @(reasoning/preserved-clashes kb)
+            old          (:entries prev {})
             [flat moved] (flat-reading kb (:flat prev))
-            [entries by] (preserving-entries kb pairs region prev @reach first? moved
-                                             (set declared))]
+            {:keys [entries by asked] moved-belief :moved}
+            (preserving-entries kb pairs region prev @reach first? moved (set declared))
+            named        (fn [hs] (into (set hs) (mapcat #(get-in by [:member %])) hs))
+            sets-of      (fn [es hs] (into #{} (comp (mapcat #(:nogoods (get es %))) (map :nogood)) hs))]
         (reset! (reasoning/preserved-clashes kb)
                 {:flat    flat
                  :mark    mark
                  :entries entries
                  :by      by})
-        (into #{}
-              (mapcat (fn [h]
-                        (when (jtms/in? tms h)
-                          (let [e (get entries h)]
-                            ;; the other members hold the classes `e` recorded
-                            (if (= (:class e) (jtms/defeat-class tms h))
-                              (:nogoods e)
-                              (map #(assoc % :priority (member-priority tms (:nogood %)))
-                                   (:nogoods e)))))))
-              (:clash by))))))
+        (if (nil? asked)
+          {:nogoods (into #{} (mapcat #(entry-nogoods tms entries %)) (:clash by))}
+          (let [changed (into #{} (remove #(identical? (get entries %) (get old %))) asked)
+                reread  (named changed)]
+            {:nogoods (into #{} (mapcat #(entry-nogoods tms entries %)) reread)
+             :sets    (-> (sets-of old changed)
+                          (into (sets-of entries reread))
+                          (into (sets-of entries (named moved-belief))))}))))))
 
 (defn discover-inherited!
   "Find the inherited clashes (`preserving-nogoods`) over the network and record them in
-  the candidate index (`inherited/install-inherited!`), as `{:found [ngmap] :left
-  [members]}`: each clash, whose members the network believes, of a candidate asked again
-  this call (one whose memo entry was not carried), and the member sets the index held
-  and no longer holds.  `chain/place-inherited!` places the first at their vantages and
-  removes the placements of the second.  `reach` and `first?` are the pass's `genlCx`
-  moves (`special/drain-context-moves!`).  `moved` is the facts a roster declaration
-  that moved reaches, whose entries are asked again (`preserving-entries`)."
+  the candidate index: each member set it read again (`inherited/update-inherited!`), or
+  every clash when it carried no entry (`inherited/install-inherited!`).  Answers
+  `{:found [ngmap] :left [members]}`: each clash, whose members the network believes, of
+  a candidate asked again this call (one whose memo entry was not carried), and the member
+  sets the index held and no longer holds.  `chain/place-inherited!` places the first at
+  their vantages and removes the placements of the second.  `reach` and `first?` are the
+  pass's `genlCx` moves (`special/drain-context-moves!`).  `moved` is the facts a
+  forced-monotonic declaration that moved reaches, whose entries are asked again
+  (`preserving-entries`)."
   ([kb region reach first?] (discover-inherited! kb region reach first? nil))
   ([kb region reach first? moved]
-   (let [tms  (reasoning/tms kb)
-         in?  #(jtms/in? tms %)
-         prev (:entries @(reasoning/preserved-clashes kb) {})
-         ngs  (into [] (comp (filter #(every? in? (:nogood %)))
-                             (filter #(seq (:vantages %)))
-                             (distinct))
-                    (preserving-nogoods kb region reach first? moved))
-         now  (:entries @(reasoning/preserved-clashes kb) {})
-         left (inherited/install-inherited! kb ngs)]
+   (let [tms   (reasoning/tms kb)
+         in?   #(jtms/in? tms %)
+         prev  (:entries @(reasoning/preserved-clashes kb) {})
+         held  (comp (filter #(every? in? (:nogood %)))
+                     (filter #(seq (:vantages %)))
+                     (distinct))
+         {:keys [nogoods sets]} (preserving-nogoods kb region reach first? moved)
+         {now :entries by :by} @(reasoning/preserved-clashes kb)
+         ngs   (into [] held nogoods)
+         left  (if sets
+                 (inherited/update-inherited!
+                  kb
+                  (into {} (map (fn [ms]
+                                  [ms (into [] (comp (mapcat #(entry-nogoods tms now %))
+                                                     (filter #(= ms (:nogood %)))
+                                                     held)
+                                            ms)]))
+                        sets)
+                  #(member-sets now by %))
+                 (inherited/install-inherited! kb ngs))]
      ;; a carried entry is the identical value, so its clashes and their placements stand
      {:found (into [] (filter (fn [ng] (some #(not (identical? (get now %) (get prev %))) (:nogood ng))))
                    ngs)

@@ -84,7 +84,7 @@
   it does nothing about the *threads*, and the two are separate ceilings.
 
   So this one is deliberately well under `vaelii.host.serve/http-threads`, and
-  `serve_test` pins that relationship rather than trusting the two numbers to stay
+  `serve_test` asserts that relationship rather than trusting the two numbers to stay
   related.  Over it, a poll asking to wait is **refused** (`:too-many-waiters`) rather
   than parked: the caller is told to poll on a timer instead, which costs the daemon one
   request and no held thread, and is the same feed at a worse latency.  Answering it an
@@ -279,13 +279,13 @@
                      (catch Throwable t
                        (swap! reg update :subs dissoc token)
                        (throw t)))]
-      ;; Guarded like `file-event!` and `poll`'s stamp, and for a sharper reason than
-      ;; either: a bare `assoc-in` on a token that has gone **recreates** the entry, with
-      ;; no `:polled-at`, `:events`, `:delivered` or `:signal` in it — and `reap` runs at
-      ;; the head of every feed op, so the next one anywhere on this daemon reads
-      ;; `(- at nil)` and throws.  One lost race would take the whole feed down until
-      ;; restart, so the entry either survived and takes its token or the listener comes
-      ;; straight back off the KB.
+      ;; Guarded like `file-event!` and `poll`'s `:polled-at` write, and for a sharper
+      ;; reason than either: a bare `assoc-in` on a token that has gone **recreates** the
+      ;; entry, with no `:polled-at`, `:events`, `:delivered` or `:signal` in it — and
+      ;; `reap` runs at the head of every feed op, so the next one anywhere on this daemon
+      ;; reads `(- at nil)` and throws.  One lost race would take the whole feed down
+      ;; until restart, so the entry either survived and takes its token or the listener
+      ;; comes straight back off the KB.
       (let [[old] (swap-vals! reg (fn [r] (cond-> r
                                             (get-in r [:subs token])
                                             (update-in [:subs token] assoc
@@ -382,8 +382,9 @@
                             (pr-str token) ", which has delivered " (:delivered sub))
                        {:type :bad-cursor :token token :cursor cursor
                         :delivered (:delivered sub)})))
-     ;; stamped before the park as well as after it, so a wait that outlasts `idle-ms`
-     ;; cannot have this subscription reaped out from under the thread parked on it
+     ;; `:polled-at` is written before the park as well as after it, so a wait that
+     ;; outlasts `idle-ms` cannot have this subscription reaped out from under the thread
+     ;; parked on it
      (swap! reg (fn [r] (cond-> r
                           (get-in r [:subs token])
                           (assoc-in [:subs token :polled-at] at))))

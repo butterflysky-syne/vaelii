@@ -438,7 +438,7 @@
                  (:depth nd) (:decoys ncfg))
          (needle-report nd 3 7))))
     (say "\n  Reading:")
-    (say "  - `same?` is the gate. A complete mode reading NO is a bug in that mode, not a")
+    (say "  - `same?` is the check. A complete mode reading NO is a bug in that mode, not a")
     (say "    trade-off; :first-result is marked ⊂ and only has to be a prefix.")
     (say "  - the correctness pass drives every query dry, so every ordering expands the same")
     (say "    nodes and its ms column measures the estimate's overhead, not the search.")

@@ -4,10 +4,11 @@
   "`:recover? :background` over a `:disk-snapshot` store whose reasoning image was written
   under other engine source.  The open installs the image, and the KB answers from it and
   refuses writes.  Belief is rebuilt under this build on a second KB over the same stores,
-  and one `vreset!` then replaces the installed belief with the rebuilt one; a read view
+  and one `vreset!` then replaces the installed belief with the rebuilt one; a read copy
   taken before it reads the installed belief whole.  A close or a `recover` during the
-  rebuild stops the rebuild first.  `:recover? :trust` installs the same image and keeps
-  it: no rebuild, writes accepted at once, and the image's source stamp kept at close."
+  rebuild stops the rebuild first.  `:recover? :trust`, the default, installs the same image
+  and keeps it: no rebuild, writes accepted at once, and the image's source digest kept at
+  close."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.set :as set]
@@ -37,20 +38,20 @@
 
 (defn- manifest ^File [dir] (io/file dir "reasoning" "manifest.edn"))
 
-(defn- stamp [dir] (edn/read-string (slurp (manifest dir))))
+(defn- manifest-of [dir] (edn/read-string (slurp (manifest dir))))
 
-(defn- restamp! [dir k v] (spit (manifest dir) (pr-str (assoc (stamp dir) k v))))
+(defn- rewrite-manifest! [dir k v] (spit (manifest dir) (pr-str (assoc (manifest-of dir) k v))))
 
 (defn- store!
   "A closed `:disk-snapshot` store holding a taxonomy edge and a membership, whose image
-  is stamped as written under the engine source \"stale\"."
+  records it as written under the engine source \"stale\"."
   ^String []
   (let [dir (tmpdir)
         kb  (v/open-kb {:backend :disk-snapshot :dir dir})]
     (v/assert kb '(genl dog animal) 'CxUniverse {:strength :monotonic})
     (v/assert kb '(dog Rex) 'CxUniverse)
     (v/close! kb)
-    (restamp! dir :source "stale")
+    (rewrite-manifest! dir :source "stale")
     dir))
 
 (defn- dogs [kb] (mapv v/sentence-of (v/sentexes-matching kb '(dog ?x) 'CxUniverse)))
@@ -123,9 +124,9 @@
                (str (.getPath f) ":" (inc i)))]
     (is (empty? hits) "read a `Reasoning` field through `vaelii.impl.types.reasoning`")))
 
-(def ^:private unviewed
+(def ^:private unwrapped
   "The public fns taking a KB first that are neither writes nor reads run against
-  `kb/read-view`.  `close!` stops the rebuild and releases the KB's own directory.
+  `kb/read-copy`.  `close!` stops the rebuild and releases the KB's own directory.
   `with-deferred-settle` is a macro.  `seal` writes the images of a KB with an operation
   log, which a KB rebuilding behind an image never carries.  The rest read or set
   subscriptions, caches, statistics or hazards rather than belief, or open another KB."
@@ -133,23 +134,23 @@
     #'v/clear-caches #'v/reset-settle-stats! #'v/write-hazards #'v/rebuild-progress
     #'v/fork #'v/load-foreign! #'v/seal})
 
-(deftest every-public-fn-taking-a-kb-is-a-write-a-viewed-read-or-unviewed
+(deftest every-public-fn-taking-a-kb-is-a-write-a-wrapped-read-or-unwrapped
   (let [takes-kb? (fn [v] (let [as (:arglists (meta v))]
                             (and (seq as) (every? #(= 'kb (first %)) as))))
         kb-fns    (set (filter takes-kb? (vals (ns-publics 'vaelii.core))))
-        writes    (set (keys @#'v/write-ops))
+        writes    (set (map #(ns-resolve 'vaelii.core (symbol (name %))) (keys @#'v/write-ops)))
         reads     (set (map #(ns-resolve 'vaelii.core (symbol (name %))) @#'v/read-ops))]
-    (is (= kb-fns (set/union writes reads unviewed))
-        "a public fn taking a KB first must be in `write-ops`, `read-ops` or `unviewed`")
+    (is (= kb-fns (set/union writes reads unwrapped))
+        "a public fn taking a KB first must be in `write-ops`, `read-ops` or `unwrapped`")
     (is (empty? (set/intersection writes reads)))
-    (is (empty? (set/intersection writes unviewed)))
-    (is (empty? (set/intersection reads unviewed)))
+    (is (empty? (set/intersection writes unwrapped)))
+    (is (empty? (set/intersection reads unwrapped)))
     (is (not-any? #(:macro (meta %)) reads) "a macro cannot be wrapped as a read")))
 
-(deftest a-read-view-taken-before-the-install-reads-the-installed-belief-whole
+(deftest a-read-copy-taken-before-the-install-reads-the-installed-belief-whole
   (tu/with-snapshot-platform
     ;; The install is one `vreset!`, so the read it has to get right is one that takes the
-    ;; network before the install and the taxonomy after it.  The view here is taken before
+    ;; network before the install and the taxonomy after it.  The read copy here is taken before
     ;; the install and read after it.
     (let [dir (store!)
           [kb ^CountDownLatch reached ^CountDownLatch release] (open-held dir)]
@@ -164,13 +165,13 @@
           (jtms/suspend-premise (reasoning/tms kb) rex)
           (tax/add-genl (reasoning/taxonomy kb) 'dog 'ghost 999999)
           (is (= [false true] (reading kb)))
-          (let [view (kb/read-view kb)]
-            (is (not (identical? kb view)) "while the install is pending, a view is a copy")
+          (let [copy (kb/read-copy kb)]
+            (is (not (identical? kb copy)) "while the install is pending, the read copy is a distinct KB")
             (.countDown release)
             (is (await-rebuilt kb) "the rebuilt belief is installed within 30 s")
             (is (= [true false] (reading kb)) "the KB reads the rebuilt belief")
-            (is (= [false true] (reading view)) "the view reads the installed belief, both halves")
-            (is (identical? kb (kb/read-view kb)) "with no install pending, the view is the KB")
+            (is (= [false true] (reading copy)) "the read copy reads the installed belief, both halves")
+            (is (identical? kb (kb/read-copy kb)) "with no install pending, the read copy is the KB")
             (is (= ['(dog Rex)] (dogs kb)) "and a public read reads the rebuilt belief")))
         (finally
           (.countDown release)
@@ -194,7 +195,7 @@
                        (binding [v/*write-unrecovered?* true]
                          (v/assert kb '(dog Fido) 'CxUniverse)))
               "*write-unrecovered?* does not open a KB whose belief is being rebuilt")
-          (is (= "stale" (:source (stamp dir))) "the image is not rewritten before the install"))
+          (is (= "stale" (:source (manifest-of dir))) "the image is not rewritten before the install"))
         ;; move the installed belief away from what the records say, so the install shows
         (jtms/suspend-premise (reasoning/tms kb) (v/handle-of kb '(dog Rex) 'CxUniverse))
         (is (= [] (dogs kb)))
@@ -202,7 +203,7 @@
         (is (await-rebuilt kb) "the rebuilt belief is installed within 30 s")
         (testing "the rebuilt belief replaces the installed belief, and writes are accepted"
           (is (= ['(dog Rex)] (dogs kb)))
-          (is (not= "stale" (:source (stamp dir))) "the rebuild writes an image under this build")
+          (is (not= "stale" (:source (manifest-of dir))) "the rebuild writes an image under this build")
           (is (some? (v/assert kb '(dog Fido) 'CxUniverse))))
         (finally
           (.countDown release)
@@ -212,26 +213,28 @@
 (deftest a-rebuild-reports-its-step-against-the-recover-the-image-records
   (tu/with-snapshot-platform
     (let [dir (store!)
-          _   (restamp! dir :recover {:ms 600 :steps {:network 100 :taxonomy 100 :depths 100
-                                                      :rosters 100 :settle 100 :refusals 100}})
+          _   (rewrite-manifest! dir :recover
+                                 {:ms 700 :steps {:network 100 :taxonomy 100 :depths 100
+                                                  :derived-sets 100 :settle 100 :refusals 100
+                                                  :placement 100}})
           [kb ^CountDownLatch reached ^CountDownLatch release] (open-held dir)]
       (try
         (is (.await reached 30 TimeUnit/SECONDS) "the rebuild reaches its install")
         (let [p (v/rebuild-progress kb)]
-          (is (= [6 8 "re-recording refusals"] ((juxt :step :of :label) p))
+          (is (= [7 9 "placing the queued nogoods"] ((juxt :step :of :label) p))
               "held before its install, the rebuild is at the recover's last step")
           (is (= "stale" (get-in p [:image :source])))
           (is (string? (get-in p [:image :written-at])))
           (is (not= "stale" (:source p)) "the running build's digest is reported beside it")
           (is (nat-int? (:elapsed-ms p)))
-          (is (= 600 (:expected-ms p)))
-          (is (<= (/ 5.0 6.0) (:fraction p) 1.0)
-              "five of the six recorded steps are done, and the sixth is running"))
+          (is (= 700 (:expected-ms p)))
+          (is (<= (/ 6.0 7.0) (:fraction p) 1.0)
+              "six of the seven recorded steps are done, and the seventh is running"))
         (.countDown release)
         (is (await-rebuilt kb) "the rebuilt belief is installed within 30 s")
         (is (nil? (v/rebuild-progress kb)) "no rebuild runs once the rebuilt belief is installed")
-        (is (= #{:network :taxonomy :depths :rosters :settle :refusals}
-               (set (keys (:steps (:recover (stamp dir))))))
+        (is (= #{:network :taxonomy :depths :derived-sets :settle :refusals :placement}
+               (set (keys (:steps (:recover (manifest-of dir))))))
             "the image the rebuild writes records the step timings of its recover")
         (finally
           (.countDown release)
@@ -263,7 +266,7 @@
           (testing "progress reports the throw, the step it was in, and a stopped clock"
             (is (= "injected rebuild failure" (get-in p [:failed :message])))
             (is (= "clojure.lang.ExceptionInfo" (get-in p [:failed :class])))
-            (is (= [6 8 "re-recording refusals"] ((juxt :step :of :label) p)))
+            (is (= [7 9 "placing the queued nogoods"] ((juxt :step :of :label) p)))
             (is (= (:elapsed-ms p) (:elapsed-ms (v/rebuild-progress kb)))
                 "a failed rebuild's elapsed time does not grow"))
           (is (= [::recovery/belief-rebuild-failed] @logged) "the throw is logged at :error"))
@@ -277,7 +280,7 @@
           (v/recover kb)
           (is (nil? (v/rebuild-progress kb)))
           (is (= {} (kb/write-hazards kb)))
-          (is (not= "stale" (:source (stamp dir))))
+          (is (not= "stale" (:source (manifest-of dir))))
           (is (some? (v/assert kb '(dog Fido) 'CxUniverse))))
         (finally
           (v/close! kb)
@@ -300,7 +303,7 @@
           stored (counts kb0)]
       (is (= [] (pets kb0)) "the unchained rule placed nothing")
       (v/close! kb0)
-      (restamp! dir :source "stale")
+      (rewrite-manifest! dir :source "stale")
       (let [logged (atom [])
             kb     (binding [trove/*log-fn* (fn [_ns _coords level id _payload]
                                               (when (= :error level) (swap! logged conj id)))]
@@ -328,12 +331,12 @@
       (try
         (is (.await reached 30 TimeUnit/SECONDS))
         (v/close! kb)
-        (is (= "stale" (:source (stamp dir))) "a stopped rebuild installs nothing and writes no image")
-        (let [kb2 (v/open-kb {:backend :disk-snapshot :dir dir})]
+        (is (= "stale" (:source (manifest-of dir))) "a stopped rebuild installs nothing and writes no image")
+        (let [kb2 (v/open-kb {:backend :disk-snapshot :dir dir :recover? :auto})]
           (try
             (is (= {} (kb/write-hazards kb2)))
             (is (= ['(dog Rex)] (dogs kb2)))
-            (is (not= "stale" (:source (stamp dir))))
+            (is (not= "stale" (:source (manifest-of dir))))
             (finally (v/close! kb2))))
         (finally
           (.countDown release)
@@ -386,7 +389,7 @@
         (v/recover kb)
         (is (= {} (kb/write-hazards kb)))
         (is (= ['(dog Rex)] (dogs kb)))
-        (is (not= "stale" (:source (stamp dir))))
+        (is (not= "stale" (:source (manifest-of dir))))
         (finally
           (.countDown release)
           (v/close! kb)
@@ -395,17 +398,17 @@
 (deftest an-image-declined-for-its-records-is-recovered-under-background-too
   (tu/with-snapshot-platform
     (let [dir (store!)]
-      (restamp! dir :records :moved)
+      (rewrite-manifest! dir :records :moved)
       (let [kb (v/open-kb {:backend :disk-snapshot :dir dir :recover? :background})]
         (try
           (is (= {} (kb/write-hazards kb)) "the open recovered, so nothing is being rebuilt")
           (is (= ['(dog Rex)] (dogs kb)))
-          (is (not= :moved (:records (stamp dir))))
+          (is (not= :moved (:records (manifest-of dir))))
           (finally
             (v/close! kb)
             (rm-rf! dir)))))))
 
-(deftest a-trusted-image-is-kept-writable-and-keeps-its-source-stamp
+(deftest a-trusted-image-is-kept-writable-and-keeps-its-source-digest
   (tu/with-snapshot-platform
     (let [dir (store!)]
       (try
@@ -420,22 +423,22 @@
               (is (= #{'(dog Rex) '(dog Fido)} (set (dogs kb))))
               (is (some #(= 'Fido (get % '?x)) (v/ask kb '(animal ?x) 'CxUniverse))))
             (finally (v/close! kb))))
-        (is (= "stale" (:source (stamp dir)))
-            "the close stamps the source the belief was last derived under in full")
+        (is (= "stale" (:source (manifest-of dir)))
+            "the close records the source the belief was last derived under in full")
         (let [recovers (atom 0)
               real     @#'recovery/recover-from-records
               kb       (with-redefs-fn {#'recovery/recover-from-records
                                         (fn [& args] (swap! recovers inc) (apply real args))}
-                         #(v/open-kb {:backend :disk-snapshot :dir dir :recover? :trust}))]
+                         #(v/open-kb {:backend :disk-snapshot :dir dir}))]
           (try
             (is (= #{'(dog Rex) '(dog Fido)} (set (dogs kb)))
-                "a second trusted open installs the image the first one closed with")
+                "a default open trusts, and installs the image the first one closed with")
             (is (zero? @recovers)
                 "the close wrote the trusted session's write into the image, so nothing recovers")
             (finally (v/close! kb))))
-        (let [kb (v/open-kb {:backend :disk-snapshot :dir dir})]
+        (let [kb (v/open-kb {:backend :disk-snapshot :dir dir :recover? :auto})]
           (try
             (is (= #{'(dog Rex) '(dog Fido)} (set (dogs kb))))
             (finally (v/close! kb))))
-        (is (not= "stale" (:source (stamp dir))) "an :auto open recovers and restamps")
+        (is (not= "stale" (:source (manifest-of dir))) "an :auto open recovers and rewrites the manifest")
         (finally (rm-rf! dir))))))

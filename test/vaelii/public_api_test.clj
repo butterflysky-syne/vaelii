@@ -4,7 +4,7 @@
   "The public namespaces are `vaelii.core` and the five entry points beside it, so the
   taxonomy read surface, the
   non-creating handle lookup, and the stored-vs-believed split of the extent/count
-  fns all have to be reachable from it.  These tests pin the public spelling —
+  fns all have to be reachable from it.  These tests assert the public spelling —
   they deliberately require nothing under `vaelii.impl.*` except the test scaffolding."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
@@ -241,12 +241,12 @@
 
 ;; ---- turning a shipped reasoner on, from core alone ---------------------
 ;; Twelve reasoners ship unregistered, and the provers are `vaelii.impl.*` values — so
-;; without a roster on `core` the only way to opt in is to reach past the boundary this
+;; without a list on `core` the only way to opt in is to reach past the boundary this
 ;; namespace exists to hold.  `add-reasoner` names them instead.  These tests require
 ;; nothing under impl, which is the whole point of them.
 
 (tu/deftest-kb the-shipped-reasoners-are-nameable-and-registrable-from-core
-  (testing "the roster covers the six algebras, the three quantitative reasoners, the
+  (testing "the list covers the six algebras, the three quantitative reasoners, the
             calendar clock, the instant-inclusion reader and the brave/cautious dilemma
             reader"
     (is (= [:allen :brave-cautious :calendar :cardinal :distance :duration :includes-instant
@@ -256,12 +256,12 @@
            (into #{} (remove #{:duration :metric-time :sign :calendar :includes-instant
                                :brave-cautious})
                  (v/reasoners)))
-        "every calculus is registrable, and the roster adds the quantitative three, the
+        "every calculus is registrable, and the list adds the quantitative three, the
          calendar and the inclusion reader, which are not relation algebras"))
   (testing "each name resolves to a prover value"
     (doseq [nm (v/reasoners)]
       (is (some? (v/reasoner nm)) (str nm))))
-  (testing "an unknown name is a bad argument, and names the roster"
+  (testing "an unknown name is a bad argument, and names the list"
     (let [d (try (v/reasoner :nope) nil (catch clojure.lang.ExceptionInfo e (ex-data e)))]
       (is (= :unknown-option (:type d)))
       (is (= (v/reasoners) (:known d))))))
@@ -338,7 +338,7 @@
     ;; `koinii/` is neither engine nor API: it is an application shipped in this tree,
     ;; layered on the six below exactly as an outside consumer would be (docs/koinii.md).
     ;; It is excluded here for the same reason it is excluded from the SPI and refusal
-    ;; rosters — pinning it as a public promise would make koinii's own development churn
+    ;; lists — freezing it as a public promise would make koinii's own development churn
     ;; the engine's contract. The other direction is checked:
     ;; `koinii-reaches-into-no-impl` below.
     ;; `browser/` is the second application, excluded for the same reason; its own check
@@ -423,7 +423,7 @@
                    (filter #(.endsWith (.getName ^java.io.File %) ".clj"))
                    sort)]
     ;; An empty or renamed directory would pass the check below vacuously, which is the
-    ;; failure mode a roster test is for.
+    ;; failure mode a list test is for.
     (is (= 9 (count files))
         "koinii's nine modules live at src/vaelii/koinii — moving them moves this test")
     (let [offenders (into {} (keep (fn [^java.io.File f]
@@ -443,8 +443,8 @@
                    (filter #(.isFile ^java.io.File %))
                    (filter #(.endsWith (.getName ^java.io.File %) ".clj"))
                    sort)]
-    (is (= 8 (count files))
-        "the browser's eight modules live at src/vaelii/browser — moving them moves this test")
+    (is (= 11 (count files))
+        "the browser's eleven modules live at src/vaelii/browser — moving them moves this test")
     (let [offenders (into {} (keep (fn [^java.io.File f]
                                      (when-some [hits (seq (impl-symbols-in f))]
                                        [(.getPath f) (vec hits)])))
@@ -457,7 +457,7 @@
   holding one more is an edit to this set rather than a side effect of its ns form."
   '#{vaelii.impl.jtms-protocol
      vaelii.impl.protocols
-     vaelii.impl.roster
+     vaelii.impl.handle-set
      vaelii.impl.settle-phases
      vaelii.impl.tokens
      vaelii.impl.types.dense-roots
@@ -534,7 +534,7 @@
   ;; indistinguishable from a believed extent with nothing defeated in it.
   (tu/with-terms [flies Tweety CxExtent]
     (v/assert kb (list flies Tweety) CxExtent)
-    (testing "the missing-? typo is refused at all three entry points, naming the roster"
+    (testing "the missing-? typo is refused at all three entry points, naming the key set"
       (doseq [call [#(v/sentexes-in-context kb CxExtent {:believed true})
                     #(v/sentexes-with-functor kb flies {:believed true})
                     #(v/sentexes-with-arg kb 1 Tweety {:believed true})]]
@@ -546,7 +546,7 @@
     (testing "a non-map opts is refused rather than read as no filter"
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be a map"
                             (v/sentexes-in-context kb CxExtent :believed?))))
-    (testing "the rostered spelling still filters"
+    (testing "the accepted spelling still filters"
       (is (= 1 (count (v/sentexes-with-functor kb flies {:believed? true}))))
       (is (= 1 (count (v/sentexes-in-context kb CxExtent {:believed? true})))))))
 

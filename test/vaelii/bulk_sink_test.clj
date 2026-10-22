@@ -193,19 +193,15 @@
                 (is (= (set (p/justification-ids (:records bulked)))
                        (set (:justification @log)))
                     "and every justification too")))
-            (testing "and the annotate call took the premise marks and the provenance"
+            (testing "the sink took the premise marks and the annotate call the provenance"
+              (is (nil? (:mark-batches @log))
+                  "no premise batch: the marks rode the records, and a dump with no
+                   collapse leaves no handle whose strength differs from its record's")
               (if (= false belief)
-                (is (and (nil? (:mark-batches @log)) (nil? (:prov-batches @log)))
-                    "the records-only path writes neither: the marks ride the record and
-                     provenance is not read at all")
-                (do
-                  (is (= 1 (count (:mark-batches @log)))
-                      "every premise mark in one call, since the aggregate is known at once")
-                  (is (= (set (p/premise-ids (:records bulked)))
-                         (set (keys (first (:mark-batches @log)))))
-                      "and it named exactly the handles that ended up marked")
-                  (is (seq (:prov-batches @log))
-                      "and the provenance stream went through the batch, chunked"))))))))))
+                (is (nil? (:prov-batches @log))
+                    "the records-only path reads no provenance")
+                (is (seq (:prov-batches @log))
+                    "and the provenance stream went through the batch, chunked")))))))))
 
 (deftest a-sink-owns-its-records-until-it-closes
   ;; The wrapper throws on a read of a handle a sink still holds, so this passing is the
@@ -271,7 +267,7 @@
         (is (= '(rel A) (:sentence (p/get-sentex (:records kb) h)))
             "and a record written through it is readable at once, since there is no buffer")
         (is (contains? (set (p/premise-ids (:records kb))) h)
-            "`:premises? true` rosters the strength the record carries")))
+            "`:premises? true` adds the record to the premise set")))
     (testing ":premises? false leaves the mark to the caller"
       (with-open [^java.io.Closeable sink (cap/sentex-sink (:records kb) {:premises? false})]
         (let [h (p/write-record! sink {:sentence '(rel B) :context 'CxBulk :strength :default})]

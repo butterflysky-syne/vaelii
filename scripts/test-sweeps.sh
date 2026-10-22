@@ -27,11 +27,11 @@
 # the alternative, not a feature of it: running these by hand is what found a clash
 # reported against a different sentex depending on which retrieval path answered.
 # `assertive-off` is a semantic switch, and it holds the same claim by a different
-# route: a test whose answer depends on the reading pins it with `tu/with-entailing` or
+# route: a test whose answer depends on the reading forces it with `tu/with-entailing` or
 # `tu/without-entailing`, and every other test answers alike under both.
 #
 # The ASSERTION COUNT is identical here too, as it is in `test-backends.sh`.  Where an
-# assertion pins an artifact of one implementation — `prove` returns one solution per
+# assertion counts an artifact of one implementation — `prove` returns one solution per
 # derivation on the DFS and one per answer on the node engine, so counting its results
 # is an engine-specific number (docs/inference.md) — the test asserts the number for
 # the engine in force, read off `tu/query-engine-override`, rather than standing
@@ -44,7 +44,7 @@
 # reason.
 #
 # WHY THIS IS A SCRIPT AND NOT A CI JOB.  It is both, and the local one is the
-# gate.  `deep.yml` runs these seven and the nine backends on a runner, which is
+# required run.  `deep.yml` runs these seven and the nine backends on a runner, which is
 # 240 job-minutes against a 2,000-minute monthly allowance — eight runs a month,
 # for a matrix a release wants once.  The same coverage here costs wall time and
 # no money, so the CI job is the confirmation and this is what you run before a
@@ -102,7 +102,7 @@ esac
 # shellcheck source=scripts/lib/suite-marks.sh
 . scripts/lib/suite-marks.sh
 
-# The roster, and the env assignments that select each: `scripts/lib/suite-configs.sh`,
+# The configuration set, and the env assignments that select each: `scripts/lib/suite-configs.sh`,
 # shared with `test-backends.sh` and `test-matrix.sh`.  Cheapest first there, so a matrix
 # that is going to fail on the retrieval switch says so before spending twenty minutes on
 # the node engine.
@@ -236,11 +236,11 @@ for sweep in "${SWEEPS[@]}"; do
   # terminal's foreground group and leiningen pumps its own stdin into the project
   # subprocess, so a run that reads the tty takes SIGTTIN and the whole group stops
   # — 0% CPU and an empty log, indistinguishable from a hang.
-  # the stamp first, then append: a log has to say what it was run *against*, or a
+  # the header first, then append: a log has to say what it was run *against*, or a
   # count that moved because the tree moved is indistinguishable from one that moved
   # because a run skipped something.  Labelled with the sweep, so a per-config log
   # names its config on line 1 as well as the revision
-  revision_stamp "sweep $sweep" > "$log"
+  revision_header "sweep $sweep" > "$log"
   RUN_START=$start                                 # the clock a `lines` run times against
   env "${envv[@]}" lein test "$SELECTOR" < /dev/null 2>&1 | tee -a "$log" | ns_progress &
   child_pid=$!
@@ -294,7 +294,7 @@ fi
 # ---- did every run run the same suite? ---------------------------------------
 # A green set of runs has still said nothing if one of them ran fewer assertions than the
 # rest: a namespace that failed to load, a `deftest` that stood aside without saying so, a
-# gate that inherited a switch and measured nothing.  Every one of those is green.
+# check that inherited a switch and measured nothing.  Every one of those is green.
 # `config_expected_delta` in suite-configs.sh expects no shortfall anywhere, and says why
 # no configuration stands aside; any shortfall is reported here and fails the run.  Skipped when something
 # already failed — an error aborts the rest of its namespace, so the shortfall means

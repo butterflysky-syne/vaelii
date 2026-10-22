@@ -3,7 +3,7 @@
 (ns vaelii.examples-test
   "The worked examples, run against the KB they describe.
 
-  This is the gate that keeps `/reasoning` from becoming a brochure. Every card on that
+  This regression test keeps `/reasoning` from becoming a brochure. Every card on that
   page declares what the shipped ontology is supposed to answer, and the ontology is
   edited far more often than the page is — so a rule removed, a declaration dropped or a
   disjointness restated turns a test red here instead of leaving a card that confidently

@@ -3,7 +3,7 @@
 (ns vaelii.truncation-fuzz-test
   "A durable file cut at an arbitrary byte, over **every** byte.
 
-  The suite already pins the tears a crash is known to leave: a length prefix promising
+  The suite already tests the tears a crash is known to leave: a length prefix promising
   bytes nobody wrote (`vaelii.disk-kv-test`, `vaelii.disk-files-test`,
   `vaelii.disk-record-store-test`), a fixed lop off an index log
   (`vaelii.disk-backend-test`), half an entry stream (`vaelii.index-dump-test`), a chunk
@@ -30,10 +30,10 @@
   **`^:fuzz` runs only when named**, by `lein test-fuzz` and by `deep.yml` — no
   selector reaches it, `:all` included.  Not because it is slow the way `^:slow` is
   slow, but because it asks a question no configuration varies: `subjects` names its own
-  backends and pins the one switch a subject sets, so every row of the matrix would run
+  backends and forces the one switch a subject sets, so every row of the matrix would run
   the identical sweep.  What `^:slow` means is *deferred until something eventually runs it*; what
   this means is *once, not once per configuration* — see `CONTRIBUTING.md` §5.  The one
-  build that varies `vaelii.disk.tokens` pins it for itself rather than reading it, so no
+  build that varies `vaelii.disk.tokens` sets it for itself rather than reading it, so no
   matrix row moves the sweep.
 
   Cost lives in `scratch-dir`, and it is worth reading before concluding the sweep is
@@ -295,7 +295,7 @@
   2.7× on a RAM disk.  It is that a sharded sweep makes a green run print at `:error`.
 
   What it provokes is **benign and already handled**.  A close landing under a queued
-  auto-compaction is a window `vaelii.impl.disk.durability` documents and closes: its
+  auto-compaction is a race window `vaelii.impl.disk.durability` documents and closes: its
   registry check is the early skip, and the record store's compaction throws on its
   closed idx before a temp or a marker is written.  So the `auto-compact of
   disk-records … failed: Stream Closed` that four workers produce — and one worker over
@@ -364,7 +364,7 @@
   ;; weekly job and nowhere else — and a harness that quietly stopped working reads
   ;; exactly like one that passes.  The twin is the answer: the exhaustive half proves
   ;; the property, the sampled half proves the harness still runs, and only the sampled
-  ;; half runs on an ordinary commit.  Written as a scan rather than a roster so it
+  ;; half runs on an ordinary commit.  Written as a scan rather than a list so it
   ;; covers the sweep somebody adds next, which is the one nobody will remember.
   (doseq [^File f (->> (file-seq (File. "test"))
                        (filter #(.isFile ^File %))

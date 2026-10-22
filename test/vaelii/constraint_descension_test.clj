@@ -15,7 +15,7 @@
   and stays with the predicate that carries it.  Refusal-side constraints descend
   because tuples narrow; licences generate tuples and do not.  `inherit-test`'s
   `the-licence-stays-with-the-predicate-it-names` and `provers-test`'s
-  `the-walk-reads-hops-through-the-subsumption-fan` pin that, and nothing here may move
+  `the-walk-reads-hops-through-the-subsumption-fan` assert that, and nothing here may move
   them."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
@@ -31,11 +31,12 @@
   `(binding [checks/*assertive-arg-types?* true] ~@body))
 
 (defn- ex-type
-  "The `:type` on the ex-info a thunk throws, or nil if it does not throw.  Named rather
+  "The `:type` a write thunk meets: the ex-info it throws, or the argument conviction its
+  fact is held inert under (`tu/write-type`), or nil.  Named rather
   than `(thrown? ExceptionInfo …)`: a descension collapsing into a naming or arity
   refusal is exactly the regression a bare `thrown?` stays green through."
   [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (tu/write-type tu/*kb* f))
 
 (defn- orderings
   "Every arrival order of `xs`.  The multi-order cases below run over all of them rather
@@ -57,12 +58,12 @@
   (let [h (v/handle-of kb sentence ctx)]
     (boolean (and h (v/in? kb h)))))
 
-;; ---- entry point parity: the refusal ------------------------------------------
+;; ---- entry point parity: the conviction ---------------------------------------
 
-(tu/deftest-kb both-spellings-of-one-ill-typed-claim-are-refused
-  ;; The headline.  Without the descension the second assert stores a fact that answers
-  ;; the very query the first one was refused for.
-  ;; Pinned to the constraint reading: what descends is asserted here as a *refusal* of both
+(tu/deftest-kb both-spellings-of-one-ill-typed-claim-are-held
+  ;; The headline.  Without the descension the second assert stores a believed fact that
+  ;; answers the very query the first one was held inert for.
+  ;; Forced to the constraint reading: what descends is asserted here as a *conviction* of both
   ;; spellings, and with the entailment on a symbol argument is minted rather than convicted
   ;; (docs/argtypes.md).  The declaration read through the edge is the subject either way —
   ;; the entailment descends through the same edges, and argtype_entail_test holds that half.
@@ -70,6 +71,7 @@
    (tu/with-terms [person rock parentOf fatherOf TheRock1 Mary]
      (a-type kb person 'CxUniverse)
      (a-type kb rock 'CxUniverse)
+     (v/assert kb (list 'disjoint person rock) 'CxUniverse)
      (v/assert kb (list rock TheRock1) 'CxUniverse)
      (v/assert kb (list 'genl fatherOf parentOf) 'CxUniverse)
      (v/assert kb (list 'arg parentOf 1 person) 'CxUniverse)
@@ -77,10 +79,10 @@
          "the declaration's own predicate")
      (is (= :arg-type (ex-type #(v/assert kb (list fatherOf TheRock1 Mary) 'CxUniverse)))
          "and the sub-predicate, whose tuples are the same tuples")
-     (testing "the refusal names the predicate the constraint was declared of"
+     (testing "the conviction names the predicate the constraint was declared of"
        (is (re-find (re-pattern (str "declared of " parentOf))
-                    (:message (first (v/check kb (list fatherOf TheRock1 Mary)
-                                              'CxUniverse))))))
+                    (:message (tu/write-conviction kb (list fatherOf TheRock1 Mary)
+                                                   'CxUniverse)))))
      (testing "and a well-typed claim under either spelling still stores"
        (tu/with-terms [Fred]
          (v/assert kb (list person Fred) 'CxUniverse)
@@ -88,25 +90,27 @@
          (is (v/assert kb (list fatherOf Fred Mary) 'CxUniverse)))))))
 
 (tu/deftest-kb genlArg-descends-on-the-same-argument
-  ;; the constraint-only reading: the refusal is the subject
+  ;; the constraint-only reading: the conviction is the subject
   (tu/without-entailing
    (tu/with-terms [machine_t vehicle_t partType subPartType Rex]
      (a-type kb machine_t 'CxUniverse)
      (a-type kb vehicle_t 'CxUniverse)
+     (v/assert kb (list 'disjoint machine_t vehicle_t) 'CxUniverse)
      (v/assert kb (list 'genl subPartType partType) 'CxUniverse)
      (v/assert kb (list 'genlArg partType 1 machine_t) 'CxUniverse)
      (is (= :arg-genl (ex-type #(v/assert kb (list partType vehicle_t Rex) 'CxUniverse)))
-         "a kind outside the constraint's down-closure")
+         "a kind the taxonomy separates from the declared type")
      (is (= :arg-genl (ex-type #(v/assert kb (list subPartType vehicle_t Rex) 'CxUniverse)))
          "and the same kind under the sub-predicate"))))
 
 (tu/deftest-kb interArg-descends-by-riding-the-same-reader
-  ;; the constraint-only reading: the refusal is the subject
+  ;; the constraint-only reading: the conviction is the subject
   (tu/without-entailing
    (tu/with-terms [carnivore meat plant eats gnawsOn Rex Chunk]
      (a-type kb carnivore 'CxUniverse)
      (a-type kb meat 'CxUniverse)
      (a-type kb plant 'CxUniverse)
+     (v/assert kb (list 'disjoint meat plant) 'CxUniverse)
      (v/assert kb (list 'genl gnawsOn eats) 'CxUniverse)
      (v/assert kb (list 'interArg eats 1 carnivore 2 meat) 'CxUniverse)
      (v/assert kb (list carnivore Rex) 'CxUniverse)
@@ -160,16 +164,16 @@
 ;; ---- scoping: the constraint applies where the edge is visible ----------
 
 (tu/deftest-kb an-edge-a-writer-cannot-see-imports-no-constraint
-  ;; The `genl` edge is as much a piece of evidence as the declaration and the
-  ;; membership are, so it is held to the same vantage: a NAF check that convicted on
-  ;; an edge asserted out of sight would convict harder the less a context sees.
-  ;; Pinned for the reason above: the vantage rule is stated here as which context refuses.
+  ;; The `genl` edge is read from the writer's vantage, as the declaration and the
+  ;; membership are.  Forced to the constraint reading: the vantage rule is stated here
+  ;; as which context convicts.
   (tu/without-entailing
    (tu/with-terms [person rock parentOf fatherOf TheRock1 Mary CxLeft CxRight]
      (v/assert kb (list 'genlCx CxLeft 'CxUniverse) 'CxUniverse)
      (v/assert kb (list 'genlCx CxRight 'CxUniverse) 'CxUniverse)
      (a-type kb person 'CxUniverse)
      (a-type kb rock 'CxUniverse)
+     (v/assert kb (list 'disjoint person rock) 'CxUniverse)
      (v/assert kb (list rock TheRock1) 'CxUniverse)
      (v/assert kb (list 'arg parentOf 1 person) 'CxUniverse)
      ;; the edge is asserted in a sibling context CxLeft cannot see
@@ -181,29 +185,29 @@
 
 ;; ---- the three arrival orders ------------------------------------------
 
-(tu/deftest-kb an-edge-arriving-after-the-facts-reports-and-refuses-nothing
-  ;; The `arg` family has no retroactive reach — the conviction rests on the
-  ;; *absence* of a path to the constraint type, so there is no second sentex to weigh
-  ;; and a sweep would have to decide whether silence about a stored argument's type is
-  ;; a violation or merely silence (docs/taxonomy.md, "What each constraint does in each
-  ;; arrival order").  The descension inherits that verbatim rather than answering the
-  ;; question through a side entry point: the edge arriving last is the family's third
-  ;; ingredient, and it neither throws nor unstores.
-  ;; Pinned for the reason above.  The absence this rests on is exactly what the entailment
-  ;; reading fills in, so the two readings answer differently and this one names its own.
+(tu/deftest-kb an-edge-arriving-after-the-facts-holds-the-fact-it-convicts
+  ;; The edge arriving last is the family's third ingredient: `assert` of it does not
+  ;; throw, and the settle holds the fact it convicts inert, as the fact arriving after
+  ;; the edge is (docs/argtypes.md, "An argument that fails its declared type is held
+  ;; inert").  Forced to the constraint reading, under which a separated argument is
+  ;; convicted.
   (tu/without-entailing
    (tu/with-terms [person rock parentOf fatherOf TheRock1 Mary]
      (a-type kb person 'CxUniverse)
      (a-type kb rock 'CxUniverse)
+     (v/assert kb (list 'disjoint person rock) 'CxUniverse)
      (v/assert kb (list rock TheRock1) 'CxUniverse)
      (v/assert kb (list 'arg parentOf 1 person) 'CxUniverse)
      (let [fh (v/assert kb (list fatherOf TheRock1 Mary) 'CxUniverse)]
-       (v/clear-violations! kb)
+       (is (v/in? kb fh) "believed while no edge carries the declaration to it")
        (is (v/assert kb (list 'genl fatherOf parentOf) 'CxUniverse)
-           "the edge is admitted, not refused for what it retroactively convicts")
-       (is (v/in? kb fh) "and the fact it now convicts stays stored and believed")
-       (is (empty? (filter #(= :arg-type (:violation %)) (v/violations kb))))
-       (testing "what does change is that the next such claim is refused"
+           "the edge is admitted, not refused for what it convicts")
+       (is (not (v/in? kb fh)) "and the fact it convicts is held inert")
+       (is (= [[(list fatherOf TheRock1 Mary) :arg-type]]
+              (into [] (comp (filter #(= :inert-argument (:violation %)))
+                             (map (juxt :sentence (comp :type :detail))))
+                    (v/violations kb))))
+       (testing "and the next such claim is held alike"
          (tu/with-terms [TheRock2]
            (v/assert kb (list rock TheRock2) 'CxUniverse)
            (is (= :arg-type (ex-type #(v/assert kb (list fatherOf TheRock2 Mary)
@@ -236,7 +240,7 @@
 ;; it of manufactures knowledge — dogs may be larger than cats without every subkind
 ;; being much larger.  So the generative four stay exactly where they were stated.
 ;;
-;; `transitiveInArg` is pinned by `inherit-test`'s `the-licence-stays-with-the-predicate-
+;; `transitiveInArg` is asserted by `inherit-test`'s `the-licence-stays-with-the-predicate-
 ;; it-names` and `transitive` by `provers-test`'s `the-walk-reads-hops-through-the-
 ;; subsumption-fan`.  The other two are here, because a property that quietly began to
 ;; descend would not fail any test that only checks the refusing four.
@@ -286,7 +290,7 @@
 
 (defn- descension-clashes
   "The members' sentences of every standing `:arity-descension` pair, as a set of sets.
-  Both readings: with CxUniverse's roster declarations the bindings are `:monotonic` and the
+  Both readings: with CxUniverse's forced-monotonic declarations the bindings are `:monotonic` and the
   pair is a hard clash in `conflicts`, and on a bare KB they are `:default` and the pair
   is a dilemma in `contradictions`."
   [kb]
@@ -311,7 +315,7 @@
 (tu/deftest-kb a-signature-on-the-sub-predicate-must-match-the-supers
   ;; What the edge asserts is why: `(genl fatherOf parentOf)` says every `fatherOf` tuple
   ;; **is** a `parentOf` tuple, and tuples of different lengths are not the same tuples.
-  ;; Every member is on the forced-monotonic roster, so under CxUniverse the pair is a hard
+  ;; Every member is forced-monotonic, so under CxUniverse the pair is a hard
   ;; clash: stored and reported whichever of its three sentences arrives last.
   (let [ingredients [:edge :super-declaration :sub-declaration]]
     (doseq [last-in ingredients]
@@ -397,7 +401,7 @@
 
 (tu/deftest-kb a-membership-spelled-through-a-subtype-binds-no-length
   ;; A binding is read by its own functor: `(myBinPred fatherOf)` is a membership off the
-  ;; forced-monotonic roster, and a type `genl` edge is defeasible, so neither is a
+  ;; forced-monotonic set, and a type `genl` edge is defeasible, so neither is a
   ;; ground that goes OUT only by retraction (docs/taxonomy.md, "Arity").
   (tu/with-terms [myBinPred fatherOf A B C]
     (v/assert kb (list 'genl myBinPred 'binary_predicate) 'CxUniverse)

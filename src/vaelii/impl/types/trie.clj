@@ -88,7 +88,7 @@
 ;; A frozen trie holds its leaf columns in **one of two places**, and that is the whole
 ;; residency split, and the walk is the half that must never page.  `fleaf-off` /
 ;; `fhandles` are heap `int[]` after a `t-compact!`, and `mleaf-off` / `mhandles` —
-;; `IntBuffer` views of an mmap'd snapshot section — after `snapshot-install!` maps one.
+;; `IntBuffer` slices of an mmap'd snapshot section — after `snapshot-install!` maps one.
 ;; The **skeleton** (`fcounts` `foffsets` `fedge-tok` `fedge-tgt`) is heap either way,
 ;; because the lookup walk reads it at every frontier node and a page fault there would
 ;; resurrect the leading-variable fan pathology at disk latency.  The leaves are read once,
@@ -228,7 +228,7 @@
   (-child-of [this node tok-val] (-get-child this node (tok/token-id dict tok-val)))
 
   ;; A node's edges as `[tokens targets]`, two parallel `int[]`s sorted by token, or nil
-  ;; for a leaf — the shape-independent view compaction and subtree-freeing want.  Narrow
+  ;; for a leaf — the shape-independent form compaction and subtree-freeing want.  Narrow
   ;; nodes hand back their own live arrays (no copy, so a caller must not mutate them);
   ;; a wide node's map is materialized and sorted, which is why the read paths that do not
   ;; need an order (`-edges`) do not come through here.  Mutable-only: writes thaw first.
@@ -375,7 +375,7 @@
           (let [nodes (persistent! nodes)                        ; n+1 entries: root..terminus
                 tids  (persistent! tids)
                 lp    (-leaf-postings this (nth nodes n))]
-            ;; gated on the handle being at the leaf: the counts below come down without
+            ;; runs only when the handle is at the leaf: the counts below come down without
             ;; looking, and a node that reaches zero is freed with its whole subtree, so a
             ;; stray remove — a handle never stored here, or already taken out — would cut
             ;; live nodes and every sentex under them.  One `pcontains?` makes it a no-op.

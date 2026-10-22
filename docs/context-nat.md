@@ -9,7 +9,7 @@
   never a context → [nat.md](nat.md); the `genlCx` closure the produced edges feed →
   [contexts.md](contexts.md); the lexical conventions the roles rest on →
   [naming.md](naming.md).
-- **Assumes:** sentex, context, `genlCx`, reification, the `termOfUnit` map →
+- **Assumes:** sentex, context, `genlCx`, reification, the `natFormula` map →
   [glossary.md](glossary.md), [nat.md](nat.md), [contexts.md](contexts.md).
 
 A context is normally a `Cx`-prefixed name — `CxWell`, `CxUniverse`. A **reified-NAT
@@ -33,7 +33,7 @@ constant, whatever is declared about its head:
 ```clojure
 (assert kb '(holiday NewYear) '(CxTimeFn CxMonad (DatetimeFn "2000")))
 ;; stored: the sentex's context slot is a bare symbol  cx/a…
-;; map:    (termOfUnit cx/a… (CxTimeFn CxMonad (DatetimeFn "2000")))
+;; map:    (natFormula cx/a… (CxTimeFn CxMonad (DatetimeFn "2000")))
 ```
 
 The write reads no declaration (`nat/context-application?`), so the stored set is a
@@ -53,7 +53,7 @@ naming that constant answers it, and a read naming the application refuses until
 CxUniverse believes the declaration.
 
 The check reads the declaration in CxUniverse, the context every reader reads the slot's
-`termOfUnit` map in ([nat.md](nat.md#what-reification-does-not-cover)). A declaration
+`natFormula` map in ([nat.md](nat.md#what-reification-does-not-cover)). A declaration
 stated in CxUniverse or in a context CxUniverse sees admits the slot. A
 declaration stated in an unwired context or in a spec of CxUniverse admits no read, and
 an `except` or a denial at CxUniverse hides the declaration (`res/supporter-visible?`). An
@@ -95,7 +95,7 @@ sweep below).
 
 ### One constant per expression per namespace
 
-The `termOfUnit` map is 1:1 **within** a namespace. One expression written in a context
+The `natFormula` map is 1:1 **within** a namespace. One expression written in a context
 slot and in argument position maps twice: to a `cx/` constant `K′` from the slot, and to a
 `nat/` constant `K` from the argument when its head is a `reifiable_function`
 ([nat.md](nat.md)). Every read from expression to constant takes the namespace it wants
@@ -151,7 +151,7 @@ reaches the `genlCx` closure and posts the re-check triggers), then a JTMS justi
 under the `contextArgSubrelation` informant. It is **never a premise anyone asserted**.
 
 Justified is the whole point: the edge belief-follows for free. Retract a context (its
-`termOfUnit` map), the declaration, or — for the stored-fact oracle below — the `R`-fact,
+`natFormula` map), the declaration, or — for the stored-fact oracle below — the `R`-fact,
 and the ordinary JTMS relabel withdraws the edge and `sees?` flips. Nothing hunts it down,
 and the taxonomy's depth/SCC potential and witness support are the derivation path's, not a
 second mechanism ([contexts.md](contexts.md), the consumers).
@@ -178,8 +178,8 @@ comparator dimension never needs and a stored-fact one cannot do without. A fact
 a context that already exists creates no pair and sweeps nothing, so its cost does not grow
 with the context's siblings (`lein perf`'s `context-nat-existing-context`); a mint costs one
 oracle call per sibling. The maintenance hook sits beside the correspondence
-reconcile at the tail of `assert` and behind the same gate, `nat/any-reified-constants?`:
-the in-memory `reifiable_function` marks, then one O(1) `termOfUnit` functor count, since a
+reconcile at the tail of `assert` and behind the same presence check, `nat/any-reified-constants?`:
+the in-memory `reifiable_function` marks, then one O(1) `natFormula` functor count, since a
 context slot mints with no declaration. A KB that has minted nothing pays that count and
 neither the hook nor the `any-context-subrelations?` index read.
 
@@ -194,7 +194,7 @@ oracle:
 - a **believed stored `(R a b)` fact**, when no comparator applies.
 
 A comparator answer is a pure function of the two expressions, already carried by the
-`termOfUnit` antecedents, so it contributes no extra supporter; a stored fact contributes
+`natFormula` antecedents, so it contributes no extra supporter; a stored fact contributes
 its own handle, so defeating it withdraws the edge.
 
 ## The calendar dimension
@@ -241,8 +241,8 @@ constructor: see [What this does not cover](#what-this-does-not-cover).
 
 ## Orphan collection: a context is a place as well as a name
 
-A context NAT is collected at the gate an object NAT is ([nat.md](nat.md), "Rename and
-remove") — `remove-orphaned-nats!` on the `retract!` / `edit!` sweep, over the region the
+A context NAT is collected by the same sweep an object NAT is ([nat.md](nat.md), "Rename
+and remove") — `remove-orphaned-nats!` on the `retract!` / `edit!` sweep, over the region the
 teardown removed. The liveness question is what differs, because a `cx/` constant is
 somewhere sentexes *are* as well as something sentences name. It is orphaned when all
 three of these are empty:
@@ -255,7 +255,7 @@ Stored, not believed, for the reason an object NAT's uses are counted that way: 
 fact still sits in the slot and a relabel can restore it.
 
 **A computed edge is not one of the three.** The structural edges above are derived from
-the two contexts' own `termOfUnit` maps, so reading one as a reference makes an ordered
+the two contexts' own `natFormula` maps, so reading one as a reference makes an ordered
 pair immortal — each end held up by an edge read off the other. The discriminant is
 **authorship**, as it is for an object NAT's materialized result types: the producer
 deduces under the `contextArgSubrelation` informant and nothing else does, so an edge that
@@ -264,7 +264,7 @@ An edge somebody **asserted** is a premise and holds its contexts up; one a rule
 carries that rule's informant and holds them up too.
 
 The map is a context's whole bookkeeping — the mint writes no result types for one — so
-the collection retracts the `termOfUnit` and stops there. The computed edges are derived,
+the collection retracts the `natFormula` and stops there. The computed edges are derived,
 so withdrawing that one premise takes them through the ordinary dependency-directed sweep,
 and *their* removal is what puts the far end of each edge in the next round's candidate
 set. A chain of ordered contexts collapses by the rule that collapsed the first, and an
@@ -288,22 +288,22 @@ Each candidate costs one **`count-in-context`**, an O(1) secondary-root read on 
 backend ([indexing.md](indexing.md)), and — only when that is zero — one inverted-term-index
 read over the constant's own footprint. So a live context holding a million facts costs a
 count rather than a million record fetches. The sweep sits behind
-`nat/any-reified-constants?`, so a KB that has minted no constant pays one `termOfUnit`
+`nat/any-reified-constants?`, so a KB that has minted no constant pays one `natFormula`
 functor count per teardown and nothing else.
 
 Nothing here can reach a context that is not a `cx/` constant. The three **query contexts**
 ([contexts.md](contexts.md)) are `Cx…` names for a way of reading, refused at every write
-entry point and never minted, so no `termOfUnit` maps one and the candidate set cannot hold one —
+entry point and never minted, so no `natFormula` maps one and the candidate set cannot hold one —
 a query holding one holds a symbol the sweep cannot name. An **agent or channel** context
 ([koinii.md](koinii.md)) is a `Cx…` name computed from an id, in the same position. In a
 **fork** the sweep runs through the ordinary `retract!`, which tombstones an inherited
 record rather than deleting it, so a context the fork empties is collected in the fork's
-view and stands in the base ([overlay.md](overlay.md), base immutability).
+own contents and stands in the base ([overlay.md](overlay.md), base immutability).
 
 ### Re-minting after a sweep
 
 Re-minting a swept expression dedups to **one** constant, exactly as it does when nothing
-was collected: the mint's dedup probe reads the `termOfUnit` map, the map is gone, so a
+was collected: the mint's dedup probe reads the `natFormula` map, the map is gone, so a
 fresh constant is minted and every later occurrence of the expression finds that one. The
 KB that results is indistinguishable from one the sweep never touched — one constant per
 expression, the same computed edges, the same answers through the compound context at
@@ -341,7 +341,7 @@ which is the only spelling the map is keyed by.
   `context-for-check` (the context `check` reads a slot as, minting nothing),
   `in-namespace?` (the per-namespace split of the map), the `reified-context-symbol?` /
   `reified-object-symbol?` discriminants, and the orphan question's context arm —
-  `orphan?`'s extent gate, `computed-genlCx-edge?` (the authorship test), and
+  `orphan?`'s extent check, `computed-genlCx-edge?` (the authorship test), and
   `orphans-named-by`'s reading of a removed sentex's context slot.
 - `vaelii.impl.naming` — `context?` (the `cx/` namespace).
 - `vaelii.core` — the context-arg reify in `assert` and the read entry points (`ist-goal`),
@@ -350,7 +350,7 @@ which is the only spelling the map is keyed by.
 - `vaelii.impl.nat-maintenance` — the producer's call site on the assert path
   (`reconcile-assert`), its revival re-run on `retract!` / `edit!`
   (`reconcile-revivals!`), the merges a computed or revived edge licenses, and
-  `collect-orphans!`, which collects both kinds of constant at one gate.
+  `collect-orphans!`, which collects both kinds of constant in one sweep.
 - `vaelii.impl.wff` — the `contextArgSubrelation` well-formedness check.
 - `vaelii.impl.context-nat` — the producer, the comparator registry, and
   `functions-ordered-by`, the evidence-arrived-last arm of the stored-fact oracle.

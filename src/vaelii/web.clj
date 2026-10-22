@@ -38,15 +38,17 @@
 ;; ---- extensions ---------------------------------------------------------
 ;;
 ;; A library adds pages and panels to the browser by registering an extension; the
-;; browser names no extension.  A handler receives `view` — the value the browser builds
-;; per request, opaque but for `:kb` (the KB it reads) and `:sandbox` (this session's
-;; scratch context) — and renders with the helpers below.  docs/web.md, "Extensions".
+;; browser names no extension.  A handler receives `env`, the render env the browser
+;; builds per request, which is opaque but for `:kb` (the KB it reads) and `:sandbox`
+;; (this session's scratch context), and renders with the helpers below.  docs/web.md,
+;; "Extensions".
 
 (defn register-extension
   "File `ext` under `ext-name`, a lower-case keyword, replacing any extension of that
   name; answers the name.  Keys, all optional: `:routes` (under `/ext/<name>/`, methods
-  `:get` `:post` `:write`, each `(fn [view req] …)`), `:term-panel`
-  (`(fn [view term] …)`), `:on-start` (`(fn [])`), `:stylesheet` and `:script`
+  `:get` `:post` `:write`, each `(fn [env req] …)`), `:menu` (`[[label href] …]`, hrefs
+  under the same prefix), `:term-actions` and `:term-panel` (`(fn [env term] …)`, beside
+  the heading and at the foot), `:on-start` (`(fn [])`), `:stylesheet` and `:script`
   (classpath resources).  `vaelii.browser.web/register-extension` has the contract."
   [ext-name ext]
   (web/register-extension ext-name ext))
@@ -57,9 +59,10 @@
   (web/unregister-extension ext-name))
 
 (defn local-kb
-  "The in-process KB behind `view`, or nil when the browser reads a remote daemon."
-  [view]
-  (web/local-kb view))
+  "The in-process KB behind the render env `env`, or nil when the browser reads a remote
+  daemon."
+  [env]
+  (web/local-kb env))
 
 (defn read-form
   "Read a request parameter as EDN, or nil when it does not read — never a throw, since
@@ -70,23 +73,23 @@
 (defn render-form
   "A sentence or term as the browser draws it: every atomic subterm a role-coloured
   link to its term page."
-  [view form]
-  (web/render-form view form))
+  [env form]
+  (web/render-form env form))
 
 (defn term-link
   "A role-coloured link to `term`'s page."
-  [view term]
-  (web/term-link view term))
+  [env term]
+  (web/term-link env term))
 
 (defn consequences
   "The panel of what `batch` (`{:add [[sentence context] …] :remove [handle …]}`) would
-  do, previewed over the view's KB under `heading`.  It asserts and rolls back, so call
+  do, previewed over the render env's KB under `heading`.  It asserts and rolls back, so call
   it from a `:write` route."
-  [view heading batch]
-  (web/consequences view heading batch))
+  [env heading batch]
+  (web/consequences env heading batch))
 
 (defn stored-sentexes
   "What a write stored — a row per sentex, then what followed from them — from
   `vaelii.core/edit-with-consequences!`'s answer."
-  [view result]
-  (web/stored-sentexes view result))
+  [env result]
+  (web/stored-sentexes env result))

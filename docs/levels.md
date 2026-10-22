@@ -70,7 +70,7 @@ storage one, which is why levels 2–5 match the goal as written.
 
 `core/sentexes-matching` — the public believed-literal match — **is** level 2. It calls the same
 `res/raw-match`: one literal context, no subtype fan-out, unification, the symmetric
-mirror, belief-filtered. So a `sentexes-matching` pinning an argument *after* a variable
+mirror, belief-filtered. So a `sentexes-matching` binding an argument *after* a variable
 (`(parentOf ?x Tom)`) shares `match-one`'s argument-root divert — it reads the
 predicate-scoped argument root (the node `[parentOf 2 Tom]`) instead of fanning
 the whole first-argument column — while a fully-ground or left-prefixed query keeps the trie,
@@ -95,7 +95,7 @@ about storage:
   ([equality.md](equality.md)).
 
 `sentexes-matching` returns the stored sentex records; level 2 wraps each in the uniform result
-map. Everything else is shared, so the two cannot drift — `levels_test` pins it: the
+map. Everything else is shared, so the two cannot drift — `levels_test` asserts it: the
 `sentexes-matching` core equals level 2 over a spread of goal shapes, and the `except` filter and
 goal-rewrite are exactly what distinguishes them.
 
@@ -135,7 +135,7 @@ is reachable at the next. Two joints are not like that, and naming them is half 
 naming the levels is for.
 
 **1 → 2 narrows.** Level 1 is candidate retrieval and never looks at the goal's
-arguments; level 2 unifies. So for any goal that pins an argument, level 2 is a
+arguments; level 2 unifies. So for any goal that binds an argument, level 2 is a
 *subset* of level 1 — which is one of the two reasons `escalate` floors at 2.
 
 **3 → 4 can drop an answer.** Level 4 is `res/matches-visible`, which reads the
@@ -210,6 +210,16 @@ A floor is the coarse half of that guard and the only half a constant can supply
 reported here at level 2 while `ask` denies it — see the monotonicity section above.
 That depends on the KB rather than on the level, so no floor rules it out.
 
+**A deadline.** `(v/escalate kb goal context floor {:max-ms n})` bounds the climb
+(`escalate-opt-keys`). The deadline is checked between levels and inside level 7's
+search, and inside a lower level only where one of its walks reads `budget/*deadline*`;
+otherwise one level's probe runs to its end. A climb stopped before any level answered
+comes back as `{:level nil :status :timeout :tried [...]}`, with `:tried` ending at the level
+it stopped in. That is a different result from `{:level nil}` without a status, which
+means every level ran and none answered. A hit found in time is the ordinary result;
+pulling more of level 7's `:results` after the deadline ends the seq there. The
+browser's example cards run under one (`/reasoning`).
+
 **`explain-levels`** runs all eight and reports what each yields. The level at which the
 count first rises is the mechanism the answer depends on:
 
@@ -221,6 +231,15 @@ count first rises is the mechanism the answer depends on:
 ```
 
 It counts, so unlike `lookup` it realizes every level fully. It is a diagnostic.
+
+Level 5 adds nothing for a goal `(P ?x ?y)` over a `transitive` `P` with both arguments
+open: the transitive prover declines it, so the closure's derived pairs are never
+enumerated ([taxonomy.md](taxonomy.md#predicate-metadata)), and levels 5–7 count the
+stored pairs alone. Each such row carries `:unenumerated [P]`
+(`levels_test/explain-levels-names-an-open-transitive-goal-at-the-levels-that-run-the-closure`).
+`escalate` carries the key when the probe of the level it stopped at recorded one; over
+stored `P` pairs the climb stops at level 2 and carries none
+([anytime.md](anytime.md#where-the-collector-lives)).
 
 **`levels`** returns the table as data (`:level :name :below :adds`).
 
@@ -247,11 +266,11 @@ Three things make that true:
 - **Level 7 streams a search that has no bound.** The recursive chainer is a
   `loop`/`recur` that runs to completion, so it cannot itself be lazy: it holds a search
   scope open for its length (`observe/with-search-scope`), and a lazy seq escaping that
-  scope would realize later with the pin and the closure memo gone. `res/prove-seq`
+  scope would realize later with the held values and the closure memo gone. `res/prove-seq`
   resolves that without a second engine — the chainer is already *resumable*, so it runs
   capped at one result, yields it, and resumes from the stack it left when the consumer
   asks again. Each pull is one eager segment inside its own scope, which is sound because
-  a query mutates no belief for a pin to hold still against.
+  a query mutates no belief for the held values to hold still against.
 
   This matters most at the level where it is least affordable. Level 7 is unbounded — it
   terminates on the data, not on a depth, under the DFS's two guards (the per-path goal

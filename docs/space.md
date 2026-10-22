@@ -55,14 +55,14 @@ Six **derived** predicates each name a disjunction of base relations:
 
 `qcn-kb/network` reads the KB in and the prover answers goals by entailment, both as
 [qcn.md](qcn.md) describes. So `(nonTangentialProperPart A B)` and
-`(nonTangentialProperPart B C)` entail `(nonTangentialProperPart A C)` — the table pins
+`(nonTangentialProperPart B C)` entail `(nonTangentialProperPart A C)` — the table narrows
 the pair to `#{:ntpp}` — and with it the weaker `(partOfRegion A C)`,
 `(properPartOfRegion A C)`, `(regionOverlaps A C)` and `(regionConnectedTo A C)`, whose
 denotations are supersets. On the diagonal, `(partOfRegion ?x ?x)` answers every region
 and `(properPartOfRegion ?x ?x)` none.
 
 `core/possible-relations kb :rcc8 ctx a b` exposes the network directly — the base
-relations still allowed between two regions, a singleton when path consistency pinned
+relations still allowed between two regions, a singleton when path consistency determined
 one, the whole universe when nothing is known, `#{}` when the network is unsatisfiable.
 `core/qualitative-network kb :rcc8 ctx` hands back the whole tightened network with its
 node list and `:consistent?` verdict.
@@ -170,7 +170,7 @@ Four **derived** predicates each constrain one axis and leave the other open:
 
 None contains `:eq`, so none holds of a thing and itself. A derived predicate is what
 survives a chain that disagrees on one axis: `(frontLeftOf A B)` with `(behindLeftOf B D)`
-pins the left-right axis and loses the front-back one, leaving three relations, no base
+determines the left-right axis and loses the front-back one, leaving three relations, no base
 one entailed, and `(leftwardOf A D)` entailed.
 
 `sameRelativePositionAs` is a third spelling of coincidence beside the compass's
@@ -240,8 +240,8 @@ itself.
 
 Two mid-range classes usually compose to several — `close ∘ close` is
 `{co, very-close, close, near}` — because a class is an interval and the triangle
-inequality relates intervals loosely. Only a chain through the zero class pins a distance
-down: `(coLocatedWith A B)` with `(closeTo B D)` entails `(closeTo A D)` exactly, and
+inequality relates intervals loosely. Only a chain through the zero class determines a
+distance: `(coLocatedWith A B)` with `(closeTo B D)` entails `(closeTo A D)` exactly, and
 nothing else does short of several facts about one pair intersecting.
 
 So the use of the calculus is **refutation and consistency-checking** rather than pinpoint
@@ -283,8 +283,8 @@ plane and facts about the world, stated in two contexts neither of which sees th
 never meet. A spatial relation between two predicates is refused `:arg-type` under the
 constraint-only reading. Under the entailing reading, the default, it is stored, and the
 predicate's `:monotonic` memberships defeat the `spatial` memberships it entails
-([argtypes.md](argtypes.md#an-argument-constraint-only-adds-support)). `space_test/the-four-calculi-share-no-predicate-and-type-every-argument-spatial`
-pins the fifty declarations and their argument types.
+([argtypes.md](argtypes.md#an-argument-constraint-derives-try-assert-refuses-a-separated-argument)). `space_test/the-four-calculi-share-no-predicate-and-type-every-argument-spatial`
+asserts the fifty declarations and their argument types.
 
 Each prover is **opt-in**: `vaelii.core/add-reasoner` registers it by name (`:rcc8`,
 `:cardinal`, `:relative`, `:distance`), and until then a KB stores and retrieves the facts

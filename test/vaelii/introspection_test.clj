@@ -25,17 +25,17 @@
 (tu/deftest-kb a-derived-conclusion-that-breaks-an-argument-constraint-is-dropped
   ;; The argument constraints hold of derived content too, but the derivation path
   ;; cannot throw — a fixpoint that aborted mid-run would make belief depend on firing
-  ;; order.  An `arg` conviction rests on the *absence* of a path from the
-  ;; argument's types to the constraint type, so there is no second believed sentex to
-  ;; weigh it against and nothing for `settle` to arbitrate: the conclusion is dropped
-  ;; and lands here.  (Disjointness, functionality and asymmetry each *do* name an
-  ;; opposing sentex, and are arbitrated instead — see `soundness_test`.)
-  ;; Pinned to the constraint reading, which is the reading the conviction-by-absence above
-  ;; belongs to.  With the entailment on the conclusion is admitted and the type minted.
+  ;; order.  Under the constraint reading an `arg` conviction derives no membership, so
+  ;; there is no derived sentex for `settle` to weigh against the held one: the
+  ;; conclusion is dropped and lands here.  (Disjointness, functionality and asymmetry
+  ;; each name an opposing sentex, and are arbitrated instead — see `soundness_test`.)
+  ;; Forced to the constraint reading.  With the entailment on the conclusion is admitted
+  ;; and the type minted.
   (tu/without-entailing
    (tu/with-terms [person rock parentOf looksLike Boulder Muffet]
      (v/assert kb (list 'genl person 'thing) 'CxUniverse)
      (v/assert kb (list 'genl rock 'thing) 'CxUniverse)
+     (v/assert kb (list 'disjoint person rock) 'CxUniverse)
      (v/assert kb (list 'arg parentOf 1 person) 'CxUniverse)
      (v/assert kb (list rock Boulder) 'CxUniverse)
      (v/assert kb (fwd [(list looksLike '?x)] (list parentOf '?x Muffet)) 'CxUniverse)
@@ -53,16 +53,35 @@
            (is (map? detail))
            (is (string? (:message detail)))))))))
 
+(tu/deftest-kb a-dropped-conclusion-is-placed-once-the-separation-convicting-it-leaves
+  ;; The drop is re-asked when the separation or the separating membership it was
+  ;; convicted on is retracted, so the KB without either holds the conclusion whichever
+  ;; arrived first.  Forced to the constraint reading, under which the drop is recorded.
+  (tu/without-entailing
+   (doseq [lift [:disjoint :membership]]
+     (tu/with-terms [person rock parentOf looksLike Boulder Muffet]
+       (v/assert kb (list 'genl person 'thing) 'CxUniverse)
+       (v/assert kb (list 'genl rock 'thing) 'CxUniverse)
+       (let [dh (v/assert kb (list 'disjoint person rock) 'CxUniverse)
+             _  (v/assert kb (list 'arg parentOf 1 person) 'CxUniverse)
+             mh (v/assert kb (list rock Boulder) 'CxUniverse)]
+         (v/assert kb (fwd [(list looksLike '?x)] (list parentOf '?x Muffet)) 'CxUniverse)
+         (v/assert kb (list looksLike Boulder) 'CxUniverse)
+         (is (not (v/ask? kb (list parentOf Boulder Muffet) 'CxUniverse)) (name lift))
+         (v/retract! kb (if (= lift :disjoint) dh mh))
+         (is (v/ask? kb (list parentOf Boulder Muffet) 'CxUniverse) (name lift)))))))
+
 (tu/deftest-kb the-violations-ledger-accumulates-across-chaining-runs
-  ;; The ledger **accumulates**, each entry stamped with its run id (`chain-stats`
+  ;; The ledger **accumulates**, each entry tagged with its run id (`chain-stats`
   ;; counts runs), and `clear-violations!` is the one way to empty it.  Clearing at the
   ;; start of each chaining run instead would make a bulk load's drops unobservable by
   ;; its end — assert #38 erasing what #37 dropped.
-  ;; Pinned for the reason above: the entries counted here are arg convictions.
+  ;; Forced for the reason above: the entries counted here are arg convictions.
   (tu/without-entailing
    (tu/with-terms [person rock parentOf looksLike Boulder Muffet Other]
      (v/assert kb (list 'genl person 'thing) 'CxUniverse)
      (v/assert kb (list 'genl rock 'thing) 'CxUniverse)
+     (v/assert kb (list 'disjoint person rock) 'CxUniverse)
      (v/assert kb (list 'arg parentOf 1 person) 'CxUniverse)
      (v/assert kb (list rock Boulder) 'CxUniverse)
      (v/assert kb (fwd [(list looksLike '?x)] (list parentOf '?x Muffet)) 'CxUniverse)
@@ -72,7 +91,7 @@
        (v/assert kb (list rock Other) 'CxUniverse)
        (is (= 1 (count (v/violations kb))))
        (is (integer? (:run (first (v/violations kb))))
-           "stamped with the run that dropped it, so \"current\" is decidable"))
+           "tagged with the run that dropped it, so \"current\" is decidable"))
      (testing "clear-violations! empties it"
        (v/clear-violations! kb)
        (is (empty? (v/violations kb)))))))
@@ -88,6 +107,8 @@
    (testing "an arg violation"
      (tu/with-terms [parentOf person rock looksLike Boulder Muffet]
        (v/assert kb (list 'genl rock 'thing) 'CxUniverse)
+       (v/assert kb (list 'genl person 'thing) 'CxUniverse)
+       (v/assert kb (list 'disjoint person rock) 'CxUniverse)
        (v/assert kb (list 'arg parentOf 1 person) 'CxUniverse)
        (v/assert kb (list rock Boulder) 'CxUniverse)
        (v/assert kb (fwd [(list looksLike '?x)] (list parentOf '?x Muffet)) 'CxUniverse)
@@ -98,7 +119,7 @@
    ;; No `:functional` case here on purpose.  `functional` is mid-redesign: a clash
    ;; between two *symbol* values now derives `(equals V1 V2)` and merges them rather
    ;; than being rejected (docs/equality.md), so a derived second value is not a
-   ;; violation at all — only a clash between non-symbols is.  Pinning either
+   ;; violation at all — only a clash between non-symbols is.  Asserting either
    ;; reading here would just be a hostage to that work.
 
    (testing "a derived genl edge that would cycle the taxonomy"

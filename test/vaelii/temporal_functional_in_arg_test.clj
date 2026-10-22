@@ -15,7 +15,7 @@
   whether the year's fact was written before January existed.
 
   The reconcilers run from one place, the settle's `special/drain-context-moves!`,
-  whichever of the three entry points stored the edge.  What the tests here pin is the *equivalence*: a computed edge and a
+  whichever of the three entry points stored the edge.  The tests here assert the *equivalence*: a computed edge and a
   stated one reach the same beliefs, in every order the ingredients can arrive in.
 
   The mark is stated **in the year context** throughout rather than in CxUniverse.  A
@@ -103,7 +103,7 @@
 (tu/deftest-kb a-stated-edge-over-the-same-shape-reaches-the-same-belief
   ;; The reporter's repair receipt, kept as the equivalence it was always measuring.  It
   ;; localized the defect by asserting one otherwise-irrelevant *stated* edge and
-  ;; watching the owed merge appear; what it pins now is that there is nothing left for
+  ;; watching the owed merge appear; it now asserts that there is nothing left for
   ;; a stated edge to repair — the computed edge already reached the belief the stated
   ;; one reaches, and asserting one afterwards changes nothing.
   (dimension! kb)

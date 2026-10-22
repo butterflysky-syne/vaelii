@@ -6,7 +6,7 @@
   re-runs it is `vaelii.impl.settle`, and the stratification the loop relies on is
   checked at assert time by `checks/check-stratified`.
 
-  Each test pins one decision from [docs/exceptions.md](../../docs/exceptions.md)
+  Each test asserts one decision from [docs/exceptions.md](../../docs/exceptions.md)
   and carries a comment naming it.  The shape under test is
 
     (exceptWhen <query> (set/defaultRule (implies <antecedents> <consequent>)))
@@ -82,42 +82,16 @@
       (testing "a defeasible rule confers :default"
         (is (= :default (v/defeat-class kb h)))))))
 
-;; ---- 3. incremental removal is garbage collection, not defeat ------------
-;; DECISION (Garbage collection, not defeat): "a blocked justification is simply
-;; invalid, the conclusion is unsupported, and the existing dependency-directed
-;; sweep **deletes** it."  Belief alone would not pin this — a *defeated* datum
-;; also fails `query` while staying stored — so storage is asserted directly.
+;; ---- 3. a holding exception stores the conclusion with a guard defeat ----
+;; DECISION (design rulings 25 and 30): a blocker of either class is one a placed defeat
+;; hides, so the firing is stored, in either order, with `(defeat (sentexHandle F))`
+;; resting on the blocker at the firing's own context, and the read walk decides belief.
 
-(tu/deftest-kb asserting-the-exception-later-deletes-the-conclusion-from-the-store
-  (tu/with-terms [bird penguin flies Opus CxBird]
-    (v/assert kb (except-rule (list penguin '?b)
-                              [(list bird '?b)] (list flies '?b))
-              CxBird)
-    (v/assert kb (list bird Opus) CxBird)
-    (let [h (v/handle-of kb (list flies Opus) CxBird)]
-      (testing "the conclusion exists before the exception arrives"
-        (is (some? h))
-        (is (seq (v/sentexes-matching kb (list flies Opus) CxBird))))
-      (v/assert kb (list penguin Opus) CxBird {:strength :monotonic})
-      (testing "belief is gone"
-        (is (empty? (v/sentexes-matching kb (list flies Opus) CxBird))))
-      (testing "and so is the storage — swept, not merely disbelieved"
-        (is (nil? (v/sentex kb h))
-            "exceptWhen sweeps rather than defeats, so the sentex record must be gone")
-        (is (nil? (v/handle-of kb (list flies Opus) CxBird))
-            "the conclusion was swept, so handle-of must not still find it"))
-      (testing "its justification went with it"
-        (is (empty? (v/supporting-justifications kb h)))))))
-
-;; DECISION (design ruling 25): the sweep is for a `:monotonic` blocker.  A `:default`
-;; blocker is one a placed defeat can hide, so the firing is stored, in either order, with
-;; `(defeat (sentexHandle F))` resting on the blocker at the firing's own context, and the
-;; read walk decides belief.
-
-(tu/deftest-kb a-default-blocker-stores-the-conclusion-with-a-defeat-resting-on-it
-  (doseq [blocker-first? [false true]]
+(tu/deftest-kb a-blocker-stores-the-conclusion-with-a-defeat-resting-on-it
+  (doseq [strength [:monotonic :default]
+          blocker-first? [false true]]
     (tu/with-terms [bird penguin flies Opus CxBird]
-      (let [block #(v/assert kb (list penguin Opus) CxBird)
+      (let [block #(v/assert kb (list penguin Opus) CxBird {:strength strength})
             ph    (when blocker-first? (block))
             _     (v/assert kb (except-rule (list penguin '?b) [(list bird '?b)] (list flies '?b))
                             CxBird)
@@ -125,9 +99,10 @@
             ph    (or ph (block))
             h     (v/handle-of kb (list flies Opus) CxBird)
             d     (when h (v/handle-of kb (list 'defeat (list 'sentexHandle h)) CxBird))]
-        (testing (str "blocker first: " blocker-first?)
+        (testing (str strength " blocker first: " blocker-first?)
           (is (some? h))
           (is (some? d))
+          (is (seq (v/supporting-justifications kb h)) "the firing's justification stays")
           (is (empty? (v/sentexes-matching kb (list flies Opus) CxBird)))
           (is (some #{ph} (mapcat :antecedents (v/supporting-justifications kb d))))
           (v/retract! kb ph)
@@ -159,12 +134,12 @@
                  (map (juxt :antecedents :informant) (v/supporting-justifications kb h)))
               "revived by re-derivation, so it carries a fresh justification"))))))
 
-;; ---- 5. the sweep cascades ----------------------------------------------
-;; DECISION (Garbage collection, not defeat): the sweep "**deletes** it along with
-;; everything solely resting on it."  A second, unexcepted rule builds on the
-;; excepted conclusion; blocking the first must take the second's output too.
+;; ---- 5. the defeat reaches the consequences -----------------------------
+;; A second, unexcepted rule builds on the excepted conclusion; the guard defeat of the
+;; first hides the second's output too, since every route to it rests on the defeated
+;; conclusion.
 
-(tu/deftest-kb sweeping-an-excepted-conclusion-takes-its-consequences-with-it
+(tu/deftest-kb a-defeated-conclusion-hides-its-consequences-with-it
   (tu/with-terms [bird penguin flies airborne Opus CxBird]
     (v/assert kb (except-rule (list penguin '?b)
                               [(list bird '?b)] (list flies '?b))
@@ -180,10 +155,9 @@
       (testing "blocking the first rule removes the conclusion that rested on it"
         (is (empty? (v/sentexes-matching kb (list flies Opus)    CxBird)))
         (is (empty? (v/sentexes-matching kb (list airborne Opus) CxBird))))
-      (testing "the cascade is a sweep, so neither is stored any more"
-        (is (nil? (v/sentex kb fh)))
-        (is (nil? (v/sentex kb ah))
-            "the consequence outlived its sole support")))))
+      (testing "both stay stored, read through the defeat"
+        (is (some? (v/sentex kb fh)))
+        (is (some? (v/sentex kb ah)))))))
 
 ;; ---- 6. a conjunctive exception -----------------------------------------
 ;; DECISION (The exception is a query, not a literal): "A conjunction is a vector,
@@ -203,8 +177,7 @@
       (is (seq (v/sentexes-matching kb (list flies Opus) CxBird))))
     (v/assert kb (list young Opus) CxBird {:strength :monotonic})
     (testing "both conjuncts hold, so the exception holds and the conclusion goes"
-      (is (empty? (v/sentexes-matching kb (list flies Opus) CxBird)))
-      (is (nil? (v/handle-of kb (list flies Opus) CxBird))))))
+      (is (empty? (v/sentexes-matching kb (list flies Opus) CxBird))))))
 
 ;; DECISION (Closure is enforced, not assumed): a variable a `thereExists` binds inside
 ;; the exception is the query's own, not one an antecedent owes — the closure check reads
@@ -376,9 +349,8 @@
     ;; the only thing that changes is a genl edge — no (flightless ...) fact,
     ;; and nothing with the exception's predicate is ever asserted
     (v/assert kb (list 'genl penguin flightless) CxBird {:strength :monotonic})
-    (testing "the edge alone makes the exception hold, and the conclusion is swept"
-      (is (empty? (v/sentexes-matching kb (list flies Opus) CxBird)))
-      (is (nil? (v/handle-of kb (list flies Opus) CxBird))))))
+    (testing "the edge alone makes the exception hold, and the conclusion is defeated"
+      (is (empty? (v/sentexes-matching kb (list flies Opus) CxBird))))))
 
 ;; ---- 9. no backchaining -------------------------------------------------
 ;; DECISION (The exception is a query, not a literal): "**No backchaining.**  An
@@ -426,30 +398,20 @@
       (is (= #{Tweety} (set (map #(get % '?who)
                                  (v/ask kb (list flies '?who) CxBird))))))))
 
-;; SPEC NOTE — this test cannot be written against today's API and is written in
-;; the form it must take.  `why-not` takes a **handle**, and an excepted
-;; conclusion has none: nothing is stored (decision "the exception is never
-;; stored"), so the question can only be asked of a sentence in a context.  The
-;; doc requires the *answer* but does not name the arity or the reason keyword;
-;; `:excepted` and `:exception` are this suite's choice.  Expect an ArityException
-;; until `why-not` grows the sentence arity.
-
 (tu/deftest-kb why-not-reports-an-excepted-conclusion-as-excepted-not-unsupported
-  (tu/with-terms [bird penguin flies Opus CxBird]
-    (v/assert kb (except-rule (list penguin '?b)
-                              [(list bird '?b)] (list flies '?b))
-              CxBird)
-    (v/assert kb (list bird Opus)    CxBird)
-    (v/assert kb (list penguin Opus) CxBird {:strength :monotonic})
-    (testing "there is no handle to ask about — the conclusion was never stored"
-      (is (nil? (v/handle-of kb (list flies Opus) CxBird))))
-    (let [wn (v/why-not kb (list flies Opus) CxBird)]
-      (testing "the reason names the exception, not a missing support"
-        (is (false? (:believed? wn)))
-        (is (= :excepted (:reason wn))
-            "an excepted conclusion is not :unsupported and not :defeated")
-        (is (= (list penguin Opus) (:exception wn))
-            "the ground exception that held, with the rule's bindings substituted")))))
+  ;; A blocker of either class stores the conclusion with a guard defeat, so the sentence
+  ;; arity and the handle arity answer alike.
+  (doseq [strength [:monotonic :default]]
+    (tu/with-terms [bird penguin flies Opus CxBird]
+      (v/assert kb (except-rule (list penguin '?b) [(list bird '?b)] (list flies '?b)) CxBird)
+      (v/assert kb (list bird Opus) CxBird)
+      (v/assert kb (list penguin Opus) CxBird {:strength strength})
+      (let [h   (v/handle-of kb (list flies Opus) CxBird)
+            wns (cond-> [(v/why-not kb (list flies Opus) CxBird)] h (conj (v/why-not kb h)))]
+        (testing (str strength)
+          (is (some? h))
+          (is (= (repeat (count wns) [false :excepted (list penguin Opus)])
+                 (map (juxt :believed? :reason :exception) wns))))))))
 
 ;; ---- 11. rebutting dilemmas still coexist -------------------------------
 ;; DECISION (Semantics): "two rules concluding `P` and `¬P` with neither naming the
@@ -500,8 +462,7 @@
       (is (seq (v/sentexes-matching kb (list flies Opus) CxHome))))
     (testing "the same exception asserted where the conclusion lives does block"
       (v/assert kb (list penguin Opus) CxHome {:strength :monotonic})
-      (is (empty? (v/sentexes-matching kb (list flies Opus) CxHome)))
-      (is (nil? (v/handle-of kb (list flies Opus) CxHome))))))
+      (is (empty? (v/sentexes-matching kb (list flies Opus) CxHome))))))
 
 ;; The exception's **own** context is scoped the same way.  An `exceptWhen` is a
 ;; sentex, so a context reasons with the exceptions its genlCx ancestor set holds and no

@@ -122,14 +122,14 @@
   "The cache profile in force: `{:scale <operator multiplier> :pressure <guard multiplier>
   :overrides {cache-id limit}}`.  A cache's effective bound is its shipped default times
   `:scale` times `:pressure` (an override replaces the default but the two multipliers still
-  apply, so the guard can shrink a pinned cache under memory pressure)."
+  apply, so the guard can shrink an overridden cache under memory pressure)."
   []
   @the-profile)
 
 (defn limit-of
   "The bound cache `id` enforces now, given its shipped default `default`.  An override names
   an absolute limit and replaces `default`: the operator's `:scale` leaves it alone, but the
-  guard's `:pressure` still multiplies it, so a filling heap shrinks a pinned cache like every
+  guard's `:pressure` still multiplies it, so a filling heap shrinks an overridden cache like every
   other.  A `default` with no override is multiplied by both `:scale` and `:pressure`.  Either
   result is floored at `min-limit` and saturates at `Long/MAX_VALUE`: `set-cache-scale`
   takes any number 0 or more, `##Inf` included, and a product past the range of a long
@@ -156,8 +156,8 @@
   `#'*a-dynamic-limit*`, is dereferenced on each call, so the row reads the current
   binding.  See `register-cache`."
   [id default]
-  ;; the metadata is what `pin-problem` reads: a descriptor whose bound comes through here
-  ;; is one a pin moves, and no other is
+  ;; the metadata is what `override-problem` reads: a descriptor whose bound comes through
+  ;; here is one an override moves, and no other is
   (with-meta (fn [] (limit-of id (if (var? default) @default default))) {::profile-id id}))
 
 (defn set-scale
@@ -169,8 +169,8 @@
   @the-profile)
 
 (defn set-limit
-  "Pin cache `id`'s bound to `n` regardless of scale, or clear the pin when `n` is nil, and
-  return the profile.  A caller who names both a cache and a number has stated the bound it
+  "Override cache `id`'s bound with `n` regardless of scale, or clear the override when `n`
+  is nil, and return the profile.  A caller who names both a cache and a number has stated the bound it
   wants, so the scale does not then move it."
   [id n]
   (swap! the-profile update :overrides (fn [o] (if n (assoc o id (long n)) (dissoc o id))))
@@ -241,20 +241,21 @@
   refusal, because the register fills lazily: a cache is registered when its namespace
   loads, and a qualitative calculus or the metric-time reasoner may not be loaded yet.  So
   `set-limit` reads this to *warn* on an id nothing has registered rather than to refuse
-  it — a not-yet-loaded cache would take the pin when it registers, where a refusal would
+  it — a not-yet-loaded cache would take the override when it registers, where a refusal would
   reject the very configuration a bulk load sets up before touching the calculus."
   [id]
   (contains? @registry id))
 
-(defn pin-problem
-  "Why a pin cannot move registered cache `id`'s bound, as a phrase, or nil when it can.
+(defn override-problem
+  "Why an override cannot move registered cache `id`'s bound, as a phrase, or nil when it
+  can.
 
-  A pin moves a bound exactly when the descriptor's `:limit` is the `limit-thunk` for `id`,
+  An override moves a bound exactly when the descriptor's `:limit` is the `limit-thunk` for `id`,
   the one bound `limit-of` reads the overrides into.  Two kinds of registered cache fail
   that: a nil-bound cache, bounded by something other than a count the profile holds
   (hot records by its own knob, `vaelii.disk.cache`), and a bound standing outside the
   profile — the symbol pool's and the scoped-closure budget's dynamic vars
-  (docs/caches.md).  `set-cache-limit` refuses a pin on either rather than recording one
+  (docs/caches.md).  `set-cache-limit` refuses an override on either rather than recording one
   nothing enforces.  Nil for an id nothing has registered, which `registered?` answers."
   [id]
   (when-let [d (get @registry id)]
@@ -622,7 +623,7 @@
 ;; scale, so a transient spike does not leave the caches small for the life of the process.
 ;; The trim is partial (`trim-map!`, or a cache's own shape-aware `:trim`), not a wholesale
 ;; clear, so the work behind the surviving half is not thrown away and recomputed the moment
-;; pressure passes.  The host installs the listener (it holds the roster of live KBs the trim
+;; pressure passes.  The host installs the listener (it holds the list of live KBs the trim
 ;; needs); nothing attaches it at engine load, so a library embedding pays for no listener it
 ;; did not ask for.  The pure-heap caches are the guard's charge; the disk hot-record cache
 ;; stays on its own `vaelii.disk.cache` cap, since its records are re-thawable from disk and
@@ -750,7 +751,7 @@
   the caches so the next collection reclaims, under `pressure-low` it grows them back.
 
   `:kbs` is a thunk answering the live KB records whose per-KB caches the trim reaches — the
-  host supplies it from its catalog, since the engine holds no roster of open KBs.
+  host supplies it from its catalog, since the engine holds no list of open KBs.
 
   Attached by the servers and by nothing at engine load, so a library embedding pays for no
   listener it did not ask for.  Idempotent: a second call replaces the `:kbs` thunk and arms
@@ -832,8 +833,8 @@
    :declared        {:n 9  :names "handle, [kind key], context"
                      :at '[vaelii.impl.taxonomy/add-supported
                            vaelii.impl.taxonomy/del-supported!]}
-   :roster          {:n 10 :names "predicate"
-                     :at '[vaelii.impl.checks/force-reach!]}
+   :forced-monotonic {:n 10 :names "predicate"
+                      :at '[vaelii.impl.checks/force-reach!]}
    :equality        {:n 11 :names "handle, pair"
                      :at '[vaelii.impl.taxonomy/add-equality vaelii.impl.taxonomy/del-equality!]}
    :except          {:n 12 :names "except, target, context"
@@ -843,7 +844,8 @@
    :recheck         {:n 14 :names "rules; a trigger, :all or :all-rejoin"
                      :at '[vaelii.impl.special/mark-recheck]}
    :inherited       {:n 15 :names "clash rows"
-                     :at '[vaelii.impl.decide.inherited/install-inherited!]}
+                     :at '[vaelii.impl.decide.inherited/install-inherited!
+                           vaelii.impl.decide.inherited/update-inherited!]}
    :settle-exit     {:n 16 :names "region"
                      :at '[vaelii.impl.settle/settle-finish]}
    :recover         {:n 17 :names "the whole store"
@@ -863,14 +865,14 @@
 
 (defn on-every
   "`{event code}` for every event in `events`: the `:retired-by` of a row any write
-  retires, such as one stamped with the change clock."
+  retires, such as one keyed by the change clock."
   [code]
   (into {} (map (fn [e] [e code])) (keys events)))
 
 (def codes
   "How an event retires a row's entries, the values of a row's `:retired-by`."
   {:K  "per key: the write names the entries it moves"
-   :S  "per stamp part: the write moves one part of a composite stamp"
+   :S  "per key part: the write moves one part of a composite key"
    :G  "generation: a counter bump retires every entry keyed on it"
    :G* "the change clock, which any write in any KB bumps"
    :I  "identity: compared with `identical?` against a value the write replaces"
@@ -1056,13 +1058,13 @@
 
 (defn compare-retired
   "While the instrument runs, compare `v`, recomputed at key `k` of the row whose tally is
-  `t`, with an earlier value there (`compared`).  `stamp` nil compares with the entry an
-  event retired at `k`, which the instrument keeps, and takes it: for a row whose entry
-  is the value read.  A non-nil `stamp` compares with the last value computed at `k` when
-  that was computed under another stamp, and keeps `v` under `stamp` in its place: for a
-  row whose entries are stamped.  A value is kept as its hash and compared by it, so the
-  instrument holds no closure the cache itself has evicted."
-  [^AtomicLongArray t k stamp v]
+  `t`, with an earlier value there (`compared`).  `under` nil compares with the entry an
+  event retired at `k`, which the instrument keeps, and takes it: for a row whose entry is
+  the value read.  A non-nil `under` compares with the last value computed at `k` when
+  that was computed under another value of `under`, and keeps `v` under `under` in its
+  place: for a row whose entries are keyed by such a value.  A value is kept as its hash
+  and compared by it, so the instrument holds no closure the cache itself has evicted."
+  [^AtomicLongArray t k under v]
   (when-let [st (and t @tallying)]
     (let [^java.util.Map g (:retired-values @st)]
       (locking g
@@ -1070,11 +1072,11 @@
               [s0 h0 :as e] (.get ^java.util.Map m k)
               h (hash v)]
           (cond
-            (nil? stamp) (when e (.remove ^java.util.Map m k) (compared t (= h0 h)))
-            :else        (do (when (and s0 (not= s0 stamp)) (compared t (= h0 h)))
+            (nil? under) (when e (.remove ^java.util.Map m k) (compared t (= h0 h)))
+            :else        (do (when (and s0 (not= s0 under)) (compared t (= h0 h)))
                              (when (>= (.size ^java.util.Map m) retired-values-limit)
                                (.clear ^java.util.Map m))
-                             (.put ^java.util.Map m k [stamp h])))))))
+                             (.put ^java.util.Map m k [under h])))))))
   nil)
 
 (defn retired-entries

@@ -2,9 +2,9 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.source-identity
   "The **source identity**: a digest of the engine definitions that derive belief.  A
-  reasoning image is stamped with it, and an open installs the image only when its own source
-  identity is equal, so an image is never installed by code that would derive a different
-  belief from the same records.
+  reasoning image is written with it, and an open installs the image only when its own
+  source identity is equal, so an image is never installed by code that would derive a
+  different belief from the same records.
 
   ## Which namespaces
 
@@ -17,7 +17,7 @@
   - every fully-qualified symbol under a `quote` in code.  These are the edges no `ns`
     form states: the `requiring-resolve` targets and the fixed symbol tables that name
     them (`vaelii.core`'s calculi, reasoners and solvers, `vaelii.impl.imperative`'s `do/`
-    handlers, `vaelii.impl.wiring`'s three entry points).
+    handlers, `vaelii.impl.wiring`'s five targets).
 
   The walk follows `vaelii.core` and `vaelii.impl.*` and nothing else.  Code from outside
   those prefixes — a registered prover or evaluatable, a foreign plugin — is not in the
@@ -37,8 +37,15 @@
   The roots are the forms that build and recover a KB: `vaelii.core/open-kb`, which also
   installs the callbacks the taxonomy calls through a map rather than through a symbol,
   `vaelii.impl.recovery/recover` and `recover-with-image`, and the three targets of
-  `vaelii.impl.wiring`.  The reasoning image's writer is reached from `recover`, so an edit to
-  the code that writes an image discards the images it wrote.
+  `vaelii.impl.wiring`, plus the write entry points that derive belief in a session (`roots`
+  names them).  The reasoning image's writer is reached from `recover`, so an edit to the
+  code that writes an image discards the images it wrote.
+
+  A registry is not an edge into what it lists.  `vaelii.core`'s `write-ops` and `read-ops`
+  name their entry points by keyword, because a top-level form that defines no var is always
+  walked: a var in either would put every write, `import!` and `reindex` among them, or every
+  read into the digest, and an edit to code that cannot change a label would discard every
+  image.
 
   Some forms run without a symbol naming them.  Each of these is included by a rule of its
   own:
@@ -127,13 +134,36 @@
 
 (def roots
   "The definitions the walk over forms starts from: the KB constructor, the two recover
-  entry points, and the three `vaelii.impl.wiring` targets."
+  entry points, the prover entry point, and every write entry point that derives belief in
+  a session — `vaelii.core`'s `:replay` writes, whose labels an image written at close
+  carries.  A `:seal` write (`import!`, `clear!`, `reindex`, `load-text!`) is not a root:
+  what it leaves is records, which the image's records fingerprint covers, and what it
+  derives it derives through `recover` or `assert`.  `source_identity_test` fails on a
+  `:replay` write missing here."
   '[vaelii.core/open-kb
     vaelii.impl.recovery/recover
     vaelii.impl.recovery/recover-with-image
+    vaelii.impl.provers/solve-goal
     vaelii.core/assert
+    vaelii.core/try-assert
+    vaelii.core/assert-rule
+    vaelii.core/assert-many
+    vaelii.core/bulk-assert-facts!
+    vaelii.core/assert-inert
+    vaelii.core/add-provenance
+    vaelii.core/forward-chain
+    vaelii.core/record-arg-types
+    vaelii.core/release-withheld!
+    vaelii.core/register-modal-predicate
     vaelii.core/retract!
-    vaelii.impl.provers/solve-goal])
+    vaelii.core/remove-unsupported!
+    vaelii.core/mark-inert!
+    vaelii.core/edit!
+    vaelii.core/edit-with-consequences!
+    vaelii.core/preview
+    vaelii.core/abduce
+    vaelii.core/abduce-discard!
+    vaelii.core/clear-violations!])
 
 (defn- in-scope?
   "Is `ns-sym` a namespace the digest follows?"

@@ -18,6 +18,61 @@
   [kb sentence ctx]
   (boolean (seq (v/sentexes-matching kb sentence ctx))))
 
+(tu/deftest-kb happening-roles-accept-gaps-without-forcing-an-event
+  (doseq [p '[doneBy performedBy input destroyedInput preservedInput
+              output tangibleOutput intangibleOutput]]
+    (tu/with-terms [Treatment Participant]
+      (v/assert kb (list 'happening Treatment) 'CxUniverse)
+      (v/assert kb (list 'intermittent Treatment) 'CxUniverse)
+      (when (= p 'tangibleOutput)
+        (v/assert kb (list 'substance Participant) 'CxUniverse))
+      (when (= p 'intangibleOutput)
+        (v/assert kb (list 'intangible Participant) 'CxUniverse))
+      (v/assert kb (list p Treatment Participant) 'CxUniverse)
+      (is (true? (v/ask? kb (list p Treatment Participant) 'CxUniverse)) (str p " accepts gaps"))
+      (is (true? (v/ask? kb (list 'actor Treatment Participant) 'CxUniverse))
+          (str p " identifies the participant of this happening"))
+      (is (not (v/ask? kb (list 'event Treatment) 'CxUniverse))
+          (str p " must not silently force an uninterrupted event")))))
+
+(tu/deftest-kb a-perceived-thing-participates-without-becoming-a-doer-or-input
+  (tu/with-terms [Viewing Clip Viewer Other]
+    (v/assert kb (list 'happening Viewing) 'CxUniverse)
+    (v/assert kb (list 'intermittent Viewing) 'CxUniverse)
+    (v/assert kb (list 'thingPerceived Viewing Clip) 'CxUniverse)
+    (v/assert kb (list 'doneBy Viewing Viewer) 'CxUniverse)
+    (is (true? (v/ask? kb (list 'actor Viewing Clip) 'CxUniverse)))
+    (is (true? (v/ask? kb (list 'actor Viewing Viewer) 'CxUniverse)))
+    (doseq [p '[doneBy performedBy input output]]
+      (is (not (v/ask? kb (list p Viewing Clip) 'CxUniverse))
+          (str "perception alone does not establish " p)))
+    (is (not (v/ask? kb (list 'performedBy Viewing Viewer) 'CxUniverse))
+        "mere doing does not establish intentional initiation")
+    (v/assert kb (list 'actor Viewing Other) 'CxUniverse)
+    (is (not (v/ask? kb (list 'thingPerceived Viewing Other) 'CxUniverse))
+        "participation alone does not establish perception")
+    (is (not (v/ask? kb (list 'event Viewing) 'CxUniverse)))
+    (is (not (v/ask? kb (list 'spatial Clip) 'CxUniverse)))
+    (is (not (v/ask? kb (list 'tangible Clip) 'CxUniverse)))))
+
+(tu/deftest-kb a-held-state-is-not-a-happening-role-subject
+  (tu/without-entailing
+   (tu/with-terms [Calm Observer]
+     (v/assert kb (list 'fluent Calm) 'CxUniverse)
+     (doseq [p '[actor thingPerceived]]
+       (is (some #(and (= :arg-type (:type %)) (= 1 (:position %)))
+                 (tu/check-or-conviction kb (list p Calm Observer) 'CxUniverse))
+           (str p " keeps the happening-versus-state boundary"))))))
+
+(tu/deftest-kb new-happening-roles-pass-the-candidate-integrity-sweep
+  (let [terms '#{actor thingPerceived}]
+    (is (= :audited (:status (v/kb-integrity kb terms 'CxUniverse))))
+    ;; The review-only missing-arg pass audits the whole visible KB, not just the
+    ;; candidate set; unrelated intentionally untyped positions are not this change.
+    (let [audit (v/kb-integrity kb terms 'CxUniverse {:categories #{:missing-arg}})]
+      (is (not= :truncated (:status audit)))
+      (is (empty? (filter #(contains? terms (:predicate %)) (:missing-arg audit)))))))
+
 ;; ---- the state-of-affairs hierarchy loads --------------------------------
 
 (tu/deftest-kb situation-hierarchy-holds
@@ -194,18 +249,19 @@
     (is (v/ask? kb (list 'causal Acme) 'CxUniverse)
         "an organization reads causal")))
 
-;; ---- doneBy / performedBy: an event's doer --------------------------------
+;; ---- doneBy / performedBy: a happening's doer -----------------------------
 ;; performedBy specializes doneBy through a predicate genl edge, so every performing is a
-;; doing and not the other way round.  The doer position declares no type: a machine or
-;; a process can bring an event about as well as a person can.
+;; doing and not the other way round. A machine or process can bring a happening about
+;; as well as a person can; intentional initiation is a separate claim.
 
 (tu/deftest-kb done-by-and-performed-by-are-declared-binary-instance-relations
   (doseq [p '[doneBy performedBy]]
     (testing (str p)
       (is (v/ask? kb (list 'binary_predicate p) 'CxUniverse))
       (is (v/ask? kb (list 'instance_relation_predicate p) 'CxUniverse))
-      (is (v/ask? kb (list 'arg p 1 'event) 'CxUniverse) "the first position is the event")
-      (is (empty? (v/sentexes-matching kb (list 'arg p 2 '?t) '?ctx)) "and the doer position declares no type")))
+      (is (v/ask? kb (list 'arg p 1 'happening) 'CxUniverse) "the first position is the happening")))
+  (is (v/ask? kb '(arg doneBy 2 thing) 'CxUniverse)
+      "an unrestricted doer has an explicit bound")
   (is (v/ask? kb '(genl performedBy doneBy) 'CxUniverse)
       "performedBy specializes doneBy"))
 
@@ -218,26 +274,26 @@
     (is (not (v/ask? kb (list 'performedBy Spill Pump) 'CxUniverse))
         "and a doing is not concluded a performing")))
 
-(tu/deftest-kb the-event-position-is-typed-and-the-doer-position-admits-any-term
-  ;; Pinned to the constraint-only reading: `check` reports the position-1 conviction
-  ;; there, and the entailing reading derives (event Stillness) instead.
+(tu/deftest-kb the-happening-position-is-typed-and-a-doer-can-be-a-machine
+  ;; Forced to the constraint-only reading: `assert` holds the fact under the position-1
+  ;; conviction there, and the entailing reading derives (happening Stillness) instead.
   (tu/without-entailing
    (tu/with-terms [Stillness Flood Pump Drizzle]
      (v/assert kb (list 'static_situation Stillness) 'CxUniverse)
      (v/assert kb (list 'machine Pump) 'CxUniverse)
-     (let [ps (v/check kb (list 'doneBy Stillness Pump) 'CxUniverse)
+     (let [ps (tu/check-or-conviction kb (list 'doneBy Stillness Pump) 'CxUniverse)
            p  (first (filter #(= :arg-type (:type %)) ps))]
-       (is (some? p) "a static situation is not an event, so it cannot be done")
+       (is (some? p) "a static situation is not a happening, so it cannot be done")
        (is (= 1 (:position p)))
-       (is (= 'event (:expected p))))
+       (is (= 'happening (:expected p))))
      (testing "the constraint reaches performedBy through the genl edge"
        (is (some #(= :arg-type (:type %))
-                 (v/check kb (list 'performedBy Stillness Pump) 'CxUniverse))))
+                 (tu/check-or-conviction kb (list 'performedBy Stillness Pump) 'CxUniverse))))
      (v/assert kb (list 'event Flood) 'CxUniverse)
-     (is (= [] (v/check kb (list 'doneBy Flood Pump) 'CxUniverse))
+     (is (= [] (tu/check-or-conviction kb (list 'doneBy Flood Pump) 'CxUniverse))
          "a machine can do an event")
      (v/assert kb (list 'event Drizzle) 'CxUniverse)
-     (is (= [] (v/check kb (list 'doneBy Flood Drizzle) 'CxUniverse))
+     (is (= [] (tu/check-or-conviction kb (list 'doneBy Flood Drizzle) 'CxUniverse))
          "and so can another event"))))
 
 ;; ---- output: what an event left behind --------------------------------------
@@ -247,13 +303,12 @@
 ;; event a made thing did makes its output.  Growth is never intentionally initiated, so
 ;; a calf is not made by its mother.
 
-(tu/deftest-kb the-output-relations-are-declared-event-first
-  ;; output's second position holds a term of any kind and declares no type
-  (doseq [[p t] '[[output nil] [tangibleOutput tangible] [intangibleOutput intangible]]]
+(tu/deftest-kb the-output-relations-are-declared-happening-first
+  (doseq [[p t] '[[output thing] [tangibleOutput tangible] [intangibleOutput intangible]]]
     (testing (str p)
       (is (v/ask? kb (list 'binary_predicate p) 'CxUniverse))
       (is (v/ask? kb (list 'instance_relation_predicate p) 'CxUniverse))
-      (is (v/ask? kb (list 'arg p 1 'event) 'CxUniverse) "the event is first")
+      (is (v/ask? kb (list 'arg p 1 'happening) 'CxUniverse) "the happening is first")
       (if t
         (is (v/ask? kb (list 'arg p 2 t) 'CxUniverse) "and what it left behind second")
         (is (empty? (v/sentexes-matching kb (list 'arg p 2 '?t) '?ctx))))
@@ -271,7 +326,7 @@
     (is (true? (v/ask? kb (list 'output Run1 File1) 'CxUniverse)))))
 
 (tu/deftest-kb the-second-position-says-which-kind-of-output
-  ;; Pinned to the constraint-only reading, where `check` reports the conviction.
+  ;; Forced to the constraint-only reading, where `assert` holds the fact inert.
   (tu/without-entailing
    (tu/with-terms [Smelting1 Steel1 Run1 File1]
      (v/assert kb (list 'event Smelting1) 'CxUniverse)
@@ -279,14 +334,14 @@
      (v/assert kb (list 'event Run1) 'CxUniverse)
      (v/assert kb (list 'intangible File1) 'CxUniverse)
      (let [p (first (filter #(= :arg-type (:type %))
-                            (v/check kb (list 'intangibleOutput Smelting1 Steel1) 'CxUniverse)))]
+                            (tu/check-or-conviction kb (list 'intangibleOutput Smelting1 Steel1) 'CxUniverse)))]
        (is (some? p) "a tangible is not an intangible output")
        (is (= 2 (:position p))))
      (let [p (first (filter #(= :arg-type (:type %))
-                            (v/check kb (list 'tangibleOutput Run1 File1) 'CxUniverse)))]
+                            (tu/check-or-conviction kb (list 'tangibleOutput Run1 File1) 'CxUniverse)))]
        (is (some? p) "nor an intangible a tangible one")
        (is (= 2 (:position p))))
-     (is (= [] (v/check kb (list 'tangibleOutput Smelting1 Steel1) 'CxUniverse))))))
+     (is (= [] (tu/check-or-conviction kb (list 'tangibleOutput Smelting1 Steel1) 'CxUniverse))))))
 
 (tu/deftest-kb a-cloned-sheep-is-made-and-biological
   (tu/with-terms [Dolly1 Cloning1 Lab1]
@@ -300,12 +355,12 @@
     (is (not (tu/stored-in-clash? kb (list 'made Dolly1) 'CxUniverse))
         "made and biological at once is no clash")))
 
-(tu/deftest-kb a-widget-a-made-machine-stamped-is-made
-  (tu/with-terms [Machine1 Widget1 Stamping1]
+(tu/deftest-kb a-widget-a-made-machine-pressed-is-made
+  (tu/with-terms [Machine1 Widget1 Pressing1]
     (v/assert kb (list 'machine Machine1) 'CxUniverse)
-    (v/assert kb (list 'event Stamping1) 'CxUniverse)
-    (v/assert kb (list 'tangibleOutput Stamping1 Widget1) 'CxUniverse)
-    (v/assert kb (list 'doneBy Stamping1 Machine1) 'CxUniverse)
+    (v/assert kb (list 'event Pressing1) 'CxUniverse)
+    (v/assert kb (list 'tangibleOutput Pressing1 Widget1) 'CxUniverse)
+    (v/assert kb (list 'doneBy Pressing1 Machine1) 'CxUniverse)
     (is (true? (v/ask? kb (list 'made Machine1) 'CxUniverse)) "a machine is made")
     (is (true? (v/ask? kb (list 'made Widget1) 'CxUniverse))
         "and what a made thing does makes its output")))
@@ -333,21 +388,21 @@
     (is (true? (tu/stored-in-clash? kb (list 'natural Statue1) 'CxUniverse))
         "the derived made meets a stated natural across the partition")))
 
-(tu/deftest-kb the-input-relations-are-declared-event-first
+(tu/deftest-kb the-input-relations-are-declared-happening-first
   (doseq [p '[input destroyedInput preservedInput]]
     (testing (str p)
       (is (v/ask? kb (list 'binary_predicate p) 'CxUniverse))
       (is (v/ask? kb (list 'instance_relation_predicate p) 'CxUniverse))
-      (is (v/ask? kb (list 'arg p 1 'event) 'CxUniverse) "the event is first")
-      (is (empty? (v/sentexes-matching kb (list 'arg p 2 '?t) '?ctx))
-          "and what went into it, second, declares no type")
+      (is (v/ask? kb (list 'arg p 1 'happening) 'CxUniverse) "the happening is first")
+      (is (v/ask? kb (list 'arg p 2 'thing) 'CxUniverse)
+          "what went into it has an explicit unrestricted bound")
       (is (seq (v/sentexes-matching kb (list 'comment p '?text) 'CxUniverse)))))
   (is (v/ask? kb '(genl destroyedInput input) 'CxUniverse))
   (is (v/ask? kb '(genl preservedInput input) 'CxUniverse))
   (is (seq (v/sentexes-matching kb '(termsRelated input output) 'CxUniverse))))
 
 (tu/deftest-kb an-input-is-stored-and-its-first-position-is-an-event
-  ;; Pinned to the constraint-only reading, where `check` reports the conviction.
+  ;; Forced to the constraint-only reading, where `assert` holds the fact inert.
   (tu/without-entailing
    (tu/with-terms [Sawing1 Plank1 Stillness1]
      (v/assert kb (list 'event Sawing1) 'CxUniverse)
@@ -355,7 +410,7 @@
      (is (true? (v/ask? kb (list 'input Sawing1 Plank1) 'CxUniverse)))
      (v/assert kb (list 'static_situation Stillness1) 'CxUniverse)
      (let [p (first (filter #(= :arg-type (:type %))
-                            (v/check kb (list 'input Stillness1 Plank1) 'CxUniverse)))]
+                            (tu/check-or-conviction kb (list 'input Stillness1 Plank1) 'CxUniverse)))]
        (is (some? p) "a static situation is not an event, so nothing goes into it")
        (is (= 1 (:position p)))))))
 
@@ -401,7 +456,7 @@
 (tu/deftest-kb an-acausal-cause-clashes-with-the-causal-membership-the-slot-derives
   ;; The cause slot derives `(causal Receipt)` beside the stated `(acausal_event Receipt)`,
   ;; and `(partition thing causal acausal)` places the clash between the two.
-  ;; Pinned to the entailing reading: the constraint-only reading mints no `(causal Receipt)`.
+  ;; Forced to the entailing reading: the constraint-only reading mints no `(causal Receipt)`.
   (tu/with-entailing
     (tu/with-terms [Receipt Blaze]
       (v/assert kb (list 'acausal_event Receipt) 'CxUniverse)

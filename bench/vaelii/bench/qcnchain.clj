@@ -83,7 +83,7 @@
       (println))
     (println "  Reading:")
     (println "  - three things sit behind the prover+rule column. The network is RESIDENT")
-    (println "    on the KB and stamped with the change clock, so it is read out once and")
+    (println "    on the KB and keyed by the change clock, so it is read out once and")
     (println "    reused until the engine mutates. The pass WARM-STARTS off its own")
     (println "    previous answer whenever the new network narrows the old, which is what")
     (println "    every arriving fact does. And the re-join is SEMI-NAIVE: a rule is joined")

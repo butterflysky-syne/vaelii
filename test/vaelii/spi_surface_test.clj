@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.spi-surface-test
-  "The extension points, pinned: the method set and arglists of every protocol a doc
+  "The extension points, frozen: the method set and arglists of every protocol a doc
   names as the thing an out-of-tree implementer implements, frozen against
   `test/golden/spi-protocols.edn`.
 
@@ -19,7 +19,7 @@
   repo has a reason to implement them.  They are listed in `not-an-extension-point` with the reason
   apiece, and `every-protocol-in-the-tree-is-classified` is what keeps that list complete:
   a new protocol has to be put in one bucket or the other before the suite goes green,
-  so the pinned set cannot quietly fall behind the tree.
+  so the frozen set cannot quietly fall behind the tree.
 
   **What a signature golden adds over `kv_backend_test`.**  That test says every adapter
   *behaves* — it runs the spec against each one, which is the stronger claim and the
@@ -71,7 +71,7 @@
    [#'protocols/RecordSink      "docs/storage.md"]
    [#'protocols/BulkAnnotating  "docs/storage.md"]
    [#'protocols/IndexStore      "docs/storage.md"]
-   [#'protocols/ImageStamping   "docs/storage.md"]
+   [#'protocols/ImageFingerprinting   "docs/storage.md"]
    [#'protocols/KvBackend              "docs/storage.md"]
    [#'snapshot-types/SnapshotSink     "docs/storage.md"]
    [#'snapshot-types/SnapshotSource   "docs/storage.md"]
@@ -80,7 +80,7 @@
    [#'prover-types/SupportingProver  "docs/inference.md"]])
 
 (def ^:private not-an-extension-point
-  "The protocols deliberately NOT pinned, each with why.  Every one is a single
+  "The protocols deliberately NOT frozen, each with why.  Every one is a single
   backend's internal shape: it exists so two namespaces in this repo can agree, and
   nothing outside the repo has an implementation of it to break."
   {'vaelii.impl.types.trie/PTrie
@@ -93,16 +93,16 @@
    "how the columnar trie and the dense roots hand their columns to the index image and
     take them back; `vaelii.impl.disk.index-snapshot` is its only caller, and the two
     structures in this tree are its only implementers.  `SnapshotSink`/`SnapshotSource`,
-    beside it in the same namespace, are the pinned pair an out-of-tree medium fills."
+    beside it in the same namespace, are the frozen pair an out-of-tree medium fills."
    'vaelii.impl.types.postings/IPostings
    "how the dense KvBackend packs a handle set. A new backend supplies a KvBackend
-    (which IS pinned) and never this."
+    (which IS frozen) and never this."
    'vaelii.impl.jtms-protocol/Tms
    "the sparse/dense JTMS swap (docs/density.md); the protocol has its own file so the
     rest of jtms.clj stays instrumentable (scripts/coverage.sh). Both implementations
     ship here and `VAELII_TEST_TMS` picks between them; an internal axis, not an invitation."})
 
-;; ---- the pin ------------------------------------------------------------
+;; ---- the frozen surface -------------------------------------------------
 
 (defn- protocol-key [v]
   (symbol (str (:ns (meta v))) (str (:name (meta v)))))
@@ -136,7 +136,7 @@
   (let [current (current-spi)
         frozen  (golden)]
     (is (empty? (set/difference (set (keys frozen)) (set (keys current))))
-        (str "BREAKING: pinned protocol(s) gone: "
+        (str "BREAKING: frozen protocol(s) gone: "
              (sort (set/difference (set (keys frozen)) (set (keys current))))
              ". An out-of-tree implementer names the protocol var directly."))
     (is (empty? (set/difference (set (keys current)) (set (keys frozen))))
@@ -169,7 +169,7 @@
                    "  now: " (get cur m) "\n"
                    "Every implementer's method has the old shape.")))))))
 
-;; ---- and the roster that keeps the pinned set complete ------------------
+;; ---- and the list that keeps the frozen protocol set complete ----------
 
 (def ^:private protocol-form
   "`(defprotocol Name` at the start of a line — the only way the tree declares one."
@@ -189,8 +189,8 @@
   API** (`docs/koinii.md`) — it sits beside `impl/` rather than inside it and requires
   nothing under `vaelii.impl` — not part of the engine, so its extension points
   (`CursorStore`, `Medium`) are koinii's own surface documented in koinii's own page and
-  this roster pins the *engine's* protocols.  koinii is free to grow protocols without
-  reshaping the engine's pinned set; the directory it lives in is that boundary, and
+  this classification covers the *engine's* protocols.  koinii is free to grow protocols
+  without reshaping the engine's frozen set; the directory it lives in is that boundary, and
   extracting it to its own repo would only move the same line."
   []
   (into #{}
@@ -205,13 +205,13 @@
              (remove #(= self-file (str/replace (.getPath ^File %) \\ \/))))))
 
 (deftest every-protocol-in-the-tree-is-classified
-  ;; What makes the pinned set trustworthy. Without this, `extension-points` is a list somebody
-  ;; wrote once, and a protocol added later is unpinned by default — which is the
+  ;; This test makes the frozen set trustworthy. Without it, `extension-points` is a list
+  ;; somebody wrote once, and a protocol added later is not frozen by default — which is the
   ;; failure mode a golden is supposed to retire, reintroduced one level up.
   (let [declared (declared-protocols)
-        pinned   (set (map (comp protocol-key first) extension-points))
+        frozen   (set (map (comp protocol-key first) extension-points))
         excused  (set (keys not-an-extension-point))
-        stray    (set/difference declared pinned excused)]
+        stray    (set/difference declared frozen excused)]
     (is (empty? stray)
         (str "unclassified protocol(s): " (sort stray)
              ". Every protocol is either one somebody outside this repo implements —"
@@ -219,17 +219,17 @@
              " — or one backend's internal shape, in which case add it to `not-an-extension-point`"
              " with the sentence saying why nothing out of tree implements it."))
     (testing "and nothing is classified twice, or classified without existing"
-      (is (empty? (set/intersection pinned excused))
-          (str "protocol(s) both pinned and excused: "
-               (sort (set/intersection pinned excused))))
-      (is (empty? (set/difference (set/union pinned excused) declared))
+      (is (empty? (set/intersection frozen excused))
+          (str "protocol(s) both frozen and excused: "
+               (sort (set/intersection frozen excused))))
+      (is (empty? (set/difference (set/union frozen excused) declared))
           (str "classified protocol(s) that no longer exist: "
-               (sort (set/difference (set/union pinned excused) declared))
+               (sort (set/difference (set/union frozen excused) declared))
                " — drop the entry, and check whether its removal wanted a Breaking"
                " entry.")))))
 
 (deftest every-extension-point-names-a-doc-that-names-it-back
-  ;; The entry's second half is a citation, so it is checked: a protocol is pinned *because*
+  ;; The entry's second half is a citation, so it is checked: a protocol is frozen *because*
   ;; a page invites an implementation, and a citation nothing verifies is how that
   ;; reason outlives the page it pointed at.
   (doseq [[v doc] extension-points]

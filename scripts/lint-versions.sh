@@ -11,7 +11,7 @@
 #      the wrong model: `build-release-tree.sh` strips `-SNAPSHOT` **tree-wide**
 #      and guards that none survives, so a dev README saying `0.5.0`
 #      carves into a release README saying `0.5.0`, which is exactly right and
-#      needs nobody to remember it.  A README pinned to a bare previous release
+#      needs nobody to remember it.  A README fixed to a bare previous release
 #      is the one that carves wrong: it survives the strip untouched and ships a
 #      0.5.0 tree advertising 0.4.0, which is the single line a reader copies.
 #      So the dev tree says snapshot everywhere and the cut says the release

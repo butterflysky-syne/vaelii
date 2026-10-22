@@ -5,7 +5,8 @@
 
   The page's whole claim is that it is *computed*, so these tests attack the two ways a
   gallery like this normally lies. It must **added no work to look at**: every read-only
-  card is answered on render, so rendering the page has to leave the KB byte-identical.
+  card is answered once the page has loaded, through `/reasoning/verdict`, so the page and
+  every verdict on it have to leave the KB byte-identical.
   And it must **name what it reasons from**: each card links the stored sentexes behind
   its verdict, and a card whose sentexes are absent has to say so instead of answering.
 
@@ -13,6 +14,7 @@
   table against the KB. This one is about the page."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
+            [vaelii.browser.access :as access]
             [vaelii.browser.examples :as ex]
             [vaelii.browser.sandbox :as sandbox]
             [vaelii.browser.web :as web]
@@ -36,6 +38,13 @@
   so a test asking what the page *says* asks it of the text and not of the markup."
   [body]
   (-> body (str/replace #"<[^>]+>" " ") (str/replace #"\s+" " ")))
+
+(defn- verdict
+  "One card's verdict, as the page asks for it after rendering."
+  ([id] (verdict id nil))
+  ([id cookie]
+   (*app* {:request-method :get :uri "/reasoning/verdict" :params {"id" id}
+           :headers (if cookie {"cookie" cookie} {})})))
 
 (defn- card
   "One example's card, sliced out by its id so an assertion about one card cannot be
@@ -66,14 +75,24 @@
   ;; sandbox cards must not be established just by being looked at, either
   (let [before-sx (v/sentex-count kb)
         before-j  (count (v/violations kb))]
-    (dotimes [_ 3] (GET "/reasoning"))
+    (dotimes [_ 3]
+      (GET "/reasoning")
+      (doseq [e ex/examples] (verdict (:id e))))
     (is (= before-sx (v/sentex-count kb)))
     (is (= before-j (count (v/violations kb))) "and derived nothing that had to be dropped")))
 
 ;; ---- what a card shows --------------------------------------------------
 
+(deftest the-page-asks-nothing-until-it-has-loaded
+  ;; every available card renders a pending verdict that asks for itself, one at a time
+  (let [c (card (:body (GET "/reasoning")) "genl-chain")]
+    (is (str/includes? c "/reasoning/verdict?id=genl-chain"))
+    (is (str/includes? c "hx-trigger=\"load\""))
+    (is (str/includes? c "queue all") "the cards ask one after another")
+    (is (not (str/includes? (text-of c) "Answered")))))
+
 (tu/deftest-kb a-read-only-card-shows-its-verdict-and-the-level-that-gave-it
-  (let [c (card (:body (GET "/reasoning")) "genl-chain")
+  (let [c (:body (verdict "genl-chain"))
         t (text-of c)]
     (is (str/includes? t "Answered") "the KB was actually asked")
     (is (str/includes? t "at level 5") "and the card names the machinery that answered")
@@ -92,12 +111,12 @@
     (is (not (str/includes? (text-of c) "not in this KB")))))
 
 (tu/deftest-kb a-derived-answer-links-its-proof
-  (let [c (card (:body (GET "/reasoning")) "metadata-to-type")]
+  (let [c (:body (verdict "metadata-to-type"))]
     (is (str/includes? c "/why/") "a card with a record offers the whole proof")
     (is (str/includes? (text-of c) "Answered"))))
 
 (tu/deftest-kb a-card-the-example-expects-no-answer-to-says-so
-  (let [t (text-of (card (:body (GET "/reasoning")) "arg-preserving-stops"))]
+  (let [t (text-of (:body (verdict "arg-preserving-stops")))]
     (is (str/includes? t "Not answered"))
     (is (str/includes? t "that is what the example is about")
         "an expected non-answer is the finding, not a failure")))
@@ -139,10 +158,13 @@
       (let [r (*app* {:request-method :post :uri "/reasoning"
                       :params {"id" "grandparent"}
                       :headers {"cookie" cookie "host" "localhost:3000"}})
-            c (card (:body r) "grandparent")]
+            c (card (:body r) "grandparent")
+            v (:body (verdict "grandparent" cookie))]
         (is (= 200 (:status r)))
-        (is (str/includes? (text-of c) "Answered") "the verdict replaces the button")
-        (is (str/includes? c "/why/") "and the join has a proof to open")
+        (is (not (str/includes? c "Run it in my sandbox")) "the button goes")
+        (is (str/includes? c "/reasoning/verdict?id=grandparent") "for a verdict that asks")
+        (is (str/includes? (text-of v) "Answered"))
+        (is (str/includes? v "/why/") "and the join has a proof to open")
         (testing "the premises are really in the sandbox, at real handles"
           (is (some? (v/handle-of kb '(parentOf AdaEx BenEx) sbx)))
           (is (some? (v/handle-of kb '(grandparentOf AdaEx CalEx) sbx))
@@ -154,6 +176,22 @@
                     :headers {"cookie" cookie "host" "localhost:3000"}})
             (is (= n (v/sentex-count kb))))))
       (finally (when sbx (sandbox/reset! kb sbx))))))
+
+(deftest a-card-that-runs-out-of-time-says-so-and-offers-longer
+  (with-redefs [access/escalate (fn [& _] {:level nil :name nil :results () :status :timeout
+                                           :tried [2 3]})]
+    (let [b (:body (verdict "genl-chain"))
+          t (text-of b)]
+      (is (str/includes? t "No answer within 10 s"))
+      (is (not (str/includes? t "Not answered")) "a stop is not a finding")
+      (is (str/includes? b "ms=120000") "and the card offers the longer climb"))))
+
+(deftest a-verdict-names-a-real-example-and-a-bounded-deadline
+  (is (= 400 (:status (verdict "bogus"))))
+  (is (= 400 (:status (*app* {:request-method :get :uri "/reasoning/verdict"
+                              :params {"id" "genl-chain" "ms" "forever"} :headers {}}))))
+  (is (= 400 (:status (*app* {:request-method :get :uri "/reasoning/verdict"
+                              :params {"id" "genl-chain" "ms" "999999999"} :headers {}})))))
 
 (deftest the-write-is-origin-checked-like-every-other
   ;; a page on another site must not be able to make this browser's KB do work

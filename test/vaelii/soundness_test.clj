@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.soundness-test
-  "Five soundness invariants, pinned.
+  "Five soundness invariants, asserted.
 
   Each came from a confirmed bug, and the namespace is regression cover: the comment
   above each test names the defect it guards against and the invariant it holds the
@@ -52,7 +52,6 @@
                        (default-rule [(list bird '?x)] (list 'not (list swims '?x))))
               'CxUniverse)
     (v/assert kb (default-rule [(list penguin '?x)] (list swims '?x))              'CxUniverse)
-    ;; known-true: a `:default` blocker stores the conclusion with a defeat instead
     (v/assert kb (list penguin Opus) 'CxUniverse {:strength :monotonic})
     (testing "only the excepted rule's conclusion survives"
       (is (seq    (v/sentexes-matching kb (list 'not (list flies Opus)) 'CxUniverse)))
@@ -60,14 +59,13 @@
     (testing "and identically when the specific rule is the positive one"
       (is (seq    (v/sentexes-matching kb (list swims Opus) 'CxUniverse)))
       (is (empty? (v/sentexes-matching kb (list 'not (list swims Opus)) 'CxUniverse))))
-    (testing "the blocked conclusion was never created, so there is nothing to arbitrate"
-      ;; `sentexes-with-functor` is raw — it sees defeated and unsupported sentexes
-      ;; too, and a negative fact roots under its positive body's functor.  So each
-      ;; of these is exactly one sentex, and it is the specific rule's conclusion.
-      (is (= [(list 'not (list flies Opus))]
-             (map :sentence (v/sentexes-with-functor kb flies))))
-      (is (= [(list swims Opus)]
-             (map :sentence (v/sentexes-with-functor kb swims))))
+    (testing "the blocked conclusion is stored with a guard defeat, so there is nothing to arbitrate"
+      ;; `sentexes-with-functor` is raw — it sees defeated sentexes too, and a negative
+      ;; fact roots under its positive body's functor.
+      (doseq [s [(list flies Opus) (list 'not (list swims Opus))]]
+        (is (some? (v/handle-of kb (list 'defeat (list 'sentexHandle (v/handle-of kb s 'CxUniverse)))
+                                'CxUniverse))
+            (str s)))
       (is (empty? (v/contradictions kb)))
       (is (empty? (v/conflicts kb))))))
 

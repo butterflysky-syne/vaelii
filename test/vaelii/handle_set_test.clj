@@ -1,39 +1,39 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
-(ns vaelii.roster-test
-  "`vaelii.impl.roster` — the compressed live-handle roster a record store may answer its
+(ns vaelii.handle-set-test
+  "`vaelii.impl.handle-set` — the compressed live-handle set a record store may answer its
   three enumerations with instead of a `PersistentHashSet<Long>`.
 
   What is under test is not the bitmap, which is a dependency: it is that a caller reading
-  an enumeration **cannot tell**.  Every operation the engine performs on a roster is
+  an enumeration **cannot tell**.  Every operation the engine performs on a handle set is
   exercised here against the Clojure set it replaces — membership, iteration, cardinality,
   ordering, equality in both directions — because that equivalence is the whole licence
   for a store to return one, and a store returning a shape that reads differently is a KB
   answering differently on that backend.
 
   The two properties beyond equivalence: it is **immutable**, so the concurrent readers a
-  networked store exists to have need no coordination; and `(set roster)` is the entry point back
+  networked store exists to have need no coordination; and `(set hs)` is the entry point back
   to an `IPersistentSet`, which is what a caller wanting `conj` / `disj` / `clojure.set`
   goes through.
 
-  The **live** roster at the end is the mutable half — a store's own live-handle set
+  The **live** handle set at the end is the mutable half — a store's own live-handle set
   rather than the value it hands out, which the disk record store keeps one of per kind.
   What is under test there is the same equivalence against the `PersistentHashSet<Long>`
-  it replaces, plus the one property its callers rest on that the immutable roster gets for
-  free: a snapshot does not move when the roster under it does."
+  it replaces, plus the one property its callers rest on that the immutable handle set gets for
+  free: a snapshot does not move when the handle set under it does."
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
             [vaelii.impl.capabilities :as cap]
-            [vaelii.impl.roster :as roster]))
+            [vaelii.impl.handle-set :as hs]))
 
 (def ^:private ids
   ;; a near-contiguous run with holes, which is what assertion-order minting plus
   ;; retraction leaves behind — and the form the representation is chosen for
   (into [] (remove #(zero? (mod % 7))) (range 1 2001)))
 
-(defn- fresh [] (roster/roster ids))
+(defn- fresh [] (hs/handle-set ids))
 
-;; ---- a roster is indistinguishable from the set it replaces -------------------------------
+;; ---- a handle set is indistinguishable from the set it replaces -------------------------------
 
 (deftest every-read-the-engine-makes-agrees-with-the-set
   (let [r (fresh)
@@ -51,14 +51,14 @@
     (testing "cardinality and emptiness"
       (is (= (count s) (count r)))
       (is (not (empty? r)))                                   ; the `seq` path
-      (is (zero? (count (roster/roster []))) "an empty roster is empty")
-      (is (nil? (seq (roster/roster []))) "and seqs to nil"))
+      (is (zero? (count (hs/handle-set []))) "an empty handle set is empty")
+      (is (nil? (seq (hs/handle-set []))) "and seqs to nil"))
     (testing "iteration"
       (is (= s (set (seq r))) "seq yields every handle and no other")
       (is (= s (into #{} r)) "and reduces the same way")
       (is (= (sort s) (sort r)) "sorted, they are one sequence")
       (is (= (first (sort s)) (first r))
-          "a roster iterates ascending, so `first` is the least handle")
+          "a handle set iterates ascending, so `first` is the least handle")
       (is (every? #(instance? Long %) (take 10 r))
           "the handles arrive boxed as Longs, which is what `get-sentex` is given"))
     (testing "the array conversions, which nothing here calls and a java caller does"
@@ -74,7 +74,7 @@
       (is (.containsAll ^java.util.Set r ids) "containsAll reads every member")
       (is (not (.containsAll ^java.util.Set r (conj ids 7))) "and answers for a hole"))
     (testing "equality, whichever side it is on"
-      (is (= s r) "a Clojure set equals a roster over the same handles")
+      (is (= s r) "a Clojure set equals a handle set over the same handles")
       (is (= r s) "and the comparison reads the same the other way round")
       (is (not= (set (rest ids)) r) "one handle short is not equal")
       (is (= (.hashCode ^Object (java.util.HashSet. ^java.util.Collection s))
@@ -87,20 +87,20 @@
     (is (= (set ids) (set r)))
     (is (= (disj (set ids) 3) (disj (set r) 3)))
     (is (= #{} (set/difference (set r) (set ids)))
-        "and clojure.set reads the conversion, never the roster")))
+        "and clojure.set reads the conversion, never the handle set")))
 
-(deftest a-roster-refuses-to-be-written
+(deftest a-handle-set-refuses-to-be-written
   (let [r (fresh)]
     (doseq [[label f] [["add" #(.add ^java.util.Set % (long 5))]
                        ["remove" #(.remove ^java.util.Set % (long 5))]
                        ["clear" #(.clear ^java.util.Set %)]]]
       (is (thrown? UnsupportedOperationException (f r))
-          (str label " is refused — a roster is a read of the store, not a handle on it")))))
+          (str label " is refused — a handle set is a read of the store, not a handle on it")))))
 
 ;; ---- immutable, so readers need no coordination --------------------------
 
 (deftest concurrent-readers-see-one-answer
-  ;; The reason a roster may be handed to a caller at all: a networked store's readers
+  ;; The reason a handle set may be handed to a caller at all: a networked store's readers
   ;; enumerate while its writer writes, and a structure that mutated on read (some
   ;; bitmaps cache a cumulative cardinality lazily) would answer differently under
   ;; contention and pass every single-threaded test.
@@ -115,7 +115,7 @@
 
 ;; ---- it composes with what the recovery walks do to an enumeration -------
 
-(deftest the-recovery-hint-chunks-a-roster-like-any-other-seq
+(deftest the-recovery-hint-chunks-a-handle-set-like-any-other-seq
   ;; `cap/hinting` wraps the enumerations on the recovery walks, so whatever they return has
   ;; to survive `take` / `drop` / `concat` — the one place a store's own shape meets the
   ;; engine's laziness.
@@ -160,45 +160,45 @@
 ;; ---- the java half, which `=` and `empty?` never reach --------------------
 
 (deftest the-java-side-set-contract-answers-too
-  ;; `=` between a roster and a Clojure set does not reach these: it goes through
+  ;; `=` between a handle set and a Clojure set does not reach these: it goes through
   ;; `APersistentSet.equiv`, which tests `size` and `contains`.  A java caller — the whole
-  ;; reason a roster is a `java.util.Set` rather than something narrower — calls them
+  ;; reason a handle set is a `java.util.Set` rather than something narrower — calls them
   ;; directly, and a Set that answered `equals` or `isEmpty` wrongly is one those callers
   ;; cannot use.
   (let [r         (fresh)
         same-set  (java.util.HashSet. ^java.util.Collection (set ids))
         one-short (java.util.HashSet. ^java.util.Collection (set (rest ids)))]
     (testing "equality, called the way java calls it"
-      (is (.equals ^Object r same-set) "a roster equals a java Set over the same handles")
+      (is (.equals ^Object r same-set) "a handle set equals a java Set over the same handles")
       (is (.equals ^Object same-set r) "and the java Set agrees, reading size and contains")
       (is (not (.equals ^Object r one-short)) "one handle short is not equal")
       (is (not (.equals ^Object r (Object.))) "and something that is not a Set never is"))
     (testing "emptiness, which `empty?` answers off `seq` instead"
       (is (not (.isEmpty ^java.util.Set r)))
-      (is (.isEmpty ^java.util.Set (roster/roster []))))
+      (is (.isEmpty ^java.util.Set (hs/handle-set []))))
     (testing "and it prints as what it is rather than as its bitmap"
-      (is (= (str "#vaelii/roster{" (count ids) " handles}") (.toString ^Object r))))))
+      (is (= (str "#vaelii/handle-set{" (count ids) " handles}") (.toString ^Object r))))))
 
 (deftest the-bulk-writes-are-refused-too
   ;; `add` / `remove` / `clear` are not the whole write half of `java.util.Set`.  The three
   ;; bulk ops are what a java caller and `java.util.Collections` reach for, and one of them
-  ;; quietly succeeding would mutate a roster every concurrent reader is holding.
+  ;; quietly succeeding would mutate a handle set every concurrent reader is holding.
   (let [r (fresh)]
     (doseq [[label f] [["addAll"    #(.addAll ^java.util.Set % [(long 5)])]
                        ["removeAll" #(.removeAll ^java.util.Set % [(long 5)])]
                        ["retainAll" #(.retainAll ^java.util.Set % [(long 5)])]]]
       (is (thrown? UnsupportedOperationException (f r))
-          (str label " is refused — a roster is a read of the store, not a handle on it")))
-    (is (= (count ids) (count r)) "and the roster is unchanged by having been asked")))
+          (str label " is refused — a handle set is a read of the store, not a handle on it")))
+    (is (= (count ids) (count r)) "and the handle set is unchanged by having been asked")))
 
-;; ---- the live roster: the mutable half a store keeps ---------------------
+;; ---- the live handle set: the mutable half a store keeps ---------------------
 
 (defn- live-of
-  "A `LiveRoster` holding `xs`."
+  "A `LiveHandleSet` holding `xs`."
   [xs]
-  (doto (roster/live-roster) (roster/live-add-all! xs)))
+  (doto (hs/live-handle-set) (hs/live-add-all! xs)))
 
-(deftest a-live-roster-reads-as-the-set-it-replaces
+(deftest a-live-handle-set-reads-as-the-set-it-replaces
   ;; Four questions is the whole of what the disk record store asks its live-id set —
   ;; membership (`kill!`), iteration (`sentex-ids`), cardinality (`sentex-tally`) and a
   ;; first handle (`a-sentex-id`).  Each is asserted against the Clojure set, because a
@@ -206,67 +206,67 @@
   (let [r (live-of ids)
         s (set ids)]
     (testing "membership, with the coercions `contains?` made silently"
-      (is (every? #(roster/live-has? r %) ids) "every stored handle is live")
-      (is (not (roster/live-has? r 7)) "and a hole is not")
-      (is (roster/live-has? r (int 3)) "a handle boxed as an Integer is the same member")
-      (is (not (roster/live-has? r nil))
+      (is (every? #(hs/live-has? r %) ids) "every stored handle is live")
+      (is (not (hs/live-has? r 7)) "and a hole is not")
+      (is (hs/live-has? r (int 3)) "a handle boxed as an Integer is the same member")
+      (is (not (hs/live-has? r nil))
           (str "a non-handle answers false rather than throwing — `delete-sentex!` reaches"
                " `kill!` with whatever a caller passed"))
-      (is (not (roster/live-has? r :informant)) "including the keyword shape a fetch refuses")
-      (is (= (contains? s 10000000000000000000N) (roster/live-has? r 10000000000000000000N))
+      (is (not (hs/live-has? r :informant)) "including the keyword shape a fetch refuses")
+      (is (= (contains? s 10000000000000000000N) (hs/live-has? r 10000000000000000000N))
           "and an integer no long can hold answers false, as the set does"))
     (testing "cardinality and a first handle"
-      (is (= (count s) (roster/live-tally r)))
-      (is (= (first (sort s)) (roster/live-least r))
+      (is (= (count s) (hs/live-tally r)))
+      (is (= (first (sort s)) (hs/live-least r))
           "the least handle, which is a determinate answer to `is there one at all`")
-      (is (nil? (roster/live-least (roster/live-roster))) "and nil when there is none")
-      (is (zero? (roster/live-tally (roster/live-roster)))))
+      (is (nil? (hs/live-least (hs/live-handle-set))) "and nil when there is none")
+      (is (zero? (hs/live-tally (hs/live-handle-set)))))
     (testing "the drops, which a kill and a lost compaction slot make"
-      (roster/live-remove! r 3)
-      (is (not (roster/live-has? r 3)))
-      (is (= (dec (count s)) (roster/live-tally r)))
-      (roster/live-remove! r 3)
-      (is (= (dec (count s)) (roster/live-tally r)) "dropping a non-member is a no-op")
-      (roster/live-remove! r :informant)
-      (is (= (dec (count s)) (roster/live-tally r)) "and so is dropping a non-handle")
-      (roster/live-remove-all! r [5 6 7])
-      (is (= (- (count s) 3) (roster/live-tally r))
+      (hs/live-remove! r 3)
+      (is (not (hs/live-has? r 3)))
+      (is (= (dec (count s)) (hs/live-tally r)))
+      (hs/live-remove! r 3)
+      (is (= (dec (count s)) (hs/live-tally r)) "dropping a non-member is a no-op")
+      (hs/live-remove! r :informant)
+      (is (= (dec (count s)) (hs/live-tally r)) "and so is dropping a non-handle")
+      (hs/live-remove-all! r [5 6 7])
+      (is (= (- (count s) 3) (hs/live-tally r))
           "a bulk drop takes the two members and ignores the hole"))
     (testing "the wipe empties it in place, rather than leaving the store a fresh one"
-      (roster/live-clear! r)
-      (is (zero? (roster/live-tally r)))
-      (is (nil? (roster/live-least r)))
-      (roster/live-add! r 42)
-      (is (= 1 (roster/live-tally r)) "and it is writable again after"))))
+      (hs/live-clear! r)
+      (is (zero? (hs/live-tally r)))
+      (is (nil? (hs/live-least r)))
+      (hs/live-add! r 42)
+      (is (= 1 (hs/live-tally r)) "and it is writable again after"))))
 
-(deftest a-snapshot-does-not-move-when-the-roster-does
+(deftest a-snapshot-does-not-move-when-the-handle-set-does
   ;; The property both readers rest on.  `sentex-ids` hands its snapshot to a caller that
   ;; outlives the kind lock, and `rebuild-premises!` *walks* one while `kill!` tombstones
-  ;; damaged records out of the roster underneath — an iteration over the live bitmap
+  ;; damaged records out of the handle set underneath — an iteration over the live bitmap
   ;; would be editing the structure it is reading.
   (let [r    (live-of ids)
-        snap (roster/live-snapshot r)]
-    (is (= (set ids) (set snap)) "the snapshot holds what the roster held")
-    (is (roster/roster? snap) "and is the immutable roster, so nothing can write it back")
-    (testing "a walk that empties the roster as it goes still yields every handle"
-      (let [seen (into [] (map (fn [id] (roster/live-remove! r id) id)) snap)]
+        snap (hs/live-snapshot r)]
+    (is (= (set ids) (set snap)) "the snapshot holds what the handle set held")
+    (is (hs/handle-set? snap) "and is the immutable handle set, so nothing can write it back")
+    (testing "a walk that empties the handle set as it goes still yields every handle"
+      (let [seen (into [] (map (fn [id] (hs/live-remove! r id) id)) snap)]
         (is (= (sort ids) seen))
-        (is (zero? (roster/live-tally r)) "having removed all of them")))
+        (is (zero? (hs/live-tally r)) "having removed all of them")))
     (is (= (set ids) (set snap)) "and the snapshot is what it was")
     (testing "growth under a snapshot is invisible to it too"
-      (roster/live-add! r 999999)
+      (hs/live-add! r 999999)
       (is (not (contains? snap 999999)))
       (is (= (count ids) (count snap))))))
 
-(deftest a-live-roster-holds-a-sparse-handle-space-too
+(deftest a-live-handle-set-holds-a-sparse-handle-space-too
   ;; Assertion-order minting gives a near-contiguous run, which is the shape chosen for.
   ;; A store that has been compacted, forked or imported into does not, and the reads have
   ;; to answer over that as well — this is the case where the representation wins least
   ;; and so is the one worth asserting.
   (let [sparse (into [] (map #(* % 100003)) (range 1 501))
         r      (live-of sparse)]
-    (is (= (count sparse) (roster/live-tally r)))
-    (is (every? #(roster/live-has? r %) sparse))
-    (is (not (roster/live-has? r (inc (long (first sparse))))))
-    (is (= (apply min sparse) (roster/live-least r)))
-    (is (= (set sparse) (set (roster/live-snapshot r))))))
+    (is (= (count sparse) (hs/live-tally r)))
+    (is (every? #(hs/live-has? r %) sparse))
+    (is (not (hs/live-has? r (inc (long (first sparse))))))
+    (is (= (apply min sparse) (hs/live-least r)))
+    (is (= (set sparse) (set (hs/live-snapshot r))))))

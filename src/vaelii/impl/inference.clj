@@ -159,7 +159,7 @@
 
 (defn node-key
   "The key a node is claimed under: its literals, the depths they carry, the map back to
-  the asker's variables, the set of pending guard identities, and the rewrite window.
+  the asker's variables, the set of pending guard identities, and the rewrite start.
 
   The literals need no renaming here — they are **already** canonical, which is the point
   of canonicalizing them, and two alpha-variant conjunctions are one key without anything
@@ -287,7 +287,7 @@
                 :proof?      (boolean (:proof? opts))
                 ;; What belief has already defeated, read once for the whole search: a
                 ;; query writes nothing, so the derived defeated set cannot move
-                ;; underneath it.  nil — the common case — is the gate that keeps every
+                ;; underneath it.  nil — the common case — is the presence check that keeps every
                 ;; node's `:derived` empty and this check out of the search entirely.
                 :defeated    (res/defeated-index kb)
                 :queue      (atom (queue-push (empty-queue) (*estimate* kb strat root)
@@ -301,6 +301,11 @@
                 ;; `:track-truncation?`, so `step!`'s candidate-rule probe is off the plain
                 ;; query path — `core/query-status` asks for it, `core/query` never does.
                 :truncated  (when (:track-truncation? opts) (atom false))
+                ;; The transitive predicates whose closure a leaf did not enumerate for a
+                ;; both-open goal (`provers/*unenumerated*`), bound around each expansion's
+                ;; solve in `step!`, so every driver of this session reads one set and a
+                ;; resume keeps adding to it.
+                :unenumerated (provers/unenumerated-collector)
                 :stats      (atom {:expanded 0 :dropped 0 :solutions 0})}]
      sess)))
 
@@ -412,26 +417,26 @@
   consequent does (`res/subsuming-unify` binding nothing: the goal itself, or the goal's
   arguments under a spec of its functor) and lands at a depth no larger than
   `goal-depth`, the goal's depth in the parent; the collapse raised no carried literal's
-  depth; and the child's `window` reopens nothing left of the parent's `from`.
+  depth; and the child's `rewrite-from` reopens nothing left of the parent's `from`.
 
   Each answer of such a child derives the goal within the depth the parent gave it, since
   both leaves and `subsuming-unify` answer a goal from its spec.  The shallowest
   derivation of the goal does not ask the goal again at its top rewrite, so the sibling
   that rewrites the goal through that rule reaches the answer.  The last two conditions
   keep a child the parent does not dominate: one that gives a literal more depth, or one
-  that may rewrite a literal the parent's window had closed.  A carried literal equal to
+  that may rewrite a literal left of the parent's rewrite start.  A carried literal equal to
   the goal does not count: the parent holds it beside the goal, and two copies of one
   goal would each see the other and drop both rewrites.
 
   `spliced` is the conjunction before the collapse, `slots` the collapse's map from each
   spliced position to its place in `kept` (nil when nothing folded), and positions `i` up
   to `i + arity` are the residual's."
-  [kb context g goal-depth from window spliced kept slots i arity]
+  [kb context g goal-depth from rewrite-from spliced kept slots i arity]
   (let [i     (long i)
         end   (+ i (long arity))
         depth (fn [^long p] (long (:depth (if slots (nth kept (nth slots p)) (nth spliced p)))))]
     (boolean
-     (and (>= (long window) (long from))
+     (and (>= (long rewrite-from) (long from))
           (or (nil? slots)
               (every? (fn [^long p] (= (long (:depth (nth spliced p))) (depth p)))
                       (concat (range i) (range end (count spliced)))))
@@ -462,7 +467,7 @@
   The child is then canonicalized in turn, which is what gives it an identity the
   claimed-key set can recognize — and what obliges every term the node is still
   accountable for to be **pushed** into the new numbering: the asker's answers, and each
-  pending guard's view of its own rule's variables.  `shift-back` is what lets the new
+  pending guard's numbering of its own rule's variables.  `shift-back` is what lets the new
   rule's guard keep speaking about `?var0` when `?var0` here means something else.
 
   The spliced conjunction then goes through `collapse-repeats`, which is what keeps a
@@ -492,17 +497,17 @@
                  ;; The child resumes rewriting at `i`, the first residual literal, except
                  ;; where a copy folded onto a literal left of that position.  The literal
                  ;; a copy folded onto carries a larger depth than the parent gave it, and
-                 ;; a window opening to the right of that literal would never spend the
+                 ;; a rewrite start to the right of that literal would never spend the
                  ;; difference.  A fold left of `i` also shortens the prefix, which moves
                  ;; the first residual literal one position left per fold; `fold` is at or
                  ;; below both indices, so one `min` covers the two.
-                 window (if fold (min (long i) (long fold)) (long i))]
+                 rewrite-from (if fold (min (long i) (long fold)) (long i))]
           :when (not (restates-goal? kb context (res/substitute sentence b) depth from
-                                     window spliced mixed slots i (count resid)))
+                                     rewrite-from spliced mixed slots i (count resid)))
           :let  [[canon vm] (sx/canonical-conjunction (mapv :sentence mixed))
                  vm-inv (set/map-invert vm)]]
       {:literals     (mapv (fn [l s] (assoc l :sentence s)) mixed canon)
-       :from         window
+       :from         rewrite-from
        :answer-terms (push-terms answer-terms b vm-inv)
        :nvars        (count vm)
        ;; The goal this rewrite is answering, carried into the child's namespace so the
@@ -717,7 +722,7 @@
   A thread interrupted before the step throws `InterruptedException` and expands nothing."
   ([sess] (step! sess nil))
   ([{:keys [kb context queue nodes counter stats seen strategy leaf-solver est-override
-            proof? defeated truncated]
+            proof? defeated truncated unenumerated]
      :as sess}
     dl]
    ;; An interrupted thread stops here, between two expansions, with the session intact:
@@ -730,7 +735,7 @@
      (when-let [[[_ _ id] q'] (queue-pop q0)]
        (reset! queue q')
        ;; One node expansion is one search step, so it is the scope the transitive-closure
-       ;; memo and the resident-value pin belong to: the inline join below solves a literal
+       ;; memo and the held resident values belong to: the inline join below solves a literal
        ;; once per binding of its join variable, which is exactly the repetition the memo
        ;; collapses.  `sols` is reduced to a vector inside, so nothing lazy escapes.
        (observe/with-search-scope
@@ -742,7 +747,8 @@
                _     (when (and truncated (not @truncated) (depth-truncated? kb node context))
                        (reset! truncated true))
                found (budget/interruptible
-                      dl #(node-solutions kb node context leaf-solver est-override defeated))]
+                      dl #(binding [provers/*unenumerated* unenumerated]
+                            (node-solutions kb node context leaf-solver est-override defeated)))]
            (if (identical? ::budget/interrupted found)
              (do (reset! queue q0) found)
              (let [;; Dedup keys on the **bindings**, with or without a proof: two
@@ -957,6 +963,14 @@
             :frontier  (count @queue)
             :max-depth (reduce max 0 (map :tree-depth ns))})))
 
+(defn unenumerated
+  "`sess`'s collector as `provers/unenumerated-report`'s two keys: `:unenumerated`, the
+  transitive predicates whose closure a both-open goal in the search did not enumerate,
+  and `:unenumerated-in-guards`, those of them recorded inside an `unknown` or
+  `exceptWhen` evaluation, where the missed pair can admit an answer (docs/inference.md)."
+  [sess]
+  (provers/unenumerated-report (:unenumerated sess)))
+
 (defn search-report
   "One node-engine search over `goals`, driven to completion and **reported** — the
   answers plus what the run costs and whether the depth bound cut it short:
@@ -972,7 +986,9 @@
      :stats                   <tree-stats>
      :unenumerated            <vector>  the transitive predicates a goal asked with
                                         both arguments open, whose derived pairs the
-                                        answers may omit (`provers/*unenumerated*`)}
+                                        answers may omit (`provers/*unenumerated*`)
+     :unenumerated-in-guards  <vector>  the subset recorded inside an `unknown` or
+                                        `exceptWhen` evaluation (`unenumerated`)}
 
   Truncation is **conservative**: `true` means at least one branch was stopped at the
   bound, not that an answer was certainly lost — a converging rule graph reaches one
@@ -993,18 +1009,16 @@
         opts (cond-> (assoc opts :track-truncation? true)
                (and pick (not= :portfolio pick)) (assoc :strategy pick))
         sess (session kb goals context opts)
-        start (System/nanoTime)
-        [report unenumerated]
-        (provers/with-unenumerated
-          #(loop [s (seq (search-seq sess)), acc (transient []), first-ns nil]
-             (if s
-               (recur (next s) (conj! acc (first s)) (or first-ns (- (System/nanoTime) start)))
-               {:answers                 (persistent! acc)
+        start (System/nanoTime)]
+    (loop [s (seq (search-seq sess)), acc (transient []), first-ns nil]
+      (if s
+        (recur (next s) (conj! acc (first s)) (or first-ns (- (System/nanoTime) start)))
+        (merge {:answers                 (persistent! acc)
                 :truncated?              (boolean (some-> (:truncated sess) deref))
                 :time-to-first-answer-ms (when first-ns (/ (double first-ns) 1e6))
                 :total-time-ms           (/ (double (- (System/nanoTime) start)) 1e6)
-                :stats                   (tree-stats sess)})))]
-    (assoc report :unenumerated unenumerated)))
+                :stats                   (tree-stats sess)}
+               (unenumerated sess))))))
 
 ;; ---- the search as data, for a debugger ----------------------------------
 
@@ -1037,14 +1051,16 @@
 
 (defn- finish-tree
   [kb sess strat goals answers results status]
-  {:goals    (vec goals)
-   :context  (:context sess)
-   :strategy (:tactician strat)
-   :status   status
-   :bounded? (not= :complete status)
-   :answers  answers
-   :nodes    (mapv #(node-data kb strat results %) (sort-by :id (vals @(:nodes sess))))
-   :stats    (tree-stats sess)})
+  (merge
+   {:goals    (vec goals)
+    :context  (:context sess)
+    :strategy (:tactician strat)
+    :status   status
+    :bounded? (not= :complete status)
+    :answers  answers
+    :nodes    (mapv #(node-data kb strat results %) (sort-by :id (vals @(:nodes sess))))
+    :stats    (tree-stats sess)}
+   (unenumerated sess)))
 
 (defn search-tree
   "Run a bounded backward search for `goals` in `context` and return the tree the run
@@ -1061,12 +1077,12 @@
   does, or this searches a different leaf than `query` would.
 
   Returns `{:goals :context :strategy :status :bounded? :answers :nodes :stats
-  :unenumerated}`. `:status` is `:complete` (the frontier emptied), `:bounded` (the node
+  :unenumerated :unenumerated-in-guards}`. `:status` is `:complete` (the frontier emptied), `:bounded` (the node
   budget), or `:timeout` (the clock).  `:answers` are `query`'s answers under `:proof?
   true`, each tagged with `:node` — the id of the node it came off, so an answer is
   reachable to the subtree that produced it.  `:nodes` is every node as `node-data`, in
-  allocation order.  `:unenumerated` is `search-report`'s: a run that empties its frontier
-  may still omit the derived pairs of a predicate named there.
+  allocation order.  `:unenumerated` and `:unenumerated-in-guards` are `search-report`'s: a
+  run that empties its frontier may still omit the derived pairs of a predicate named there.
 
   Read-only by construction: a query in this engine writes nothing (`portfolio-solutions`)."
   ([kb goals context] (search-tree kb goals context {}))
@@ -1075,33 +1091,28 @@
          strat    (:strategy sess)
          queue    (:queue sess)
          budget   (long (or node-budget default-node-budget))
-         deadline (when max-ms (+ (System/currentTimeMillis) (long max-ms)))
-         [tree unenumerated]
-         (provers/with-unenumerated
-           (fn []
-             (loop [answers [], results {}, expanded 0]
-               (let [entry (first @queue)]
-                 (cond
-                   (nil? entry)
-                   (finish-tree kb sess strat goals answers results :complete)
+         deadline (when max-ms (+ (System/currentTimeMillis) (long max-ms)))]
+     (loop [answers [], results {}, expanded 0]
+       (let [entry (first @queue)]
+         (cond
+           (nil? entry)
+           (finish-tree kb sess strat goals answers results :complete)
 
-                   (>= expanded budget)
-                   (finish-tree kb sess strat goals answers results :bounded)
+           (>= expanded budget)
+           (finish-tree kb sess strat goals answers results :bounded)
 
-                   (and deadline (>= (System/currentTimeMillis) (long deadline)))
-                   (finish-tree kb sess strat goals answers results :timeout)
+           (and deadline (>= (System/currentTimeMillis) (long deadline)))
+           (finish-tree kb sess strat goals answers results :timeout)
 
-                   :else
-                   ;; a frontier entry is `[estimate content id]`, and the tree is keyed
-                   ;; by node
-                   (let [nid  (long (nth entry 2))
-                         sols (step! sess)]
-                     (if (nil? sols)
-                       (finish-tree kb sess strat goals answers results :complete)
-                       (recur (into answers (map #(assoc % :node nid)) sols)
-                              (cond-> results (seq sols) (assoc nid sols))
-                              (inc expanded)))))))))]
-     (assoc tree :unenumerated unenumerated))))
+           :else
+           ;; a frontier entry is `[estimate content id]`, and the tree is keyed by node
+           (let [nid  (long (nth entry 2))
+                 sols (step! sess)]
+             (if (nil? sols)
+               (finish-tree kb sess strat goals answers results :complete)
+               (recur (into answers (map #(assoc % :node nid)) sols)
+                      (cond-> results (seq sols) (assoc nid sols))
+                      (inc expanded))))))))))
 
 (def default-compare-tacticians
   "The tacticians `compare-tacticians` runs when the caller names no subset: the shipped
@@ -1112,11 +1123,13 @@
 
 (defn- compare-row
   [t sess answers status ms]
-  (merge (tree-stats sess)
-         {:tactician t
-          :status    status
-          :ms        ms
-          :answers   (into #{} (map answer-bindings) answers)}))
+  (let [u (unenumerated sess)]
+    (merge (tree-stats sess)
+           u
+           {:tactician t
+            :status    (if (and (= :complete status) (seq (:unenumerated u))) :incomplete status)
+            :ms        ms
+            :answers   (into #{} (map answer-bindings) answers)})))
 
 (defn compare-tacticians
   "Run `goals` in `context` under each of several tacticians, each to completion (bounded),

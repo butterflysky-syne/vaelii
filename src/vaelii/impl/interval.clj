@@ -46,7 +46,7 @@
 
   **Stored facts are not the only reader.**  This is the one calculus with a
   `qcn-kb` **narrowing**: `stp/allen-narrowing-with-support` closes the metric constraints
-  over the instants `(startOf I P)` / `(endOf I P)` name and reads back what they pin down
+  over the instants `(startOf I P)` / `(endOf I P)` name and reads back what they determine
   about the interval relations, and that is intersected into the same network.  So a KB
   that states two meetings' start and end times, and the gap between them, answers
   `(before A B)` with no interval relation written anywhere — and the entailment names the
@@ -109,8 +109,9 @@
 
 ;; The composition table below is written out of thirteen recurring blocks rather than 169
 ;; loose sets, because that is what its entries actually are.  Composing two relations
-;; pins some of the four endpoint comparisons between the outer intervals and leaves the
-;; rest free, and each block is the set of relations agreeing on the comparisons it pins —
+;; determines some of the four endpoint comparisons between the outer intervals and leaves
+;; the rest free, and each block is the set of relations agreeing on the comparisons it
+;; determines —
 ;; so an entry says *which comparison survived the composition*, and can be read back
 ;; against the endpoint definitions above rather than merely trusted.
 
@@ -271,7 +272,7 @@
 ;; ---- the second readers: metric bounds and point facts ------------------
 
 (defn- points-narrowing-with-support
-  "What the point network pins down about the interval relations, as
+  "What the point network determines about the interval relations, as
   `{:net {[i j] → #{base relations}} :support {[i j] → #{handle}}}`.  A thing is read when
   its `(StartFn X)` is a node of the point network and X is a symbol; a pair's relations
   are those whose `stp/endpoint-signature` every one of the four endpoint comparisons
@@ -352,20 +353,25 @@
   through — and `:contexts` the ones that put an interval *into* a network, which is what
   makes a context worth reading one at.  A `conversionFactor` is in the first and not the
   second: it changes what a bound comes to, and a context holding one and no interval has
-  nothing to narrow."
+  nothing to narrow.
+
+  `subintervalOf` and `properSubintervalOf` are the **typed** predicates: they take time
+  intervals, and every other interval predicate takes any temporal thing.  So the network
+  answers the two only over arguments their declared types admit (`qcn-kb/solve-goal`)."
   (qkb/calculus :allen allen-algebra interval-denotation
                 {:fn       both-narrowings
                  :sources  (into stp/allen-narrowing-sources (keys pt/instant-denotation))
                  :contexts (-> stp/stp-predicates
                                (into stp/endpoint-predicates)
-                               (into (keys pt/instant-denotation)))}))
+                               (into (keys pt/instant-denotation)))}
+                '#{subintervalOf properSubintervalOf}))
 
 (defn possible-allen-relations
   "The Allen base relations still possible between intervals `i1` and `i2` given
   everything believed in `context` — `#{}` when the network is inconsistent.
 
   This is the algebra read directly rather than through a goal, so a caller that needs to
-  know *how much* is pinned down — rather than whether one named relation is entailed —
+  know *how much* is determined — rather than whether one named relation is entailed —
   asks here.  `vaelii.impl.duration` is the one in tree."
   [kb context i1 i2]
   (qkb/possible allen kb context i1 i2))

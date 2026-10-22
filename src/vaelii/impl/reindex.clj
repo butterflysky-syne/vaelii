@@ -27,6 +27,7 @@
   records, which stay untouched."
   (:require [vaelii.impl.capabilities :as cap]
             [vaelii.impl.observe :as observe]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.rules :as rules]
             [vaelii.impl.sentex :as sx]
@@ -52,7 +53,7 @@
 (defn- index-exceptWhen-entry
   "Register an exceptWhen meta-sentex's exception the way
   `special/index-exceptWhen-meta` does: post the rule it names under each predicate
-  its query mentions (and into the `:rules` roster).  No recheck queue, like the rule
+  its query mentions (and into the `:rules` set).  No recheck queue, like the rule
   entry above."
   [index meta-sentex]
   (let [rh    (sx/exceptWhen-rule-handle (:sentence meta-sentex))
@@ -79,12 +80,15 @@
   "The handles the stored justifications `special/mint-informant?` accepts conclude: one
   fetch per stored justification, chunk-hinted as `recover`'s walk is."
   [records]
-  (into #{}
-        (comp (keep #(p/get-justification records %))
-              (filter #(special/mint-informant? (:informant %)))
-              (map :consequence))
-        (cap/hinting (cap/justification-prefetcher records) cap/recovery-hint-chunk
-                     (p/justification-ids records))))
+  (with-open [r (progress/start ::read-justifications
+                                "reindex: read the justifications"
+                                (cap/count-justifications records))]
+    (into #{}
+          (comp (keep #(do (progress/tick! r) (p/get-justification records %)))
+                (filter #(special/mint-informant? (:informant %)))
+                (map :consequence))
+          (cap/hinting (cap/justification-prefetcher records) cap/recovery-hint-chunk
+                       (p/justification-ids records)))))
 
 (defn reindex
   "Flush the index store and rebuild every entry from the stored sentexes: each record's
@@ -98,24 +102,28 @@
         minted  (mint-conclusions records)]
     (p/clear-index! index)
     ;; the index moves wholesale here rather than through the per-sentex choke point, so
-    ;; the clock a resident derived structure stamps itself with is bumped by hand — as
+    ;; the clock a resident derived structure is keyed by is bumped by hand — as
     ;; `core/clear!` does, and for the same reason
     (observe/note-change)
     (let [counts
-          (reduce
-           (fn [acc h]
-             (if-let [sx (p/get-sentex records h)]
-               (do (when (contains? minted h)
-                     (special/post-mint! index (sx/sentence-of sx) (:context sx) h))
-                   (cond-> (update acc :sentexes inc)
-                     (index-one! index sx h) (update :rules inc)))
-               acc))
-           {:sentexes 0 :rules 0}
-           ;; A walk that fetches every live record, so a store that can warm many at one cost
-           ;; is told a chunk ahead (`protocols/Prefetching`).  Ungated, unlike the query path's
-           ;; hint: this walk consumes every handle it is given, so a hint here can save round
-           ;; trips and cannot waste one.  Nil for every store that does not prefetch, which is
-           ;; every store the engine ships, and then this is `(p/sentex-ids records)`.
-           (cap/hinting (cap/prefetcher records) cap/recovery-hint-chunk (p/sentex-ids records)))]
+          (with-open [r (progress/start ::index-sentexes
+                                        "reindex: index the sentexes"
+                                        (cap/count-sentexes records))]
+            (reduce
+             (fn [acc h]
+               (progress/tick! r)
+               (if-let [sx (p/get-sentex records h)]
+                 (do (when (contains? minted h)
+                       (special/post-mint! index (sx/sentence-of sx) (:context sx) h))
+                     (cond-> (update acc :sentexes inc)
+                       (index-one! index sx h) (update :rules inc)))
+                 acc))
+             {:sentexes 0 :rules 0}
+             ;; A walk that fetches every live record, so a store that can warm many at one cost
+             ;; is told a chunk ahead (`protocols/Prefetching`).  Unconditional, unlike the query path's
+             ;; hint: this walk consumes every handle it is given, so a hint here can save round
+             ;; trips and cannot waste one.  Nil for every store that does not prefetch, which is
+             ;; every store the engine ships, and then this is `(p/sentex-ids records)`.
+             (cap/hinting (cap/prefetcher records) cap/recovery-hint-chunk (p/sentex-ids records))))]
       (special/post-taxonomy-supporters! kb)
       counts)))

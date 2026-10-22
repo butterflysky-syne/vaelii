@@ -20,10 +20,10 @@
   short run into the long one where neither is a bitmap.  Smallest posting first, and one
   Clojure set built at the end at the size of the answer.  What that buys is not mainly
   speed on the big case (hot ∩ hot at 32k: 29.2 → 0.56 ms) but the *shape* of the common
-  one: a query pins a rare argument on a hot predicate, and 4 handles against a root of n
+  one: a query binds a rare argument on a hot predicate, and 4 handles against a root of n
   went from 4.73 ms at n=32,000 to 0.0015 ms at any n — flat in the extent the argument
-  roots exist to avoid scanning.  `lein perf --only intersect-selectivity` is the gate on
-  that, and what cost is left tracks the answer rather than the columns, which is the
+  roots exist to avoid scanning.  `lein perf --only intersect-selectivity` is the perf check
+  that enforces that, and what cost is left tracks the answer rather than the columns, which is the
   boundary contract and not the narrowing.
 
   Off by default (`:index :dense`); proven set-equal to `MemoryKvBackend` by
@@ -62,7 +62,7 @@
 
 (defn- handle-key?
   "Does `k` name a HANDLE set (int postings)?  The child sets, the counters and the
-  rosters of names stay an ordinary set / a Long.
+  name sets stay an ordinary set / a Long.
 
   A key this fails to recognize is stored boxed and answers every read identically, so
   nothing behavioural can catch a spelling that drifts from the one `vaelii.impl.kv`

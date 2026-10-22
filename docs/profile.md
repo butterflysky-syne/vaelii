@@ -15,7 +15,7 @@
 into them, and every family is a write tax on every assert. Which of them pays for itself
 is a question about a **workload**, not about the code: a KB whose patterns all lead with
 a ground first argument pays for three secondary root families nothing reads, and a KB
-asking `(?type Muffet)` a thousand times a second lives on the argument-slot roster. This
+asking `(?type Muffet)` a thousand times a second lives on the slot predicate set. This
 is the instrument that answers it from outside.
 
 ## Seven tallies
@@ -50,8 +50,8 @@ milliseconds, at the identical `:reads` count ([storage.md](storage.md)). On the
 store a fetch is a
 positional slot read, a positional frame read and a nippy thaw past the LRU, so the two
 quantities are not even the same order. It counts the protocol call — `get-sentex`,
-`get-justification`, `get-provenance`, `premise-strength`, and the roster reads
-`sentex-ids`, `justification-ids` and `premise-ids`, once per call whatever the roster
+`get-justification`, `get-provenance`, `premise-strength`, and the enumerations
+`sentex-ids`, `justification-ids` and `premise-ids`, once per call whatever the enumeration
 holds — and not a backend's internal re-reads, so it reads the same on every store.
 
 `:retracts` is a tally of its own rather than `:writes` with a sign on it, and `:dead` is
@@ -119,8 +119,8 @@ can count it. `res/candidate-handles` yields one of seven:
 | `:context-extent` | every argument open in a ground context — the predicate extent's leaf there |
 | `:structural` | a positive pattern with a compound argument, narrowed on the compound's interior |
 | `:functor-extent` | the same shape with `res/*structural-index*` false — the correct looser superset |
-| `:negative-roots` | an open negative with a functor or a ground argument pinned |
-| `:negative-fan` | an open negative with nothing pinned — the `:false` node's own children |
+| `:negative-roots` | an open negative with a functor or a ground argument bound |
+| `:negative-fan` | an open negative with nothing bound — the `:false` node's own children |
 
 `res/matches-hierarchical`, the set-algebra matcher behind the context-scoped levels,
 makes its own choice and never consults `candidate-handles`:
@@ -128,7 +128,7 @@ makes its own choice and never consults `candidate-handles`:
 | path | taken when |
 |---|---|
 | `:hier-trie-prefix` | a left prefix of ground atoms, two of them indexable, then only variables, and no permuting spec — the trie under the prefix, or that spec's argument roots where `res/arg-lead` finds them smaller, per spec |
-| `:hier-scoped-roots` | something indexable to lead with, and a spec closure to scope by — each spec's node, or the node of each slot-roster predicate in the closure (`res/*lead-side*`) |
+| `:hier-scoped-roots` | something indexable to lead with, and a spec closure to scope by — each spec's node, or the node of each slot predicate in the closure (`res/*lead-side*`) |
 | `:hier-agnostic-roots` | something indexable to lead with and no predicate — a variable functor |
 | `:hier-functor-extent` | nothing indexable to lead with, so the sub-predicates' extents in the reader's ancestor set |
 
@@ -178,7 +178,7 @@ lein bench-profile generated [facts] [rules]  a Zipf-skewed corpus of known shap
 lein bench-profile corpus <dir> [profile]     a converted corpus (:cyc-corpus)
 ```
 
-A corpus run wants a heap, and the `:bench` profile pins `-Xmx6g`. An environment
+A corpus run wants a heap, and the `:bench` profile sets `-Xmx6g`. An environment
 `JVM_OPTS` is placed *before* the project's own options and loses to it silently, so the
 vector is edited on the way past instead — `with-profile` first, `update-in` second,
 which is the order `scripts/run-bench-caches.sh` documents. The corpus arm reads
@@ -205,10 +205,10 @@ Six readings come out, and they answer different questions:
   itself.
 - **The interactive arm** makes the reads an *application* makes — `terms`,
   `term-count`, `find-terms`, `find-sentexes` — and it is the only arm that does. No
-  reasoning calls any of them, so without it the term roster and the term index read zero
+  reasoning calls any of them, so without it the term-name set and the term index read zero
   on every corpus, which is indistinguishable from a family nobody uses and means a family no **reasoner**
   uses. Its read table is the inverse of every other arm's: on the shipped starter it is
-  88% `:term-index` and 12% `:term-roster`, and every other family at nothing.
+  88% `:term-index` and 12% `:term-names`, and every other family at nothing.
 - **The churn arm** retracts a sample of premises and puts each one back, which is the
   only way `unindex-sentex!` runs at all. It is net-neutral by construction and says so
   when it is not: a fact retracted that will not go back is counted and reported, because
@@ -263,10 +263,10 @@ Six readings come out, and they answer different questions:
   arrive but what each shape costs when it does. Frequency comes from the arms above;
   cost comes from here.
 
-## The gate built on it
+## The counted test built on it
 
 `test/vaelii/assert_cost_test.clj` is the instrument's second consumer, and it *decides*
-where `lein bench-profile` reports. It runs fourteen fixed workloads and pins the
+where `lein bench-profile` reports. It runs fourteen fixed workloads and asserts the
 **exact** index-operation counts each costs, every read by family and every
 `index-sentex` or `unindex-sentex!` batch op by family. Nine of them assert — a plain
 binary fact, a type membership, the same membership at depth 8, a fact of a
@@ -279,13 +279,13 @@ equality merges the retractions do not name.
 It exists because `lein perf` cannot see this class of defect and says so in its own
 preamble: **a ratio cannot see a constant.** An unconditional read added to the assert
 path moves the reading at both sizes equally and divides out, so every ratio check passes
-untouched. The two gates are complements, and neither subsumes the other: `perf.clj` holds
+untouched. The two checks are complements, and neither subsumes the other: `perf.clj` holds
 the *shape* of a cost, this holds the *constant*.
 
 The quantity is an integer the engine computes rather than a measurement of the machine,
 so there is no warm-up, no tail mean, no noise floor and no tolerance. It is identical
 across runs, machines and a loaded box, which is what lets it live in the suite instead
-of behind a command somebody has to remember. Its configuration is pinned rather than
+of behind a command somebody has to remember. Its configuration is fixed rather than
 inherited — `:backend :memory` because the counted calls are `KvIndexStore`'s and the columnar
 store has none, and every retrieval switch at its shipped default — so it says
 the same thing on all eight backend runs of `scripts/test-backends.sh` and all seven sweeps
@@ -293,8 +293,8 @@ of `scripts/test-sweeps.sh`.
 
 Budgets are **exact**, not ceilings. A ceiling lets a change spend whatever is already
 budgeted, and these numbers are not a design target: they are a record of what the engine
-does today. So an optimization fails this gate too, which is the intended behaviour — the
-commit that re-pins the number carries the improvement as data.
+does today. So an optimization fails this counted test too, which is the intended behaviour: the
+commit that rewrites the number carries the improvement as data.
 
 **The worked case is a regression that really shipped.** `inter-args-problem` once ran its
 `interArg` declaration retrieval unconditionally, on every assert of every KB, though
@@ -307,18 +307,18 @@ worktree at the parent commit ([argtypes.md](argtypes.md)). Restoring it:
 | assert-cost read budgets | **every one fails**, `:argument-root` +1 per sentex |
 | assert-cost write budgets | every one passes |
 
-The third row is the one that sets the gate's scope. A counter over the *write* side alone
+The third row is the one that sets the counted test's scope. A counter over the *write* side alone
 would have reported nothing, because the regression was a read; counting per family is
 what makes it visible at all, since one extra read is 4% of the plain workload's twenty-five
 reads per assert and 20% of the five that land on the family it hits.
 
-What the gate does not catch is in its own namespace docstring: work that is not an index
+What the counted test does not catch is in its own namespace docstring: work that is not an index
 operation, a more expensive version of the same operation, a non-`KvIndexStore` index, and
 anything that scales. `:dead` is the one budgeted number that is not a per-operation
 constant — it is exact for a fixed corpus torn down in a fixed order, which is what a
 workload is, and it is not a figure another corpus reproduces.
 
-### The other two counted gates
+### The other two counted tests
 
 That file prices the **assert** path. Two more read the same instrument at the two places
 an assert budget cannot reach, and each exists because a gap let a defect in.
@@ -328,7 +328,7 @@ over four rule shapes: no join at all, a join whose functor has no sub-predicate
 whose functor has four, and one whose trigger antecedent is symmetric and reached only
 through the datum's mirror. `assert_cost_test` reaches chaining through a single workload
 whose rule has one antecedent, so `chain/*matcher*` was never on its path — which is how
-the join went unpinned. The first two budgets are the pair: an argument lead taken over a
+the join went untested. The first two budgets are the pair: an argument lead taken over a
 functor with nothing under it costs two reads per firing and shows up as `:trie-lookup`
 going to zero while the argument families rise.
 
@@ -338,6 +338,15 @@ going to zero while the argument families rise.
 must fetch **no** records whatever the extent of the pattern's shape, which is what
 separates the exact-leaf read from the wildcard match that paged one record per candidate
 ([storage.md](storage.md)).
+
+`test/vaelii/padding_blindness_test.clj` reads **which** handles a write touches, not how
+many. `prof/*handle-sink*` is called with each sentex handle a `RecordStore` fetch reads
+and each handle an `IndexStore` posting read answers; a count or a name-set read answers
+no handle and calls nothing. The test binds it around each write of a seeded stream run
+beside a padding of standing content the stream never names, and fails a read of the
+padding that no row of its `known-padding-reads` table names
+([nmtms.md](nmtms.md#where-the-scaling-arguments-hold), "Linear in the standing set"). A walk over an in-memory structure
+(a memo, the taxonomy's closures) reads no handle, so the sink does not see it.
 
 ## The bake-off built on it
 
@@ -382,7 +391,7 @@ above the index. The `:reads` table beside it prints **not applicable** rather t
 for a layout with no `KvIndexStore`, since a zero and an absence are different
 readings: a columnar arm scored on `:reads` would look like an index nobody touches.
 
-Answers are gated mechanically alongside it. Every layout answers the identical probe
+Answers are checked mechanically alongside it. Every layout answers the identical probe
 set, and each probe's answer is fingerprinted as `[count (hash handle-set)]` — content
 rather than order, since two layouts may return one set in two orders. A layout whose
 fingerprint differs is reported as wrong and its timings are void.
@@ -405,7 +414,7 @@ drives the same layout table.
 
 In the harness's own namespace docstring, at more length. A read-only workload cannot see
 a layout that moves cost to the write path; every probe is asked at `?ctx`, so nothing
-walks the `genlCx` up-closure; the term index and the term roster are read by
+walks the `genlCx` up-closure; the term index and the term-name set are read by
 `terms` / `find-terms` / `find-sentexes` and by no reasoning at all, so a layout that
 moves them shows up as bytes and as nothing else; the q-error arm's corpus is 1:1, where a
 correct estimator scores exactly 1.00, so it fails a layout rather than ranking one; and a

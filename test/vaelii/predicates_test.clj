@@ -3,11 +3,11 @@
 (ns vaelii.predicates-test
   "That `vaelii.impl.predicates` says what the engine already does.
 
-  The declaration namespace began as a claim about twenty-odd rosters it did not feed,
+  The declaration namespace began as a claim about twenty-odd lists it did not feed,
   and these tests were the only defensible proof its population was right before a single
-  consumer moved.  Consumers have moved since — `taxonomy`'s three rosters,
-  `spec/::prop-kind`, `vocabulary/roster` and `settle`'s eight — so the tests come in
-  **two kinds**, and which kind a roster gets is decided by whether it has moved.  One
+  consumer moved.  Consumers have moved since — `taxonomy`'s three lists,
+  `spec/::prop-kind`, `vocabulary/classification` and `settle`'s eight — so the tests come in
+  **two kinds**, and which kind a list gets is decided by whether it has moved.  One
   still written by hand is **reconstructed** from the declaration and asserted equal to
   itself, which is what says a consumer switching over later cannot change behaviour.
   One that has moved states its **value** as a literal instead: reconstructing a derived
@@ -15,7 +15,7 @@
 
   **Six facets are reconstructible and four are claims.**  `:cached`, `:derived`,
   `:migrates`, `:arbitrable`, `:reach` and `:query-only` each have a data structure in
-  the tree stating them, and are pinned below against it.  `:answers`, `:retriggers`,
+  the tree stating them, and are asserted below against it.  `:answers`, `:retriggers`,
   `:convicts` and `:inert` have none — a prover's `applicable?` is per-prover code over
   goal shape, a re-check posting is a line inside an arm, and being read by nothing is
   the absence of code rather than any of it.  Those four are exactly the ones that go
@@ -80,9 +80,9 @@
            (into #{} (comp (remove #(= [:none] (:storage (second %)))) (map first))
                  pr/entries)))))
 
-;; ---- the taxonomy's three rosters ----------------------------------------
+;; ---- the taxonomy's three lists ------------------------------------------
 
-(deftest the-declaration-reconstructs-the-taxonomy-rosters
+(deftest the-declaration-reconstructs-the-taxonomy-lists
   (testing "the prop kinds a declaration maintains are the ones the table marks"
     (is (= (into {} (comp (filter #(:prop (second %)))
                           (map (fn [[f spec]] [f (:prop spec)])))
@@ -92,10 +92,10 @@
             generated rather than written, so the two cannot say different things"
     (is (every? #(s/valid? ::vspec/prop-kind %) (pr/prop-kinds)))
     (is (not (s/valid? ::vspec/prop-kind :declares-max-cardinality))))
-  ;; The three rosters below are *read off* the declaration now, so a test that derives
+  ;; The three lists below are *read off* the declaration now, so a test that derives
   ;; them from it and compares proves the wiring and nothing about the values.  Each
   ;; therefore states its value as a literal first — small enough to write out, and the
-  ;; only place left that says what it is — and pins the derivation second, which is what
+  ;; only place left that says what it is — and asserts the derivation second, which is what
   ;; fails on a refactor that stops routing the var through `predicates`.
   (testing "the argument constraints' subject props"
     (is (= '{arg :declares-arg-isa, genlArg :declares-arg-genl,
@@ -115,9 +115,9 @@
     (is (= '#{genl genlCx} tax/closure-relations))
     (is (= tax/closure-relations (set (keys (pr/by-storage :edge)))))))
 
-;; ---- the merge and arbitration rosters -----------------------------------
+;; ---- the merge and arbitration lists -------------------------------------
 
-(deftest the-declaration-reconstructs-the-belief-rosters
+(deftest the-declaration-reconstructs-the-belief-lists
   (testing ":migrates is the set of relations whose own assertion is a merge"
     (is (= kb/equality-predicates (pr/by-facet :migrates))))
   (testing ":arbitrable, read as the violation kind each names, is checks/arbitrable-kinds"
@@ -152,8 +152,8 @@
   ;; convicts.
   ;;
   ;; The argument constraints reach through `special/entail-existing`, which *mints*
-  ;; rather than convicting, being open-world, and is gated on
-  ;; `checks/*assertive-arg-types?*`.  `arg1` / `arg2` / `arg3` reach through that same
+  ;; rather than convicting, being open-world, and runs only when
+  ;; `checks/*assertive-arg-types?*` is true.  `arg1` / `arg2` / `arg3` reach through that same
   ;; mechanism at one remove, the bridge rule's `arg` conclusion being what
   ;; entail-existing reads: a late `(arg1 owns person)` mints `(person Ann)` over an
   ;; `(owns Ann Rex)` stored before it, exactly as the ternary spelling does.
@@ -164,57 +164,57 @@
   ;; rule's `(commutativeInArgAndRest P 1)` conclusion being what the re-spelling fires on.
   (is (= (into '#{genl genlCx disjoint disjoint_metatype sibling_disjoint
                   covering separating partition
-                  arity arityMin arg argArg genlArg interArg arg1 arg2 arg3
+                  arity arityMin arg argArg genlArg interArg arg1 arg2 arg3 arg4 arg5
                   commutative commutativeInArgs commutativeInArgAndRest
                   irreflexive anti_symmetric functional functionalInArg asymmetric
-                  anti_transitive}
+                  anti_transitive negates}
                (keys tax/exact-arity-classes))
          (pr/by-facet :reach))))
 
-(def ^:private live-rosters
+(def ^:private live-inputs
   "What `settle`'s call site hands the validator — the cross-layer reads a bottom
   namespace cannot make for itself.
 
   Read off that call site rather than copied from it.  A copy is two spellings of one
   fact with nothing joining them, which is the defect this whole validator exists to
   refuse: every negative case below would go on passing against a map the engine had
-  stopped handing it, and a roster added to the live map would be one these tests never
+  stopped handing it, and a list added to the live map would be one these tests never
   drive."
   settle/facet-check-inputs)
 
-(deftest a-roster-that-reads-a-family-enumerates-exactly-that-family
+(deftest a-list-that-reads-a-family-enumerates-exactly-that-family
   ;; The rule with no `:stops-short` escape, and the one that would have refused
-  ;; `quotedArg`.  Three rosters read the argument constraints as a family — the
+  ;; `quotedArg`.  Three lists read the argument constraints as a family — the
   ;; declarations here, the entry point's query table, the prover's shape table — and
   ;; `provers/meta-constraint-shape` held three of the four for as long as nothing
   ;; compared them.  The lane rule caught the missing `:answers` facet and offered a
   ;; record; a record is the wrong answer to two enumerations of one fact disagreeing,
   ;; which is why this one refuses outright.
-  (let [refusal (fn [rosters]
-                  (try (pr/check-facets pr/entries (assoc live-rosters :family-rosters rosters))
+  (let [refusal (fn [lists]
+                  (try (pr/check-facets pr/entries (assoc live-inputs :family-lists lists))
                        nil
                        (catch clojure.lang.ExceptionInfo e (ex-data e))))]
-    (is (= pr/entries (pr/check-facets pr/entries live-rosters))
-        "the three rosters agree today")
+    (is (= pr/entries (pr/check-facets pr/entries live-inputs))
+        "the three lists agree today")
     (testing "the bug itself: the prover's table missing the family's fourth spelling"
       (let [data (refusal {:argument-constraint
                            {'provers/meta-constraint-functors
                             (disj provers/meta-constraint-functors 'quotedArg)}})]
         (is (= :bad-table-entry (:type data)))
-        (is (= :family-roster (:mismatch data)))
-        (is (= 'provers/meta-constraint-functors (:roster data)))
+        (is (= :family-list (:mismatch data)))
+        (is (= 'provers/meta-constraint-functors (:list data)))
         (is (= '#{quotedArg arg argArg genlArg interArg args argsGenl argAndRest
                   argAndRestGenl interArgs interArgAndRest}
                (:declared data))
             "and the throw names both sets, so the reader sees which half is missing")))
-    (testing "and the other direction — a roster naming a spelling nothing declares"
-      (is (= :family-roster
+    (testing "and the other direction — a list naming a spelling nothing declares"
+      (is (= :family-list
              (:mismatch (refusal {:argument-constraint
                                   {'checks/constraint-declaration-functors
                                    (conj checks/constraint-declaration-functors 'notAConstraint)}})))))
-    (testing "a family no roster is named for is not thereby unchecked — it is unread,
+    (testing "a family no list is named for is not thereby unchecked — it is unread,
               which is a different thing, and the lane rule still holds its facets"
-      (is (= pr/entries (pr/check-facets pr/entries (assoc live-rosters :family-rosters {})))))))
+      (is (= pr/entries (pr/check-facets pr/entries (assoc live-inputs :family-lists {})))))))
 
 (deftest the-facet-contract-is-checked-at-settles-load
   ;; Everything above drives the validator directly, which proves it *refuses* and
@@ -226,30 +226,32 @@
   (is (= pr/entries settle/checked-entries)
       "settle's load runs the facet contract over the live declarations"))
 
-(def ^:private family-roster-exemptions
+(def ^:private family-list-exemptions
   "Vars that enumerate a mark family and are **not** on `settle/facet-check-inputs`'
-  `:family-rosters`, each with why the rule would say nothing about it.
+  `:family-lists`, each with why the rule would say nothing about it.
 
   A recorded exception rather than a suppression, as `:stops-short` is: the test below
-  refuses an entry that has stopped being true, so one cannot outlive its reason.  Both
-  of today's are the same reason — a roster read off the declarations is the rule
+  refuses an entry that has stopped being true, so one cannot outlive its reason.  Every
+  entry has the same reason: a list read off the declarations is the rule
   already satisfied, and comparing a derivation with what it derives from checks the
   `=` operator."
-  '{taxonomy/arg-declaration-props
+  '{argument/declaration-functors
+    "derived: `(predicates/family :argument-constraint)`, the functors the argument family queues on"
+    taxonomy/arg-declaration-props
     "derived: `(pr/family :argument-constraint)`, keyed to each spelling's own storage"
     taxonomy/functional-family-marks
     "derived: `(pr/by-family :functional)`, keyed to each spelling's written shape"})
 
-(deftest a-roster-that-enumerates-a-family-is-named-here
-  ;; What `check-facets`' `:family-roster` rule cannot see: its own reach.  The rule
-  ;; compares the rosters `settle/facet-check-inputs` names and is silent about one
+(deftest a-list-that-enumerates-a-family-is-named-here
+  ;; What `check-facets`' `:family-list` rule cannot see: its own reach.  The rule
+  ;; compares the lists `settle/facet-check-inputs` names and is silent about one
   ;; nobody named — so the rule written because two enumerations of the argument
   ;; constraints disagreed covers exactly the enumerations somebody remembered to list.
   ;;
-  ;; A family roster is recognizable without being listed: a var whose members are a
+  ;; A family list is recognizable without being named: a var whose members are a
   ;; non-empty *subset* of a family's spellings is reading that family and nothing else.
   ;; Subset and not equality is the point — `meta-constraint-functors` held three of the
-  ;; four, and an equality test would have called the bug not-a-roster and passed.
+  ;; four, and an equality test would have called the bug not-a-family-list and passed.
   (require 'vaelii.core)                ; the whole engine, so the scan sees every ns
   (let [families  (into {} (map (juxt identity pr/family)) pr/mark-families)
         members   (fn [v] (cond (and (set? v) (every? symbol? v))              v
@@ -266,40 +268,40 @@
                               [fam spellings] families
                               :when (set/subset? ms (set spellings))]
                           [(short-name n sym) fam]))
-        named     (into #{} (mapcat keys) (vals (:family-rosters settle/facet-check-inputs)))
-        exempt    (set (keys family-roster-exemptions))]
+        named     (into #{} (mapcat keys) (vals (:family-lists settle/facet-check-inputs)))
+        exempt    (set (keys family-list-exemptions))]
     (doseq [[var-sym fam] flagged]
       (is (or (named var-sym) (exempt var-sym))
           (str var-sym " enumerates the " fam " family and is on neither"
-               " `settle/facet-check-inputs` nor `family-roster-exemptions` — so"
+               " `settle/facet-check-inputs` nor `family-list-exemptions` — so"
                " `check-facets` never compares it with the declarations, and a spelling"
                " it is missing means one thing to whichever lane reads it and another"
                " everywhere else.  Name it there, or record here why the comparison"
                " would say nothing.")))
     (doseq [var-sym (sort exempt)]
       (is (flagged var-sym)
-          (str "`family-roster-exemptions` names " var-sym ", which enumerates no mark"
+          (str "`family-list-exemptions` names " var-sym ", which enumerates no mark"
                " family — the exemption has outlived what it excused.  Drop the entry.")))
     (doseq [var-sym (sort named)]
       (is (flagged var-sym)
-          (str "`settle/facet-check-inputs` names " var-sym " as a family roster and the"
+          (str "`settle/facet-check-inputs` names " var-sym " as a family list and the"
                " scan does not see it: a var that has been made private, renamed, or has"
                " stopped enumerating a family is one the rule can no longer reach.")))))
 
 (deftest a-facet-implication-nothing-answers-for-does-not-load
   ;; `the-terms-that-convict-with-no-retroactive-half-are-exactly-three` stood here and is
-  ;; gone.  It pinned the set of terms that convict at the entry point and reach nothing behind
+  ;; gone.  It asserted the set of terms that convict at the entry point and reach nothing behind
   ;; it, because the rule could not be stated while three terms broke it.  `check-facets`
   ;; states it: the three now record the exception in `:stops-short`, and the record is
   ;; held to being *exactly* what is owed, so a fourth term cannot appear and a recorded
-  ;; one cannot go stale — which is strictly more than the set-pin said.
+  ;; one cannot go stale — which is strictly more than the set assertion said.
   (let [refusal (fn [entries]
                   (try (pr/check-facets entries {}) nil
                        (catch clojure.lang.ExceptionInfo e (ex-data e))))
         ok      (fn [spec] (merge {:shape {:args [:predicate]} :storage [:none]
                                    :checked false :facets #{} :family nil}
                                   spec))]
-    (is (= pr/entries (pr/check-facets pr/entries live-rosters))
+    (is (= pr/entries (pr/check-facets pr/entries live-inputs))
         "the real declarations pass and come back unchanged")
 
     (testing "#54's shape as an implication: convicting at the entry point and reaching nothing"
@@ -338,7 +340,7 @@
         (is (nil? (refusal [['tellsPred (ok {:facets #{:answers :retriggers}})]]))
             "as its own arms are")))
 
-    (testing "a facet outside the closed vocabulary, which is a roster again"
+    (testing "a facet outside the closed vocabulary, which is a hand-kept list again"
       (is (= :vocabulary (:mismatch (refusal [['brokenPred (ok {:facets #{:convicst}})]])))))
 
     (testing "the facet and the storage kind say the same thing and cannot disagree"
@@ -379,17 +381,17 @@
 ;; ---- the population ------------------------------------------------------
 
 (deftest the-population-is-the-grammar
-  ;; The first of these is true by construction now — `vocabulary/roster` is the entries
+  ;; The first of these is true by construction now — `vocabulary/classification` is the entries
   ;; carrying `:enforced` or `:inert` prose, so its keys cannot fail to be declared here.
-  ;; It stays as the statement that the roster is still that read: a refactor putting the
+  ;; It stays as the statement that the classification is still that read: a refactor putting the
   ;; prose back in a list of its own fails here rather than passing quietly.  What the
   ;; population actually rests on is `vocabulary_audit_test`, which asks CxUniverse.
-  (testing "every term CxUniverse's roster answers for is declared here"
-    (is (empty? (remove pr/table (keys vocab/roster)))))
+  (testing "every term CxUniverse's classification answers for is declared here"
+    (is (empty? (remove pr/table (keys vocab/classification)))))
   (testing "every functor the special table interprets is declared here"
     (is (empty? (remove pr/table table-functors))))
   (testing "and nothing else is — the population is the grammar, not the KB"
-    (is (empty? (remove (into (set (keys vocab/roster)) table-functors)
+    (is (empty? (remove (into (set (keys vocab/classification)) table-functors)
                         (keys pr/table)))))
   (testing "no term is declared twice"
     (is (= (count pr/entries) (count pr/table)))))
@@ -420,11 +422,11 @@
   ;; `check-facets`' `:inert` rule now.  What no validator inside `predicates` can see is
   ;; the *other* namespace's answer, which is what this is left saying.
   (doseq [t (pr/by-facet :inert)]
-    (is (:inert (vocab/roster t))
+    (is (:inert (vocab/classification t))
         (str t " is called inert here and must be called inert there too"))))
 
 (deftest the-vocabulary-answer-is-one-answer
-  ;; `vocabulary/roster` reads the *class* off `:facets` and the prose off whichever key
+  ;; `vocabulary/classification` reads the *class* off `:facets` and the prose off whichever key
   ;; it was written under, so the two must not be able to say different things.  The
   ;; `inert` constructor is what holds them together — it writes the facet with the prose
   ;; — and this is what fails if an entry is ever assembled without it.
@@ -434,9 +436,9 @@
           "a term is enforced or inert, never both")
       (is (= (boolean (:inert spec)) (contains? (:facets spec) :inert))
           "the :inert prose and the :inert facet are one decision, not two")))
-  (testing "and the roster is exactly the entries carrying prose — the wiring, since what
+  (testing "and the classification is exactly the entries carrying prose — the wiring, since what
             the prose says is now only written here"
-    (is (= (set (keys vocab/roster))
+    (is (= (set (keys vocab/classification))
            (into #{} (comp (filter #(or (:enforced (second %)) (:inert (second %))))
                            (map first))
                  pr/entries)))))
@@ -459,7 +461,7 @@
 
 (deftest a-note-names-a-lane-the-facet-vocabulary-does-not-reach
   ;; A note is the record of a term doing something no facet covers, so it is the
-  ;; backlog the facet validator will work through — not prose to accumulate.  Pinning
+  ;; backlog the facet validator will work through — not prose to accumulate.  Asserting
   ;; the count keeps a note from being added silently as an alternative to a facet.
   (let [noted (into #{} (comp (filter #(:notes (second %))) (map first)) pr/entries)]
     (is (seq noted))

@@ -87,14 +87,14 @@
 ;; ---- the search ----------------------------------------------------------
 
 (defn- assign
-  "Pin `pair` to the single relation `rel`, writing the converse on the reversed pair so the
+  "Narrow `pair` to the single relation `rel`, writing the converse on the reversed pair so the
   network stays readable in both directions — the invariant `qcn` maintains."
   [net algebra [i j] rel]
   (assoc net [i j] #{rel} [j i] ((:converse algebra) #{rel})))
 
-(defn- pinned
+(defn- determined
   "The network as an explicit scenario: every pair a singleton, both directions written,
-  including the pairs the search never had to decide because tightening pinned them."
+  including the pairs the search never had to decide because tightening determined them."
   [calc net prs]
   (let [converse (:converse (:algebra calc))]
     (into {}
@@ -120,7 +120,7 @@
            (when-not (= :inconsistent pc)
              (search calc pc node-vec prs))))
        (relation-order (qkb/constraint calc net (first pair) (second pair))))
-      (list (pinned calc net prs)))))
+      (list (determined calc net prs)))))
 
 ;; ---- the public shape ----------------------------------------------------
 

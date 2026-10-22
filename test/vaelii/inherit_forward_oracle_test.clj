@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.inherit-forward-oracle-test
-  "The correctness gate for forward chaining on an inherited claim.
+  "The correctness oracle test for forward chaining on an inherited claim.
 
   Preservation lets a rule fire on a claim nobody stored, so the fixpoint reaches
   conclusions no stored fact unifies with — and every failure on that path is a

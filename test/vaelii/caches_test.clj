@@ -12,13 +12,13 @@
   rather than by reading the keyword back.
 
   **Completeness.**  A diagnostics list that quietly omits a cache is worse than no list:
-  a reader concludes the engine holds nothing else.  Two tests enforce it — a roster,
+  a reader concludes the engine holds nothing else.  Two tests enforce it — a fixed set,
   so adding a cache is a visible change in a diff, and a scan of the sources for the
   **bounded**-cache idiom, so a cache spelled with a `…-limit` / `…-budget` /
   `…-capacity` constant and no registration fails here rather than going unnoticed.  The
   scan reaches exactly that far and no further: an *unbounded* cache has no constant to
   find — `:taxonomy-closures` is one, retired by a generation bump rather than by size —
-  so the roster is what catches those, and it catches them only by being read."
+  so the fixed set is what catches those, and it catches them only by being read."
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
@@ -198,7 +198,7 @@
   (is (= 1000000 (:limit (row kb :symbol-pool))) "the pool is not scaled by the profile")
   (is (= 1024 (:limit (row kb :literal-matches))) "while a routed cache is"))
 
-(tu/deftest-kb an-override-pins-a-cache-and-the-scale-does-not-move-it
+(tu/deftest-kb an-override-fixes-a-cache-bound-and-the-scale-does-not-move-it
   (v/set-cache-scale 0.5)
   (v/set-cache-limit :resident 1000)
   (is (= 1000 (:limit (row kb :resident))) "the override wins over the scale")
@@ -224,16 +224,16 @@
                        (catch clojure.lang.ExceptionInfo e (ex-data e)))))
         (str "a limit of " (pr-str bad) " is refused"))))
 
-(tu/deftest-kb a-pin-moves-the-row-it-names-or-is-refused
+(tu/deftest-kb an-override-moves-the-row-it-names-or-is-refused
   ;; `set-cache-limit` promises a bound "regardless of the scale".  Every registered row
-  ;; either takes the pin — its reported :limit becomes the pinned number — or refuses it:
-  ;; a pin recorded for a bound nothing reads through the profile is a setting reported
+  ;; either takes the override — its reported :limit becomes the overriding number — or
+  ;; refuses it: an override recorded for a bound nothing reads through the profile is a setting reported
   ;; and enforced nowhere.
   (let [outcome (fn [id]
                   (try (v/set-cache-limit id 7)
                        (let [l (:limit (row kb id))]
                          (v/set-cache-limit id nil)
-                         [:pinned l])
+                         [:overridden l])
                        (catch clojure.lang.ExceptionInfo e
                          [(:type (ex-data e)) (:cache (ex-data e))])))
         rows    (v/caches kb)
@@ -241,17 +241,17 @@
         ;; property of which namespaces the run loaded, and the assertion count must not
         ;; depend on it
         outcomes (into (sorted-map) (map (juxt :cache (comp outcome :cache))) rows)]
-    (is (= {} (into {} (remove (fn [[id o]] (#{[:pinned 7] [:unknown-option id]} o))) outcomes))
-        "every row takes the pin or refuses it")
+    (is (= {} (into {} (remove (fn [[id o]] (#{[:overridden 7] [:unknown-option id]} o))) outcomes))
+        "every row takes the override or refuses it")
     (testing "the rows outside the profile are the refused ones"
       (is (= {:symbol-pool       [:unknown-option :symbol-pool]
-              :taxonomy-closures [:pinned 7]}
+              :taxonomy-closures [:overridden 7]}
              (select-keys outcomes [:symbol-pool :taxonomy-closures])))
       (is (every? (fn [{id :cache limit :limit}] (or (some? limit) (= [:unknown-option id] (outcomes id))))
                   rows)
-          "a row with no count to pin refuses one")
-      (is (= [:pinned 7] (outcomes :literal-matches)) "and a profile-scaled row takes it"))
-    (testing "a refused pin leaves no override behind, and clearing one is accepted"
+          "a row with no count to override refuses one")
+      (is (= [:overridden 7] (outcomes :literal-matches)) "and a profile-scaled row takes it"))
+    (testing "a refused override leaves no override behind, and clearing one is accepted"
       (is (= {} (:overrides (v/cache-profile))))
       (is (= {} (:overrides (v/set-cache-limit :symbol-pool nil)))))))
 
@@ -288,18 +288,19 @@
       "so a cache under sustained pressure still holds an eighth of its bound"))
 
 (tu/deftest-kb pressure-trims-an-override-even-though-the-scale-does-not
-  ;; The decision behind the guard: a pin the operator set with set-cache-limit stands against
-  ;; the scale but not against a filling heap.  The scale leaves a pinned bound alone; pressure
-  ;; shrinks it like any other counted cache, because a pin the guard could not reach would
+  ;; The decision behind the guard: an override the operator set with set-cache-limit stands
+  ;; against the scale but not against a filling heap.  The scale leaves an overridden bound
+  ;; alone; pressure shrinks it like any other counted cache, because an override the guard
+  ;; could not reach would
   ;; keep the heap short of the reclaim the guard exists to force.
   (v/set-cache-scale 0.5)
   (v/set-cache-limit :resident 1000)
-  (is (= 1000 (:limit (row kb :resident))) "the scale does not move a pinned bound")
+  (is (= 1000 (:limit (row kb :resident))) "the scale does not move an overridden bound")
   (caches/shrink! [])
-  (is (= 500 (:limit (row kb :resident))) "but pressure 0.5 halves the pin")
+  (is (= 500 (:limit (row kb :resident))) "but pressure 0.5 halves the override")
   (dotimes [_ 20] (caches/shrink! []))
   (is (= 125 (:limit (row kb :resident)))
-      "and the floor is pressure-min (0.125) times the pin, not min-limit"))
+      "and the floor is pressure-min (0.125) times the override, not min-limit"))
 
 (deftest a-trim-keeps-the-target-rather-than-emptying-the-map
   ;; The "not too much" property, on the plain-map helper the trims share: past its target a
@@ -566,28 +567,28 @@
 
 ;; ---- completeness -------------------------------------------------------
 
-(def ^:private roster
-  "Every cache registered by a namespace `vaelii.core` loads.  A roster rather than a
+(def ^:private expected-caches
+  "Every cache registered by a namespace `vaelii.core` loads.  A set rather than a
   count, so adding one is a visible change in a diff and not merely a number that moved."
   #{:literal-matches :resident :stored-handles :closure-neighbours :closure-answers
-    :pinned-values :justification-dedup :symbol-pool :compiled-algebras :relation-decode
+    :held-values :justification-dedup :symbol-pool :compiled-algebras :relation-decode
     :path-consistency :network-support :taxonomy-closures :taxonomy-supporters
     :hot-records :rete-alpha :source-parses :preservation-crossing :arity-lengths})
 
-(def ^:private optional-roster
+(def ^:private optional-caches
   "Caches registered by a namespace core does **not** load, so whether they are present
-  depends on what else the run required.  Held apart from the roster rather than folded
-  into it: the roster is a claim about what every process holds, and one that moved with
+  depends on what else the run required.  Held apart from `expected-caches` rather than folded
+  into it: `expected-caches` is a claim about what every process holds, and one that moved with
   the test order would be a claim about nothing."
   #{:metric-closures :metric-reconstructions})
 
-(tu/deftest-kb the-roster-is-what-this-process-holds
+(tu/deftest-kb the-expected-caches-are-what-this-process-holds
   (let [registered (into #{} (map :cache) (v/caches kb))]
-    (is (empty? (set/difference roster registered))
-        (str "a cache in the roster that no namespace registers — either it is gone, in "
-             "which case the roster entry goes with it, or its registration was dropped"))
-    (is (empty? (set/difference registered roster optional-roster))
-        (str "a cache the page shows that the roster does not name. Adding one changes "
+    (is (empty? (set/difference expected-caches registered))
+        (str "a cache in `expected-caches` that no namespace registers — either it is gone, in "
+             "which case its entry goes with it, or its registration was dropped"))
+    (is (empty? (set/difference registered expected-caches optional-caches))
+        (str "a cache the page shows that `expected-caches` does not name. Adding one changes "
              "what the page claims the engine holds — name it here in the same commit, "
              "and check it has a :unit and a :note that say what an entry is"))))
 
@@ -607,7 +608,7 @@
                                    "recompute; instrument state, not a cache a read is served from")
    "min-limit"           (str "caches.clj — the floor `limit-of` never scales a bound "
                               "below; a clamp on the tunable bound, not a cache of its own")
-   "set-limit"           (str "caches.clj — the setter that pins one cache's bound; a "
+   "set-limit"           (str "caches.clj — the setter that overrides one cache's bound; a "
                               "function, not a constant, and it writes a bound rather than "
                               "being one")
    "set-cache-limit"     "core.clj — the public setter wrapping `caches/set-limit`"
@@ -622,6 +623,9 @@
                               "memo holds may come to, the least recently read dropped past "
                               "it; the memo is dropped with the question or pass, not a "
                               "registered cache")
+   "spec-walk-limit"     (str "checks.clj — how many specializations of a moved type the "
+                              "argument-hold refresh walks before reading every stored "
+                              "declaration; a walk bound, nothing retained")
    "dense-table-limit"   (str "qcn.clj — whether a composition table is built whole or "
                               "per base relation; a build decision, and the table is not "
                               "evicted")
@@ -655,7 +659,7 @@
                               "may read before it is refused too costly; a per-match "
                               "evaluation bound, nothing retained")
    "default-describe-limit" (str "core.clj — how many entries one of `describe`'s bounded "
-                                 "lists carries; a per-read window on an answer computed "
+                                 "lists carries; a per-read truncation of an answer computed "
                                  "fresh each call, nothing retained")})
 
 (def ^:private bound-to-cache

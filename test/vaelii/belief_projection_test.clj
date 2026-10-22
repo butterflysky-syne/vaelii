@@ -114,7 +114,7 @@
     (is (empty? (v/conflicts kb)))
     (is (empty? (v/contradictions kb)))))
 
-;; ---- the ground gate: an unbound agent is not the projector's -----------
+;; ---- the ground check: an unbound agent is not the projector's ----------
 
 (tu/deftest-kb an-unbound-agent-is-not-claimed-by-the-projector
   (believe! kb 'Alice '(flies Tweety))
@@ -254,7 +254,7 @@
 (tu/deftest-kb belief-projection-survives-recover
   ;; The `modal_predicate` grant is a taxonomy prop rebuilt from the stored
   ;; `(modal_predicate P)` fact — the same shape as genlArg's mark (arggenl_test) — so a
-  ;; rebuild must reconstruct the gate, else a recovered KB would stop projecting a belief
+  ;; rebuild must reconstruct the grant, else a recovered KB would stop projecting a belief
   ;; the running one answered: a restart changing an answer.  Covers both the shipped
   ;; `believes` grant and a runtime-registered one.
   (believe! kb 'Alice '(flies Tweety))

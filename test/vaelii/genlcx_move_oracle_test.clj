@@ -132,7 +132,7 @@
                      :retract (when-let [h (get @hs i)]
                                 (when (v/sentex kb h) (v/retract! kb h))
                                 (vswap! hs dissoc i)))))]
-    (v/assert kb '(forced_monotonic_predicate genlCx) 'CxRefRoster)
+    (v/assert kb '(forced_monotonic_predicate genlCx) 'CxRefForced)
     (if *deferred?* (v/with-deferred-settle kb (apply!)) (apply!))
     {:kb kb :space space :handles @hs}))
 
@@ -163,11 +163,12 @@
 
 (defn- reading
   "Per context of `world`: `{C {:asked #{S} :stored #{S} :justs {S #{#{antecedent}}}}}`,
-  over the justifications not blocked, a `genlCx` antecedent left out."
+  over the justifications whose verdict at C neither blocks, guards, voids nor exempts
+  (`v/justification-verdicts`), a `genlCx` antecedent left out."
   [world kb]
   (let [tms     (reasoning/tms kb)
         recs    (:records kb)
-        blocked (jtms/blocked tms)
+        invalid #{:blocked :guard :void :exempt}
         key     (fn [h] (when-let [sx (p/get-sentex recs h)]
                           (let [s (v/sentence-of sx)]
                             (when-not (and (seq? s) (= 'genlCx (first s)))
@@ -180,10 +181,11 @@
                                         :when (v/ask? kb s c)]
                                     s))
                 :stored (into #{} (map #(render kb (v/sentence-of %))) sxs)
-                :justs  (into {} (for [sx sxs]
+                :justs  (into {} (for [sx sxs
+                                       :let [vs (v/justification-verdicts kb (:id sx) c)]]
                                    [(render kb (v/sentence-of sx))
                                     (into #{} (keep (fn [jid]
-                                                      (when-let [j (when-not (contains? blocked jid)
+                                                      (when-let [j (when-not (invalid (get vs jid))
                                                                      (jtms/justification tms jid))]
                                                         (into #{} (keep key) (:antecedents j)))))
                                           (jtms/supports tms (:id sx)))]))}]))))
@@ -220,13 +222,23 @@
              :when detail]
          [c kind detail])))
 
+(defn- verdict-rows
+  "`[context :verdicts [handle kind]]` per row where the verdicts `kb` reads disagree with
+  its belief over the sentexes of `world`'s contexts (`tu/verdict-violations`)."
+  [world kb]
+  (let [cs (:contexts world)]
+    (mapv (fn [[h c kind]] [c :verdicts [h kind]])
+          (tu/verdict-violations
+           kb (into [] (comp (mapcat #(v/sentexes-in-context kb %)) (map :id)) cs) cs))))
+
 (defn judge
   "The disagreements of `world` run by `ops` against its final premises in content
-  order."
+  order, and the rows where the run's verdicts disagree with its belief."
   [world ops]
   (let [a (run-ops! world ops)
         b (binding [*deferred?* false] (run-ops! world (final-ops world ops)))]
-    (try (disagreements world (:kb a) (reading world (:kb a)) (reading world (:kb b)))
+    (try (into (disagreements world (:kb a) (reading world (:kb a)) (reading world (:kb b)))
+               (verdict-rows world (:kb a)))
          (finally (close! a) (close! b)))))
 
 (defn shrink
@@ -278,7 +290,7 @@
   ;; a fact, a rule or a declaration stored after it was chained, joined or drawn with the
   ;; edge in place.  Each row is a rule or an `arg` declaration in the lower context, a
   ;; fact in the upper one, and the edge, in every order.
-  ;; Pinned to the entailing reading: the constraint-only reading draws no `(dfo_kind DfoAnn)`.
+  ;; Forced to the entailing reading: the constraint-only reading draws no `(dfo_kind DfoAnn)`.
   (tu/with-entailing
     (doseq [[upper opts conclusion] [['(implies (dfo_low ?x) (dfo_high ?x)) {:direction :forward}
                                       '(dfo_high DfoAnn)]

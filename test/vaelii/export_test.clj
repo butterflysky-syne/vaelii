@@ -86,7 +86,7 @@
   independently derive, a defeated-but-stored default, and a `rewriteOf` that retires a
   spelling and migrates what mentioned it.
 
-  The clock is pinned because `assert` stamps `:created` into provenance from it, and
+  The clock is fixed because `assert` writes `:created` into provenance from it, and
   two builds a millisecond apart would then disagree about content neither KB considers
   content."
   [kb {:keys [bird penguin flies feathered happy Tweety Opus Rex Preferred Deprecated ctx]}]
@@ -115,8 +115,8 @@
 
 ;;; ── the destination ───────────────────────────────────────────────────
 
-(deftest a-blank-build-stamp-is-unset
-  ;; `-Dvaelii.build=` stamps nothing: the writer falls through to the git HEAD or `dev`
+(deftest a-blank-build-label-is-unset
+  ;; `-Dvaelii.build=` sets no build label: the writer falls through to the git HEAD or `dev`
   ;; rather than naming itself "vaelii " in every dump's meta.edn.
   (let [prior (System/getProperty "vaelii.build")]
     (try
@@ -304,7 +304,7 @@
 (deftest a-kb-with-no-provenance-writes-no-provenance-file
   (tu/with-neutral-kb [kb tu/fresh]
     (tu/with-terms [likes Ann Bob CxPlain]
-      ;; the bulk path stamps no provenance, which is the case the optional file is for
+      ;; the bulk path records no provenance, which is the case the optional file is for
       (v/bulk-assert-facts! kb [(list likes Ann Bob)] CxPlain)
       (with-dirs* 1 "noprov"
         (fn [dir]
@@ -469,16 +469,16 @@
           (is (nil? (catalog/classify dir))
               "and the catalog does not classify what it left behind as a dump"))))))
 
-;;; ── the opts rosters ──────────────────────────────────────────────────
+;;; ── the accepted option keys ──────────────────────────────────────────
 
 (deftest an-export-or-import-option-nothing-reads-is-refused
   ;; `check-compression!` and `check-variant!` hold the *values* of two known keys;
-  ;; the key roster is the check beside them, against a quieter failure: a misspelt
+  ;; the key-set check stands beside them, against a quieter failure: a misspelt
   ;; `:varient` or `:provenence?` takes its default in silence and writes a dump other
   ;; than the one asked for — no index where one was ordered, the unbounded provenance
   ;; stream where it was dropped — under a summary that looks exactly right.
   (tu/with-neutral-kb [kb tu/fresh]
-    (with-dirs* 1 "roster"
+    (with-dirs* 1 "opt-keys"
       (fn [^File dir]
         (rm-rf! dir)
         (testing "export! refuses the misspelt key before the directory exists"
@@ -491,12 +491,12 @@
         (testing "and a non-map opts the same"
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be a map"
                                 (export/export! kb dir :gzip))))))
-    (with-dirs* 1 "import-roster"
+    (with-dirs* 1 "import-opt-keys"
       (fn [^File dir]
         (rm-rf! dir)
-        (tu/with-terms [dog Muffet Rex CxRoster]
-          (v/assert kb (list dog Muffet) CxRoster)
-          (v/assert kb (list dog Rex) CxRoster))
+        (tu/with-terms [dog Muffet Rex CxKeys]
+          (v/assert kb (list dog Muffet) CxKeys)
+          (v/assert kb (list dog Rex) CxKeys))
         (export/export! kb dir {:compression :none})
         (tu/with-cleared-kb [target #(tu/isolated-fresh)]
           (testing "import-dump refuses the misspelt flag before reading anything"
@@ -506,7 +506,7 @@
               (is (= [:beleif?] (:unknown (ex-data e))))
               (is (re-find #":belief\?" (ex-message e)))
               (is (zero? (:sentexes (tu/content-count target))) "nothing landed")))
-          (testing "and :report-every is a real option, in the roster"
+          (testing "and :report-every is a real option, in the key set"
             (let [seen (atom 0)
                   s    (imp/import-dump target (str dir)
                                         {:belief? false :report-every 1

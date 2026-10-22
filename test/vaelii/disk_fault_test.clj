@@ -174,7 +174,7 @@
         (is (= :no-throw (refusal #(v/close! kb))))))))
 
 (deftest a-store-that-stops-after-the-write-landed-does-not-fail-the-write
-  ;; `assert` stamps provenance after the sentence is stored, chained and settled.  A
+  ;; `assert` records provenance after the sentence is stored, chained and settled.  A
   ;; store that stops there has taken the write, and a reopen holds it; the assert
   ;; returns its handle, and the call after it is refused.
   (with-tmp
@@ -182,7 +182,7 @@
       (let [kb        (seed! (open dir))
             prov      (:provenance (:kinds (:records kb)))
             read-slot f/read-slot]
-        ;; the provenance kind's channels close under the store as the stamp reads its
+        ;; the provenance kind's channels close under the store as the provenance write reads its
         ;; slot, as an interrupt on another thread would close them.  Closed before the
         ;; assert, the durability daemon's fsync tick can find them first and stop the
         ;; store while the sentence is still being chained.

@@ -13,7 +13,7 @@
   the root returns a superset of the trie's hits and the existing `unify` filters it
   to the same set.
 
-  This pins that claim the way the taxonomy pins its incremental closures against a
+  This tests that claim the way the taxonomy tests its incremental closures against a
   rebuild — the flag ON must return the identical result set the flag OFF (pure
   trie) does, over patterns generated from the test-world's own stored facts (so they
   actually match, and cover numeric arguments the roots do not index, symmetric
@@ -76,11 +76,11 @@
       (when (pos? n) [(cons pred (cons 'ZzzNoSuchIndividual (rest args)))])
       [(cons '?fn args)]                              ; functor open, arguments ground
       (for [i (range n)] (cons '?fn (open #{i})))     ; functor open + one argument open
-      [(cons '?fn (open (set (range n))))]))))        ; nothing pinned at all
+      [(cons '?fn (open (set (range n))))]))))        ; nothing ground at all
 
 (deftest ^:slow match-pattern-arg-root-equals-trie
   ;; 80 sampled facts (each ~8 patterns) rather than the first 250: the exhaustive
-  ;; sweep was ~11s for a per-pattern trie-vs-arg-root equality a spread already pins.
+  ;; sweep was ~11s for a per-pattern trie-vs-arg-root equality a spread already asserts.
   (tu/with-kb [kb]
     (let [pats (mapcat var-patterns (tu/fact-sample kb 80))]
       (is (seq pats))
@@ -198,7 +198,7 @@
                             "\n  off: " (pr-str off) "\n  on:  " (pr-str on)))))))
 
 ;; the public `query` shares the same divert: it routes through `res/raw-match`, so a
-;; believed-literal query pinning an argument *after* a variable is answered from the
+;; believed-literal query binding an argument *after* a variable is answered from the
 ;; argument root, not a leading-variable fan-out.  Flag on == flag off, over facts this
 ;; test asserts itself (so the equality is non-vacuous, unlike a probe for a cast that
 ;; the schema-only starter never loaded).

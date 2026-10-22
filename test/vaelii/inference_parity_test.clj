@@ -14,7 +14,7 @@
   the DFS terminates on the data, so a derivation deeper than the bound is found by one
   and not the other.  That is a real difference and not a bug to be tested away: every
   shape here is given a bound that covers it, and `deeper-than-the-bound-is-not-found`
-  pins the divergence itself rather than pretending it is absent."
+  asserts the divergence itself rather than pretending it is absent."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.inference :as inf]

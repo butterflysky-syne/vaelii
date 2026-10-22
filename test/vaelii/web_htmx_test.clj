@@ -206,7 +206,7 @@
         "and the answer carries the swap")))
 
 (deftest a-record-page-is-clean-too
-  ;; the justification audit is pinned to a **derived** sentex, built here rather than
+  ;; the justification audit is run on a **derived** sentex, built here rather than
   ;; picked out of an enumeration: a premise carries no supporting justification, so a
   ;; backend whose enumeration led with one would leave this audit unrun — and unrun is
   ;; indistinguishable from clean, since it moves the assertion count by nothing
@@ -217,7 +217,7 @@
           [concl & more] (v/sentexes-matching tu/*kb* (list 'mortal Rufus) '?ctx)
           derived        (:id concl)
           j              (:id (first (v/supporting-justifications tu/*kb* derived)))]
-      (is (nil? more) "one placement for the fresh individual, so the audit is pinned to it")
+      (is (nil? more) "one placement for the fresh individual, so the audit runs on it")
       (is (some? derived) "the shipped rule concluded, so there is a derived sentex to audit")
       (is (some? j) "and it rests on the justification the /justification page shows")
       (let [found (concat (audit "/sentex" (:body (GET (str "/sentex/" stored))))

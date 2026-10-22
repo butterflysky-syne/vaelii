@@ -28,7 +28,7 @@
     same position must.  This is where a reader set read off the raw closure rather than
     the visibility-filtered one would show.
   - **a forced budget truncation.**  The budget bounds candidates and this bounds
-    readers; the two are pinned here to not interact.
+    readers; the two are asserted here to not interact.
 
   `genlcx_sweep_cost_test` holds the other half — that the count does not grow with
   readers the edge did not reach, which is the property the narrowing exists for."

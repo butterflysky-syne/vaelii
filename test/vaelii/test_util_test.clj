@@ -93,8 +93,8 @@
           (finally (v/close! kb)))))))
 
 (deftest the-overlay-arms-fresh-kb-reads-through-its-base
-  ;; Built under the overlay arm whatever the run selected, so the default gate holds the
-  ;; arm's `fresh` too.  A cleared fork hides its base for the rest of the process
+  ;; Built under the overlay arm whatever the run selected, so `lein gate` at `:default`
+  ;; tests the arm's `fresh` too.  A cleared fork hides its base for the rest of the process
   ;; (docs/overlay.md), so a `fresh` that cleared the slot's fork would read none of the
   ;; record written into the base below.  The base is the one the whole arm shares, so it
   ;; is emptied again before the test ends.
@@ -107,11 +107,11 @@
           (is (= '(dog Muffet) (:sentence (v/sentex kb h))) "the record half reads the base"))
         (finally (v/clear! base))))))
 
-;; ---- the sweep roster, against the table the scripts read ---------------
+;; ---- the sweep list, against the table the scripts read -----------------
 
 (defn- sweep-envs-in-the-shell-table
   "The environment variables `scripts/lib/suite-configs.sh` selects its sweeps with, read
-  out of `SWEEP_ENVS` — the shell half of a roster the Clojure half has to match.  Read as
+  out of `SWEEP_ENVS` — the shell half of a list the Clojure half has to match.  Read as
   text rather than by running bash: what is wanted is the *spellings*, and a name spelt
   only in one of the two files is the whole finding."
   []
@@ -119,25 +119,25 @@
         block (second (re-find #"(?s)SWEEP_ENVS=\((.*?)\n\)" txt))]
     (set (map second (re-seq #"\b(VAELII_[A-Z_]+)=" (or block ""))))))
 
-(deftest every-sweep-is-rostered-with-the-vars-it-replaces
+(deftest every-sweep-is-listed-with-the-vars-it-replaces
   ;; The gap this closes.  A sweep installs its implementation by altering a ROOT, and a
-  ;; counted gate (`assert_cost_test`, `lead_side_cost_test`, `join_lead_cost_test`) is a
+  ;; counted test (`assert_cost_test`, `lead_side_cost_test`, `join_lead_cost_test`) is a
   ;; claim about one configuration — so every root a sweep replaces has to be a root
   ;; `tu/shipped-defaults` can hand back.  `VAELII_RETE` was not, and
   ;; `join_lead_cost_test` measured the alpha matcher's join for as long as that was true.
-  ;; Adding a sweep to the shell table now fails here until it is rostered, and rostering
+  ;; Adding a sweep to the shell table now fails here until it is listed, and listing
   ;; it is where its vars get named.
   (let [shell    (sweep-envs-in-the-shell-table)
-        rostered (set (map :env tu/sweeps))]
+        listed   (set (map :env tu/sweeps))]
     (is (seq shell) "the SWEEP_ENVS block was found and parsed — the finding is not an empty read")
-    (is (= shell rostered)
-        (str "the sweep roster and scripts/lib/suite-configs.sh disagree: "
-             "only in the shell " (sort (set/difference shell rostered))
-             ", only in tu/sweeps " (sort (set/difference rostered shell))))
-    (testing "and every var a sweep names is one the pin can hand back"
+    (is (= shell listed)
+        (str "the sweep list and scripts/lib/suite-configs.sh disagree: "
+             "only in the shell " (sort (set/difference shell listed))
+             ", only in tu/sweeps " (sort (set/difference listed shell))))
+    (testing "and every var a sweep names is one the fixture can hand back"
       (doseq [sym (mapcat :vars tu/sweeps)]
         (is (contains? tu/shipped-defaults (requiring-resolve sym))
-            (str sym " is rostered but absent from tu/shipped-defaults"))))))
+            (str sym " is listed but absent from tu/shipped-defaults"))))))
 
 (defn- owed-map-rows
   "`config_owed_for_path`'s case arms, as `[path-pattern configs]` pairs, read out of
@@ -154,7 +154,7 @@
           :when          (seq pat)]
       [pat (str/split (str/trim owed) #"\s+")])))
 
-(defn- shell-roster
+(defn- shell-list
   "`ALL_BACKENDS` and `ALL_SWEEPS`, off the same file."
   []
   (let [txt  (slurp (io/file "scripts/lib/suite-configs.sh"))
@@ -180,19 +180,20 @@
   ;; The other half: a row may only name a configuration or a group word, since
   ;; `expand_configs` silently drops anything in neither table — so a typo there is also
   ;; a change that quietly owes less than the map says.
-  (let [known (into #{"backends" "sweeps" "routine" "full"} (shell-roster))]
+  (let [known (into #{"backends" "sweeps" "routine" "full"} (shell-list))]
     (doseq [[pat owed] (owed-map-rows)
             c          owed]
       (is (contains? known c)
           (str pat " owes " c ", which is neither a configuration nor a group word")))))
 
-(deftest the-pin-hands-back-a-shipped-default-a-sweep-replaced
-  ;; The property the gates rely on, over the var that actually bit: whatever the root
-  ;; says, the pin reads the reference matcher inside.  Written against a `binding` rather
-  ;; than an `alter-var-root` so the test itself leaves no root moved.
+(deftest forcing-hands-back-a-shipped-default-a-sweep-replaced
+  ;; The property the counted tests rely on, over the var that actually broke them:
+  ;; whatever the root says, `with-shipped-config` reads the reference matcher inside.
+  ;; Written against a `binding` rather than an `alter-var-root` so the test itself leaves
+  ;; no root moved.
   (let [matcher   (requiring-resolve 'vaelii.impl.chain/*matcher*)
         reference (tu/shipped-value matcher)]
-    (is (some? reference) "the matcher is rostered")
+    (is (some? reference) "the matcher is listed")
     (is (= (requiring-resolve 'vaelii.impl.resolution/match-pattern)
            (get tu/shipped-defaults matcher))
         "the matcher's default is held as the var that defines it, so a reload reaches it")
@@ -201,7 +202,7 @@
         (is (= ::something-else (var-get matcher)) "the sweep's replacement is what is installed")
         (tu/with-shipped-config
           (is (identical? reference (var-get matcher))
-              "and inside the pin the shipped reader is what answers"))))))
+              "and inside it the shipped reader is what answers"))))))
 
 ;; ---- sole-answer ---------------------------------------------------------
 

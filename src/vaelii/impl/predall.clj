@@ -12,7 +12,7 @@
   contexts and expands no rule, and the `genlCx` ancestor scoping is applied in the matching
   layer below (docs/namespaces.md, \"The layering\").
 
-  Where the *Instance* relations stamp real inference and the *Exists* relations are
+  Where the *Instance* relations generate real inference and the *Exists* relations are
   inert records beside a sanctioned placeholder functor, `predAllSpecified` / `predSpecifiedAll` are an **integrity
   audit**: given a declaration that every instance of a collection ought to have a
   *determinate*, contract-satisfying filler, the reader here reports the instances

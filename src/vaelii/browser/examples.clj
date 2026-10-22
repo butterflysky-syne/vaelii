@@ -92,8 +92,7 @@
     :shows "largerThan is declared a binary_predicate, which is a binary through
             (genl binary_predicate binary), and every reader of an arity reads that
             class: the position query answers that a second argument exists. No rule
-            concludes (arity largerThan 2), since arity is on the forced-monotonic
-            roster; an asserted (arity R 2) concludes (binary R) the other way."
+            concludes (arity largerThan 2), since arity is forced-monotonic; an asserted (arity R 2) concludes (binary R) the other way."
     :rests-on [['(binary_predicate largerThan) 'CxUniverse]
                ['(genl binary_predicate binary) 'CxUniverse]]
     :goal '(admitsArgnum largerThan 2) :context 'CxWell :expect :yes}
@@ -185,33 +184,32 @@
     :shows "Location was stated of the car and parthood of the wheel; the conclusion is
             about neither on its own. Retract either premise and it goes — the
             justification names both, so the sweep is dependency-directed."
-    :rests-on [['(implies (and (partOf ?part ?whole) (locatedIn ?whole ?place))
+    :rests-on [['(implies (and (tangiblePartOf ?part ?whole) (locatedIn ?whole ?place))
                           (locatedIn ?part ?place))
                 'CxMereology]]
     :premises '[(vehicle CarEx) (made WheelEx) (building GarageEx)
-                (partOf WheelEx CarEx) (locatedIn CarEx GarageEx)]
+                (tangiblePartOf WheelEx CarEx) (locatedIn CarEx GarageEx)]
     :goal '(locatedIn WheelEx GarageEx) :expect :yes}
 
    {:id "owns-parts" :group "Rules that join"
     :title "Owning a whole is owning its parts"
     :shows "The same join shape on a social relation rather than a spatial one. One
             rule, and every part of everything anyone owns follows."
-    :rests-on [['(implies (and (owns ?p ?whole) (partOf ?part ?whole)) (owns ?p ?part))
+    :rests-on [['(implies (and (owns ?p ?whole) (tangiblePartOf ?part ?whole)) (owns ?p ?part))
                 'CxMereology]]
     :premises '[(person AdaEx) (vehicle CarEx) (made WheelEx)
-                (owns AdaEx CarEx) (partOf WheelEx CarEx)]
+                (owns AdaEx CarEx) (tangiblePartOf WheelEx CarEx)]
     :goal '(owns AdaEx WheelEx) :expect :yes}
 
-   {:id "symmetry-then-rule" :group "Rules that join"
-    :title "Both chainers, one rule, one stored fact"
-    :shows "The forward pass concluded acquaintance in the direction the friendship was
-            canonically stored. This asks the other direction, so no stored sentex
-            matches and the backward chainer runs the same rule over the same symmetric
-            fact, probing both argument orders. knows is deliberately not symmetric:
+   {:id "symmetry-then-genl" :group "Rules that join"
+    :title "A symmetric relation under an asymmetric one"
+    :shows "friendOf is symmetric and a spec of knows, so one stored friendship answers
+            acquaintance in both directions: the converse friendship holds by symmetry,
+            and the genl carries it up to knows. knows is deliberately not symmetric:
             declaring it so would have the KB assert the converse of every acquaintance
             it ever learned."
     :rests-on [['(symmetric friendOf) 'CxUniverse]
-               ['(implies (and (friendOf ?x ?y)) (knows ?x ?y)) 'CxSocial]]
+               ['(genl friendOf knows) 'CxSocial]]
     :premises '[(person AdaEx) (person BenEx) (friendOf AdaEx BenEx)]
     :goal '(knows BenEx AdaEx) :expect :yes}
 
@@ -219,7 +217,7 @@
     :title "A rule that computes rather than looks up"
     :shows "olderThan is a backward rule whose third antecedent is evaluable: lessThan
             is computed from ground numbers, never stored and never forward-chained.
-            The planner pins it after the two antecedents that bind its arguments."
+            The planner places it after the two antecedents that bind its arguments."
     :rests-on [['(set/backwardRule
                   (implies (and (birthYearOf ?x ?bx) (birthYearOf ?y ?by) (lessThan ?bx ?by))
                            (olderThan ?x ?y)))
@@ -239,17 +237,17 @@
     :kind :refusal
     :refuse '(genl mammal dog)}
 
-   {:id "argisa-refusal" :group "What it refuses"
+   {:id "argisa-inert" :group "What it refuses"
     :title "A value the predicate's argument constraint cannot type"
     :shows "eats wants food in its second position. A value is typed by its kind, which
-            the value itself states: 42 is an integer, and an integer is not food, so
-            the sentence is refused. A name in that position is not refused: the
-            constraint adds the type it names, so (eats RexEx GarageEx) is stored and
-            derives (food GarageEx)."
+            the value itself states: 42 is an integer, and an integer is not food. The
+            sentence is stored and held inert: it is not believed, and violations reports
+            it as :inert-argument. try-assert refuses it instead. A name in that position
+            is not convicted: the constraint adds the type it names, so
+            (eats RexEx GarageEx) is believed and derives (food GarageEx)."
     :rests-on [['(arg eats 2 food) 'CxUniverse]]
-    :premises '[(dog RexEx)]
-    :kind :refusal
-    :refuse '(eats RexEx 42)}
+    :premises '[(dog RexEx) (eats RexEx 42)]
+    :goal '(eats RexEx 42) :expect :no}
 
    {:id "not-ground-refusal" :group "What it refuses"
     :title "A universal written as a fact"
@@ -297,9 +295,10 @@
   stack and stops at the first level that answers, so the level *is* the mechanism:
   level 3 means context inheritance reached it, 5 means a closure, 7 means the rule
   chainers had to run.  A goal nothing answers comes back with a nil level, which reports
-  that no level answered and is not an error."
-  [kb {:keys [goal expect]} context]
-  (let [{:keys [level name results]} (v/escalate kb goal context)
+  that no level answered and is not an error.  One `opts`' `:max-ms` stopped before
+  anything answered is `:timeout? true` and no verdict on the example either way."
+  [kb {:keys [goal expect]} context opts]
+  (let [{:keys [level name results status]} (v/escalate kb goal context nil opts)
         answered? (some? level)
         ;; the handle off the level that answered, not a fresh `handle-of` in the asking
         ;; context: an answer inherited from a supercontext, or one the closures derived
@@ -310,7 +309,8 @@
      :level level :level-name name
      :handle handle
      :why (when handle (v/why kb handle))
-     :as-intended? (= answered? (= :yes expect))}))
+     :timeout? (= :timeout status)
+     :as-intended? (when-not (= :timeout status) (= answered? (= :yes expect)))}))
 
 (defn- refusal-verdict
   "What `check` says about the sentence this example expects to be refused.  A read —
@@ -329,14 +329,18 @@
 
   Writes nothing.  Establishing an example's premises is `establish!`, which the page
   does on an explicit click — so rendering the gallery is a read however many examples
-  it holds."
-  [kb {:keys [kind] :as example} context]
-  (let [avail? (available? kb example)]
-    (merge {:id (:id example) :available? avail?}
-           (when avail?
-             (if (= :refusal kind)
-               (refusal-verdict kb example context)
-               (goal-verdict kb example context))))))
+  it holds.
+
+  `opts` takes `:max-ms`, the deadline on a goal's climb (`v/escalate`); a refusal is one
+  `check` and runs to its end."
+  ([kb example context] (run kb example context nil))
+  ([kb {:keys [kind] :as example} context opts]
+   (let [avail? (available? kb example)]
+     (merge {:id (:id example) :available? avail?}
+            (when avail?
+              (if (= :refusal kind)
+                (refusal-verdict kb example context)
+                (goal-verdict kb example context opts)))))))
 
 (defn establish!
   "Write an example's premises into `context` — one `edit`, so the whole batch settles

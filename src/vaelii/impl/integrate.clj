@@ -73,9 +73,10 @@
 
   `want?` false answers **nil**, and a nil sink is the one that records nothing.  The
   record is read by the reified-NAT sweep, the meta cascade, and a settle reading the
-  defeats it removed (`settle/defeat-moves`), and it is not free: it retains every sentex
+  defeats it removed (`settle/defeat-moves`) and the terms whose memberships it removed
+  (`settle/region-terms`), and it is not free: it retains every sentex
   a teardown removes for as long as the teardown runs, which on a cascade is the whole
-  cascade held in a vector.  The caller passes the gate its readers consult
+  cascade held in a vector.  The caller passes the presence check its readers consult
   (`nat/any-reified-constants?`, a stored `defeat`), so a KB with none of them pays the
   retention of nothing at all."
   ([] (removal-sink true))
@@ -139,7 +140,8 @@
     ;; After the record is deleted, which is what drops a departing spelling's entry
     (special/reconcile-removed-supersession! kb sentex)
     ;; An except's departure changes the effective belief of the declaration it hid.
-    ;; Run after the roster drop so the common reconcile reads the new visibility state.
+    ;; Run after the except leaves the index so the common reconcile reads the new
+    ;; visibility state.
     (when except-target
       (special/reconcile-belief-change kb #{except-target}))
     (special/recheck-on-sentence kb (sx/sentence-of sentex))))

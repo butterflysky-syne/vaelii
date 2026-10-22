@@ -5,7 +5,7 @@
 
   Two halves.  The first drives `edge-solver` directly with hand-built `Program`s
   — no KB, no store — because the translation is a pure function of the program
-  and that is the level the encoding is worth pinning at: minimal defeat, caller
+  and that is the level the encoding is tested at: minimal defeat, caller
   priority respected, and above all a tie broken the *same way* regardless of the
   order the knowledge arrived.  This half is the backend's real coverage and is
   unaffected by anything below it.
@@ -14,7 +14,7 @@
   default/default rebuttal to any solver,
   because a `P`/`¬P` pair at `:default` is a **represented dilemma** rather than a tie
   to be broken (docs/exceptions.md, \"What surfaces where\").  So a Nixon diamond in a
-  KB does not settle to one side, and the KB-level property worth pinning is the
+  KB does not settle to one side, and the KB-level property tested here is the
   negative one: installing a real ASP backend does not change belief, is never
   consulted, and cannot quietly re-introduce arbitration.  Arbitration remains the
   right answer for nogoods that are *not* plain rebuttals, which is why the protocol and
@@ -259,7 +259,7 @@
         (permutations ops)))
 
 (deftest the-outcome-is-order-independent-with-the-asp-solver-installed
-  ;; The invariant `order_independence_test` pins for the stub, re-run with the real
+  ;; The invariant `order_independence_test` asserts for the stub, re-run with the real
   ;; backend installed.  The engine routes this shape to no solver, so what the
   ;; permutation catches is not "does the ASP encoding pick a stable winner" but "does
   ;; the presence of a backend perturb the outcome under *any* ordering" — a single
@@ -340,7 +340,7 @@
 ;; A backend that was interrupted (the time limit, a signal) hands back no witness.
 ;; Every reader maps an atom's absence to *defeated* / *not kept*, so read as an
 ;; answer an empty result defeats every contested assumption — the exact opposite
-;; of "decide nothing".  No backend is needed to pin this: `solver/solve` is the
+;; of "decide nothing".  No backend is needed to test this: `solver/solve` is the
 ;; protocol, and a stub answer in its shape is what arrives either way.
 
 (def ^:private two-choices

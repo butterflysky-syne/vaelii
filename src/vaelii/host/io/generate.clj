@@ -30,6 +30,7 @@
   (:require [vaelii.core :as v]
             [vaelii.host.core-context :as core-context]
             [vaelii.host.starter :as starter]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.rules :as rules]
             [vaelii.impl.sentex :as sx]))
 
@@ -302,7 +303,6 @@
          done    (volatile! 0)
          report  (fn [phase note]
                    (on-progress {:phase phase :done @done :total units :note note}))
-         bump    (fn [phase n note] (vswap! done + n) (report phase note))
          ;; chaining counts something else entirely — conclusions, not units of planned
          ;; work — and a fixpoint has no total (the agenda grows as it derives), so the
          ;; total is cleared rather than left reading as the assert phases' one.  What
@@ -322,34 +322,39 @@
          ;; it, so keying on the sentence alone would drop every repeat past the first
          ;; and make `:contexts` a knob that spreads the facts without adding any.
          seen    (java.util.HashSet.)
-         fresh   (fn [batch] (into [] (filter #(.add seen %)) batch))
-         load!   (fn [phase batches]
-                   (doseq [batch batches]
-                     (let [b (fresh batch)]
-                       (doseq [[ctx group] (group-by second b)]
-                         (v/bulk-assert-facts! kb (map first group) ctx))
-                       (bump phase (count batch) nil))))]
+         fresh   (fn [batch] (into [] (filter #(.add seen %)) batch))]
      (report :vocabulary "loading the shipped vocabulary")
      (case (:base p)
        :starter (starter/load-into kb)
        (core-context/load-into kb))
-     (report :contexts "wiring the contexts")
-     (v/assert-many kb context-edges context-root {:chain? false})
-     (bump :contexts (count context-edges) nil)
-     (report :types "the type hierarchy, most general first")
-     (doseq [batch (partition-all chunk-size genls)]
-       (v/assert-many kb batch context-root {:chain? false})
-       (bump :types (count batch) nil))
-     (report :individuals "type memberships")
-     (load! :individuals (partition-all chunk-size memberships))
-     (report :rules "rules")
-     (doseq [batch (partition-all 1000 rules)]
-       (v/with-deferred-settle kb
-         (doseq [r batch]
-           (v/assert kb (rule-sentence r) context-root {:chain? false})))
-       (bump :rules (count batch) nil))
-     (report :facts "ground facts")
-     (load! :facts (partition-all chunk-size facts))
+     (with-open [rep (progress/start ::load "generate: assert the corpus" units)]
+       (let [bump  (fn [phase n note]
+                     (vswap! done + n)
+                     (progress/tick! rep n)
+                     (report phase note))
+             load! (fn [phase batches]
+                     (doseq [batch batches]
+                       (let [b (fresh batch)]
+                         (doseq [[ctx group] (group-by second b)]
+                           (v/bulk-assert-facts! kb (map first group) ctx))
+                         (bump phase (count batch) nil))))]
+         (report :contexts "wiring the contexts")
+         (v/assert-many kb context-edges context-root {:chain? false})
+         (bump :contexts (count context-edges) nil)
+         (report :types "the type hierarchy, most general first")
+         (doseq [batch (partition-all chunk-size genls)]
+           (v/assert-many kb batch context-root {:chain? false})
+           (bump :types (count batch) nil))
+         (report :individuals "type memberships")
+         (load! :individuals (partition-all chunk-size memberships))
+         (report :rules "rules")
+         (doseq [batch (partition-all 1000 rules)]
+           (v/with-deferred-settle kb
+             (doseq [r batch]
+               (v/assert kb (rule-sentence r) context-root {:chain? false})))
+           (bump :rules (count batch) nil))
+         (report :facts "ground facts")
+         (load! :facts (partition-all chunk-size facts))))
      (let [chained (when (:chain? p)
                      (chain-report {})
                      ;; **Bounded by the layer count.**  A derivation over this rule set

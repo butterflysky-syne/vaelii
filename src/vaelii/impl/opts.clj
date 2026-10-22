@@ -24,9 +24,9 @@
 
 (defn check!
   "Refuse a non-nil non-map `opts`, and any key outside `opt-keys` — `:unknown-option`
-  both, carrying `:options` (the roster) and, for the second, `:unknown` (what was
+  both, carrying `:options` (the accepted keys) and, for the second, `:unknown` (what was
   passed).  `subject` names the entry point in the message; `consequence` is the clause on what
-  the silent default would have done, and may be nil where the roster speaks for itself.
+  the silent default would have done, and may be nil where the key set speaks for itself.
 
   `opt-keys` is a set, used as the membership predicate and sorted for the message.
 
@@ -57,7 +57,7 @@
   `vaelii.impl.budget/check-budget!` all run their known keys through `check-values!`
   below.
 
-  A value outside a bound's domain is refused for the roster check's reason at one remove.
+  A value outside a bound's domain is refused for the key check's reason at one remove.
   A key nothing reads is one silent default (`check!` above); a key that *is* read holding
   a value it cannot mean is the other, and quieter still where the value is not a cast
   error but a near-miss: a string `:max-ms` reaches arithmetic and throws bare, but a
@@ -83,7 +83,8 @@
    [:progress-every-ms "a non-negative integer" nat-int?]
    [:on-progress       "a function"             fn?]
    [:counters?         "true or false"          boolean?]
-   [:believed?         "true or false"          boolean?]])
+   [:believed?         "true or false"          boolean?]
+   [:grounds?          "true or false"          boolean?]])
 
 (def ^:private bound-domain-map
   "`bound-domains` as `{key [what pred]}`, for a per-key lookup rather than a scan of the
@@ -98,7 +99,7 @@
   naming the entry point in the message as `check!` does.
 
   The **value** refusal beside the key one, and it runs *after* it: a misspelt key is not
-  a bad value, so the key roster (`check!`) is settled before any value is read, and by
+  a bad value, so the key check (`check!`) is settled before any value is read, and by
   then every key present is one the entry point admits.  Reads the caller's `opts` against
   `bound-domain-map`, so a key with no row here (a `:strength`, a `:strategy`) is not this
   check's business, and a key the entry point does not read was already refused.

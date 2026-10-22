@@ -23,7 +23,7 @@
 (use-fixtures :each (tu/neutral-fresh belief-kb))
 
 (defn- holds!
-  "`agent` asserts `claim` into its own koinii context, stamped as its creator.  Returns
+  "`agent` asserts `claim` into its own koinii context, recorded as its creator.  Returns
   the claim's handle."
   [kb agent claim]
   (v/assert kb claim (id/context-for agent) {:creator agent}))
@@ -84,7 +84,7 @@
         (is (bel/would-believe? kb 'AgentAtlas P)))
       (let [eh (bel/disregard kb 'AgentAtlas h)]
         (testing "disregarded — withdrawn from view, but NOT deleted"
-          (is (not (v/ask? kb P 'CxDeploy)) "gone from the channel view")
+          (is (not (v/ask? kb P 'CxDeploy)) "gone from CxDeploy's view")
           (is (not (bel/would-believe? kb 'AgentAtlas P)) "and from Atlas's own beliefs")
           (is (some? (v/sentex kb h)) "the statement still exists — reversible, not retracted"))
         (bel/restore! kb eh)

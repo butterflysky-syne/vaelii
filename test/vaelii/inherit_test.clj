@@ -74,19 +74,19 @@
     (v/assert kb (list chases dog_t cat_t) 'CxUniverse)
     (is (v/ask? kb (list chases golden_retriever_t cat_t) 'CxUniverse))
     (is (not (v/ask? kb (list chases dog_t maine_coon_t) 'CxUniverse))
-        "position 2 was not declared, so it is pinned")))
+        "position 2 was not declared, so it stays fixed")))
 
 ;; ---- the relation is a parameter -----------------------------------------
 
 (tu/deftest-kb the-preserved-relation-need-not-be-genl
   ;; `(transitiveInArg P n R)` names R.  Here it is an ordinary declared-transitive
   ;; predicate over individuals, with no types in sight.
-  (tu/with-terms [partOf needs_maintenance Car Engine Piston]
+  (tu/with-terms [tangiblePartOf needs_maintenance Car Engine Piston]
     (v/with-deferred-settle kb
-      (v/assert kb (list 'transitive partOf) 'CxUniverse)
-      (v/assert kb (list partOf Engine Car) 'CxUniverse)
-      (v/assert kb (list partOf Piston Engine) 'CxUniverse)
-      (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 partOf) 'CxUniverse)
+      (v/assert kb (list 'transitive tangiblePartOf) 'CxUniverse)
+      (v/assert kb (list tangiblePartOf Engine Car) 'CxUniverse)
+      (v/assert kb (list tangiblePartOf Piston Engine) 'CxUniverse)
+      (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 tangiblePartOf) 'CxUniverse)
       (v/assert kb (list needs_maintenance Car) 'CxUniverse))
     (testing "one hop and two, through the transitive relation that was named"
       (is (v/ask? kb (list needs_maintenance Engine) 'CxUniverse))
@@ -108,7 +108,7 @@
         "but not back down to a sibling")))
 
 (tu/deftest-kb transitiveInArg-carries-a-claim-up-genl-and-the-inverse-carries-it-down
-  ;; The direction each name carries, pinned against Cyc's `transitiveViaArg`:
+  ;; The direction each name carries, checked against Cyc's `transitiveViaArg`:
   ;; `(transitiveInArg P n R)` moves a claim along R's arrow, so a stored `(P W)` with
   ;; `(genl W S)` gives `(P S)` — up to a supertype — and `transitiveInArgInverse` moves
   ;; it against the arrow, down to a subtype.  Neither name reaches the other way.
@@ -169,12 +169,12 @@
   ;; The direction and the relation are independent axes: `transitiveInArg` along
   ;; a declared-transitive predicate reads its stored facts along their arrow, so a claim about
   ;; a part reaches the assemblies it sits in.
-  (tu/with-terms [partOf dirty Car Engine Piston]
+  (tu/with-terms [tangiblePartOf dirty Car Engine Piston]
     (v/with-deferred-settle kb
-      (v/assert kb (list 'transitive partOf) 'CxUniverse)
-      (v/assert kb (list partOf Engine Car) 'CxUniverse)
-      (v/assert kb (list partOf Piston Engine) 'CxUniverse)
-      (v/assert kb (list 'transitiveInArg dirty 1 partOf) 'CxUniverse)
+      (v/assert kb (list 'transitive tangiblePartOf) 'CxUniverse)
+      (v/assert kb (list tangiblePartOf Engine Car) 'CxUniverse)
+      (v/assert kb (list tangiblePartOf Piston Engine) 'CxUniverse)
+      (v/assert kb (list 'transitiveInArg dirty 1 tangiblePartOf) 'CxUniverse)
       (v/assert kb (list dirty Piston) 'CxUniverse))
     (is (v/ask? kb (list dirty Engine) 'CxUniverse) "one hop up the part chain")
     (is (v/ask? kb (list dirty Car) 'CxUniverse) "and two")
@@ -184,7 +184,7 @@
 ;; ---- the semantics travel with the relation --------------------------------
 ;; Undercutting, strength and negation are stated over `genl` in the sections below,
 ;; and the code that decides them is relation-generic — `below?` compares tuples along
-;; whatever relation the declaration names.  These pin that the semantics hold off
+;; whatever relation the declaration names.  These assert that the semantics hold off
 ;; `genl` too, so a regression scoped to the non-genl arms cannot pass the suite.
 
 (tu/deftest-kb a-specific-claim-undercuts-along-the-relation-it-travelled
@@ -204,13 +204,13 @@
       (is (v/ask? kb (list appliesIn TheDecree CxSide) 'CxUniverse)
           "a branch the denial says nothing about still inherits")))
   (testing "along a declared fact-relation"
-    (tu/with-terms [partOf needs_maintenance Car Engine Piston Wheel]
+    (tu/with-terms [tangiblePartOf needs_maintenance Car Engine Piston Wheel]
       (v/with-deferred-settle kb
-        (v/assert kb (list 'transitive partOf) 'CxUniverse)
-        (v/assert kb (list partOf Engine Car) 'CxUniverse)
-        (v/assert kb (list partOf Piston Engine) 'CxUniverse)
-        (v/assert kb (list partOf Wheel Car) 'CxUniverse)
-        (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 partOf) 'CxUniverse)
+        (v/assert kb (list 'transitive tangiblePartOf) 'CxUniverse)
+        (v/assert kb (list tangiblePartOf Engine Car) 'CxUniverse)
+        (v/assert kb (list tangiblePartOf Piston Engine) 'CxUniverse)
+        (v/assert kb (list tangiblePartOf Wheel Car) 'CxUniverse)
+        (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 tangiblePartOf) 'CxUniverse)
         (v/assert kb (list needs_maintenance Car) 'CxUniverse))
       (is (v/ask? kb (list needs_maintenance Piston) 'CxUniverse))
       (v/assert kb (list 'not (list needs_maintenance Engine)) 'CxUniverse)
@@ -241,12 +241,12 @@
   ;; "A :monotonic claim is never undercut" is stated of the strength, not of the
   ;; relation: along a fact-relation the contrary specific claim leaves a dilemma
   ;; standing rather than silently overriding the fixed background.
-  (tu/with-terms [partOf needs_maintenance Car Engine Piston]
+  (tu/with-terms [tangiblePartOf needs_maintenance Car Engine Piston]
     (v/with-deferred-settle kb
-      (v/assert kb (list 'transitive partOf) 'CxUniverse)
-      (v/assert kb (list partOf Engine Car) 'CxUniverse)
-      (v/assert kb (list partOf Piston Engine) 'CxUniverse)
-      (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 partOf) 'CxUniverse))
+      (v/assert kb (list 'transitive tangiblePartOf) 'CxUniverse)
+      (v/assert kb (list tangiblePartOf Engine Car) 'CxUniverse)
+      (v/assert kb (list tangiblePartOf Piston Engine) 'CxUniverse)
+      (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 tangiblePartOf) 'CxUniverse))
     (v/assert kb (list needs_maintenance Car) 'CxUniverse {:strength :monotonic})
     (v/assert kb (list 'not (list needs_maintenance Engine)) 'CxUniverse)
     (is (= :ambiguous (inherit/verdict kb (list needs_maintenance Piston) 'CxUniverse))
@@ -278,13 +278,13 @@
   ;; A claim reachable only through the symmetric mirror *and* an argument hop along
   ;; the relation's arrow: stored `(adjacentTo Garden Piston)`, mirrored to put the piston at the
   ;; preserved position, then walked up the part chain.
-  (tu/with-terms [partOf adjacentTo Garden Car Engine Piston]
+  (tu/with-terms [tangiblePartOf adjacentTo Garden Car Engine Piston]
     (v/with-deferred-settle kb
-      (v/assert kb (list 'transitive partOf) 'CxUniverse)
-      (v/assert kb (list partOf Engine Car) 'CxUniverse)
-      (v/assert kb (list partOf Piston Engine) 'CxUniverse)
+      (v/assert kb (list 'transitive tangiblePartOf) 'CxUniverse)
+      (v/assert kb (list tangiblePartOf Engine Car) 'CxUniverse)
+      (v/assert kb (list tangiblePartOf Piston Engine) 'CxUniverse)
       (v/assert kb (list 'symmetric adjacentTo) 'CxUniverse)
-      (v/assert kb (list 'transitiveInArg adjacentTo 1 partOf) 'CxUniverse))
+      (v/assert kb (list 'transitiveInArg adjacentTo 1 tangiblePartOf) 'CxUniverse))
     (v/assert kb (list adjacentTo Garden Piston) 'CxUniverse)
     (is (v/ask? kb (list adjacentTo Engine Garden) 'CxUniverse) "one hop, mirrored")
     (is (v/ask? kb (list adjacentTo Car Garden) 'CxUniverse) "and two")
@@ -295,7 +295,7 @@
 (tu/deftest-kb a-position-past-the-arity-preserves-nothing
   ;; `wff` checks the position is a positive integer and not that the predicate has
   ;; it; `by-position` drops what no tuple can satisfy, so the declaration is stored,
-  ;; inert, and licenses nothing — pinned so a regression that reads past a tuple's
+  ;; inert, and licenses nothing — asserted so a regression that reads past a tuple's
   ;; end, or takes the declaration's existence for a licence, is caught here.
   (tu/with-terms [dog_t cat_t golden_retriever_t chases]
     (v/with-deferred-settle kb
@@ -311,7 +311,7 @@
         "the stored fact still answers, by the ordinary matcher")))
 
 (tu/deftest-kb an-open-goal-returns-the-stored-tuples-and-only-those
-  ;; docs/inherit.md's ground-only contract, pinned: `TransitiveInArgProver` answers a
+  ;; docs/inherit.md's ground-only contract, asserted: `TransitiveInArgProver` answers a
   ;; ground goal, and an open one is left to the fact and rule provers — so a query
   ;; enumerates the stored extent while `ask?` answers each licensed tuple.  A future
   ;; enumerator changes this test deliberately or not at all.
@@ -328,7 +328,7 @@
            (vec (v/ask kb (list largerThan '?x '?y) 'CxUniverse)))
         "the open goal enumerates the stored extent and no licensed tuple")
     (is (empty? (v/ask kb (list largerThan '?x maine_coon_t) 'CxUniverse))
-        "a half-open goal pinned off the stored extent enumerates nothing")))
+        "a half-open goal bound off the stored extent enumerates nothing")))
 
 (tu/deftest-kb the-licence-stays-with-the-predicate-it-names
   ;; Subsumption makes a sub-predicate's *facts* serve the super-predicate's goals; the
@@ -512,7 +512,7 @@
   ;; Subsumption, preservation and visibility meet in one read: the claim is stored
   ;; under a *sub-predicate* of the goal's, about the *supertypes* of the goal's
   ;; arguments, and the licence and the predicate edge sit at different depths of the
-  ;; asking context's ancestor set.  Each pairing is pinned on its own — here and in
+  ;; asking context's ancestor set.  Each pairing is asserted on its own — here and in
   ;; `predicate_subsumption_test` — and this is the intersection, where the fact reach
   ;; has to fan to the sub-predicate *as seen from the asking context* for a tuple the
   ;; argument walk proposed.
@@ -569,7 +569,7 @@
   ;; `instance_relation_predicate`, so one predicate symbol relates kinds *or* instances
   ;; and never both.  Preservation moves an *argument* along a relation; the predicate
   ;; and the level it relates at are left alone.  Crossing the line links two
-  ;; predicates and has a quantifier reading to pin down — `typeToInstancePred`, which
+  ;; predicates and has a quantifier reading to settle — `typeToInstancePred`, which
   ;; the engine does not act on.
   (tu/with-terms [dog_t cat_t golden_retriever_t maine_coon_t chihuahua_t siamese_t
                   largerThan Rex Whiskers]
@@ -588,32 +588,26 @@
     (is (nil? (inherit/verdict kb (list largerThan Rex Whiskers) 'CxUniverse))
         "nothing bears on the pair at all — it is not an ambiguity, it is silence")))
 
-(tu/deftest-kb two-declarations-at-one-position-union-their-reaches
-  ;; Each declaration independently licenses the claim, so a position declared twice
-  ;; reaches what either reaches — rather than the second one filed silently replacing
-  ;; the first.
-  (tu/with-terms [partOf locatedIn needsAttention Car Engine Garage Bike]
+(tu/deftest-kb two-declarations-at-one-position-reach-what-either-reaches
+  (tu/with-terms [tangiblePartOf locatedIn needsAttention Car Engine Garage Bike]
     (v/with-deferred-settle kb
-      (v/assert kb (list 'transitive partOf) 'CxUniverse)
+      (v/assert kb (list 'transitive tangiblePartOf) 'CxUniverse)
       (v/assert kb (list 'transitive locatedIn) 'CxUniverse)
-      (v/assert kb (list partOf Engine Car) 'CxUniverse)
+      (v/assert kb (list tangiblePartOf Engine Car) 'CxUniverse)
       (v/assert kb (list locatedIn Bike Garage) 'CxUniverse)
-      (v/assert kb (list 'transitiveInArgInverse needsAttention 1 partOf) 'CxUniverse)
+      (v/assert kb (list 'transitiveInArgInverse needsAttention 1 tangiblePartOf) 'CxUniverse)
       (v/assert kb (list 'transitiveInArgInverse needsAttention 1 locatedIn) 'CxUniverse)
       (v/assert kb (list needsAttention Car) 'CxUniverse)
       (v/assert kb (list needsAttention Garage) 'CxUniverse))
     (is (v/ask? kb (list needsAttention Engine) 'CxUniverse)
-        "the first declaration reaches, down partOf")
+        "the first declaration reaches, down tangiblePartOf")
     (is (v/ask? kb (list needsAttention Bike) 'CxUniverse)
         "and so does the second, along locatedIn — from the same argument position")))
 
-(tu/deftest-kb both-directions-at-one-position-reach-up-and-down-the-relation
-  ;; A position declared *both* `transitiveInArgInverse` and `transitiveInArg` along the
-  ;; same relation reaches what either reaches: a claim stored at a mid kind lands on its
-  ;; subkinds (`transitiveInArgInverse`) and its superkinds (`transitiveInArg`) alike.  But the two are the union of
-  ;; two one-source reaches, not a flood of the connected component — the superkind is
-  ;; reached, and a *sibling under that superkind* is not, since nothing re-descends from
-  ;; the term the upward walk arrived at.
+(tu/deftest-kb both-directions-at-one-position-reach-the-connected-component
+  ;; `transitiveInArg` carries `(flagged mammal)` up to `(flagged animal)`, and
+  ;; `transitiveInArgInverse` carries that conclusion down to `reptile`: the two
+  ;; declarations entail the claim of every kind connected to `mammal`.
   (tu/with-terms [animal_t mammal_t dog_t golden_retriever_t reptile_t flagged]
     (v/with-deferred-settle kb
       (v/assert kb (list 'genl mammal_t animal_t) 'CxUniverse)
@@ -628,22 +622,90 @@
       (is (v/ask? kb (list flagged golden_retriever_t) 'CxUniverse)))
     (testing "and upward, by the transitiveInArg declaration at the same position"
       (is (v/ask? kb (list flagged animal_t) 'CxUniverse)))
-    (testing "but the union does not chain: the sibling below the reached superkind stays out"
-      (is (not (v/ask? kb (list flagged reptile_t) 'CxUniverse)))
-      (is (nil? (inherit/verdict kb (list flagged reptile_t) 'CxUniverse))))))
+    (testing "and down again from the superkind, to its other subkinds"
+      (is (v/ask? kb (list flagged reptile_t) 'CxUniverse)))))
 
-(tu/deftest-kb a-position-unions-a-genl-reach-and-a-declared-relation-reach
-  ;; The two declarations at one position need not name the same *kind* of relation:
-  ;; `genl` reads the engine's cached type closure, `partOf` is walked over stored facts,
-  ;; and the position's reach is their union — the same argument descending a type chain
-  ;; and a part chain at once.
-  (tu/with-terms [equipment_t lathe_t Chuck partOf hazard]
+(tu/deftest-kb two-relations-at-one-position-compose
+  ;; `(needsCheck Crate Monday)` reaches `Engine` along `heldIn`, and the conclusion at
+  ;; `Engine` reaches `Piston` along `partOf`: a reach across both relations.
+  (tu/with-terms [partOf heldIn needsCheck Piston Engine Crate Monday]
     (v/with-deferred-settle kb
       (v/assert kb (list 'transitive partOf) 'CxUniverse)
+      (v/assert kb (list 'transitive heldIn) 'CxUniverse)
+      (v/assert kb (list partOf Piston Engine) 'CxUniverse)
+      (v/assert kb (list heldIn Engine Crate) 'CxUniverse)
+      (v/assert kb (list 'transitiveInArgInverse needsCheck 1 partOf) 'CxUniverse)
+      (v/assert kb (list 'transitiveInArgInverse needsCheck 1 heldIn) 'CxUniverse)
+      (v/assert kb (list needsCheck Crate Monday) 'CxUniverse))
+    (is (v/ask? kb (list needsCheck Engine Monday) 'CxUniverse) "one heldIn step")
+    (is (v/ask? kb (list needsCheck Piston Monday) 'CxUniverse) "heldIn, then partOf")
+    (is (not (v/ask? kb (list needsCheck Crate 'TmpTuesday) 'CxUniverse)))))
+
+(tu/deftest-kb a-denial-at-a-term-between-two-relations-undercuts-the-claim-above-it
+  ;; The joint reach orders claims too: `Engine` lies between `Piston` and `Crate`, so the
+  ;; denial stated at `Engine` is more specific than the default claim at `Crate`.
+  (tu/with-terms [partOf heldIn needsCheck Piston Engine Crate Monday]
+    (v/with-deferred-settle kb
+      (v/assert kb (list 'transitive partOf) 'CxUniverse)
+      (v/assert kb (list 'transitive heldIn) 'CxUniverse)
+      (v/assert kb (list partOf Piston Engine) 'CxUniverse)
+      (v/assert kb (list heldIn Engine Crate) 'CxUniverse)
+      (v/assert kb (list 'transitiveInArgInverse needsCheck 1 partOf) 'CxUniverse)
+      (v/assert kb (list 'transitiveInArgInverse needsCheck 1 heldIn) 'CxUniverse)
+      (v/assert kb (list needsCheck Crate Monday) 'CxUniverse)
+      (v/assert kb (list 'not (list needsCheck Engine Monday)) 'CxUniverse))
+    (is (= :against (inherit/verdict kb (list needsCheck Piston Monday) 'CxUniverse)))))
+
+(defn- mereology!
+  "`(transitive partOf)`, `(transitive locatedIn)`, `(transitiveInArgInverse locatedIn 1
+  partOf)`, and the parts and places of `terms`."
+  [kb {:keys [partOf locatedIn Piston Engine Car Garage House]}]
+  (v/with-deferred-settle kb
+    (v/assert kb (list 'transitive partOf) 'CxUniverse)
+    (v/assert kb (list 'transitive locatedIn) 'CxUniverse)
+    (v/assert kb (list 'transitiveInArgInverse locatedIn 1 partOf) 'CxUniverse)
+    (v/assert kb (list partOf Piston Engine) 'CxUniverse)
+    (v/assert kb (list partOf Engine Car) 'CxUniverse)
+    (v/assert kb (list locatedIn Car Garage) 'CxUniverse)
+    (v/assert kb (list locatedIn Garage House) 'CxUniverse)))
+
+(tu/deftest-kb a-preserved-transitive-predicate-composes-with-its-own-transitivity
+  ;; `(locatedIn Garage House)` is a claim the prover reads at `Car`'s reach once
+  ;; `(locatedIn Car Garage)` composes with it, and `Piston` is a part of `Car`.
+  (tu/with-terms [partOf locatedIn Piston Engine Car Garage House Key]
+    (mereology! kb {:partOf partOf :locatedIn locatedIn :Piston Piston :Engine Engine
+                    :Car Car :Garage Garage :House House})
+    (is (v/ask? kb (list locatedIn Piston Garage) 'CxUniverse) "a part is where its whole is")
+    (is (v/ask? kb (list locatedIn Piston House) 'CxUniverse) "and where that place is")
+    (is (not (v/ask? kb (list locatedIn Piston Car) 'CxUniverse)) "a whole is no place")
+    (testing "a located thing inside a part reaches past the whole"
+      (v/assert kb (list locatedIn Key Piston) 'CxUniverse)
+      (is (v/ask? kb (list locatedIn Key House) 'CxUniverse)))))
+
+(tu/deftest-kb the-self-relation-carries-no-denial
+  ;; `(locatedIn Car Garage)` and `(not (locatedIn Garage Shed))` leave `(locatedIn Car
+  ;; Shed)` open, so the denial reaches `Car` along no `locatedIn` step; a denial at `Car`
+  ;; reaches its part `Engine` along `partOf`.
+  (tu/with-terms [partOf locatedIn Piston Engine Car Garage House Shed]
+    (mereology! kb {:partOf partOf :locatedIn locatedIn :Piston Piston :Engine Engine
+                    :Car Car :Garage Garage :House House})
+    (v/assert kb (list 'not (list locatedIn Garage Shed)) 'CxUniverse)
+    (is (nil? (inherit/verdict kb (list locatedIn Car Shed) 'CxUniverse)))
+    (v/assert kb (list 'not (list locatedIn Car Shed)) 'CxUniverse)
+    (is (= :against (inherit/verdict kb (list locatedIn Engine Shed) 'CxUniverse)))))
+
+(tu/deftest-kb a-position-reaches-along-genl-and-a-declared-relation
+  ;; The two declarations at one position need not name the same *kind* of relation:
+  ;; `genl` reads the engine's cached type closure, `tangiblePartOf` is walked over stored
+  ;; facts, and the position's reach is their joint closure — the same argument descending
+  ;; a type chain and a part chain at once.
+  (tu/with-terms [equipment_t lathe_t Chuck tangiblePartOf hazard]
+    (v/with-deferred-settle kb
+      (v/assert kb (list 'transitive tangiblePartOf) 'CxUniverse)
       (v/assert kb (list 'genl lathe_t equipment_t) 'CxUniverse)
-      (v/assert kb (list partOf Chuck equipment_t) 'CxUniverse)
+      (v/assert kb (list tangiblePartOf Chuck equipment_t) 'CxUniverse)
       (v/assert kb (list 'transitiveInArgInverse hazard 1 'genl) 'CxUniverse)
-      (v/assert kb (list 'transitiveInArgInverse hazard 1 partOf) 'CxUniverse)
+      (v/assert kb (list 'transitiveInArgInverse hazard 1 tangiblePartOf) 'CxUniverse)
       (v/assert kb (list hazard equipment_t) 'CxUniverse))
     (is (v/ask? kb (list hazard lathe_t) 'CxUniverse)
         "down the cached type closure: a kind of equipment")
@@ -871,9 +933,9 @@
   ;; withdraws — and it has to be a function of the content rather than of which of the
   ;; three the retrieval happened to enumerate first.
   (doseq [flip [false true]]
-    (tu/with-terms [partOf needs_maintenance Car Engine alphaTransitive betaTransitive]
-      (let [subs  [(list alphaTransitive partOf) (list betaTransitive partOf)]
-            fan   (cons (list 'transitive partOf) subs)
+    (tu/with-terms [tangiblePartOf needs_maintenance Car Engine alphaTransitive betaTransitive]
+      (let [subs  [(list alphaTransitive tangiblePartOf) (list betaTransitive tangiblePartOf)]
+            fan   (cons (list 'transitive tangiblePartOf) subs)
             least (first (sort-by pr-str fan))
             what  (str "the " (if flip "beta" "alpha") " sub-predicate asserted first")]
         (v/with-deferred-settle kb
@@ -881,14 +943,14 @@
           (v/assert kb (list 'genl betaTransitive 'transitive) 'CxUniverse)
           ;; the plain declaration too: `transitiveInArg` refuses a relation nobody has
           ;; said composes, and a sub-predicate's sentex does not mark the property
-          (v/assert kb (list 'transitive partOf) 'CxUniverse)
+          (v/assert kb (list 'transitive tangiblePartOf) 'CxUniverse)
           (doseq [s (if flip (reverse subs) subs)] (v/assert kb s 'CxUniverse))
-          (v/assert kb (list partOf Engine Car) 'CxUniverse)
-          (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 partOf) 'CxUniverse)
+          (v/assert kb (list tangiblePartOf Engine Car) 'CxUniverse)
+          (v/assert kb (list 'transitiveInArgInverse needs_maintenance 1 tangiblePartOf) 'CxUniverse)
           (v/assert kb (list needs_maintenance Car) 'CxUniverse))
         (is (v/ask? kb (list needs_maintenance Engine) 'CxUniverse)
             (str what ": the claim reaches down the part chain"))
-        (is (= 3 (count (res/matches-visible kb (list 'transitive partOf) 'CxUniverse)))
+        (is (= 3 (count (res/matches-visible kb (list 'transitive tangiblePartOf) 'CxUniverse)))
             (str what ": the licence query is answered by a fan, or this proves nothing"))
         (let [named (into #{} (map #(:sentence (v/sentex kb %)))
                           (:handles (first (inherit/supports-for kb (list needs_maintenance Engine)
@@ -990,7 +1052,7 @@
 ;; only the cost moves, so nothing but a count can see it.  `res/matches-visible` is the
 ;; probe point: a reach over a fact-relation reads it once per node walked (`inherit/fact-reach`).
 ;;
-;; A ratio of **second differences** rather than a pinned number: linear growth doubles the
+;; A ratio of **second differences** rather than an exact number: linear growth doubles the
 ;; step from 4→8 claims to 8→16 and quadratic growth quadruples it, so 3.0 sits between the
 ;; two with room on either side.  `lein perf`'s `inherit-reach-memo` holds the same claim as
 ;; a duration, and neither subsumes the other — a count cannot see a slower walk and a
@@ -1021,11 +1083,11 @@
   term — each size gets its own relation, predicate and term, so the three do not share a
   reach."
   [kb n]
-  (tu/with-terms [partOf needsWork]
+  (tu/with-terms [tangiblePartOf needsWork]
     (let [base   (tu/tmp-ind "Part")
           owners (into [] (repeatedly n #(tu/tmp-ind "Whole")))
           drain  #(doall (inherit/surviving kb (list needsWork base) 'CxUniverse))]
-      (preserved-fan! kb partOf needsWork base owners)
+      (preserved-fan! kb tangiblePartOf needsWork base owners)
       (drain)                                  ; warm whatever caches persist between asks
       (is (= n (count (drain))) "one surviving claim per owner, none comparable")
       (visible-reads drain))))
@@ -1066,6 +1128,28 @@
                  (visible-rows
                   #(is (empty? (inherit/claims kb (list largerThan dog_t cat_t) 'CxUniverse))))))]
     (is (= (rows 8) (rows 64)))))
+
+(tu/deftest-kb a-denial-probe-is-priced-at-the-stored-denials
+  ;; `bigger` stores 16 positive facts outside the goal's four-tuple product and no
+  ;; denial.  The negated probe walks the negative rows alone, so it reads the open probe
+  ;; once and probes none of the four tuples.
+  (tu/with-terms [dog_t animal_t cat_t feline_t bigger]
+    (v/with-deferred-settle kb
+      (v/assert kb (list 'genl dog_t animal_t) 'CxUniverse)
+      (v/assert kb (list 'genl cat_t feline_t) 'CxUniverse)
+      (v/assert kb (list 'transitiveInArgInverse bigger 1 'genl) 'CxUniverse)
+      (v/assert kb (list 'transitiveInArgInverse bigger 2 'genl) 'CxUniverse)
+      (dotimes [_ 16]
+        (v/assert kb (list bigger (tu/tmp-ind "A") (tu/tmp-ind "B")) 'CxUniverse)))
+    (let [probes (atom []), orig @#'res/matches-visible]
+      (with-redefs-fn {#'res/matches-visible
+                       (fn [& args]
+                         (let [s (second args)]
+                           (when (and (seq? s) (= 'not (first s)))
+                             (swap! probes conj s)))
+                         (apply orig args))}
+        #(is (empty? (inherit/claims kb (list bigger dog_t cat_t) 'CxUniverse))))
+      (is (= [(list 'not (list bigger '?w0 '?w1))] (distinct @probes))))))
 
 (defn- walked-rows
   "`[answer rows]`: what `run` answers (the thrown `ex-data` when it throws one), and how

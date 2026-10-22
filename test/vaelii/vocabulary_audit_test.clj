@@ -8,8 +8,8 @@
   read by nobody — so a KB author gets identical silence from a constraint that is
   enforced and one that was never implemented.  `vaelii.impl.vocabulary` answers the
   question for the engine's own grammar, and these tests are what keep the answer true:
-  a term core.txt declares that the roster says nothing about fails here, and so does a
-  roster entry naming a term the grammar has retired.
+  a term core.txt declares that the classification says nothing about fails here, and so does a
+  classification entry naming a term the grammar has retired.
 
   An upper-layer baseline holds the whole population, which is why this is its own
   namespace — the constraint tests beside it (`constraint-vocabulary-test`) need a cleared
@@ -28,13 +28,13 @@
   ;; as nothing was checking.
   (let [a (v/vocabulary-audit kb)]
     (is (empty? (:unclassified a))
-        "a term core.txt declares that vocabulary/roster says nothing about")
+        "a term core.txt declares that vocabulary/classification says nothing about")
     (is (empty? (:retired a))
-        "a roster entry naming a term core.txt no longer declares")
+        "a classification entry naming a term core.txt no longer declares")
     (is (empty? (:contradicted a))
-        "a term the special-predicate table gives an arm to and the roster calls inert")
+        "a term the special-predicate table gives an arm to and the classification calls inert")
     (is (seq (:enforced a)))
-    (is (seq (:inert a)) "and the inert set is not empty — the roster classifies some terms inert")))
+    (is (seq (:inert a)) "and the inert set is not empty — the classification calls some terms inert")))
 
 (tu/deftest-kb a-new-grammar-declaration-nobody-classified-is-reported
   ;; The test above only fails if this mechanism works, so drive it: a term added to the
@@ -48,15 +48,15 @@
       (with-redefs [vocab/file-terms (delay terms)]
         (is (= [maxCardinality] (:unclassified (v/vocabulary-audit kb))))))))
 
-;; `the-special-predicate-table-and-the-roster-agree` stood here and is gone.  It walked
+;; A test asserting the special-predicate table and the classification agree stood here and is gone.  It walked
 ;; `special/entries` asserting no functor with an arm was classified inert — which is
 ;; `audit`'s `:contradicted` restated, and the test above already asserts that empty.  The
-;; half of it that was about two hand-written lists agreeing went with the roster: the
+;; half of it that was about two hand-written lists agreeing went with the hand-kept list: the
 ;; prose now sits on the term's own declaration and the class is read off that entry's
 ;; facets, so there is no second list for the table to disagree with.
 
 (tu/deftest-kb the-two-new-constraints-are-on-the-enforced-side
-  ;; Ties the implementations in `constraint-vocabulary-test` to the roster, so removing
+  ;; Ties the implementations in `constraint-vocabulary-test` to the classification, so removing
   ;; one and leaving the claim is a failing test rather than a stale sentence.
   (is (:enforced (v/interpreted 'interArg)))
   (is (:enforced (v/interpreted 'arity)))
@@ -65,8 +65,8 @@
   (is (:inert (v/interpreted 'typeToInstancePred))
       "and a declared term nothing reads says so rather than reading as enforced"))
 
-(deftest the-roster-answers-in-exactly-one-of-the-two-classes
-  (doseq [[term entry] vocab/roster]
+(deftest the-classification-answers-in-exactly-one-of-the-two-classes
+  (doseq [[term entry] vocab/classification]
     (is (= 1 (count (select-keys entry [:enforced :inert])))
         (str term " must be enforced or inert, and say which"))
     (is (seq (or (:enforced entry) (:inert entry)))

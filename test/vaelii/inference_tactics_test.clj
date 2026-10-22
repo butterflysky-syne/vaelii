@@ -159,7 +159,7 @@
                          (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))
 
 (tu/deftest-kb every-complete-tactician-returns-the-same-answers
-  ;; The gate.  Every tactician reorders the frontier and none of them drops a node, so
+  ;; Every tactician reorders the frontier and none of them drops a node, so
   ;; the answer set is the same seven times over; only the order of arrival differs.
   (tu/with-terms [edgeOf anc reach mid1 mid2 CxSweep]
     (tu/with-terms [SwA SwB SwC SwD]
@@ -231,11 +231,11 @@
                  {:direction :backward}))
 
 (tu/deftest-kb a-productive-nodes-children-carry-the-tacticians-bias
-  (tu/with-terms [edgeOf anc CxGate]
+  (tu/with-terms [edgeOf anc CxTactics]
     (tu/with-terms [GtA GtB GtC GtD]
-      (productive-kb! kb edgeOf anc CxGate GtA GtB GtC GtD)
+      (productive-kb! kb edgeOf anc CxTactics GtA GtB GtC GtD)
       (let [goals [(list anc '?x '?y)]
-            after (fn [t] (let [s (inf/session kb goals CxGate
+            after (fn [t] (let [s (inf/session kb goals CxTactics
                                                {:strategy t :max-depth 3})]
                             (is (seq (inf/step! s)) "the root produced nothing to bias on")
                             (mapv first @(:queue s))))
@@ -250,9 +250,9 @@
         (is (< (apply max up) (apply min flat))
             ":transformation-first must hoist them above it")
         (testing "and sinking is not dropping"
-          (is (= (answers kb goals CxGate :cost 3)
-                 (answers kb goals CxGate :removal-first 3)
-                 (answers kb goals CxGate :transformation-first 3))))))))
+          (is (= (answers kb goals CxTactics :cost 3)
+                 (answers kb goals CxTactics :removal-first 3)
+                 (answers kb goals CxTactics :transformation-first 3))))))))
 
 (tu/deftest-kb first-result-mode-stops-the-frontier-growing-and-says-so
   ;; The one strategy that returns fewer answers.  It is excluded from the completeness

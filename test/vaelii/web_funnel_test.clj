@@ -11,7 +11,6 @@
             [vaelii.browser.jobs :as jobs]
             [vaelii.browser.web :as web]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.test-util :as tu]))
 
 (def ^:dynamic *app* nil)
@@ -19,22 +18,20 @@
 ;; Three forward rules, one of each kind the funnel classifies:
 ;;  - fires:   (p ?x) -> (q ?x), with (p A) — asserting it auto-chains and places (q A)
 ;;  - silent:  (unfired ?x) -> (never ?x), nothing it needs is ever believed
-;;  - blocked: a defeasible (bird ?x) -> (flies ?x) its own exceptWhen (penguin ?x) blocks
+;;  - blocked: (bird ?x) & (not (penguin ?x)) -> (flies ?x), its negative antecedent read
+;;    under a `closed_extent_predicate` grant, which a stored (penguin Opus) refuses
 (use-fixtures :each
   (fn [f]
     (catalog/reset-registry!)
-    (let [kb (doto (tu/fresh) core-context/load-into)]
+    (let [kb (doto (tu/fresh) tu/load-core!)]
       (v/assert-rule kb '[(p ?x)] '(q ?x) 'CxFunnel {:direction :forward})
       (v/assert kb '(p A) 'CxFunnel)
       (v/assert-rule kb '[(unfired ?x)] '(never ?x) 'CxFunnel {:direction :forward})
-      (v/assert kb (list 'exceptWhen '(penguin ?x)
-                         (list 'set/defaultRule (list 'set/forwardRule (list 'implies '(bird ?x) '(flies ?x)))))
-                'CxFunnel)
-      ;; the exception must already hold when the rule fires, or (flies Opus) is placed and
-      ;; only *later* defeated — a defeat, not a placement-time refusal, and the funnel would
-      ;; read the rule as firing.  penguin first, then bird, then a fixpoint to be sure.
-      ;; Known-true, since a `:default` blocker stores the firing with a defeat.
-      (v/assert kb '(penguin Opus) 'CxFunnel {:strength :monotonic})
+      (v/assert kb '(closed_extent_predicate penguin) 'CxFunnel)
+      (v/assert-rule kb '[(bird ?x) (not (penguin ?x))] '(flies ?x) 'CxFunnel {:direction :forward})
+      ;; penguin first, so the firing is refused at its placement rather than placed and
+      ;; swept; then bird, then a fixpoint to be sure
+      (v/assert kb '(penguin Opus) 'CxFunnel)
       (v/assert kb '(bird Opus) 'CxFunnel)
       (v/forward-chain kb)
       (catalog/register! "base" "Base KB" kb {:source (catalog/source "core")})
@@ -63,9 +60,8 @@
       (is (re-find #">fires</span>" b))
       (is (re-find #">blocked</span>" b))
       (is (re-find #">silent</span>" b)))
-    (testing "a blocked rule names why it is blocked — the category and the exception itself"
-      (is (re-find #">exception<" b))
-      (is (re-find #"penguin" b))                       ; the exceptWhen query, named
+    (testing "a blocked rule names why it is blocked"
+      (is (re-find #">naf<" b))
       (is (re-find #"no antecedent set completed" b)))
     (testing "the summary counts the three kinds"
       (is (re-find #"forward rules" b))
@@ -122,9 +118,7 @@
       (is (every? #(pos? (long (:placed %))) fires)))
     (testing "a silent rule placed nothing and refused nothing"
       (is (every? #(and (zero? (long (:placed %))) (= 0 (:refused %))) silent)))
-    (testing "a blocked rule's refusal names the exception, and the row carries its query"
+    (testing "a blocked rule's refusal names the closed extent"
       (is (some (fn [row]
-                  (some #(= :exception (:reason %)) (:refusals row)))
-                blocked))
-      (is (some #(seq (:excepts %)) blocked)
-          "the exceptWhen query is on the row, so the page can name it"))))
+                  (some #(= :naf (:reason %)) (:refusals row)))
+                blocked)))))

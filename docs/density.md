@@ -19,8 +19,8 @@ structures are persistent Clojure collections holding boxed values, which measur
 ~1,973 B/fact of index (591.9 MB over 300k real facts, measured below). Each backend
 here is a dense replacement for one of them.
 **Every dense index backend is off by default**, selected per KB, while the dense
-truth-maintenance network (Phase 3) is the default `:tms`; each is gated by a differential
-oracle proving it answers the protocol identically to the structure it replaces.
+truth-maintenance network (Phase 3) is the default `:tms`; a differential oracle test
+enforces each, proving it answers the protocol identically to the structure it replaces.
 
 Nothing here changes what the engine computes. If a dense backend ever returns a
 different answer, that is a bug in the backend, not a feature of it — which is why the
@@ -137,8 +137,8 @@ columns it came from.** The rare rows hold their answer at 4 handles while the h
 grows 32× and the cost does not move; the hot ∩ hot rows grow their answer 143 → 4,572 and
 the cost grows with it. That is the boundary contract showing through — the narrowing is
 native, and what is left is `|answer|` handles boxed into `Long`s for a caller who was
-promised a Clojure set. `lein perf --only intersect-selectivity` gates the first half of
-it.
+promised a Clojure set. `lein perf --only intersect-selectivity` checks the first half
+of it.
 
 Every arm allocates its result, so a read can never shrink a posting it narrowed against.
 The mutating `RoaringBitmap.and` instance method would, and would stay invisible until some
@@ -151,7 +151,7 @@ whose row in `kv/index-families` has `:leaf :handles`
 count tries, and the context root, the opposed members by context, the term index and
 both halves of the exception index. The rest must *not* be packed as handles: the counts
 are integers, `[:trie :children …]` holds path tokens (numbers among them), a count
-trie's `:children` hold contexts, and the rosters (`:leaf :names`) hold term, predicate,
+trie's `:children` hold contexts, and the name sets (`:leaf :names`) hold term, predicate,
 rule-key, body, taxonomy-key and binding-kind *names*. `TieredKvBackend` reads its
 handle test off `:leaf`, so it packs every handle family. `dense-roots` routes from a
 table of its own (`routes`), keyed by family tag, and a family absent from it goes to the
@@ -173,7 +173,7 @@ which families are left in the fallback.
 `dense-roots` packs the count tries' nodes and the name sets too, though their members are
 not handles. An argument node's children ride the `(pred, pos)` scope, and every other
 node's children hold the node in the term field, each context held as its id in the shared
-token dictionary; a name set (the term, slot and membership rosters, a handle's installed
+token dictionary; a name set (the term, slot and membership name sets, a handle's installed
 taxonomy keys, a predicate's binding kinds and lengths) holds each name the same way. So
 the per-key mass is an `int` run rather than a boxed key and set in the fallback, and a
 snapshot writes those ids through the remap it applies to the keys. A node's count in the
@@ -238,7 +238,7 @@ Child order is not part of `p/children`'s contract — the flat-map index answer
 an unordered set — so a wide node's edges come off the map as they lie, and only
 `compact!` pays to sort them, which the frozen CSR's binary search needs.
 
-`lein perf --only columnar-fanout` is the gate: n sentexes on one predicate with n
+`lein perf --only columnar-fanout` is the perf check: n sentexes on one predicate with n
 distinct first arguments, so the only thing that grows between 4,000 and 64,000 is the
 fan-out of the single node every insert passes through. The tiered node reads **1.07×**
 growth against a bound of 2.00×; the array-only node reads 3.14×, and costs 4.3× as much
@@ -249,7 +249,7 @@ and exception indexes, and the inverted term index route into one
 `Long2ObjectOpenHashMap` keyed by a packed `family | pos | term-id`, with the term
 interned through the *same* dictionary the trie uses. Unrecognized keys fall back to a
 plain backend, so it stays a full `KvBackend` and the composition above it is unchanged —
-which here is the name families `[:term-roster]`, `[:argument-slot pos term]` and
+which here is the name families `[:term-names]`, `[:argument-slot pos term]` and
 `[:unary-slot term]`, whose members are term and predicate names rather than handles, and
 the predicate-extent and rule-index counters. All are vocabulary-scaled, so
 nothing fact-scaled is left outside the packed map — the argument trie reaches it through
@@ -423,7 +423,7 @@ always in RAM in every backend**, and the reference network — an atom over one
 map — costs ~467 B/node (`lein bench-jtms`), ~43 GB at 100M, on par with the whole record
 store. That is why `vaelii.impl.dense-jtms`, the bitmap/primitive-map representation, is
 **the default** as of 0.9.0 (`open-kb`'s `:tms`, orthogonal to storage — any backend may
-use either network); `:reference` is the baseline a caller pins:
+use either network); `:reference` is the baseline a caller selects:
 
 ```
   109,055 nodes, a fact corpus         total    graph    justs
@@ -483,22 +483,22 @@ representation chosen for how it *holds* data has to be re-checked against how t
 
 This one is a **parallel implementation** rather than a swap, and the reason is
 atomicity, not caution: `RoaringBitmap` is mutable while the reference is an atom over a
-persistent map whose all-or-nothing mutation `jtms_atomicity_test` pins. So both sit
+persistent map whose all-or-nothing mutation `jtms_atomicity_test` asserts. So both sit
 behind a `vaelii.impl.jtms-protocol/Tms` protocol, and the dense one coordinates through a
-`StampedLock`: writers take the exclusive stamp — serializing exactly as the reference's
+`StampedLock`: writers take the write lock — serializing exactly as the reference's
 `swap!` retry does — while point reads (`in?`, one per candidate on the match path) run
 **optimistically**, lock-free in the steady state and validated after the fact, and the
-O(nodes) iterating reads take a shared stamp. That gives the incidental reader — the web
-browser beside a REPL's writer, the form the single-writer contract calls supported
-(docs/storage.md) — the consistent view the reference's persistent map gives for free: a
+O(nodes) iterating reads take a shared read lock. That gives the incidental reader — the
+web browser beside a REPL's writer, the form the single-writer contract calls supported
+(docs/storage.md) — the consistent snapshot the reference's persistent map gives for free: a
 reader never observes a partially-applied relabel. The lock is not the trade the earlier
-unlocked design feared, either, because a bitmap probe under an optimistic stamp still
+unlocked design feared, either, because a bitmap probe under an optimistic read still
 beats a boxed-`Long` hash-set lookup by an order of magnitude — measured ≈19 ns against
 the reference's ≈180 ns per `in?`. Plain `lein test` runs the whole suite through the
-dense network (it is the default), `VAELII_TEST_TMS=reference lein test` the persistent-map
-baseline; `jtms_dense_oracle_test` compares the two in full after every step of randomized
-operation streams, and `jtms_concurrency_test` holds the consistent-view guarantee under a
-reader-beside-writer stress on both.
+dense network (it is the default), `VAELII_TEST_TMS=reference lein test` the
+persistent-map baseline; `jtms_dense_oracle_test` compares the two in full after every
+step of randomized operation streams, and `jtms_concurrency_test` holds the
+consistent-snapshot guarantee under a reader-beside-writer stress on both.
 
 **A justification is not an object either.** A fact corpus derives about a tenth of a
 justification per node and cannot say what one costs, so the decomposition was taken on a
@@ -551,7 +551,7 @@ the reference or slightly faster, and on a store of millions of sentexes the two
 identically because the open-time bottleneck is the `content-order` sort, above the
 network entirely — so dense makes a large KB *fit*, never *open faster*. Given an engine
 whose target is one large node holding 100M, the default is the network that scales, and
-this is it. `:reference` remains a one-keyword pin for the simpler baseline.
+this is it. `:reference` remains a one-keyword option for the simpler baseline.
 
 **One ceiling the reference does not share.** The dense bitmaps and fastutil maps are
 `int`-keyed, so a handle or justification id must fit a 32-bit int — 2^31-1 ≈ 2.1B.
@@ -563,7 +563,7 @@ first enters, so an operator sees that rather than the cast's bare "integer over
 a supervisor discriminates on the type as it does on every other refusal — and never a
 silent truncation
 that would collide two handles and corrupt belief. A KB that expects to churn past 2^31
-pins `{:tms :reference}`, whose `Long`-keyed maps have no ceiling. The reference costs the
+sets `{:tms :reference}`, whose `Long`-keyed maps have no ceiling. The reference costs the
 RAM this page measures; that is the trade.
 
 ## The budget at 100M
@@ -586,20 +586,20 @@ calls the form a common-sense KB actually takes:
 |---|---|---|
 | flat KV index (resident, whole map) | **293.73 GB** | linear |
 | dense JTMS | **16.56 GB** | linear |
-| record premises (boxed set, before the `LiveRoster` conversion) | **4.12 GB** | linear |
+| record premises (boxed set, before the `LiveHandleSet` conversion) | **4.12 GB** | linear |
 | hot-record cache | 41.2 MB | capped at 65,536 records/kind |
-| record live-id rosters | tens of KB | refused — too small for four points to resolve |
+| record live-id handle sets | tens of KB | refused — too small for four points to resolve |
 | record store, rest | 1.6 KB | flat in the extent |
-| naming / match / feed / qcn | tens of KB | refused — same reason as the rosters |
+| naming / match / feed / qcn | tens of KB | refused — same reason as the live-id handle sets |
 | taxonomy `:up`/`:down` | 0.2 MB | flat in the extent |
 | **total** | **314.45 GB** | **7.86× the budget** |
 
 At j/n 0.5 the justification-sensitive rows fall — the JTMS to 11.07 GB, the premise set to
 4.22 GB — and the total to 306.21 GB. The index does not move with j/n.
 
-**The roster row is a bitmap, and reading it beside the premise row is the only defensible way
+**The live-id row is a bitmap, and reading it beside the premise row is the only defensible way
 to read either.** The live-handle sets are `Roaring64Bitmap`s over the strided runs
-`next-id` mints (`vaelii.impl.roster`, [storage.md](storage.md#the-enumerations-and-what-a-roster-costs)),
+`next-id` mints (`vaelii.impl.handle-set`, [storage.md](storage.md#the-enumerations-and-what-a-handle-set-costs)),
 which is what put a row that carried **9.47 GB** as a `PersistentHashSet<Long>` under 100
 KB at every corpus size this run tried. Four points cannot resolve a row that small —
 26.3 → 68.0 KB across the run, inside noise — which is a property of the row's new size,
@@ -608,12 +608,12 @@ not a gap in the method. What matters is where the weight this row once carried 
 ### The premise set is the row that was hiding
 
 `cumulative` attributes shared structure to whichever row it reaches first, and the
-rosters are measured before the rest of the record store — so a hash-set roster's boxed
+live-id sets are measured before the rest of the record store — so a hash-set live-id set's boxed
 `Long`s are the premise set's `PersistentHashSet<Long>` as well, and taking them out of
-the roster row only moves the charge: it does not take them out of the KB. With no row
+the live-id row only moves the charge: it does not take them out of the KB. With no row
 of its own that charge lands on one undifferentiated row, where *"record store, rest"*
-reads 4.07 GB against the 2.00 GB it reads when the rosters absorb the boxing.
-`bench-budget` gives the premise set the same row the rosters have: `record-premises`,
+reads 4.07 GB against the 2.00 GB it reads when the live-id sets absorb the boxing.
+`bench-budget` gives the premise set the same row the live-id sets have: `record-premises`,
 attributed before the leftover fields rather than folded into them.
 
 **The result is that `record store, rest` is now exactly what its name says.** With
@@ -626,14 +626,14 @@ because the target is a fixed sentex count and fewer justifications means fewer 
 sentexes are non-premise rule conclusions, so more of the same 100M are premise-bearing.
 Either way it is the size a boxed `PersistentHashSet<Long>` gives at this cardinality,
 which was the representation when this run measured it. The premise set is now a
-`LiveRoster` under the sentexes kind lock
-([storage.md](storage.md#tallying--the-questions-that-do-not-need-the-roster)), and this
+`LiveHandleSet` under the sentexes kind lock
+([storage.md](storage.md#tallying--the-questions-that-do-not-need-the-handle-set)), and this
 row is owed a re-run of `lein bench-budget`.
 
-**The engine-wide saving from the roster conversion is the pair, not the roster row
-alone.** Before: 9.47 GB of boxed rosters plus 4.07 GB of (then-unattributed) premises,
-13.54 GB. After: under 100 KB of bitmap roster plus 4.12 GB of (now-named) boxed premises,
-4.12 GB. The roster's own multiple is real, but reading it alone credits the conversion
+**The engine-wide saving from the bitmap conversion is the pair, not the live-id row
+alone.** Before: 9.47 GB of boxed live-id sets plus 4.07 GB of (then-unattributed) premises,
+13.54 GB. After: under 100 KB of bitmap live-id sets plus 4.12 GB of (now-named) boxed premises,
+4.12 GB. The live-id row's own multiple is real, but reading it alone credits the conversion
 with more than it delivered — the measured saving is what the pair actually gave back,
 **9.4 GB**. The premise set has since taken the same conversion, and its saving is the
 re-run's to report.
@@ -657,7 +657,7 @@ of the index row:
 |---|---|---|
 | CSR skeleton | **3.26 GB** | linear |
 | roots routed map | *refused, but bounded — see below* | flat, then a 10.9× step, then flat again |
-| roots fallback blob ← term + slot rosters | 19.0 MB | flat in the extent |
+| roots fallback blob ← term + slot name sets | 19.0 MB | flat in the extent |
 | token dictionary | 1.3 MB | flat in the extent |
 | argument-root scope table | 0.0 MB | flat in the extent |
 | roots handle column *(mapped)* | 2.95 GB | linear |
@@ -670,7 +670,7 @@ pred pos term]` had no packed spelling, so the family rode the resident blob and
 whole on open. That row once measured **34.10 GB, linear**, 90% of the image's remaining heap
 and the difference between this backend being over budget and under it. The interned
 `(pred, pos)` scope gave it a packed spelling; the argument roots now ride the mapped
-handle column with every other family. The 19.0 MB row holds the term and slot rosters;
+handle column with every other family. The 19.0 MB row holds the term and slot name sets;
 at snapshot format 5 those ride the mapped run as token ids, and the blob keeps the
 vocabulary's counters alone.
 No resident section of the image tracks the fact count except the CSR skeleton.
@@ -695,7 +695,7 @@ points alone, and either way the operative fact for the budget is the plateau, n
 of the two produced it. Refitting the index row's affine coefficient over the widened range drops it from
 86 B/fact to **69 B/fact** (66 B/fact at j/n 0.5) — the 20% the old fit was carrying on
 the routed map's behalf. **The section is still refused a shape of its own — a
-flat/jump/flat step matches none of the three the gate tests for — but it is no longer an
+flat/jump/flat step matches none of the three the shape check tests for — but it is no longer an
 unattributed 4.6 GB: it is a measured, bounded 1.7 MB, and the affine fit for the row that
 contains it no longer needs to guess.**
 
@@ -750,10 +750,10 @@ them cost 400,000 sentexes of the rows above, 0.4% of a 100M extent, and members
 same. Widening the ontology moves the total twice and both moves are small.
 
 **The fallback blob is the row that does not have this defence.** In the measurement
-above it holds the term and slot rosters, which grow with the terms, and 8,070 terms is a
+above it holds the term and slot name sets, which grow with the terms, and 8,070 terms is a
 very small vocabulary. It measures flat there only inside the 0.25 tolerance — 11.0 → 13.3
 → 16.0 MB is 1.20× then 1.20× against facts at 1.68× then 1.73×. On a KB of millions of
-sentexes the same blob, holding the rosters and the taxonomy's supporters, grows with the
+sentexes the same blob, holding the name sets and the taxonomy's supporters, grows with the
 terms into gigabytes. Since snapshot format 5 it holds the counters keyed by a predicate,
 functor or rule key alone, and `perf`'s `roots-fallback-section` holds it flat in the
 facts.

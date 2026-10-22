@@ -453,7 +453,7 @@
                            :dimensions (nm/by-print-key (map first dims))
                            :units      (into [] (sort-by nm/name-key (map second dims)))}}]
     (trove/log! {:level :warn :id ::metric-temporal-mixed-dimensions :data entry})
-    (violations/report-unstamped kb entry)))
+    (violations/report-without-run kb entry)))
 
 (defn- build-problem
   "The stated constraints as `{:dimension :unit :net :support}`, nil when none, or
@@ -479,7 +479,7 @@
 (defn- problem-or-refusal
   "`build-problem`'s answer for `context`, the refusal `{:mixed dims :handles}` included,
   and the refusal reported once per KB and context.  Resident on the KB's `:qcn` atom,
-  stamped with the change clock and keyed on the tolerance the magnitudes are snapped to."
+  keyed by the change clock and on the tolerance the magnitudes are snapped to."
   [kb context]
   (let [prob (observe/cached (reasoning/qcn kb) [::problem context provers/*quantity-tolerance*]
                              (fn [_stale] (build-problem kb context)))]
@@ -535,7 +535,7 @@
                             (seq bad)         (assoc :pairs (nm/by-print-key bad))
                             (seq cycle-nodes) (assoc :cycle (nm/by-print-key cycle-nodes)))}]
     (trove/log! {:level :warn :id ::metric-temporal-inconsistency :data entry})
-    (violations/report-unstamped kb entry)))
+    (violations/report-without-run kb entry)))
 
 (defn- resident-closure
   "`(build stale)` held on the KB under `k` and the change clock beside `net`, where `stale`
@@ -716,7 +716,7 @@
                     support)}))
 
 (defn allen-narrowing-with-support
-  "What the metric constraints pin down about the interval relations, as
+  "What the metric constraints determine about the interval relations, as
   `{:net {[i j] → #{base relations}} :support {[i j] → #{handle}}}` — `qcn-kb/build-network`'s
   shape.  A pair's support is both intervals' endpoint facts and the chains behind the four
   `endpoint-gaps`.  Only narrowed pairs are recorded.  nil with no constraints or fewer

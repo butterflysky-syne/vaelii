@@ -4,7 +4,7 @@
   "Every bound refuses a value outside its domain, by name, at every entry point that
   takes one.
 
-  The key rosters were already held everywhere (`opts/check!`): an option nothing reads is
+  The key sets were already checked everywhere (`opts/check!`): an option nothing reads is
   `:unknown-option`.  The **value** domains are the other half — a key that *is* read
   holding a value it cannot mean.  Unchecked, the value reaches arithmetic or a call and
   throws a bare `ClassCastException`, which the daemon answers `:internal-error` (500)
@@ -98,7 +98,7 @@
             (is (= :capped (:status r)))
             (is (fn? (:resume r)))))))))
 
-(deftest the-anytime-roster-splits-what-ask-reads-from-what-prove-reads
+(deftest the-anytime-key-set-splits-what-ask-reads-from-what-prove-reads
   ;; The same split `ask-opt-keys` / `prove-opt-keys` make for `ask` / `prove`: a depth is
   ;; prove's and a cost tier is ask's, so a bound the entry point does not read is refused
   ;; rather than accepted and ignored.
@@ -113,13 +113,13 @@
         (testing "prove-within refuses :max-cost — an ask concept prove ignores"
           (is (= :unknown-option
                  (:type (refusal #(v/prove-within kb g CxBVD {:max-cost :lookup}))))))
-        (testing "and the two rosters are the split of the union resume still holds"
+        (testing "and the two key sets are the split of the union resume still holds"
           (is (= budget/budget-keys (into budget/ask-budget-keys budget/prove-budget-keys)))
           (is (not (contains? budget/ask-budget-keys :max-depth)))
           (is (not (contains? budget/prove-budget-keys :max-cost))))
         (testing "resume continues either, so it holds the union"
           ;; a prove-within partial resumed under a budget carrying an ask key is still
-          ;; accepted — resume is neither entry point and holds the wider roster
+          ;; accepted — resume is neither entry point and holds the wider key set
           (let [r (v/prove-within kb g CxBVD {:max-results 0})]
             (is (map? (v/resume r {:max-results 1})))))))))
 
@@ -186,9 +186,9 @@
       (is (map? (v/clear-caches kb {:counters? false})))
       (is (map? (v/clear-caches kb {:counters? true}))))))
 
-;; ---- the three roster gaps beside the value gaps --------------------------
+;; ---- the three key-set gaps beside the value gaps -------------------------
 
-(deftest add-evaluatable-refuses-a-key-off-its-roster
+(deftest add-evaluatable-refuses-a-key-off-its-key-set
   (tu/with-neutral-kb [kb tu/fresh]
     (testing "a key provers/evaluatable does not read is refused"
       (let [d (refusal #(v/add-evaluatable kb 'evenSum (fn [a b] (even? (+ a b)))
@@ -201,9 +201,10 @@
 
 (deftest set-cache-limit-warns-on-an-unknown-id-rather-than-refusing
   ;; The register fills lazily, so an id nothing has registered *yet* is a warning and a
-  ;; recorded pin — a not-yet-loaded cache picks it up — not a refusal that would reject
-  ;; the configuration a bulk load sets up before touching a lazily-loaded calculus.
-  ;; a cache a pin moves, which not every registered one is (`caches/pin-problem`)
+  ;; recorded override — a not-yet-loaded cache picks it up — not a refusal that would
+  ;; reject the configuration a bulk load sets up before touching a lazily-loaded calculus.
+  ;; A registered id must name a cache an override moves, which not every registered one is
+  ;; (`caches/override-problem`).
   (let [known :literal-matches]
     (try
       (testing "a bad id or a bad limit is still refused by name"
@@ -216,10 +217,10 @@
         (binding [trove/*log-fn* (fn [& _] nil)]
           (is (map? (v/set-cache-limit :no-such-cache 5))))
         (is (= 5 (get-in (v/cache-profile) [:overrides :no-such-cache])))
-        (testing "and clearing the pin with nil takes it back"
+        (testing "and clearing the override with nil takes it back"
           (v/set-cache-limit :no-such-cache nil)
           (is (nil? (get-in (v/cache-profile) [:overrides :no-such-cache])))))
-      (testing "a registered id is pinned outright"
+      (testing "a registered id is overridden outright"
         (is (caches/registered? known))
         (v/set-cache-limit known 4096)
         (is (= 4096 (get-in (v/cache-profile) [:overrides known]))))
@@ -242,7 +243,7 @@
     kb))
 
 (deftest assert-rule-refuses-an-unrecovered-kb-before-its-range-check
-  ;; `assert-rule` ran `check-range-restricted` before `assert`'s unrecovered-KB gate, so
+  ;; `assert-rule` ran `check-range-restricted` before `assert`'s unrecovered-KB check, so
   ;; on a KB whose belief was never built it answered `:not-range-restricted` where every
   ;; other write entry point answers `:unrecovered-kb` first.  `checks/check-rule!` makes
   ;; the same range check inside `assert`, so the early call only decided which refusal won.

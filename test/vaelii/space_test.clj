@@ -3,11 +3,13 @@
 (ns vaelii.space-test
   "RCC-8 (`vaelii.impl.space`), and the claims the four spatial calculi share, as tables
   with one row per calculus."
-  (:require [clojure.set :as set]
+  (:require [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.walk :as walk]
             [vaelii.core :as v]
             [vaelii.impl.distance :as dist]
+            [vaelii.impl.io.text :as text]
             [vaelii.impl.orientation :as dir]
             [vaelii.impl.provers :as provers]
             [vaelii.impl.qcn-kb :as qkb]
@@ -37,7 +39,7 @@
     (v/assert kb (list 'nonTangentialProperPart B D) C)
     (testing "NTPP∘NTPP = NTPP"
       (is (v/ask? kb (list 'nonTangentialProperPart A D) C)))
-    (testing "and the table pins the pair to that one relation"
+    (testing "and the table narrows the pair to that one relation"
       (is (= #{:ntpp} (qkb/possible space/rcc8 kb C A D)))
       (is (= :ntpp (qkb/definite space/rcc8 kb C A D))))
     (testing "so a base relation the network excludes is not answered"
@@ -86,6 +88,40 @@
       (is (v/ask? kb (list 'hasRegionPart D A) C))
       (is (not (v/ask? kb (list 'partOfRegion D A) C))))))
 
+(tu/deftest-kb an-entailed-region-part-answers-generic-parthood
+  ;; partOfRegion is below partOf and properPartOfRegion below properPartOf, so a region
+  ;; part the network entails is a parthood tuple too
+  (tu/with-terms [A B D]
+    (v/assert kb (list 'nonTangentialProperPart A B) C)
+    (v/assert kb (list 'nonTangentialProperPart B D) C)
+    (testing "ground"
+      (is (v/ask? kb (list 'partOf A D) C))
+      (is (v/ask? kb (list 'properPartOf A D) C))
+      (is (not (v/ask? kb (list 'properPartOf D A) C))))
+    (testing "open"
+      (is (= #{A B D} (set (map #(get % '?x) (v/ask kb (list 'partOf '?x D) C)))))
+      (is (= #{B D} (set (map #(get % '?y) (v/ask kb (list 'properPartOf A '?y) C))))))))
+
+(tu/deftest-kb the-calculus-entails-the-inert-partOf-edges-space-txt-states
+  ;; space.txt states (genl spatiallyEqual partOfRegion) and three genlInverse edges to
+  ;; partOf under set/inert. The calculus answers each edge's conclusion on its own.
+  (doseq [[stated p goals]
+          [['(genl spatiallyEqual partOfRegion) 'spatiallyEqual
+            ['(partOfRegion $a $b) '(partOf $a $b)]]
+           ['(genlInverse hasRegionPart partOf) 'hasRegionPart ['(partOf $b $a)]]
+           ['(genlInverse tangentialProperPartInverse partOf) 'tangentialProperPartInverse
+            ['(partOf $b $a)]]
+           ['(genlInverse nonTangentialProperPartInverse partOf)
+            'nonTangentialProperPartInverse ['(partOf $b $a)]]]]
+    (testing (str stated)
+      (let [h (v/handle-of kb stated C)]
+        (is (integer? h) "the edge is stored")
+        (is (false? (v/in? kb h)) "and is not believed"))
+      (tu/with-terms [A B]
+        (v/assert kb (list p A B) C)
+        (doseq [g goals]
+          (is (v/ask? kb (fill g A B) C) (str (fill g A B))))))))
+
 (tu/deftest-kb a-region-cannot-stand-apart-from-itself
   (tu/with-terms [A B]
     ;; DC is its own converse, so the diagonal constraint is #{:dc}, non-empty, and
@@ -113,7 +149,7 @@
       (is (= #{A B D} (set (map #(get % '?y) (v/ask kb (list 'partOfRegion A '?y) C))))))
     (testing "(partOfRegion ?x D)"
       (is (= #{A B D} (set (map #(get % '?x) (v/ask kb (list 'partOfRegion '?x D) C))))))
-    (testing "a base relation enumerates only the pairs it is pinned to"
+    (testing "a base relation enumerates only the pairs it is narrowed to"
       (is (= #{B D}
              (set (map #(get % '?y) (v/ask kb (list 'nonTangentialProperPart A '?y) C))))))
     (testing "both arguments open enumerates the entailed pairs, off the diagonal"
@@ -169,7 +205,7 @@
                             (v/ask? kb (list 'arg % 2 'spatial) C))
                       (sort (apply set/union preds)))))))
 
-(tu/deftest-kb a-spatial-relation-between-predicates-is-stored-or-refused-by-the-reading
+(tu/deftest-kb a-spatial-relation-between-predicates-is-believed-or-held-by-the-reading
   ;; temporary predicates, each a monotonic binary_predicate as genl is in CxUniverse
   (tu/with-terms [rel1 rel2]
     (doseq [r [rel1 rel2]] (v/assert kb (list 'binary_predicate r) C {:strength :monotonic}))
@@ -182,15 +218,64 @@
               (is (some? (v/handle-of kb (list 'spatial r) C)) (str r))
               (is (not (v/ask? kb (list 'spatial r) C)) (str r)))
             (v/retract! kb h))))
-      (testing "constraint-only: the assert is refused"
+      (testing "constraint-only: the fact is held inert"
         (tu/without-entailing
-         (is (= :arg-type (try (v/assert kb s C) nil
-                               (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
+         (is (= :arg-type (:type (tu/write-conviction kb s C)))))))))
 
 (deftest every-calculus-prover-ships-opt-in
   ;; the calculi share one prover record, so opt-in is asked by calculus, not by class
   (doseq [nm (keys calculi)]
     (is (not-any? #(qkb/prover-for? nm %) provers/default-provers) (name nm))))
+
+(def ^:private stated-converses
+  "The `(inverse P Q)` pairs space.txt states under `set/inert`, each as `[P Q]`."
+  (vec (for [s (text/read-forms (io/file "resources/kb/upper/space.txt"))
+             :when (and (seq? s) (= 'set/inert (first s))
+                        (seq? (second s)) (= 'inverse (first (second s))))]
+         (vec (rest (second s))))))
+
+(deftest space-txt-states-every-converse-pair-of-the-calculi
+  ;; The calculi are the source of truth: two distinct predicates of one calculus are a
+  ;; converse pair when the algebra's converse of one's base relations is the other's.
+  ;; Distance is symmetric, so it contributes no pair.
+  (let [computed (set (for [calc   (vals calculi)
+                            :let   [den  (:denotation calc)
+                                    conv (:converse (:algebra calc))]
+                            [p ps] den
+                            [q qs] den
+                            :when  (and (not= p q) (= (conv ps) qs))]
+                        #{p q}))]
+    (is (= 15 (count stated-converses)))
+    (is (= computed (set (map set stated-converses)))
+        "space.txt states exactly the converse pairs the algebras compute")))
+
+(tu/deftest-kb an-inert-converse-fact-leaves-the-calculus-prover-answering-alone
+  (doseq [[p q] stated-converses]
+    (testing (str p " / " q)
+      (let [h (v/handle-of kb (list 'inverse p q) C)]
+        (is (integer? h) "the converse fact is stored")
+        (is (false? (v/in? kb h)) "and is not believed"))
+      (tu/with-terms [A B]
+        (v/assert kb (list p A B) C)
+        (let [goal (list p A B)
+              calc (qkb/calculus-for kb p)
+              appl (provers/applicable-provers kb (provers/registry kb) goal C)]
+          (is (empty? (provers/shadowing-channels kb goal C)))
+          (is (qkb/prover-for? (:name calc) (provers/sole-prover kb appl goal C))
+              "the calculus prover answers the goal alone")
+          (is (v/ask? kb (list q B A) C) "and the calculus answers the converse"))))))
+
+(tu/deftest-kb a-believed-inverse-of-a-spatial-predicate-shadows-its-prover
+  ;; The contrast the test above needs: the same goal, once a believed inverse names
+  ;; partOfRegion, is no longer the calculus prover's alone.
+  (tu/with-terms [A B containsRegion]
+    (v/assert kb (list 'partOfRegion A B) C)
+    (let [goal (list 'partOfRegion A B)
+          h    (v/assert kb (list 'inverse 'partOfRegion containsRegion) C)
+          appl (provers/applicable-provers kb (provers/registry kb) goal C)]
+      (is (contains? (provers/shadowing-channels kb goal C) :inverse))
+      (is (nil? (provers/sole-prover kb appl goal C)))
+      (v/retract! kb h))))
 
 (tu/deftest-kb without-the-prover-the-facts-are-inert
   ;; the same KB, read through the default registry, isolates what registering adds
@@ -291,7 +376,7 @@
         (doseq [e entailed] (is (v/ask? kb (list e A B) C) (str e)))
         (doseq [r refused] (is (not (v/ask? kb (list r A B) C)) (str r)))))))
 
-(tu/deftest-kb a-derived-assertion-constrains-without-pinning
+(tu/deftest-kb a-derived-assertion-constrains-without-determining
   (doseq [[nm p possible entailed refused]
           [[:rcc8 'properPartOfRegion #{:tpp :ntpp}
             '[(partOfRegion $a $b) (regionOverlaps $a $b)]

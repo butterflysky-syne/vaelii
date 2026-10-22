@@ -4,7 +4,7 @@
   "The lookup-to-query stack: eight levels of escalating machinery over one goal.
 
   The tests are written as *isolation* tests — for each level, a goal that the level
-  below cannot answer and this one can, so each mechanism is pinned to the level that
+  below cannot answer and this one can, so each mechanism is tied to the level that
   introduces it.  The last group checks the laziness contract: taking one result must
   cost strictly less than taking all of them."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
@@ -91,10 +91,10 @@
 ;; ---- query is the level-2 matcher ---------------------------------------
 ;; `core/sentexes-matching` *is* level 2 (`res/raw-match`): one literal context, unification,
 ;; the symmetric mirror, belief-filtered — so it shares `match-one`'s argument-root
-;; divert (a goal pinning an argument after a variable is answered from the arg root,
+;; divert (a goal binding an argument after a variable is answered from the arg root,
 ;; not a leading-variable fan-out).  It adds exactly two things level 2 does not do:
 ;; the `except` visibility filter, the retired-spelling filter, and the equality
-;; goal-rewrite.  These pin that identity so `query` and the stack cannot drift apart.
+;; goal-rewrite.  These assert that identity so `query` and the stack cannot drift apart.
 
 (tu/deftest-kb query-core-is-exactly-level-2
   (tu/with-terms [parentOf siblingOf flies Tom Bob Ann Carol Opus CxStory]
@@ -278,6 +278,35 @@
     (testing "from floor 0, level 1 claims it — on the strength of a different fact"
       (is (= 1 (:level (v/escalate kb (list ancestorOf Ann Carol) CxStory 0)))))))
 
+(tu/deftest-kb escalate-under-a-deadline
+  (tu/with-terms [parentOf grandparentOf Tom Bob Ann dog Muffet CxStory]
+    (v/assert-rule kb [(list parentOf '?x '?y) (list parentOf '?y '?z)]
+                   (list grandparentOf '?x '?z) CxStory {:direction :backward})
+    (v/assert kb (list parentOf Tom Bob) CxStory)
+    (v/assert kb (list parentOf Bob Ann) CxStory)
+    (v/assert kb (list dog Muffet) CxStory)
+    (testing "a deadline that does not pass changes nothing"
+      (let [r (v/escalate kb (list grandparentOf Tom '?who) CxStory 2 {:max-ms 60000})]
+        (is (= 7 (:level r)))
+        (is (not (contains? r :status)))
+        (is (= Ann (get (:bindings (first (:results r))) '?who)))))
+    (testing "a passed deadline stops the climb after the first level, and says so"
+      (let [r (v/escalate kb (list grandparentOf Tom '?who) CxStory 2 {:max-ms 0})]
+        (is (nil? (:level r)))
+        (is (= :timeout (:status r)))
+        (is (= [2] (:tried r)) "the levels above 2 never ran")
+        (is (empty? (:results r)))))
+    (testing "a hit found before the deadline is checked is the ordinary answer"
+      (let [r (v/escalate kb (list dog Muffet) CxStory 2 {:max-ms 0})]
+        (is (= 2 (:level r)))
+        (is (not (contains? r :status)))))
+    (testing "an unanswerable goal without a deadline still says nothing answers, with no status"
+      (tu/with-terms [cat]
+        (is (not (contains? (v/escalate kb (list cat '?x) CxStory 2 nil) :status)))))
+    (testing "a key escalate does not read is refused"
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (v/escalate kb (list dog Muffet) CxStory 2 {:max-mss 10}))))))
+
 ;; ---- explain-levels ------------------------------------------------------------
 
 (tu/deftest-kb explain-levels-shows-where-the-answer-appears
@@ -295,12 +324,35 @@
       (testing "and every level above still answers it"
         (is (every? pos? (map by-n (range 4 8))))))))
 
+(tu/deftest-kb explain-levels-names-an-open-transitive-goal-at-the-levels-that-run-the-closure
+  ;; `(aheadOf ?x ?y)` with both ends open answers the two stored pairs at every level, and
+  ;; levels 5-7 run the transitive prover, which leaves the derived (R0 R2) out.
+  (tu/with-terms [aheadOf behindOf closeTo R0 R1 R2 CxT]
+    (v/assert kb (list 'transitive aheadOf) CxT)
+    (v/assert kb (list aheadOf R0 R1) CxT)
+    (v/assert kb (list aheadOf R1 R2) CxT)
+    (let [rows (v/explain-levels kb (list aheadOf '?x '?y) CxT)]
+      (is (= {5 [aheadOf] 6 [aheadOf] 7 [aheadOf]}
+             (into {} (keep (fn [r] (some->> (:unenumerated r) (vector (:level r))))) rows)))
+      (is (= #{2} (set (map :count rows)))))
+    (testing "escalate stops at level 2 over the stored pairs and names nothing"
+      (is (not (contains? (v/escalate kb (list aheadOf '?x '?y) CxT) :unenumerated))))
+    (testing "escalate names the predicate when only a rule derives its pairs"
+      ;; levels 2-6 hold no `behindOf` pair, so the climb stops at level 7
+      (v/assert kb (list 'transitive behindOf) CxT)
+      (v/assert kb (list closeTo R0 R1) CxT)
+      (v/assert kb (list closeTo R1 R2) CxT)
+      (v/assert-rule kb [(list closeTo '?x '?y)] (list behindOf '?x '?y) CxT
+                     {:direction :backward})
+      (is (= {:level 7 :unenumerated [behindOf]}
+             (select-keys (v/escalate kb (list behindOf '?x '?y) CxT) [:level :unenumerated]))))))
+
 ;; ---- monotonicity: what survives the climb, and what does not -----------
 ;;
 ;; The stack's whole claim is that a result appearing at level n and not at n-1 is
 ;; attributable to that level's one mechanism.  That only means something if climbing
 ;; never *loses* an answer — otherwise a level's contribution is a net of two effects
-;; and reads as neither.  These pin the property where it holds, and pin the two
+;; and reads as neither.  These assert the property where it holds, and assert the two
 ;; joints where it does not so that neither is a surprise.
 
 (tu/deftest-kb the-answer-count-never-falls-as-the-stack-is-climbed
@@ -336,7 +388,7 @@
   ;; `except` hides is matched below the filter and gone above it.  Level 4 is right
   ;; and `ask` agrees; what it costs is `escalate`, which names level 2 as the
   ;; machinery sufficient for a goal the engine refuses.  No floor rules that out —
-  ;; whether a level over-reports is a property of the KB — so it is pinned instead.
+  ;; whether a level over-reports is a property of the KB — so it is asserted instead.
   (tu/with-terms [likes Bob Ann CxStory]
     (let [h (v/assert kb (list likes Bob Ann) CxStory {:strength :monotonic})]
       (v/assert kb (list 'except (sx/sentex-handle h)) CxStory {:strength :monotonic})

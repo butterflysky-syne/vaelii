@@ -7,7 +7,7 @@
   reach through `vaelii.impl.qcn-kb` — what a registered prover is *reachable from*, what
   it is not, and what it reports when the facts it reads cannot all hold.  Several of
   these behaviours fall out of the registry being a KB-held list rather than being
-  designed in, which is exactly why they need pinning: nothing else would notice if a
+  designed in, which is exactly why they need asserting: nothing else would notice if a
   change to the prover engine took them away."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.walk :as walk]
@@ -384,7 +384,7 @@
     (v/assert-rule kb [(list 'spatiallyDisconnected '?x D)] (list tmpApart '?x) C
                    {:direction :forward})
     (v/assert kb (list 'not (list 'regionConnectedTo A D)) C)
-    (testing "the negative fact alone pins the pair"
+    (testing "the negative fact alone determines the pair"
       (is (= #{:dc} (qkb/possible space/rcc8 kb C A D)))
       (is (v/ask? kb (list 'spatiallyDisconnected A D) C))
       (is (nil? (v/handle-of kb (list 'spatiallyDisconnected A D) C))))
@@ -440,7 +440,7 @@
    :steps   [;; the containment chain, split so only CxBoth composes it
              #(v/assert % (list 'nonTangentialProperPart A B) CxA)
              #(v/assert % (list 'nonTangentialProperPart B D) CxB)
-             ;; a negative fact, which pins P/Q to DC by complement alone
+             ;; a negative fact, which narrows P/Q to DC by complement alone
              #(v/assert % (list 'not (list 'regionConnectedTo P Q)) CxA)
              ;; and one about two regions neither pair mentions
              #(v/assert % (list 'nonTangentialProperPart X Y) CxB)
@@ -462,7 +462,7 @@
     (is (contains? (first answers) [(list tmpIn A) CxBoth])
         "the composition only CxBoth sees")
     (is (contains? (first answers) [(list tmpApart P) CxA])
-        "and the relation only the negative fact pins")))
+        "and the relation only the negative fact determines")))
 
 (tu/deftest-kb the-same-qualitative-knowledge-derives-the-same-belief-in-sampled-orders
   ;; Three of the orders the `^:slow` test below runs, into the namespace's KB, each on
@@ -594,7 +594,7 @@
 ;; ---- the resident network -----------------------------------------------
 ;; Reading a network is one belief-filtered read per predicate of the calculus per
 ;; polarity, and every consumer asks for one constantly.  So it lives on the KB between
-;; reads, stamped with `observe/change-clock`, and is rebuilt exactly when the engine has
+;; reads, keyed by `observe/change-clock`, and is rebuilt exactly when the engine has
 ;; mutated something.  These count *builds*, not calls: the call count is the point of
 ;; the mechanism, and the build count is what it costs.
 

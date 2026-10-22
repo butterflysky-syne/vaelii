@@ -42,7 +42,7 @@
 # the report. A directory that is not a git checkout — an unpacked release, say —
 # is grepped directly, minus the build and scratch directories.
 #
-# ## Not a gate
+# ## Not a required check
 #
 # This is a release step, not a check the suite runs: it reads other repositories
 # on the machine, and which of them are cloned is not a fact about this tree. A
@@ -78,18 +78,18 @@ cd "$ROOT" || exit 1
 # globbed off the parent directory — the same reason scripts/lint.sh names its
 # scripts. A directory beside this checkout is not evidence of a consumer (an
 # archived port, a scratch clone and this repo's own release staging all live
-# there), and a roster is the place the judgement gets written down.
+# there), and a named list is the place the judgement gets written down.
 #
-# The shipped roster is the published consumer alone. **Your own downstreams go
+# The shipped list names the published consumer alone. **Your own downstreams go
 # in `.sibling-repos`**, one directory name per line, `#` comments allowed —
-# untracked, because a roster is a fact about one machine's checkouts and a
+# untracked, because the list is a fact about one machine's checkouts and a
 # repository that published one would be advertising every private consumer it
 # has by name.
 #
 # A file rather than an environment variable, deliberately: a `VAELII_*` name is
 # part of the configuration surface (CONTRIBUTING §3.8) and owes a golden entry,
 # a row in docs/operations.md and a changelog line, which is a lot of ceremony
-# for a roster only a release step reads. `--root` already covers the one-off.
+# for a list only a release step reads. `--root` already covers the one-off.
 #
 # What belongs on it is anything that goes through an entry point this repo can break:
 # a plugin reaching into `vaelii.impl.*` on purpose, a store or feed adapter

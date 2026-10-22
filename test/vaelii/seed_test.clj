@@ -32,9 +32,9 @@
            (seed/layer-files "upper")))
     (is (= "core.txt" (first (core-context/upper-files)))))
   (testing "middle holds the theory contexts"
-    (is (= '[CxAnatomy CxBiology CxChange CxComputing CxKinship
-             CxMereology CxNormalPhysicalConditions CxPerception CxRealWorld CxSize
-             CxSocial CxSocialExtension]
+    (is (= '[CxAnatomy CxBiology CxChange CxKinship CxMereology
+             CxNormalPhysicalConditions CxRealWorld CxSize CxSocial CxSocialExtension
+             CxTra]
            (seed/layer-contexts "middle"))))
   (testing "an absent layer is nil, not a crash"
     (is (nil? (seed/layer-contexts "no-such-layer")))))
@@ -49,8 +49,8 @@
 
 (tu/deftest-kb a-sentence-refused-for-what-has-not-arrived-yet-is-retried
   ;; The blocks of a KB file run in natural sort order, so it cannot also be
-  ;; dependency-ordered: `(transitiveInArgInverse largerThan 1 partOf)` is filed under
-  ;; `largerThan` and `(transitive partOf)` under `partOf`, and `l` sorts before `p`.
+  ;; dependency-ordered: `(transitiveInArgInverse largerThan 1 tangiblePartOf)` is filed under
+  ;; `largerThan` and `(transitive tangiblePartOf)` under `tangiblePartOf`, and `l` sorts before `t`.
   ;; The preservation's transitivity check reads the store, so in file order it is
   ;; refused — for where its author filed a sentence, which is not a property of the
   ;; knowledge.

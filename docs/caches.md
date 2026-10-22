@@ -61,7 +61,7 @@ one entry that would make room. Evicting exactly the right entry costs more book
 than the entry saves, and a cache that has outgrown its bound is one whose questions have
 moved on. A nil bound is not unbounded neglect: those caches are retired by a **generation
 bump** (a taxonomy edge or context change retires every closure read at once), by the
-**change clock** (a per-placement stamp, so a chaining run meets its own reads cold), or
+**change clock** (a per-placement counter, so a chaining run meets its own reads cold), or
 they are structural (the symbol pool, the compiled algebras) where dropping entries costs
 the sharing they exist for.
 
@@ -100,14 +100,15 @@ On a running process the same dial is `vaelii.core`:
   ([web.md](web.md#pages)): a write to the whole process, reaching every KB loaded in it,
   and origin-checked like every browser write. The route answers 400 to a value that is not
   a finite number 0 or more, and to no value at all, and changes nothing.
-- `(set-cache-limit id n)` — pin one cache's bound to `n`, or clear the pin with `nil`. `id`
-  is a `:cache` keyword from `caches`. The scale leaves a pinned bound alone, for a cache
-  measured on its own. The memory-pressure guard does not: a pinned cache shrinks under a
-  filling heap like every other counted cache, because the guard's relief has to reach every
-  counted cache or a pin holds the heap short of the reclaim the guard exists to force.
-  A pin on a registered cache no pin moves is **refused** (`:unknown-option`): the three
-  bounds outside the scale below, and the nil-bound caches. An `id` no cache has registered
-  yet is warned and recorded, since its namespace may load later and take the pin.
+- `(set-cache-limit id n)` — override one cache's bound with `n`, or clear the override with
+  `nil`. `id` is a `:cache` keyword from `caches`. The scale leaves an overridden bound alone,
+  for a cache measured on its own. The memory-pressure guard does not: an overridden cache
+  shrinks under a filling heap like every other counted cache, because the guard's relief has
+  to reach every counted cache or an override holds the heap short of the reclaim the guard
+  exists to force. An override on a registered cache no override moves is **refused**
+  (`:unknown-option`): the three bounds outside the scale below, and the nil-bound caches. An
+  `id` no cache has registered yet is warned and recorded, since its namespace may load later
+  and take the override.
 
 ## The memory-pressure guard
 
@@ -122,8 +123,8 @@ between two marks:
   does not leave the caches small for the rest of the run.
 
 Both multipliers apply: a cache's effective bound is `default × scale × pressure`, floored at
-`min-limit`, and `cache-profile` shows both. A pinned cache's bound is `override × pressure`,
-since a pin is set against the scale but not against the guard. The trim is **partial**, not a
+`min-limit`, and `cache-profile` shows both. An overridden cache's bound is `override ×
+pressure`, since an override is set against the scale but not against the guard. The trim is **partial**, not a
 wholesale clear
 (`trim-map!`, or a cache's own shape-aware `:trim`): past the lowered bound a cache keeps that
 many entries rather than none, so the reads the survivors serve are not all recomputed the
@@ -145,7 +146,7 @@ disagree. Two bounds stand outside the scale: the **symbol pool**
 load — and scaling it risks the sharing it exists for (a disk store's open raises it to twice
 its token dictionary, [storage.md](storage.md#symbol-interning)); and **hot records**, whose per-kind
 LRU has its own knob (`vaelii.disk.cache`). The nil-bound caches
-have no count to scale. A pin does not move any of these, so `set-cache-limit` refuses one
+have no count to scale. An override does not move any of these, so `set-cache-limit` refuses one
 rather than recording an override nothing reads.
 
 ## Reading them
@@ -196,7 +197,7 @@ A row declares:
   node, term, literal, value or global.
 - **`:reads`** — the rows and stores it is computed from, by id.
 - **`:retired-by`** — each write event that retires entries, with the code saying how:
-  **K** per key, **S** per stamp part, **G** a generation bump, **G\*** the change clock
+  **K** per key, **S** per key part, **G** a generation bump, **G\*** the change clock
   every write in the process bumps, **I** identity against a value the write replaces,
   **W** wholesale, **Q** a take-and-empty drain, **C** never stale, **P** pass-scoped,
   **R** rebuilt whole.
@@ -255,11 +256,11 @@ The tables are generated from the register by `lein regen-goldens`, and
 | T3 | Equality partition | `taxonomy` | term | records M1 | E8 K, E11 K, E17 R, E18 R | write | index | taxonomy |  |  |
 | T4 | Rewrite rules | `taxonomy` | handle | records M1 | E2 K, E3 K, E8 K, E17 R, E18 R | write | index | taxonomy |  |  |
 | T5 | Taxonomy closures | `taxonomy` | node | T1 M1 | E7 G, E8 G, E17 W, E21 W, every other event G* | read | cache | no | `:taxonomy-closures` |  |
-| T7 | Closure filter memo | `taxonomy` | context | T1 M1 index | E17 W, every other event G* | read | cache | no |  |  |
+| T7 | Closure filter memo | `taxonomy` | context | T1 M1 index records | E17 W, every other event G* | read | cache | no |  |  |
 | T10 | Taxonomy pass caches | `taxonomy` | node | T1 M1 | P | pass | pass | no |  |  |
 | T11 | Taxonomy supporters | `taxonomy` | value | index | E7 K, E8 K, E9 K, E17 W, E21 W | read | cache | no | `:taxonomy-supporters` |  |
 | M1 | Labels | `jtms` | handle | justifications | E5 K, E10 K, E17 R, E18 R | write | index | network |  |  |
-| M2 | Touched window | `jtms` | handle | M1 | E5 K, E10 K, E16 W, E17 W | write | journal | no |  |  |
+| M2 | Touched set | `jtms` | handle | M1 | E5 K, E10 K, E16 W, E17 W | write | journal | no |  |  |
 | M3 | Belief hold | `jtms` | global | M1 | E6 K | settle | index | no |  |  |
 | M4 | Justification dedup | `jtms` | handle | justifications | E5 W | pass | pass | no | `:justification-dedup` |  |
 | J1 | Candidate journal | `decide` | handle | N1 N5 | E1 K, E3 K, E4 K, E7 K, E8 K, E9 K, E15 K, E17 R, E18 R, E22 K | write | journal | no |  |  |
@@ -275,6 +276,7 @@ The tables are generated from the register by `lein regen-goldens`, and
 | N7 | Inherited clashes | `decide.inherited` | value | D3 | E15 W, E17 R, E18 R | settle | index | state |  |  |
 | N8 | Arity lengths | `decide.arity` | functor | index records T1 J5 | E1 K, E3 K, E7 K, E8 K, E17 W, E21 W, E22 K | write | cache | no | `:arity-lengths` |  |
 | N9 | Candidate recover memos | `decide.tuple` | functor | records | P | pass | pass | no |  |  |
+| N10 | Argument holds | `decide.argument` | handle | index records M1 T1 J5 | E1 K, E3 K, E5 K, E7 G, E8 G, E17 R, E18 R, E22 Q | write | cache | state |  |  |
 | X1 | Sync memo | `decide` | global | N1 T1 | E20 W, every other event I | read | cache | no |  |  |
 | X3 | Change clock | `observe` | global |  | every event G* | write | counter | no |  |  |
 | D3 | Preserved clashes | `discovery` | handle | index T1 Q2 Q3 J4 J6 M2 | E3 K, E15 K, E16 K, E17 R, E18 R, E22 K | settle | cache | state |  |  |
@@ -287,6 +289,7 @@ The tables are generated from the register by `lein regen-goldens`, and
 | Q7 | Negation placement queue | `decide.negation` | literal | records index | E3 K, E17 R, E18 R, E22 Q | write | queue | state |  |  |
 | Q8 | Mint departures | `special` | handle | records | E17 W, E19 W, E22 Q | write | queue | no |  |  |
 | Q9 | Unpremised mints | `special` | handle | records | E17 W, E19 W, E22 Q | write | queue | no |  |  |
+| Q10 | Owed mint releases | `special` | handle | records Q8 | E18 R, E19 W | write | queue | state |  |  |
 | R1 | Literal matches | `literal-cache` | literal | index M1 T1 | E21 W, every other event G* | read | cache | no | `:literal-matches` |  |
 | R2 | Closure answers | `provers` | node | index M1 | E21 W, every other event G* | read | cache | no | `:closure-answers` |  |
 | R3 | Resident derived values | `observe` | context | index M1 | E19 W, E21 W, every other event G* | read | cache | no | `:resident` |  |
@@ -300,6 +303,7 @@ The tables are generated from the register by `lein regen-goldens`, and
 | R11 | Chaining run memos | `chain` | value | index records | P | pass | pass | no |  |  |
 | R12 | Call-scoped memos | `kb` | value | index T1 | P | pass | pass | no |  |  |
 | R13 | Mapped index roots | `columnar` | value | index | E1 K, E3 K, E4 K | write | index | no |  |  |
+| R14 | Write record | `observe` | value | records index M1 T1 J1 | P | pass | pass | no |  |  |
 | K1 | Symbol pool | `sentex` | value |  | C | read | cache | no | `:symbol-pool` |  |
 | K2 | Compiled algebras | `qcn` | value |  | C | read | cache | no | `:compiled-algebras` |  |
 | K3 | Relation decode tables | `qcn` | value | K2 | E21 W | read | cache | no | `:relation-decode` |  |
@@ -315,28 +319,28 @@ The tables are generated from the register by `lein regen-goldens`, and
 
 | id | event | choke points | names | rows it retires |
 |---|---|---|---|---|
-| E1 | `stored` | `kb/create-sentex` | handle, sentence, context | T5 T7 J1 J2 N1 N2 N3 N5 N6 N8 X1 X3 R1 R2 R3 R6 R9 R10 R13 K10 K11 |
+| E1 | `stored` | `kb/create-sentex` | handle, sentence, context | T5 T7 J1 J2 N1 N2 N3 N5 N6 N8 N10 X1 X3 R1 R2 R3 R6 R9 R10 R13 K10 K11 |
 | E2 | `integrated` | `special/integrate-sentex`, `special/derived-sentex-added`, `special/integrate-twin` | handle, functor | S5 T4 T5 T7 X1 X3 R1 R2 R3 K10 K11 |
-| E3 | `removed` | `integrate/sentex-removed!` | record, except target | S5 T4 T5 T7 J1 J2 N1 N2 N3 N5 N6 N8 X1 X3 D3 Q7 R1 R2 R3 R6 R8 R9 R10 R13 K10 K11 |
+| E3 | `removed` | `integrate/sentex-removed!` | record, except target | S5 T4 T5 T7 J1 J2 N1 N2 N3 N5 N6 N8 N10 X1 X3 D3 Q7 R1 R2 R3 R6 R8 R9 R10 R13 K10 K11 |
 | E4 | `respelled` | `kb/respell-sentex!` | old and new sentex, one handle | T5 T7 J1 J2 N1 N2 N5 N6 X1 X3 R1 R2 R3 R6 R8 R9 R10 R13 K10 K11 |
-| E5 | `relabelled` | `jtms/supersede`, `jtms/ensure-node`, `jtms/add-premise`, `jtms/suspend-premise`, `jtms/add-justification`, `jtms/restrength-informant`, `jtms/set-forced`, `jtms/relabel`, `jtms/set-blocked`, `jtms/retract!`, `jtms/sweep!`, `jtms/drop-justification!` | the handles of the region, held in the network | T5 T7 M1 M2 M4 N3 X1 X3 R1 R2 R3 K10 K11 |
+| E5 | `relabelled` | `jtms/supersede`, `jtms/ensure-node`, `jtms/add-premise`, `jtms/suspend-premise`, `jtms/add-justification`, `jtms/restrength-informant`, `jtms/set-forced`, `jtms/relabel`, `jtms/set-blocked`, `jtms/retract!`, `jtms/sweep!`, `jtms/drop-justification!` | the handles of the region, held in the network | T5 T7 M1 M2 M4 N3 N10 X1 X3 R1 R2 R3 K10 K11 |
 | E6 | `held` | `settle/hold-belief!`, `settle/publish-belief!` | hold token | T5 T7 M3 X1 X3 Q4 R1 R2 R3 K10 K11 |
-| E7 | `edge` | `taxonomy/add-genl`, `taxonomy/del-genl!`, `taxonomy/add-genlCx`, `taxonomy/del-genlCx!` | handle, edge, context | T1 T5 T7 T11 J1 J5 N1 N2 N3 N5 N6 N8 X1 X3 R1 R2 R3 K10 K11 |
-| E8 | `edge-belief` | `special/reconcile-belief-change`, `taxonomy/refresh-beliefs` | moved handles, or nil for all | T1 T2 T3 T4 T5 T7 T11 J1 J2 J4 J5 N2 N3 N5 N6 N8 X1 X3 Q5 R1 R2 R3 K10 K11 |
+| E7 | `edge` | `taxonomy/add-genl`, `taxonomy/del-genl!`, `taxonomy/add-genlCx`, `taxonomy/del-genlCx!` | handle, edge, context | T1 T5 T7 T11 J1 J5 N1 N2 N3 N5 N6 N8 N10 X1 X3 R1 R2 R3 K10 K11 |
+| E8 | `edge-belief` | `special/reconcile-belief-change`, `taxonomy/refresh-beliefs` | moved handles, or nil for all | T1 T2 T3 T4 T5 T7 T11 J1 J2 J4 J5 N2 N3 N5 N6 N8 N10 X1 X3 Q5 R1 R2 R3 K10 K11 |
 | E9 | `declared` | `taxonomy/add-supported`, `taxonomy/del-supported!` | handle, [kind key], context | T2 T5 T7 T11 J1 J4 N1 N2 N5 N6 X1 X3 R1 R2 R3 K10 K11 |
-| E10 | `roster` | `checks/force-reach!` | predicate | T5 T7 M1 M2 X1 X3 R1 R2 R3 K10 K11 |
+| E10 | `forced-monotonic` | `checks/force-reach!` | predicate | T5 T7 M1 M2 X1 X3 R1 R2 R3 K10 K11 |
 | E11 | `equality` | `taxonomy/add-equality`, `taxonomy/del-equality!` | handle, pair | T3 T5 T7 X1 X3 Q5 R1 R2 R3 K10 K11 |
 | E12 | `except` | `special/recheck-except` | except, target, context | T5 T7 X1 X3 R1 R2 R3 K10 K11 |
 | E13 | `rule-indexed` | `special/index-rule-sentex` | rule, antecedent predicates, context | T5 T7 X1 X3 R1 R2 R3 K10 K11 |
 | E14 | `recheck` | `special/mark-recheck` | rules; a trigger, :all or :all-rejoin | T5 T7 X1 X3 R1 R2 R3 K10 K11 |
-| E15 | `inherited` | `decide.inherited/install-inherited!` | clash rows | T5 T7 J1 J2 N7 X1 X3 D3 R1 R2 R3 K10 K11 |
+| E15 | `inherited` | `decide.inherited/install-inherited!`, `decide.inherited/update-inherited!` | clash rows | T5 T7 J1 J2 N7 X1 X3 D3 R1 R2 R3 K10 K11 |
 | E16 | `settle-exit` | `settle/settle-finish` | region | T1 T5 T7 M2 X1 X3 D3 Q2 Q3 Q5 Q6 R1 R2 R3 K10 K11 |
-| E17 | `recover` | `recovery/recover-from-records`, `recovery/install-rebuilt!` | the whole store | S5 T1 T2 T3 T4 T5 T7 T11 M1 M2 J1 J2 J4 J5 J6 N1 N2 N3 N5 N6 N7 N8 X1 X3 D3 Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q9 R1 R2 R3 R6 R9 K10 K11 |
-| E18 | `image-install` | `reasoning-image/install-from!` | the image | S5 S7 T1 T2 T3 T4 T5 T7 M1 J1 J2 J5 J6 N1 N2 N3 N5 N6 N7 X1 X3 D3 Q1 Q2 Q5 Q7 R1 R2 R3 K10 K11 |
-| E19 | `cleared` | `vaelii.core/clear!`, `reindex/reindex`, `io.import/clearing-on-refusal` | the stores, wiped | S5 T5 T7 X1 X3 Q2 Q8 Q9 R1 R2 R3 R4 R10 K10 K11 |
+| E17 | `recover` | `recovery/recover-from-records`, `recovery/install-rebuilt!` | the whole store | S5 T1 T2 T3 T4 T5 T7 T11 M1 M2 J1 J2 J4 J5 J6 N1 N2 N3 N5 N6 N7 N8 N10 X1 X3 D3 Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q9 R1 R2 R3 R6 R9 K10 K11 |
+| E18 | `image-install` | `reasoning-image/install-from!` | the image | S5 S7 T1 T2 T3 T4 T5 T7 M1 J1 J2 J5 J6 N1 N2 N3 N5 N6 N7 N10 X1 X3 D3 Q1 Q2 Q5 Q7 Q10 R1 R2 R3 K10 K11 |
+| E19 | `cleared` | `vaelii.core/clear!`, `reindex/reindex`, `io.import/clearing-on-refusal` | the stores, wiped | S5 T5 T7 X1 X3 Q2 Q8 Q9 Q10 R1 R2 R3 R4 R10 K10 K11 |
 | E20 | `closed` | `vaelii.core/close!` | the KB | T5 T7 X1 X3 R1 R2 R3 R9 K10 K11 |
 | E21 | `caches-cleared` | `caches/clear-caches`, `caches/shrink!` | the KB, or every live KB | T5 T7 T11 N8 X1 X3 R1 R2 R3 R6 R9 K3 K4 K5 K6 K10 K11 |
-| E22 | `settle-pass` | `settle/pass-work`, `settle/apply-pass!` | the region, the queues a pass drains | S5 T5 T7 J1 J6 N2 N3 N5 N6 N8 X1 X3 D3 Q1 Q3 Q5 Q7 Q8 Q9 R1 R2 R3 K10 K11 |
+| E22 | `settle-pass` | `settle/pass-work`, `settle/apply-pass!` | the region, the queues a pass drains | S5 T5 T7 J1 J6 N2 N3 N5 N6 N8 N10 X1 X3 D3 Q1 Q3 Q5 Q7 Q8 Q9 R1 R2 R3 K10 K11 |
 
 <!-- end of the generated register -->
 
@@ -378,7 +382,7 @@ per event, the entries it retired of each row; `derived-state`'s `:events` carry
 function under it. `derived_state_test` checks each row's `:retired-by` with the same
 instrument. A move outside every event is a read's own refill and is not charged.
 
-A row whose retired entries stay held until a read replaces them (R1–R3, stamped by the
+A row whose retired entries stay held until a read replaces them (R1–R3, keyed by the
 change clock, and T5, keyed by a generation) declares `:live`, the number of its entries
 current now. The instrument charges such a row the fall in `:live` across an event that
 retires it, since a diff of its value would see nothing drop. Run without an `:observe`
@@ -397,7 +401,7 @@ write retired an entry whose inputs it did not change. While the instrument runs
 compares its recompute with the value it replaces, counts `:compared`, and counts
 `:spurious` when the two are equal. The value at hand is the stale entry for a row that
 keeps one (R1–R3, T7), the last value computed under
-another stamp for a row keyed by one (T5), and for a row that drops its entries, the
+another key for a row keyed by one (T5), and for a row that drops its entries, the
 value the instrument saw the event drop (`caches/compare-retired`). A kept value is its hash, and the
 comparison is of hashes. Keeping the value itself holds every retired value reachable for
 the instrument's run, and on the full store that took a 40 GB heap. With the instrument off, nothing is compared and no value is

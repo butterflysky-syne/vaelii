@@ -200,12 +200,12 @@ an error.
 
 The nogoods the engine builds have two members apiece — a `P`/`¬P` pair, a definitional
 clash — and greedy cannot diverge from optimal on a plain pair, so no sequence of
-`assert`s reaches the check. It is pinned at the `Program` level instead, where a
+`assert`s reaches the check. It is asserted at the `Program` level instead, where a
 divergence can be handed to it directly.
 
 ### One caveat about which level you ask at
 
-`Ctx` is consistent at level 3 (`:visible`) — the belief-filtered view of stored
+`Ctx` is consistent at level 3 (`:visible`) — the belief-filtered reading of stored
 facts — and that is the level at which "is this world consistent" means anything.
 
 One neighbouring level will mislead you, and one will not:

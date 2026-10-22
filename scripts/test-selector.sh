@@ -4,7 +4,7 @@
 # Behind the two aliases whose selectors NOTHING ELSE RUNS:
 #
 #   lein test-multi-jvm   the cross-process tests — `:multi-jvm` is opt-in, so
-#                         `lein test`, `lein test :all` and the gate all pass over it
+#                         `lein test`, `lein test :all` and `lein gate` all pass over it
 #   lein test-fuzz        the exhaustive truncation sweep, opt-in for the other
 #                         reason: no configuration varies it, so a matrix row
 #                         would repeat identical work
@@ -13,7 +13,7 @@
 # open/close, recovery, the daemon and the CLI's `--dir` for the first; a durable
 # file format, its framing or its recovery for the second (README.md's entry
 # points).  A run that leaves no trace is one nobody can say happened, which for
-# a selector no gate reaches is the whole question: this writes the report to
+# a selector `lein gate` never runs is the whole question: this writes the report to
 # `logs/test/<selector>-run-<pid>.log` and one row to `logs/runs.tsv`
 # (scripts/lib/runlog.sh).
 #
@@ -52,7 +52,7 @@ LOG="$TEST_ROOT/${SELECTOR#:}-run-$$.log"
 mkdir -p "$TEST_ROOT" || exit 1
 
 runlog_start
-revision_stamp "test $SELECTOR" >"$LOG"
+revision_header "test $SELECTOR" >"$LOG"
 # `${PIPESTATUS[0]}`, not `$?`: a pipeline reports `tee`'s status, and a suite as
 # green as `tee` is reports nothing.  This is the mistake test-parallel.sh names
 # in its header and reads an exit marker to avoid.

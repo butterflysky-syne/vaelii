@@ -106,7 +106,7 @@
 
 (def ^:private show-shown   (Integer/valueOf 2))
 
-;; `clingo_show_type_atoms`: every true atom of a model, as its symbol — the view the
+;; `clingo_show_type_atoms`: every true atom of a model, as its symbol — the atom set the
 ;; backend path reads, since a backend-added atom is shown by its symbol association
 ;; rather than by a #show directive.  `show-shown` (2) reads only atoms a show
 ;; statement named, which the ASPIF-text classify path emits and this path does not.
@@ -572,7 +572,7 @@
    for THIS solve only), keeping the models `retain` keeps.  Returns the same drain
    shape as the one-shot path.  The mode flags are fixed at `open-control` time; this
    is the ASPIF-text path (`classify-both` loads via load_aspif), so witnesses come off
-   the output table through the `show-shown` view `model-symbols` reads."
+   the output table through the `show-shown` atom selection `model-symbols` reads."
   [ctl assume-lits retain]
   (let [amem (int-array-mem assume-lits)
         hr   (PointerByReference.)]

@@ -22,13 +22,14 @@
   `(arg transitiveInArg 3 transitive)` cannot say so — arg is
   open-world, and an untyped relation cannot violate it.  Naming the relation is what
   keeps this from being a `genl` special case: an argument can equally be preserved
-  along `partOf`, `connectedTo`, or anything else transitive.  `transitiveInArg` carries
+  along `tangiblePartOf`, `connectedTo`, or anything else transitive.  `transitiveInArg` carries
   the claim along `R`'s arrow and `transitiveInArgInverse` against it, the directions of
   Cyc's `transitiveViaArg` / `transitiveViaArgInverse`; the two names exist so neither
   direction requires declaring an inverse predicate that has no other purpose.
 
-  Several declarations may name one argument position; their reaches **union**, since
-  each independently licenses the claim.
+  Several declarations may name one argument position; their reaches **compose**, and a
+  binary `(transitive P)` composes with them as one more relation (`reach`,
+  `self-positions`).
 
   ## Preservation stays on one side of the type/instance line
 
@@ -42,7 +43,7 @@
 
   Preservation moves an argument along a relation, leaving the predicate and the level
   it lives at alone.  Crossing the line is a *different* claim — it links two
-  predicates and has a quantifier reading to pin down (every member? some member?) —
+  predicates and has a quantifier reading to settle (every member? some member?) —
   and the vocabulary for it is `(typeToInstancePred TypePred InstancePred)`, which
   records the pairing for a reader and is inferred from by nothing.
 
@@ -176,21 +177,20 @@
   sits — one set intersection per functor, against a root that is empty for nearly
   every KB and tiny for the rest.
 
-  This is a **gate, not an answer**: it is neither belief-filtered nor context-scoped,
-  so a true says only that the real read is worth making.  A false is exact, because a
-  declaration naming `pred` would be in that intersection whatever anyone believes
-  about it.  That is also what makes it the right question for a *conservative* caller
-  that wants no answer at all, only \"could preservation be in play here\":
+  This is a **presence check, not an answer**: it is neither belief-filtered nor
+  context-scoped, so a true says only that the real read is worth making.  A false is
+  exact, because a declaration naming `pred` would be in that intersection whatever anyone
+  believes about it.  That is also what makes it the right question for a *conservative*
+  caller that wants no answer at all, only \"could preservation be in play here\":
   `recheck/cross-argument-predicate?` reads it to decide whether an exception conjunct's
   arguments may be compared with a trigger's, where an under-selection is a missed
   withdrawal.
 
-  The gate is for the query path rather than the assert path.  `positions` is
+  The presence check is for the query path rather than the assert path.  `positions` is
   read by `TransitiveInArgProver.applicable?` and by `provers/shadowing-channels`, so it
-  runs for **every goal's functor in the KB**, and each real read is two
-  `matches-visible` calls.  Ungated, one declaration anywhere made a `genl` goal cost
-  2.8x what it costs in a KB with none — a tax every query pays for a feature almost
-  none of them use.
+  runs for **every goal's functor in the KB**, and each real read is two `matches-visible`
+  calls.  Without the check, one declaration anywhere makes a `genl` goal cost 2.8x what it
+  costs in a KB with none — a tax every query pays for a feature almost none of them use.
 
   Two stages, because the two questions have different prices and different answers.
   The **cardinality** read is O(1) and false for nearly every KB there is, so it comes
@@ -204,14 +204,37 @@
                   (seq (reads/as-stored-with-args idx f {1 pred}))))
            declaration-functors))))
 
+(def ^:dynamic *concluding*
+  "The consequent predicate of the forward rule whose antecedent is being joined, or nil.
+  `positions` leaves out the self relation of a `pred` the rule concludes on or below
+  (`chain/walks-its-own-conclusion?` draws the same line for the transitive walk): such a
+  rule stores its conclusions inside the closure the self relation walks."
+  nil)
+
+(defn- self-positions
+  "The self relation of a binary `pred` declared `(transitive pred)` visible from
+  `context`: `pred` itself at each position 1 or 2 in `ns`, along its own arrow at 2 and
+  against it at 1, since `(P a w)` and `(P w b)` compose to `(P a b)`.  `:self?` marks
+  them, and they carry no `:handle`: the composition rests on `(transitive pred)` and the
+  edges, which `move-supports` names.  Empty under `*concluding*` on `pred` or below it;
+  that `genls` read is unscoped for `chain/walks-its-own-conclusion?`'s reason, a property
+  of the rule and not of one reader."
+  [kb pred ns context]
+  (let [tx (reasoning/taxonomy kb)]
+    (when (and (not (contains? virtual-relations pred))
+               (tax/has-prop? tx :transitive pred context)
+               (not (when-let [c *concluding*] (contains? (tax/genls-global tx c) pred))))
+      (for [n (sort (distinct ns)) :when (<= n 2)]
+        {:n n :rel pred :along? (= 2 n) :self? true}))))
+
 (defn positions
   "`[{:n :rel :along? :handle :in} …]` — the preserved argument positions declared for
-  `pred`, visible from `context`, whose relation is one this may actually walk.  Empty
-  (the overwhelmingly common case) means the predicate inherits nothing and every
-  consumer here is a no-op.
+  `pred`, visible from `context`, whose relation is one this may actually walk, and the
+  self relation (`self-positions`) at each of them.  Empty (the overwhelmingly common
+  case) means the predicate inherits nothing and every consumer here is a no-op.
 
   Several declarations may name one position; they are not collapsed here, because
-  their reaches **union** (`reach`) rather than compete.
+  their reaches **compose** (`reach`) rather than compete.
 
   Each carries the `:handle` of the declaration it was read off, which is what
   `supports-for` names when a firing rests on the move it licenses: the declaration is
@@ -226,28 +249,33 @@
   record fetch per declaration, paid inside the memo rather than per firing, over a list
   that is empty for nearly every predicate.
 
-  Realized rather than lazy, and memoized on `[pred context]`: four layers of one
+  Realized rather than lazy, and memoized on `[pred context *concluding*]`: four layers of one
   question ask for this, and each computation is two `matches-visible` calls.
 
-  Behind a root-intersection gate on any declaration naming `pred` at all, so a
+  This runs only when a root intersection finds a declaration naming `pred`, so a
   predicate nobody declared about — which is every predicate but a handful, in every
-  KB — pays one intersection against an empty root rather than two index lookups.  The
-  same shape of gate `special.clj` puts in front of the exception re-check triggers,
-  for the same reason."
+  KB — pays one intersection against an empty root rather than two index lookups.
+  `special.clj` puts a presence check of the same shape in front of the exception
+  re-check triggers, for the same reason."
   [kb pred context]
   (when (and (symbol? pred) (declared-about? kb pred))
-    (memoized [:positions pred context]
-              #(vec (for [[f along?] declarations
-                          [h b] (res/matches-visible kb (list f pred '?n '?rel) context)
-                          :let  [n (get b '?n) rel (get b '?rel)]
-                          :when (and (integer? n) (pos? n) (symbol? rel)
-                                     (usable-relation? (reasoning/taxonomy kb) rel context))]
-                      {:n n :rel rel :along? along? :handle h
-                       :in (:context (p/get-sentex (:records kb) h))})))))
+    (memoized [:positions pred context *concluding*]
+              (fn []
+                (let [ds (vec (for [[f along?] declarations
+                                    [h b] (res/matches-visible kb (list f pred '?n '?rel) context)
+                                    :let  [n (get b '?n) rel (get b '?rel)]
+                                    :when (and (integer? n) (pos? n) (symbol? rel)
+                                               (usable-relation? (reasoning/taxonomy kb) rel context))]
+                                {:n n :rel rel :along? along? :handle h
+                                 :in (:context (p/get-sentex (:records kb) h))}))]
+                  (into ds
+                        (remove (fn [{:keys [n along?]}]
+                                  (some #(and (= n (:n %)) (= pred (:rel %)) (= along? (:along? %))) ds)))
+                        (self-positions kb pred (map :n ds) context)))))))
 
 (defn declarations-exist?
   "Does this KB declare any preservation at all?  One set-cardinality read per
-  declaration functor, false for nearly every KB there is.  The forward join's gate:
+  declaration functor, false for nearly every KB there is.  This is the forward join's presence check:
   `chain/preserving-antecedent?` asks it before `positions`, once per chaining run
   through `chain/*declarations-cell*`, so a KB that declares nothing pays O(1) and stops.
   `moved-predicates`, `licensing-functors` and `preserved-pairs` ask it first as well
@@ -361,7 +389,7 @@
   `transitiveInArg`.  Reflexive, so `x` itself is always among them and a directly-stated claim is
   found by the same walk as an inherited one.
 
-  One declaration's reach.  Callers want a *position's*, which is the union over the
+  One declaration's reach.  Callers want a *position's*, which is the closure over the
   declarations made at it — `reach`.
 
   The `genl` walk is **scoped to `context`**, exactly as `fact-reach` is: a claim
@@ -389,15 +417,48 @@
                   genlCx (if along? (tax/context-down tx x) (tax/context-up tx x)) ; global on purpose
                   (fact-reach kb rel along? x context))))))
 
+(defn- relation-keys
+  "The distinct `{:rel :along?}` walks the declarations `poss` at one position name: two
+  statements of one declaration in two contexts walk the same relation."
+  [poss]
+  (into #{} (map #(select-keys % [:rel :along?])) poss))
+
 (defn- reach
   "The terms one argument may be stated of, over **every** declaration at its
-  position: a union, because each independently licenses the claim.  A position
-  preserved along both `genl` and a declared-transitive `partOf` reaches what either
-  reaches, and `below?` compares along the same union."
+  position: the closure of `x` under the union of their relations, since a claim one
+  declaration carries to a term is a claim another declaration carries on from there.  A
+  position preserved along `genl` and a declared-transitive `tangiblePartOf` reaches a part
+  of a subkind, and `below?` compares along the same closure.
+
+  Each relation's own reach of a term is `witness-terms`, closed already, so a term
+  reached along a relation is not expanded along it again, and one relation's reach is
+  read once per term another relation reaches.  Memoized for the question."
   [kb poss x context]
-  (if (= 1 (count poss))
-    (witness-terms kb (first poss) x context)   ; the common case: no set to rebuild
-    (into #{} (mapcat #(witness-terms kb % x context)) poss)))
+  (let [ks (relation-keys poss)]
+    (if (= 1 (count ks))
+      (witness-terms kb (first ks) x context)   ; the common case: no set to rebuild
+      (memoized [:joint-reach ks x context]
+                #(loop [seen #{x}, todo [x], done (zipmap ks (repeat #{}))]
+                   (if-let [n (peek todo)]
+                     (let [[seen todo done]
+                           (reduce (fn [[seen todo done] k]
+                                     (if (contains? (done k) n)
+                                       [seen todo done]
+                                       (let [r     (witness-terms kb k n context)
+                                             fresh (remove seen r)]
+                                         [(into seen fresh) (into todo fresh) (update done k into r)])))
+                                   [seen (pop todo) done]
+                                   ks)]
+                       (recur seen todo done))
+                     seen))))))
+
+(defn- licensed-reach
+  "The terms a claim stated at `w` reaches at a position declared by `poss`: `reach` with
+  every declaration's direction flipped.  `reach` asks what a *goal* may be stated of;
+  the forward join and the re-join triggers ask what a *claim* licenses, and `(rel a w)`
+  is one relation read from either end."
+  [kb poss w context]
+  (reach kb (map #(update % :along? not) poss) w context))
 
 (defn- whole-reach
   "The `genl` reach of `x` from `context`, whole, walked through the edges it sees and
@@ -452,47 +513,52 @@
     (contains? (witness-terms kb pos x context) t)))
 
 (defn- held-reach
-  "`reach` of `x` over the declarations `poss` as a set, when each `genl` reach in it holds
-  at most `whole-reach-limit` terms (`bounded-reach`, else `whole-reach`), or nil when one
-  holds more.  Read through the memo, so a pass walks each term's reach once."
+  "`reach` of `x` over the declarations `poss` as a set, when they walk one relation and
+  its `genl` reach holds at most `whole-reach-limit` terms (`bounded-reach`, else
+  `whole-reach`), or nil when it holds more.  Over several relations, `reach` itself.
+  Read through the memo, so a pass walks each term's reach once."
   [kb poss x context]
-  (let [cx  (when-not (unscoped? context) context)
-        one (fn [{:keys [rel along?] :as pos}]
-              (if (= 'genl rel)
-                (or (bounded-reach kb along? x context) (whole-reach kb along? x cx))
-                (witness-terms kb pos x context)))]
-    (if (= 1 (count poss))
-      (one (first poss))
-      (reduce (fn [acc pos] (if-some [r (one pos)] (into acc r) (reduced nil))) #{} poss))))
+  (let [ks (relation-keys poss)]
+    (if (next ks)
+      (reach kb poss x context)
+      (let [{:keys [rel along?] :as pos} (first ks)]
+        (if (= 'genl rel)
+          (or (bounded-reach kb along? x context)
+              (whole-reach kb along? x (when-not (unscoped? context) context)))
+          (witness-terms kb pos x context))))))
 
 (defn- reaches?
-  "Is `t` in `reach` of `x` over the declarations `poss`: one of them licenses it."
+  "Is `t` in `reach` of `x` over the declarations `poss`: a walk per membership over one
+  relation (`witness?`), the closure over several."
   [kb poss x t context]
-  (boolean (some #(witness? kb % x t context) poss)))
+  (let [ks (relation-keys poss)]
+    (if (next ks)
+      (contains? (reach kb poss x context) t)
+      (witness? kb (first ks) x t context))))
 
 (defn- reach-size
   "How many terms `reach` of `x` holds, when it holds at most `limit`, else ##Inf.  Only
   ever weighed against an extent to pick a retrieval path, which never changes the
   answer.  A `genl` reach is counted bounded (`bounded-reach`, then a walk of the edges
   `context` sees that stops at `limit`, `tax/genls-within`), so the closure is not built
-  to be counted."
+  to be counted.  Over several relations, the size of `reach` itself."
   [kb poss x context limit]
-  (let [tx  (reasoning/taxonomy kb)
-        cx  (when-not (unscoped? context) context)
-        lim (long (min limit Long/MAX_VALUE))]
-    (reduce (fn [n {:keys [rel along?] :as pos}]
-              (let [m (if (= 'genl rel)
-                        (if-some [r (bounded-reach kb along? x context)]
-                          (count r)
-                          (if-let [c (if along?
-                                       (tax/specs-within tx x cx lim)
-                                       (tax/genls-within tx x cx lim))]
-                            (count c)
-                            ##Inf))
-                        (count (witness-terms kb pos x context)))
-                    n (+ n m)]
-                (if (> n limit) (reduced ##Inf) n)))
-            0 poss)))
+  (let [ks (relation-keys poss)
+        {:keys [rel along?] :as pos} (first ks)
+        n  (cond
+             (next ks)    (count (reach kb poss x context))
+             (= 'genl rel) (if-some [r (bounded-reach kb along? x context)]
+                             (count r)
+                             (let [tx  (reasoning/taxonomy kb)
+                                   cx  (when-not (unscoped? context) context)
+                                   lim (long (min limit Long/MAX_VALUE))]
+                               (if-let [c (if along?
+                                            (tax/specs-within tx x cx lim)
+                                            (tax/genls-within tx x cx lim))]
+                                 (count c)
+                                 ##Inf)))
+             :else        (count (witness-terms kb pos x context)))]
+    (if (> n limit) ##Inf n)))
 
 ;; ---- the claims bearing on a goal ---------------------------------------
 
@@ -507,7 +573,7 @@
 (defn- slots
   "What a claim's argument may be, per argument position of the goal: at a preserved
   position `{:reach terms :in? member? :size size :held held}`, `terms` a delay of the
-  reach and `held` a thunk of `held-reach`, and `{:pinned term}` where the goal's own
+  reach and `held` a thunk of `held-reach`, and `{:ground term}` where the goal's own
   argument stands.
 
   The **product** of the reaches is the set of tuples a claim could be stated at, and
@@ -525,15 +591,15 @@
                  :in?   #(reaches? kb poss x % context)
                  :size  #(reach-size kb poss x context %)
                  :held  #(held-reach kb poss x context)})
-              {:pinned (nth args i)}))
+              {:ground (nth args i)}))
           (range (count args)))))
 
 (defn- product-tuples
-  "Every argument tuple a claim could be stated at — the product of the reaches,
-  pinned elsewhere."
+  "Every argument tuple a claim could be stated at — the product of the reaches, and the
+  goal's own term at every other position."
   [slots]
   (reduce (fn [tuples s]
-            (let [terms (if-let [r (:reach s)] @r #{(:pinned s)})]
+            (let [terms (if-let [r (:reach s)] @r #{(:ground s)})]
               (for [t tuples, w terms] (conj t w))))
           [[]]
           slots))
@@ -556,29 +622,34 @@
 
 (defn- extent-size
   "How many stored sentexes one open probe would walk: the predicate extents of every
-  predicate the matcher fans the probe over, capped by whichever pinned argument position
+  predicate the matcher fans the probe over, capped by whichever ground argument position
   is most selective.  The fan is `pred`'s sub-predicates for a positive probe and its
-  super-predicates for a negated one (`res/sub-predicates`, `res/super-predicates`), so a
-  sub-predicate holding the facts is counted where the walk reads them.  The sum stops once
+  contrapositive ones for a negated one (`res/sub-predicates`,
+  `res/contrapositive-predicates`), so a
+  sub-predicate holding the facts is counted where the walk reads them.  A negated probe
+  walks the negative facts alone, so each member counts its stored denials
+  (`reads/stored-count-denials-global`).  The sum stops once
   it passes `limit`, the product's size, since the caller asks only which is smaller.
 
-  Read through `order`, because that is where the pinned term will actually **sit** in
+  Read through `order`, because that is where the ground term will actually **sit** in
   the probe.  The converse an asymmetric predicate is denied by swaps the tuple
-  indices, so a term pinned at tuple index 0 is looked up at sentence position 2.  Both
+  indices, so a ground term at tuple index 0 is looked up at sentence position 2.  Both
   roots span either polarity."
   [kb pred slots order negated? context limit]
   (let [idx  (:index kb)
         fan  (if negated?
-               (res/super-predicates kb pred context)
+               (first (res/contrapositive-predicates kb pred context))
                (res/sub-predicates kb pred context))
         rows (reduce (fn [n f]
-                       (let [n (+ n (reads/stored-count-with-functor idx f))]
+                       (let [n (+ n (if negated?
+                                      (reads/stored-count-denials-global idx f)
+                                      (reads/stored-count-with-functor idx f)))]
                          (if (> n limit) (reduced n) n)))
                      0 (or (not-empty fan) [pred]))]
     (double
      (reduce (fn [n j]
                (let [s (nth slots (nth order j))]
-                 (if-some [t (:pinned s)] (min n (reads/stored-count-with-arg-global idx (inc j) t)) n)))
+                 (if-some [t (:ground s)] (min n (reads/stored-count-with-arg-global idx (inc j) t)) n)))
              rows
              (range (count order))))))
 
@@ -602,31 +673,31 @@
   [pred slots order terms]
   (cons pred (map-indexed (fn [j ti]
                             (let [s (nth slots ti)]
-                              (if (:reach s) (or (terms ti) (probe-var j)) (:pinned s))))
+                              (if (:reach s) (or (terms ti) (probe-var j)) (:ground s))))
                           order)))
 
 (defn- in-product?
   "Is `tuple` one of the tuples a claim bearing on the goal could be stated at?  Asked
-  of every position, pinned ones included: the symmetric mirror can hand back a match
-  whose arguments sit in the other order, and a pinned position is only pinned in the
+  of every position, ground ones included: the symmetric mirror can hand back a match
+  whose arguments sit in the other order, and a ground position is ground only in the
   pattern."
   [slots tuple]
   (and (= (count tuple) (count slots))
        (every? (fn [i]
                  (let [s (nth slots i) t (nth tuple i)]
-                   (if-let [in? (:in? s)] (in? t) (= t (:pinned s)))))
+                   (if-let [in? (:in? s)] (in? t) (= t (:ground s)))))
                (range (count slots)))))
 
 (defn- bound-tuple
   "The tuple a match is a statement about, read back through `order` — the bindings at
-  the preserved positions, the goal's own terms at the pinned ones.  nil when a
+  the preserved positions, the goal's own terms at the ground ones.  nil when a
   preserved position came back unbound, which no match of this pattern can do."
   [bindings slots order]
   (reduce (fn [t j]
             (let [ti (nth order j) s (nth slots ti)]
               (if (:reach s)
                 (if-some [v (get bindings (probe-var j))] (assoc t ti v) (reduced nil))
-                (assoc t ti (:pinned s)))))
+                (assoc t ti (:ground s)))))
           (vec (repeat (count slots) nil))
           (range (count order))))
 
@@ -664,7 +735,7 @@
   by the term at each preserved tuple index: `{ti {term [[tuple h] …]}}`, the known-true
   ones alone under `strong?`.  Held in the memo, so the questions of one discovery pass
   read a predicate's extent once between them.  The grouping reads no goal: the probe
-  pins the pinned positions, and `slots` says only which tuple indices are preserved."
+  binds the ground positions, and `slots` says only which tuple indices are preserved."
   [kb sentence slots order context strong?]
   (memoized (extent-key sentence order context strong?)
             #(let [tms  (reasoning/tms kb)
@@ -860,8 +931,11 @@
            ;; so this still answers "what is believed about exactly this tuple" — which
            ;; is what the asymmetry check needs of a predicate that inherits nothing.
            sl    (slots kb poss args context)
+           ;; a denial moves along the declared relations and not along the self
+           ;; relation: `(P a w)` and `(not (P w b))` leave `(P a b)` open
+           nsl   (if (some :self? poss) (slots kb (into [] (remove :self?) poss) args context) sl)
            fwd   (vec (range (count args)))
-           probe (fn [order negated? polarity]
+           probe (fn [sl order negated? polarity]
                    (strongest-per-tuple
                     kb polarity (found-claims kb pred sl order negated? context strong?)))]
        ;; realized here, inside the memo (`with-memo`): the probes read the store and
@@ -869,17 +943,17 @@
        ;; of that with the memo gone
        (vec
         (concat
-         (probe fwd false :for)
-         (probe fwd true  :against)
+         (probe sl fwd false :for)
+         (probe nsl fwd true :against)
          ;; The converse is read with the tuple indices swapped, so a stored `(P x y)`
          ;; is filed against the tuple `[y x]` it denies.
          (when (and asym? (= 2 (count args)))
            (remove #(= (first (:tuple %)) (second (:tuple %)))
-                   (probe [1 0] false :against)))
+                   (probe nsl [1 0] false :against)))
          (when (and (= 1 (count args)) (seq poss) (not strong?))
            (strongest-per-tuple
             kb :against
-            (separated-denials kb pred (first args) sl context *deadline*)))))))))
+            (separated-denials kb pred (first args) nsl context *deadline*)))))))))
 
 ;; ---- specificity ---------------------------------------------------------
 
@@ -941,8 +1015,8 @@
   Claims displaced by a strictly more specific one drop out first; that is where a
   general default yields to a specific statement without either being defeated."
   [kb goal context]
-  ;; Gated on a declared position: without one there is no inheritance to perform, and
-  ;; answering from the goal's own tuple would just be `FactProver` wearing a hat.
+  ;; This runs only when a position is declared: without one there is no inheritance to
+  ;; perform, and an answer from the goal's own tuple would repeat `FactProver`'s.
   (with-memo
     (when (seq (positions kb (nm/functor goal) context))
       (let [polarity (into #{} (map :polarity) (surviving kb goal context))]
@@ -1045,13 +1119,33 @@
     (vec (for [{:keys [hs ctxs]} alts, [h c] sups]
            {:hs (conj hs h) :ctxs (conj ctxs c)}))))
 
-(defn- licensed-terms
-  "The terms a claim stated at `w` reaches at this position — `witness-terms` read the
-  other way round, which is the same walk with the declaration's direction flipped.
-  `witness-terms` asks what a *goal* may be stated of; the forward join asks what a
-  *claim* licenses, and `(rel a w)` is one relation read from either end."
-  [kb {:keys [rel along?]} w context]
-  (witness-terms kb {:rel rel :along? (not along?)} w context))
+(defn- fact-steps
+  "`step` for `tax/uncovered-routes` over the declared-transitive `rel` as `context` sees
+  it, from the goal's end toward the claim's (`fact-paths`): from a node, each neighbour
+  once per believed fact stating the step that no other covers, with its rank under
+  `sclass`, whether `hid` marks it, and its content key."
+  [kb rel along? context sclass hid]
+  (let [tx    (reasoning/taxonomy kb)
+        label (fn [[h c]] [(supporter-rank sclass h) (if (nil? c) #{} #{c}) (hidable-of hid [h])])]
+    (fn [n]
+      (->> (res/matches-visible
+            kb (if along? (list rel '?rv n) (list rel n '?rv)) context)
+           (keep (fn [[h b]]
+                   (let [v (get b '?rv)]
+                     (when (and v (not= v n))
+                       (when-let [sxr (p/get-sentex (:records kb) h)]
+                         [v [h (:context sxr)]
+                          (str (:context sxr))
+                          (nm/print-key (:sentence sxr))])))))
+           (nm/sort-by-content-key
+            (juxt #(nm/print-key (nth % 0)) #(nth % 2) #(nth % 3))
+            compare)
+           (partition-by first)
+           (mapcat (fn [steps]
+                     (let [keys (into {} (map (fn [[_ sw c t]] [sw [c t]])) steps)]
+                       (for [sw (tax/uncovered tx label (mapv second steps))]
+                         [(first (first steps)) sw (supporter-rank sclass (first sw))
+                          (boolean (and hid (hid (first sw)))) (keys sw)]))))))))
 
 (defn- fact-paths
   "The paths from `a` to `w` over the declared-transitive `rel` that `context` sees and
@@ -1076,28 +1170,59 @@
   rank, so a route is labelled with its weakest fact as `tax/reach-supports` labels one,
   and `hid` is `claim-supports`'."
   [kb rel along? a w context sclass hid]
-  (let [tx    (reasoning/taxonomy kb)
-        label (fn [[h c]] [(supporter-rank sclass h) (if (nil? c) #{} #{c}) (hidable-of hid [h])])
-        step  (fn [n]
-                (->> (res/matches-visible
-                      kb (if along? (list rel '?rv n) (list rel n '?rv)) context)
-                     (keep (fn [[h b]]
-                             (let [v (get b '?rv)]
-                               (when (and v (not= v n))
-                                 (when-let [sxr (p/get-sentex (:records kb) h)]
-                                   [v [h (:context sxr)]
-                                    (str (:context sxr))
-                                    (nm/print-key (:sentence sxr))])))))
-                     (nm/sort-by-content-key
-                      (juxt #(nm/print-key (nth % 0)) #(nth % 2) #(nth % 3))
-                      compare)
-                     (partition-by first)
-                     (mapcat (fn [steps]
-                               (let [keys (into {} (map (fn [[_ sw c t]] [sw [c t]])) steps)]
-                                 (for [sw (tax/uncovered tx label (mapv second steps))]
-                                   [(first (first steps)) sw (supporter-rank sclass (first sw))
-                                    (boolean (and hid (hid (first sw)))) (keys sw)]))))))]
-    (tax/uncovered-routes tx a w step)))
+  (tax/uncovered-routes (reasoning/taxonomy kb) a w (fact-steps kb rel along? context sclass hid)))
+
+(defn- joint-move-supports
+  "`move-supports` at a position whose declarations `poss` walk several relations: the
+  routes from `a` to `w` over the union of the relations (`reach`), each naming, for every
+  relation it walks, the declaration that permits it (none for the self relation,
+  `self-positions`) and, for a fact relation, an uncovered statement of `(transitive R)`,
+  beside the edges.  One `tax/uncovered-routes` walk over `[term relation]` nodes, where
+  entering a relation at a term is a step resting on those statements, so a route through
+  general contexts covers one through a specific context across relations as along one."
+  [kb poss a w context sclass hid]
+  (let [tx      (reasoning/taxonomy kb)
+        rank    #(supporter-rank sclass %)
+        hid?    #(boolean (and hid (hid %)))
+        enter   (fn [[h] k] [(rank h) (hid? h) k])
+        trans   (memoize (fn [rel] (general-supporters kb (list 'transitive rel) context sclass hid)))
+        ks      (vec (relation-keys poss))
+        edges   (into {}
+                      (map (fn [{:keys [rel along?] :as k}]
+                             [k (if (contains? virtual-relations rel)
+                                  (tax/edge-steps tx (keyword rel) (when (= 'genl rel) context)
+                                                  sclass hid (if along? :rev :fwd))
+                                  (fact-steps kb rel along? context sclass hid))]))
+                      ks)
+        ;; entering relation `k` at a term: [stage supporter content-key] per statement
+        entries (into {}
+                      (map (fn [k]
+                             [k (->> poss
+                                     (filter #(= k (select-keys % [:rel :along?])))
+                                     (keep (fn [{:keys [handle in]}] (when handle [[handle in] (str in)])))
+                                     (nm/sort-by-content-key second compare))]))
+                      ks)
+        step    (fn [[n k stage]]
+                  (if (= ::declared stage)
+                    (for [sw (trans (:rel k))]
+                      (into [[n k] sw] (enter sw (str (second sw)))))
+                    (concat
+                     (when (map? k)
+                       (for [[n2 sw r h? key] ((edges k) n)]
+                         [[n2 k] sw r h? key]))
+                     (for [k2 ks :when (not= k k2)
+                           :let [virtual? (contains? virtual-relations (:rel k2))]
+                           e (if (seq (entries k2))
+                               (for [[sw key] (entries k2)]
+                                 (into [(if virtual? [n k2] [n k2 ::declared]) sw] (enter sw key)))
+                               ;; the self relation: no declaration, only its transitivity
+                               (for [sw (trans (:rel k2))]
+                                 (into [[n k2] sw] (enter sw (str (second sw))))))]
+                       e))))
+        routes  (tax/uncovered-routes tx [a ::start] #(and (= w (first %)) (nil? (nth % 2 nil))) step)]
+    (tax/uncovered tx (fn [{:keys [hs ctxs]}]
+                        [(reading-rank sclass hs) (tax/context-floor tx ctxs) (hidable-of hid hs)])
+                   (mapv (fn [route] {:hs (mapv first route) :ctxs (mapv second route)}) routes))))
 
 (defn- move-supports
   "The alternative supports licensing the step from the claim's term `w` to the goal's `a`
@@ -1127,8 +1252,14 @@
   their weakest member too (`tax/reach-supports`), so a stronger route stays beside a
   weaker one its contexts cover; nil leaves strength out.  `hid` is `claim-supports`'."
   [kb poss a w context sclass hid]
-  (if (= a w)
+  (cond
+    (= a w)
     [{:hs [] :ctxs []}]
+
+    (next (relation-keys poss))
+    (joint-move-supports kb poss a w context sclass hid)
+
+    :else
     (let [tx   (reasoning/taxonomy kb)
           alts (into []
                      (mapcat
@@ -1180,7 +1311,10 @@
   covers stays a candidate in a reader where an except hides the covering one."
   [kb by-n args c context sclass hid]
   (when-let [alts (reduce (fn [acc i]
-                            (if-let [ps (by-n (inc i))]
+                            ;; a denial moved along the declared relations alone (`claims`)
+                            (if-let [ps (cond->> (by-n (inc i))
+                                          (= :against (:polarity c)) (filterv (complement :self?))
+                                          true                      not-empty)]
                               (let [ms (move-supports kb ps (nth args i) (nth (:tuple c) i) context
                                                       sclass hid)]
                                 (if (seq ms)
@@ -1589,10 +1723,10 @@
 
 (defn- stated-claims
   "`[tuple handle]` for every believed claim of `pred` this literal could inherit from
-  — the predicate's extent, with the literal's own ground arguments pinned at the
+  — the predicate's extent, with the literal's own ground arguments bound at the
   positions that preserve nothing, since there the claim's term *is* the conclusion's.
 
-  A preserved position is left open even where the literal pins it: the claim licensing
+  A preserved position is left open even where the literal binds it: the claim licensing
   that term is stated *above* it, and narrowing to the term itself would find only the
   diagonal.
 
@@ -1603,7 +1737,7 @@
   the swap has to happen here: a tuple whose stored sentence's own functor is declared
   symmetric — the fan surfaces sub-predicates, and the matcher mirrors each fanned
   literal on *its* declaration — is also read backwards, kept where the pattern's
-  pinned positions still agree.
+  ground positions still agree.
 
   The `symmetric` mark is read unscoped, a superset that `supports-for` narrows at
   `context`."
@@ -1645,13 +1779,11 @@
 (defn- licensed-product
   "Every tuple a claim stated at `w` licenses that the literal's arguments admit — the
   product of the licensed terms at the preserved positions, the claim's own term
-  elsewhere, and a ground argument of the literal pinned wherever it has one."
+  elsewhere, and a ground argument of the literal bound wherever it has one."
   [kb by-n args w context]
   (reduce (fn [tuples i]
             (let [terms (if-let [ps (by-n (inc i))]
-                          (let [r (if (= 1 (count ps))
-                                    (licensed-terms kb (first ps) (nth w i) context)
-                                    (into #{} (mapcat #(licensed-terms kb % (nth w i) context)) ps))
+                          (let [r (licensed-reach kb ps (nth w i) context)
                                 a (nth args i)]
                             (if (and (symbol? a) (sx/variable? a))
                               r
@@ -1705,14 +1837,14 @@
 ;; ---- which rules an arriving sentence moves ------------------------------
 
 (def crossing-closure-cap
-  "The most closure terms `crossing-claim?` reads the slot roster at.  The closure is
+  "The most closure terms `crossing-claim?` reads the slot predicate set at.  The closure is
   `specs-global` of a `genl` edge's lower term together with `genls-global` of its upper
   one.  An edge whose closure holds more is not narrowed: every predicate preserved along
   `genl` is moved, read off the declarations' relation index with no index read.  The
   closures are walked through `tax/specs-global-within`, which stops one term past the
   cap, so an edge under a type with 20,000 subtypes pays 513 steps and not 20,000.
 
-  The narrowing costs a slot-roster read per closure term per preserved position, and the
+  The narrowing costs a slot-set read per closure term per preserved position, and the
   fallback costs a full re-join of every rule on a predicate preserved along `genl`.  The
   bound keeps the first from growing with the closure: `(genl root_t top_t)` over 20,000
   leaves and one preserved position reads 20,000 slots without it."
@@ -1860,7 +1992,7 @@
         (not-empty (into [] (distinct) alts))))))
 
 (defonce ^:private crossing-reads
-  ;; `{kb-key -> {:decls postings :derived {k value} :stamp s :marks {q #{group}}}}`, one
+  ;; `{kb-key -> {:decls postings :derived {k value} :read-under s :marks {q #{group}}}}`, one
   ;; entry per KB, keyed by `crossing-key`
   (atom {}))
 
@@ -1932,9 +2064,10 @@
         v))))
 
 (defn- positions-along
-  "`{:preds {P #{n …}} :positions #{n …}}` — the argument positions every stored
-  declaration preserving along `rel` names, per predicate and as one set, read off the
-  argument root at position 3 and one record fetch per declaration.  Global and not
+  "`{:preds {P #{n …}} :positions #{n …} :both #{P …}}` — the argument positions every
+  stored declaration preserving along `rel` names, per predicate and as one set, and the
+  predicates declaring one position along `rel` in both directions, read off the argument
+  root at position 3 and one record fetch per declaration.  Global and not
   belief-filtered, for `declared`'s reason.  A negated declaration is in the same root and
   drops out on its shape.  Cached on the declaration postings (`declarations-cached`)."
   [kb rel]
@@ -1942,15 +2075,19 @@
    kb (declaration-postings kb) [:along rel]
    #(let [idx  (:index kb)
           recs (:records kb)
-          m    (reduce (fn [m h]
+          fs   (reduce (fn [m [f h]]
                          (let [[_ pred n] (:sentence (p/get-sentex recs h))]
                            (if (and (symbol? pred) (integer? n) (pos? n))
-                             (update m pred (fnil conj #{}) n)
+                             (update m [pred n] (fnil conj #{}) f)
                              m)))
                        {}
-                       (mapcat (fn [f] (reads/as-stored-with-args idx f [[3 rel]]))
-                               declaration-functors))]
-      {:preds m :positions (into #{} (mapcat val) m)})))
+                       (for [f declaration-functors
+                             h (reads/as-stored-with-args idx f [[3 rel]])]
+                         [f h]))
+          m    (reduce (fn [m [[pred n]]] (update m pred (fnil conj #{}) n)) {} fs)]
+      {:preds     m
+       :positions (into #{} (mapcat val) m)
+       :both      (into #{} (keep (fn [[[pred] f]] (when (next f) pred))) fs)})))
 
 (defn- commuting-marks
   "`{q #{group …}}` — the commuting groups every stored mark states, in any context and
@@ -1964,9 +2101,9 @@
   hold the same marks."
   [kb]
   (let [idx   (:index kb)
-        stamp (mapv #(reads/as-stored-with-functor idx %) permuting-marks)
+        posts (mapv #(reads/as-stored-with-functor idx %) permuting-marks)
         e     (get @crossing-reads (crossing-key kb))]
-    (if (and e (contains? e :marks) (= stamp (:stamp e)))
+    (if (and e (contains? e :marks) (= posts (:read-under e)))
       (:marks e)
       (let [recs  (:records kb)
             marks (reduce (fn [m h]
@@ -1975,8 +2112,8 @@
                                 (update m (second sen) (fnil conj #{}) g)
                                 m)))
                           {}
-                          (sequence cat stamp))]
-        (store-crossing-read! kb #(assoc % :stamp stamp :marks marks))
+                          (sequence cat posts))]
+        (store-crossing-read! kb #(assoc % :read-under posts :marks marks))
         marks))))
 
 (defn- reach-positions
@@ -1999,7 +2136,7 @@
 (defn- crossings
   "The set of predicates preserved along `genl` that the edge `a → b` moves, or nil where
   no narrowing is read: a closure past `crossing-closure-cap`, or an index store with no
-  slot roster.  `crossing-claim?` states what it computes.
+  slot predicate set.  `crossing-claim?` states what it computes.
 
   The closures are unscoped: the moved set is a trigger over every reader, and each
   re-join reads its rule from the rule's own context."
@@ -2010,7 +2147,7 @@
         above (when below (tax/genls-global-within tax b (- cap (count below))))]
     (when above
       (let [idx    (:index kb)
-            {along :preds poss0 :positions} (positions-along kb 'genl)
+            {along :preds poss0 :positions both :both} (positions-along kb 'genl)
             ;; {P {q positions-or-:any}}, for each marked sub-predicate q of a declared P
             marked (reduce-kv (fn [m q gs]
                                 (reduce (fn [m pr]
@@ -2021,7 +2158,7 @@
                                         (tax/genls-global tax q)))
                               {}
                               (commuting-marks kb))
-            any    (into #{} (keep (fn [[pr qs]] (when (some #{:any} (vals qs)) pr))) marked)
+            any    (into both (keep (fn [[pr qs]] (when (some #{:any} (vals qs)) pr))) marked)
             poss   (into poss0 (comp (mapcat vals) (remove keyword?) cat) (vals marked))
             ;; {q #{n …}}: the positions each predicate holds a closure term at
             hits   (reduce (fn [m t]
@@ -2053,7 +2190,7 @@
   could pass through the edge.  A set, so it is also the predicate `P -> truthy` that
   `moved-predicates` applies.  Nil where no narrowing is read, which leaves every
   declaration on `genl` moved: the edge's terms are not both symbols, the closure holds
-  more than `crossing-closure-cap` terms, or the index store keeps no slot roster.
+  more than `crossing-closure-cap` terms, or the index store keeps no slot predicate set.
 
   A walk through `a → b` runs from a term below `a` to a term above `b`, so a claim whose
   preserved argument lies in neither `specs-global` of `a` nor `genls-global` of `b` has no
@@ -2063,7 +2200,7 @@
   second.  The segments on either side are the edges still standing, so the closures
   read now contain every end a walk through the edge had or will have; a second edge on
   the same walk moving in the same block is asked about when it arrives.  The claim may be
-  on `P` or on a sub-predicate of it, in either polarity, since the slot roster lists
+  on `P` or on a sub-predicate of it, in either polarity, since the slot predicate set lists
   both.
 
   **A permuting mark widens the positions.**  The matcher reads a claim of a sub-predicate
@@ -2083,27 +2220,32 @@
   can move a claim, and a scoped closure would leave out a route a more specific context
   holds.
 
-  The reads run from the terms: one slot-roster read per closure term per preserved
+  The reads run from the terms: one slot-set read per closure term per preserved
   position names the predicates holding that term there, and each is walked up to the
   declared predicates above it.  So the cost is the closure's size times the distinct
   preserved positions, and not times the declarations, of which a KB may hold thousands;
-  the marks add four predicate-extent reads.  Memoized per edge inside a `with-memo`."
+  the marks add four predicate-extent reads.  Memoized per edge inside a `with-memo`.
+
+  A predicate declaring one position along `genl` in both directions is in every answer:
+  its joint reach walks up and then down, so it crosses an edge between any two terms."
   [kb body]
   (let [[_ a b] body]
     (when (and (symbol? a) (symbol? b))
       (memoized [:crossings a b] #(crossings kb a b)))))
 
 (defn- decl-index
-  "`{:by-p {P #{R …}} :by-r {R #{P …}}}` over the `[P R]` pairs `decls`, so a channel reads
-  the pairs naming one predicate or one relation with a map lookup rather than a pass over
-  every declaration."
+  "`{:by-p {P #{R …}} :by-r {R #{P …}} :joint #{P …}}` over the `[P R]` pairs `decls`, so a
+  channel reads the pairs naming one predicate or one relation with a map lookup rather
+  than a pass over every declaration.  `:joint` holds the predicates preserved along two
+  or more relations."
   [decls]
-  (reduce (fn [m [pr r]]
-            (-> m
-                (update-in [:by-p pr] (fnil conj #{}) r)
-                (update-in [:by-r r] (fnil conj #{}) pr)))
-          {:by-p {} :by-r {}}
-          decls))
+  (let [m (reduce (fn [m [pr r]]
+                    (-> m
+                        (update-in [:by-p pr] (fnil conj #{}) r)
+                        (update-in [:by-r r] (fnil conj #{}) pr)))
+                  {:by-p {} :by-r {}}
+                  decls)]
+    (assoc m :joint (into #{} (keep (fn [[pr rs]] (when (next rs) pr))) (:by-p m)))))
 
 (defn- declaration-index
   "`decl-index` over the `[P R]` pairs `declared` reads, with the pairs under `:pairs`,
@@ -2130,6 +2272,17 @@
     (filter #(contains? in %) xs)
     (filter #(contains? xs %) (if (map? in) (keys in) in))))
 
+(defn- joint-genl
+  "The predicates of `ps`, each preserved along `genl`, whose reach can run through a
+  `genl` edge from a term outside the edge's closures (`crossing-claim?`): those in
+  `joint` (`decl-index`'s, preserved along a second relation) or declared `(transitive
+  P)`, since a joint reach (`reach`) leaves the `genl` closure and comes back; `crossings`
+  answers the predicates preserved along `genl` in both directions.  Read off the stored
+  declarations and marks, globally, a superset for `moved-predicates`' reason.  Each
+  intersection walks its smaller side (`among`), so the cost does not grow with `ps`."
+  [kb joint ps]
+  (concat (among ps joint) (among ps (tax/props (reasoning/taxonomy kb) :transitive))))
+
 (defn- moved-in
   "`moved-predicates` over the declarations indexed as `decl-index` indexes them, as
   `[claimed other]`: the predicates moved through the claim channel, and those moved
@@ -2140,17 +2293,19 @@
   `wanted` names the predicates whose narrowing the caller acts on.  A `genl` edge is
   narrowed (`crossing-claim?`) only when a predicate it would otherwise move is wanted;
   otherwise it moves every predicate preserved along `genl`, unnarrowed.  The narrowing
-  reads a slot roster per closure term per preserved position, and a caller that does
+  reads a slot predicate set per closure term per preserved position, and a caller that does
   nothing with a predicate (no rule on it, or one already in its answer) gains nothing
   from it."
-  [kb sen {:keys [by-p by-r]} wanted]
+  [kb sen {:keys [by-p by-r joint]} wanted]
   (let [body (or (sx/underlying-body sen) sen)
         f    (nm/functor body)
         arg1 (nth body 1 nil)]
     (when (symbol? f)
       (cond
         (contains? declarations f) [nil (when (symbol? arg1) #{arg1})]
-        (= 'transitive f)          [nil (into #{} (get by-r arg1))]
+        ;; the relations walked along it, and its own self relation
+        (= 'transitive f)          [nil (cond-> (into #{} (get by-r arg1))
+                                          (contains? by-p arg1) (conj arg1))]
         ;; the mark binds its spec subtree, whose converses `converse-claim` reads
         (= 'asymmetric f)          [nil (when (symbol? arg1)
                                           (into #{} (among (tax/specs-global
@@ -2172,7 +2327,7 @@
                                    (if-some [crosses (when (and (= 'genl f) (= 'genl r)
                                                                 (some wanted ps))
                                                        (crossing-claim? kb body))]
-                                     (among ps crosses)
+                                     (into (set (among ps crosses)) (joint-genl kb joint ps))
                                      ps))))
                        (among preds by-r))])))))
 
@@ -2243,7 +2398,9 @@
   goal is one of the claim's or a term one of them licenses.  A fact on a **relation**
   moves only a goal whose reach crosses it, and a walk from the goal's term reaches the
   fact's first term whether the fact is there or not, so some argument of the goal is an
-  end of the fact or a term one licenses along it (docs/inherit.md).  A membership, a
+  end of the fact or a term one licenses over the relations at a position walking it
+  (docs/inherit.md).  A fact on a predicate with a self relation (`self-positions`) is
+  read on both channels.  A membership, a
   separation or a `genl` edge moves the goals `separation-moved` names: a goal on a
   predicate it separates from the membership's type at the membership's own argument,
   and every goal on a predicate whose separations it moves."
@@ -2260,17 +2417,20 @@
         (let [tx      (reasoning/taxonomy kb)
               preds   (tax/genls-global tx f)
               claimed (among preds by-p)
-              rels    (set (among preds by-r))
+              selfs   (filter #(some :self? (positions kb % '?ctx)) claimed)
+              rels    (into (set (among preds by-r)) selfs)
               reached (fn [prs keep-pos?]
                         (into (set args)
-                              (for [pr prs, pos (positions kb pr '?ctx) :when (keep-pos? pos)
-                                    t args, w (licensed-terms kb pos t '?ctx)]
+                              (for [pr prs, ps (vals (group-by :n (positions kb pr '?ctx)))
+                                    :when (some keep-pos? ps)
+                                    t args, w (licensed-reach kb ps t '?ctx)]
                                 w)))]
           (when-not (and (= 'genl f)
                          (some #(seq (among (tax/genls-global tx %) by-p)) args))
             (let [every-t (when (seq claimed) (reached claimed any?))
                   some-t  (when (seq rels)
-                            (reached (into #{} (mapcat by-r) rels) #(contains? rels (:rel %))))
+                            (reached (into (set selfs) (mapcat by-r) rels)
+                                     #(contains? rels (:rel %))))
                   [member any] (separation-moved kb sen (keys by-p))]
               (when (or every-t some-t (seq member) (seq any))
                 (fn [goal]
@@ -2287,7 +2447,7 @@
   claim `sen` (on `pred` or a sub-predicate of it, in either polarity) can reach by
   preservation from some context, as a superset: the handles holding at argument 1 one of
   `sen`'s arguments or a term a believed declaration of `pred` licenses from one
-  (`licensed-terms`, read at `'?ctx`).  Every argument order the matcher reads a claim in
+  (`licensed-reach`, read at `'?ctx`).  Every argument order the matcher reads a claim in
   holds its terms among these, and so does the converse an asymmetric predicate is denied
   by.  nil when an argument is not a symbol or the terms outnumber `pred`'s stored
   extent, for a caller to read the extent instead."
@@ -2299,7 +2459,8 @@
           poss  (positions kb pred '?ctx)
           terms (when (every? symbol? args)
                   (reduce (fn [acc t]
-                            (let [acc (into acc (mapcat #(licensed-terms kb % t '?ctx)) poss)]
+                            (let [acc (into acc (mapcat #(licensed-reach kb % t '?ctx))
+                                            (vals (group-by :n poss)))]
                               (if (> (count acc) limit) (reduced nil) acc)))
                           (set args)
                           args))]
@@ -2321,7 +2482,7 @@
   "The stored memberships `(S x)` the claim `sen`, on the preserved `pred` or a
   sub-predicate of it, can deny by reaching `(pred x)` from some context
   (`separated-claims`), as a superset: the unary facts at an argument of `sen` or at a
-  term a believed declaration of `pred` licenses from one (`licensed-terms`, read at
+  term a believed declaration of `pred` licenses from one (`licensed-reach`, read at
   `'?ctx`) whose type is one of `separated-types`, or the stored extents of those types
   when the terms outnumber them.  The unary facts are read in every context, a candidate
   set each asker reads again from its own."
@@ -2337,7 +2498,8 @@
               poss  (positions kb pred '?ctx)
               terms (when (every? symbol? args)
                       (reduce (fn [acc t]
-                                (let [acc (into acc (mapcat #(licensed-terms kb % t '?ctx)) poss)]
+                                (let [acc (into acc (mapcat #(licensed-reach kb % t '?ctx))
+                                                (vals (group-by :n poss)))]
                                   (if (> (count acc) limit) (reduced nil) acc)))
                               (set args)
                               args))]
@@ -2347,6 +2509,53 @@
                              (and (seq? s) (= 2 (count s)) (contains? types (first s)))))
                   (mapcat #(reads/as-stored-unary-with-arg-global idx %) terms))
             (into #{} (mapcat #(reads/as-stored-with-functor idx %)) types)))))))
+
+(defn edge-reach
+  "The stored facts whose questions the `genl` edge `(genl a b)` can move for `pred`, a
+  predicate preserved along `genl`, as a superset: the facts of `pred`, in either
+  polarity, holding a term of the edge's closure (`specs-global` of `a` with
+  `genls-global` of `b`) at a position `pred` is preserved at along `genl` or at the other
+  position of a binary converse, and, when a stored claim states `pred`
+  (`claims-stored?`), the unary facts at such a term whose type is one of
+  `separated-types`.  A walk along `genl` crosses the edge only between those two closures
+  (`crossing-claim?`), so a goal holding no closure term at those positions reads the same
+  reach on either side of it.  At a position walking a second relation the closures are
+  the joint ones (`reach`): the terms whose reach holds the edge's start, and the terms
+  the edge's end reaches.  The facts of `pred` are its stored extent when the closure
+  reads would outnumber it.  nil when `pred` names no position along `genl` or a commuting
+  mark stands on `pred` or below it, for the caller to re-open the extent instead.  The
+  closure and the unary facts are read unscoped, a superset over every reader, since each
+  asker re-reads its own."
+  [kb a b pred]
+  (with-memo
+    (let [tax  (reasoning/taxonomy kb)
+          poss (positions kb pred '?ctx)
+          by-n (group-by :n poss)
+          ns   (into #{} (comp (filter #(= 'genl (:rel %))) (map :n)) poss)]
+      (when (and (seq ns)
+                 (not-any? #(contains? (tax/genls-global tax %) pred) (keys (commuting-marks kb))))
+        (let [idx   (:index kb)
+              recs  (:records kb)
+              ;; a walk against `genl` crosses the edge from `a` to `b`, one along it from
+              ;; `b` to `a`
+              terms (if (some #(next (relation-keys (by-n %))) ns)
+                      (into #{}
+                            (for [n ns, {:keys [rel along?]} (relation-keys (by-n n))
+                                  :when (= 'genl rel)
+                                  :let  [[from to] (if along? [b a] [a b])]
+                                  t     (concat (licensed-reach kb (by-n n) from '?ctx)
+                                                (reach kb (by-n n) to '?ctx))]
+                              t))
+                      (into (tax/specs-global tax a) (tax/genls-global tax b)))
+              at    (into ns (comp (filter #{1 2}) (map #(- 3 %))) ns)
+              types (when (claims-stored? kb pred) (separated-types kb pred))]
+          (cond-> (if (> (* (count terms) (count at)) (reads/stored-count-with-functor idx pred))
+                    (set (reads/as-stored-with-functor idx pred))
+                    (into #{} (for [t terms, n at, h (reads/as-stored-with-args idx pred {n t})] h)))
+            (seq types)
+            (into (filter #(let [s (some-> (p/get-sentex recs %) :sentence)]
+                             (and (seq? s) (= 2 (count s)) (contains? types (first s)))))
+                  (mapcat #(reads/as-stored-unary-with-arg-global idx %) terms))))))))
 
 (defn moved-predicates
   "The preserved predicates whose licensed claims `sen` may have moved.
@@ -2507,8 +2716,9 @@
   "Is the ground positive `goal` reached at `context` by a believed claim: a stated match
   of its functor or a sub-predicate (`stated-reached?`), or, at a preserved position, a
   claim whose term reaches the goal's over edges `context` sees and believes
-  (`claim-in?`).  Stops at the first claim found.  Seeded off the stored claims with the
-  goal's pinned arguments when they number no more than the goal term's reach
+  (`claim-in?`, or `reach` at a position walking several relations).  Stops at the first
+  claim found.  Seeded off the stored claims with the
+  goal's ground arguments when they number no more than the goal term's reach
   (`extent-size`, `product-size`), and off the reach's terms otherwise.  The reach is
   weighed unscoped, an upper bound on the scoped one, since the weighing never changes the
   answer."
@@ -2538,9 +2748,10 @@
                                        n (+ n m)]
                                    (if (> n limit) (reduced ##Inf) n)))
                                0 (by-n (inc i)))))
+              ;; a position walking several relations keeps `slots`' joint reach
               sl   (into [] (map-indexed
                              (fn [i s]
-                               (if (:reach s)
+                               (if (and (:reach s) (not (next (relation-keys (by-n (inc i))))))
                                  (let [x (nth args i)]
                                    (assoc s
                                           :in?  (fn [t] (boolean (some #(claim-in? kb % x t context)
@@ -2598,11 +2809,14 @@
         (when (and (seq goals) (every? ground-goal? goals))
           [goals stated])))))
 
-;; the read walk asks these walks whether a reader reaches a preserved claim's path, or a
-;; rule firing's goals, over a second route (`exc/install-route-reach!`)
-(exc/install-route-reach!
- (fn [kb rel a b reader]
-   (binding [*memo* (atom {})]
-     (contains? (witness-terms kb {:rel rel :along? false} a reader) b)))
- firing-goals
- goal-reached?)
+#_{:clj-kondo/ignore [:unused-private-var]}
+(def ^:private second-route
+  "The walks `vaelii.impl.except`'s read walk asks for a second route, reached through
+  `wiring/route-reach`, `wiring/firing-goals` and `wiring/goal-reach`: `:reach` answers
+  whether `reader` reaches `b` from `a` over the fact relation `rel`, `:goals` a rule
+  firing's goals, and `:goal-reach` whether `reader` reaches a ground goal from a claim."
+  {:reach      (fn [kb rel a b reader]
+                 (binding [*memo* (atom {})]
+                   (contains? (witness-terms kb {:rel rel :along? false} a reader) b)))
+   :goals      firing-goals
+   :goal-reach goal-reached?})

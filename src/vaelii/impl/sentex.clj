@@ -236,7 +236,7 @@
 
 (defn symbols-where
   "The set of symbols anywhere in `form` satisfying `pred`, or **nil** when none does.
-  The collecting form of `some-symbol?`, and nil rather than `#{}` so a caller can gate
+  The collecting form of `some-symbol?`, and nil rather than `#{}` so a caller can branch
   on it without allocating for the common empty answer."
   [pred form]
   (letfn [(walk [acc x]
@@ -269,7 +269,7 @@
 (defn forms-where
   "Every sub-form satisfying `pred`, depth-first pre-order, as a vector.  The collecting
   form of `some-form` — a vector rather than nil, because its callers report *each* form
-  they find rather than gating on the first."
+  they find rather than stopping at the first."
   [pred form]
   (letfn [(walk [acc x]
             (let [acc (if (pred x) (conj acc x) acc)]
@@ -496,7 +496,7 @@
 (defn- wrapper-stack
   "The `set/*` wrapper heads around one rule, outermost first, read through any
   `exceptWhen` and past a constraint wrapper's leading priority.  Stops at the first form
-  that is not a wrapper, so a generator's stamped rule is a stack of its own."
+  that is not a wrapper, so a generator's generated rule is a stack of its own."
   [form]
   (loop [f form, acc []]
     (let [h (when (and (sequential? f) (seq f)) (first f))]
@@ -694,22 +694,30 @@
   relation normally has both — but a `{:chain? false}` assert or a KB loaded without
   the rules has only what was written, so both spellings are read.
 
-  **Nine spellings, because core.txt ships nine classes.**  `unary` / `binary` / `ternary`
-  are the relation-wide ones and the other six specialize them by kind, so a KB may write
+  **Fifteen spellings, because core.txt ships fifteen classes.**  `unary` / `binary` /
+  `ternary` / `quaternary` / `quinary` are the relation-wide ones and the other ten
+  specialize them by kind, so a KB may write
   the arity of a function as `(binary_function F)` exactly as it writes a predicate's as
   `(binary_predicate P)`.  The arity readers read a **stored** membership by its own
-  functor (`arity-binding`), and what a KB stored is whichever of the nine its author
+  functor (`arity-binding`), and what a KB stored is whichever of the fifteen its author
   wrote.
 
   The three arities never disagree across the spellings one term holds: a class and its
-  specializations map to one number, and `(disjoint unary binary)` and its two peers
-  separate the relation-wide three, which the six inherit through their `genl` edges.
+  specializations map to one number, and one `separating` declaration under `fixed_arity`
+  separates the relation-wide five, which the ten inherit through their `genl` edges.
 
   Here, below the index, `arity/relation-length` and `kb/relation?`, because all of them
-  read it; a roster read twice is a roster that drifts."
-  '{unary 1 binary 2 ternary 3
+  read it; a table copied twice is a table that drifts."
+  '{unary 1 binary 2 ternary 3 quaternary 4 quinary 5
     unary_predicate 1 binary_predicate 2 ternary_predicate 3
-    unary_function 1 binary_function 2 ternary_function 3})
+    quaternary_predicate 4 quinary_predicate 5
+    unary_function 1 binary_function 2 ternary_function 3
+    quaternary_function 4 quinary_function 5})
+
+(def arg-projections
+  "Each binary projection of `arg`, with the position it projects: `(argN P T)` states
+  what `(arg P N T)` states.  The declaration checks and the integrity census read it."
+  '{arg1 1 arg2 2 arg3 3 arg4 4 arg5 5})
 
 (def variable-arity-classes
   "The memberships that release a relation from one exact length."
@@ -890,9 +898,9 @@
   failure** — it holds exactly while `S` is *not* derivable — so it consumes the
   bindings its argument's free variables need and produces none.  Reaching it before
   those bindings exist would test an open formula, which is meaningless, so like
-  `different` it is pinned after the generators that bind it (docs/naf.md).  Its
+  `different` it is placed after the generators that bind it (docs/naf.md).  Its
   argument's *quantified* variables (a nested `thereExists`) are **not** among the
-  ones that must be bound — that is the whole point of the quantifier — so the pinning
+  ones that must be bound — that is the whole point of the quantifier — so the placement
   and closure logic reads `free-vars`, not every variable.  `thereExists` is
   deliberately **absent**: a *standalone* positive `(thereExists ?x S)` antecedent is
   desugared to `S` with `?x` a local generator variable (see the constructor), so it
@@ -903,7 +911,7 @@
   deferred for the `evaluate` reason: `QuantityProver` (`vaelii.impl.provers`) *computes*
   them from two ground measure terms, so a comparison sorted ahead of the literal that
   binds its measure variable is inapplicable and the rule silently stops firing —
-  pinning it after its binders is what a rule antecedent like
+  placing it after its binders is what a rule antecedent like
   `(quantityGreaterThan ?q (QuantityFn 100 Kilogram))`, whose `?q` a `(mass ?o ?q)`
   produces, needs.  Like `different`, being deferred is *all* they share with the
   arithmetic comparisons: they are absent from `comparison-siblings` and
@@ -917,10 +925,14 @@
   ?n ?v (ancestorOf ?v ?x))` must be bound first, or the census counts the whole
   relation (docs/aggregate.md).
 
-  `integer` and `matchesPattern` are here for the `lessThan` reason: `EvaluableProver`
-  computes them from ground arguments and nothing stores them, so a rule's join sends
-  `(matchesPattern ?s \"a+b\")` to the registry once the literal binding `?s` has run."
-  (into '#{evaluate lessThan greaterThan different unknown integer matchesPattern
+  `matchesPattern` and the value kinds (`integer`, `string`, `number`, `boolean`,
+  `keyword`, `character`) are here for the `lessThan` reason: `EvaluableProver` computes
+  them from ground arguments and nothing stores them, so a rule's join sends
+  `(matchesPattern ?s \"a+b\")` or `(string ?s)` to the registry once the literal binding
+  `?s` has run.  A value kind of a constant or a compound is read from the store instead
+  (`provers/term-value-kind-goal?`)."
+  (into '#{evaluate lessThan greaterThan different unknown matchesPattern
+           integer string number boolean keyword character
            sameQuantity quantityLessThan quantityGreaterThan
            quantityLessThanOrEqual quantityGreaterThanOrEqual}
         (keys aggregate-functors)))
@@ -1239,7 +1251,7 @@
   Applied at both entry points a rule reaches — the sentex constructor and `rules/inner-rule`,
   which every pre-storage check reads through — so range restriction, closure, the
   quantifier locality rule and the stratification graph all see the NAF form rather than
-  the sugar.  A stored rule never holds a `forall`, so the gate is a `some` that
+  the sugar.  A stored rule never holds a `forall`, so the presence check is a `some` that
   allocates nothing and this is the identity on it."
   [rule-form]
   (let [antes (rule-antecedents rule-form)]
@@ -2297,7 +2309,7 @@
               (canonicalize-rule antes1 conseq0 marks)
               ;; A bare implies is backward by default.  Forward chaining materializes a
               ;; conclusion per match, which is intractable on a large KB, so it is opt-in
-              ;; (`set/forwardRule`).  A generator is the one exception: it stamps a rule by
+              ;; (`set/forwardRule`).  A generator is the one exception: it generates a rule by
               ;; firing forward and no backward goal asks for a rule, so a bare generator
               ;; stays forward.  `set/forwardRule` runs a rule forward *and* backward, so
               ;; wrapping a rule never removes a backward use it had — which is what lets a
@@ -2432,8 +2444,8 @@
     visible (`ist-rule-problem`);
   * a nested `implies` anywhere but a rule's consequent — a rule is a sentence, not a
     literal, and consequent position is the one place it means something else: a
-    **generator**, whose firing stamps the inner rule out (docs/generators.md).  The
-    nesting is not capped there: a stamped rule may stamp one in turn, and each level
+    **generator**, whose firing generates the inner rule (docs/generators.md).  The
+    nesting is not capped there: a generated rule may generate one in turn, and each level
     is checked in the ordinary rule roles;
   * a negated rule — `not` over an `implies`, bare or wrapped: negation lives on
     facts, and what a rule's negation would mean is said as an exception or a
@@ -2524,13 +2536,13 @@
               (not= 3 n)
               [(str "implies takes antecedents and one consequent, got arity " (dec n))]
               ;; A rule **in consequent position** is a generator's head: the rule its
-              ;; firing stamps out (docs/generators.md).  Its own parts are checked in
+              ;; firing generates (docs/generators.md).  Its own parts are checked in
               ;; the ordinary rule roles, so every arm below — `ist`, a head
-              ;; existential, a negated antecedent — holds of the stamped rule exactly
+              ;; existential, a negated antecedent — holds of the generated rule exactly
               ;; as it holds of a written one, at whatever depth it sits.
               ;;
-              ;; The recursion is the whole of the nesting rule: a stamped rule that
-              ;; stamps a rule is read here exactly as the one above it was, and the
+              ;; The recursion is the whole of the nesting rule: a generated rule that
+              ;; generates a rule is read here exactly as the one above it was, and the
               ;; scoping rule composes to match — a variable belongs to the outermost
               ;; level whose antecedents mention it (`rules/nesting`), which is the
               ;; level whose firing grounds it.
@@ -2775,8 +2787,28 @@
 
 (def quote-functor
   "The quoting function whose argument is a form taken as syntax: `(Quote X)` mentions X.
-  The same symbol as `quasiquote/quote-function`, which this namespace cannot require."
+  `quasiquote/quote-function` is this symbol."
   'Quote)
+
+(def quasiquote-functor
+  "The template-constructing quoting function: `(Quasiquote T)` mentions T with its
+  `(Unquote v)` holes spliced.  `quasiquote/quasiquote-function` is this symbol."
+  'Quasiquote)
+
+(def quoting-functors
+  "The quoting functions — `Quote` and `Quasiquote`, fixed by the engine.  A quoting
+  function's arguments are a **mention**, a term named as syntax rather than used: they are
+  held opaque to identity congruence (`res/representative-term` rewrites them by a
+  `rewriteOf` spelling rename only, never by a `sameAs` / `equals` merge), not reified on
+  their own when the application is (`nat/reify-or-mint-nat`), and not typed by what they
+  denote (`checks`).  The set is not declared in the KB and no assertion changes it, so
+  whether an argument is a mention is a fact about the sentence alone."
+  #{quote-functor quasiquote-functor})
+
+(defn quoting-functor?
+  "Is `head` one of the `quoting-functors`?"
+  [head]
+  (contains? quoting-functors head))
 
 (defn quote-form?
   "Is `form` a `(Quote X)` mention?  `unquoted-free-vars`, `res/unify`, `res/substitute`

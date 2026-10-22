@@ -5,7 +5,7 @@
 
   A vector is `sequential?`, so `sentex/canon` flattens `[likes Tom Ann]` to the list it
   looks like — while `query` and `prove` read a vector as a join over its members.  The
-  write entry point refuses the collision (`sentence-shape-problem`), and this pins the read
+  write entry point refuses the collision (`sentence-shape-problem`), and this asserts the read
   side of it, which is where the same knowledge answered two ways:
 
     a sentence written as a vector   `ask` / `sentexes-matching` / `handle-of` said the
@@ -15,8 +15,8 @@
                                      a sentence nothing matches and answered **false**
 
   Neither raised.  Both directions are refused now, and the tests below are written as a
-  roster of entry points rather than as one assertion each, because the defect was never in one
-  entry point — it was in two entry points disagreeing, and a roster is what fails when the in the adjacent namespace
+  table of entry points rather than as one assertion each, because the defect was never in one
+  entry point — it was in two entry points disagreeing, and a table is what fails when the in the adjacent namespace
   is added on one side only."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]

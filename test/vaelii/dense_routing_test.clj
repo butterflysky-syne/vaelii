@@ -40,8 +40,9 @@
                       :opposed :tax-support :mint :mint-in :self-tuple :arity-binding :shape-tuple)
       [(nth k 0) (nth k 1)]
       :exception-index (if (= :rules (nth k 1)) [:exception-index :rules] [:exception-index :predicate])
-      (:context-root :argument-slot :unary-slot :term-index :term-roster :rule-antecedent-keys
-                     :opposed-in :opposed-bodies :tax-installs :mint-terms :unary-multi
+      (:context-root :argument-slot :unary-slot :term-index :term-names :rule-antecedent-keys
+                     :opposed-in :opposed-bodies :opposed-functor :opposed-between
+                     :tax-installs :mint-terms :unary-multi
                      :unary-kept :unary-kept-types :unary-denied :unary-denied-types
                      :shape-lengths :arity-binding-kinds :arity-bound)
       [(nth k 0)]
@@ -73,13 +74,13 @@
   "Families whose value is deliberately *not* a handle set, so packing them as handles
   would be wrong rather than merely unrealized: the counts, the trie's child labels (path
   tokens — numbers among them, which is the case a value-type dispatch would
-  misclassify), an argument node's children (contexts), the roster (term *names*), and
-  the two slot rosters (*predicates* present at a slot, and those a term is the lone
-  argument of — names, like the term roster's members)."
+  misclassify), an argument node's children (contexts), the term-name set (term *names*), and
+  the two slot predicate sets (*predicates* present at a slot, and those a term is the lone
+  argument of — names, like the term-name set's members)."
   (into #{[:trie :children] [:argument-root :children] [:predicate-extent :children]
           [:rule-antecedent :children] [:rule-consequent :children] [:rule-extent :children]
-          [:opposed :children] [:self-tuple :children] [:term-roster] [:argument-slot] [:unary-slot]
-          [:rule-antecedent-keys] [:opposed-bodies]
+          [:opposed :children] [:self-tuple :children] [:term-names] [:argument-slot] [:unary-slot]
+          [:rule-antecedent-keys] [:opposed-bodies] [:opposed-functor] [:opposed-between]
           [:tax-support :children] [:tax-installs]
           [:mint :children] [:mint-in :children] [:mint-terms] [:unary-multi] [:unary-kept]
           [:unary-kept-types] [:unary-denied] [:unary-denied-types] [:shape-lengths]
@@ -105,7 +106,7 @@
 ;;; ── the KB, and the backends under test ───────────────────────────────
 
 ;; Own db numbers, outside the suite's block: this namespace opens whole KBs on named
-;; backends rather than running on whichever one the suite's gate selected.
+;; backends rather than running on whichever one `VAELII_TEST_BACKEND` selected.
 (defn- open-kb! [backend space]
   (doto (v/open-kb {:backend backend :space space
                     :recover? false})
@@ -114,11 +115,11 @@
 (defn- build!
   "One KB touching every index family: a ragged trie (a numeric token, a negative fact),
   the context root, the argument trie and the predicate extent, both rule indexes, both halves of the exception index, the
-  term index and the roster, and the mint family, which an argument declaration's mint
-  writes with the entailment pinned on.  A family the fixture never writes cannot be checked, so the
+  term index and the term-name set, and the mint family, which an argument declaration's mint
+  writes with the entailment forced on.  A family the fixture never writes cannot be checked, so the
   completeness assertion below fails when the fixture misses a family."
   [kb]
-  (tu/with-terms [bird penguin animal flies feathered parentOf grandparentOf
+  (tu/with-terms [bird penguin animal flies feathered parentOf grandparentOf relatesTo
                   Tweety Opus Ann Bob Cid CxRouting]
     (v/assert kb (list 'genl penguin bird) CxRouting {:strength :monotonic})
     (v/assert kb (list 'genl bird animal) CxRouting {:strength :monotonic})
@@ -141,8 +142,12 @@
       (v/assert kb (list parentOf Bob Cid) CxRouting))
     (v/assert kb (list 'bornInYear Tweety 1970) CxRouting)   ; a numeric trie token
     (v/assert kb (list 'not (list feathered Opus)) CxRouting)
-    ;; a body stored in both polarities: the opposed family
+    ;; a body stored in both polarities: the opposed family, filed by functor
     (v/assert kb (list feathered Opus) CxRouting)
+    ;; and one between predicates, spelled camelCase as `tu/with-terms` does not spell them
+    (let [between (list relatesTo (gensym "tmpFatherOf") (gensym "tmpKinOf"))]
+      (v/assert kb between CxRouting)
+      (v/assert kb (list 'not between) CxRouting))
     ;; a ground binary self tuple: the self-tuple trie
     (v/assert kb (list parentOf Cid Cid) CxRouting)
     ;; a length binding: the arity-binding trie

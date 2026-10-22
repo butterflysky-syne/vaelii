@@ -10,7 +10,7 @@
         - core.txt       — the vocabulary the engine interprets and the top of the
                                 ontology.
         - abstract.txt   — the abstract type skeleton (physical/intangible and
-                                their kinds) + the structural relations partOf/locatedIn.
+                                their kinds) + the structural relations tangiblePartOf/locatedIn.
         - organism.txt   — the biological taxonomy + its disjointness.
         - life.txt       — the organism relations (parentOf, siblingOf, flies,
                                 mortal, birthYearOf, olderThan, …) with arg + metadata.
@@ -44,23 +44,15 @@
         - CxChange.txt    — a simple event calculus: a state persists until an
                                  event ends it, so holdsAt is inertia over what
                                  initiates and terminates say.
-        - CxComputing.txt — relations over software tools, their invocations and
-                                 receipts, media resources and DNS names, and
-                                 the kinds the relations are typed over.
-                                 Opt-in: it sees CxUniverse and CxWell does not
-                                 see it.
         - CxKinship.txt   — grandparentOf, ancestorOf, olderThan, and parenthood
                                  from maternity and paternity.
         - CxMereology.txt — a part is located where its whole is; owning a whole
                                  entails owning its parts.
         - CxNormalPhysicalConditions.txt — the states of matter at room temperature
                                  and pressure: stone, wood and glass are solid,
-                                 mercury is liquid, a metal is solid by default.
+                                 mercury is liquid, metal_stuff is solid by default.
                                  Opt-in: it sees CxUniverse and CxWell does not
                                  see it.
-        - CxPerception.txt — perception relations: perceives, sees, seeImage,
-                                 watchVideo. Opt-in: it sees CxUniverse and CxWell
-                                 does not see it.
         - CxSize.txt      — comparative size: stated between kinds, computed
                                  between objects from their measures.
         - CxSocial.txt    — what acquaintance follows from; employment as one way
@@ -73,6 +65,13 @@
                                  an existing starter theory with vocabulary
                                  most contexts under the base theory have no
                                  occasion to see.
+        - CxTra.txt       — vocabulary that is generally useful but specific to
+                                 one domain: relations over software tools, their
+                                 invocations and receipts, media resources and DNS
+                                 names, the kinds the relations are typed over, and
+                                 the perception relations perceives, sees, seeImage
+                                 and watchVideo. Opt-in: it sees CxUniverse and
+                                 CxWell does not see it.
 
   The topology, most general (top) to most specific (bottom): CxUniverse holds the upper
   ontology; each middle context sees CxUniverse and not the other middle contexts; and
@@ -96,6 +95,7 @@
             [vaelii.host.core-context :as core-context]
             [vaelii.host.seed :as seed]
             [vaelii.impl.naming :as nm]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.sentex :as sx]))
 
 (defn load-into
@@ -117,14 +117,25 @@
      (v/with-deferred-settle kb
        (core-context/load-into kb)
        (loaded sx/root-context)
-       (doseq [c (seed/layer-contexts "middle")]
-         (seed/load-context kb c "middle")
-         (loaded c)))
+       (let [cs (seed/layer-contexts "middle")]
+         (with-open [r (progress/start ::middle "starter: load the middle contexts" (count cs))]
+           (doseq [c cs]
+             (seed/load-context kb c "middle")
+             (loaded c)
+             (progress/tick! r)))))
      ;; The subtypes of thing are unary types. Other genl components may relate
      ;; predicates of any arity and do not imply unary membership.  `specs` is read after the
-     ;; batch above settles, so its extent is the believed one; a second batch stores the marks.
+     ;; batch above settles, so its extent is the believed one; a second batch stores the
+     ;; marks.  A type an argument declaration names already holds its mark, entailed by the
+     ;; declaration (docs/argtypes.md), and is skipped.
      (v/with-deferred-settle kb
-       (doseq [t (nm/by-print-key (v/specs kb 'thing))]
-         (v/assert kb (list 'unary_predicate t) sx/root-context)))
+       (let [ts (into [] (remove #(seq (v/sentexes-matching kb (list 'unary_predicate %)
+                                                            sx/root-context)))
+                      (nm/by-print-key (v/specs kb 'thing)))]
+         (with-open [r (progress/start ::unary-predicates "starter: mark the unary types"
+                                       (count ts))]
+           (doseq [t ts]
+             (v/assert kb (list 'unary_predicate t) sx/root-context)
+             (progress/tick! r)))))
      (loaded :unary-predicates)
      kb)))

@@ -44,8 +44,8 @@
   (doseq [^File f (reverse (file-seq d))] (.delete f)))
 
 (defn- memory-kb
-  "A cleared plain `:memory` KB (`tu/plain-memory-space`) whatever the suite's backend
-  gate says — this namespace is *about* the two backends, so it names both."
+  "A cleared plain `:memory` KB (`tu/plain-memory-space`) whatever backend the suite
+  selects — this namespace is *about* the two backends, so it names both."
   []
   (doto (v/open-kb tu/plain-memory-space) (tu/clear-kb!)))
 
@@ -362,7 +362,7 @@
 
 (deftest records-only-keeps-the-premises-a-later-recover-believes-from
   ;; `recover` is what turns this corpus into a believing KB, and it believes from the
-  ;; premise roster and the strengths on the records.  Stored strength-less, the rebuild
+  ;; premise set and the strengths on the records.  Stored strength-less, the rebuild
   ;; still builds a node per handle — so the KB comes back looking whole and believes
   ;; **nothing**, every handle a derivation with no justification to ground it.  So the
   ;; records-only path stores each record of ours the way the belief path stores it,
@@ -381,7 +381,7 @@
                 (testing "the corpus arrives with its premises and their strengths"
                   (is (= (set (tu/premise-ids source)) (set (tu/premise-ids target))))
                   (is (every? #(some? (:strength (v/sentex target %))) (tu/premise-ids target))
-                      "a premise the roster names carries the strength the dump held"))
+                      "a premise the premise set names carries the strength the dump held"))
                 (testing "and nothing is believed yet — there is no TMS behind it"
                   (is (empty? (v/sentexes-matching target (list (:bird t) (:Tweety t))
                                                    (:ctx t)))))
@@ -766,7 +766,7 @@
                 "no sentex, no justification: the dump was read before it was written")
             (is (empty? (tu/premise-ids kb)))
             (is (empty? (v/terms kb)) "and no term was minted into the index either"))
-          (testing "so the retry needs no clear! — the empty-destination gate still passes"
+          (testing "so the retry needs no clear! — the empty-destination check still passes"
             (frames/write-frames! f frames {:compression :none :chunk-size 10000})
             (let [summary (imp/import-dump kb dump)]
               (is (= before [(:sentexes summary) (:justifications summary)])
@@ -851,7 +851,7 @@
     {:meta-id (:id meta-fr) :rests-on-it (:id jframe) :doomed (:id doomed)}))
 
 (deftest a-dropped-meta-sentex-takes-the-justifications-that-name-it
-  ;; The import deletes the meta-sentex and reports it.  What this pins is the other half:
+  ;; The import deletes the meta-sentex and reports it.  This asserts the other half:
   ;; the id map forgets the dump id along with the record, so every reference to it fails
   ;; to resolve and is dropped through the path a dangling reference already has — and no
   ;; justification is left naming a handle the store does not hold.
@@ -1150,7 +1150,7 @@
 (defn- open-fds
   "How many file descriptors this JVM holds, or nil where the platform bean cannot say.
   `com.sun.management.UnixOperatingSystemMXBean` ships in `jdk.management` everywhere;
-  only the *implementation* is Unix-only, so the `instance?` is the portable gate."
+  only the *implementation* is Unix-only, so the `instance?` is the portable check."
   []
   (let [b (java.lang.management.ManagementFactory/getOperatingSystemMXBean)]
     (when (instance? com.sun.management.UnixOperatingSystemMXBean b)
@@ -1169,15 +1169,15 @@
         (spit f "not compressed, and not nippy either")
         (testing "a compression this build cannot read is refused"
           (let [e (is (thrown? clojure.lang.ExceptionInfo
-                               (doall (frames/read-window-seq f :brotli))))]
+                               (doall (frames/read-single-stream-seq f :brotli))))]
             (is (= :unsupported-compression (:type (ex-data e))))))
         (testing "and so is a section whose bytes are not the codec the dump names"
-          (is (thrown? java.io.IOException (doall (frames/read-window-seq f :gzip)))))
+          (is (thrown? java.io.IOException (doall (frames/read-single-stream-seq f :gzip)))))
         (testing "and neither refusal keeps the descriptor"
           (let [before (open-fds)]
             (dotimes [_ 300]
-              (try (doall (frames/read-window-seq f :gzip)) (catch Throwable _ nil))
-              (try (doall (frames/read-window-seq f :brotli)) (catch Throwable _ nil)))
+              (try (doall (frames/read-single-stream-seq f :gzip)) (catch Throwable _ nil))
+              (try (doall (frames/read-single-stream-seq f :brotli)) (catch Throwable _ nil)))
             (let [after (open-fds)]
               (is (or (nil? before) (< (- (long after) (long before)) 50))
                   (str "600 refused opens leaked descriptors: " before " -> " after))))))
@@ -1227,8 +1227,8 @@
 (defrecord PlantedFrame [sentence])
 
 (def dump-reader-without-replay
-  "An `:engine-dump` reader map with no `:replay-belief!`: it gates the version and decodes
-  a frame, and the belief path has nothing to read the dump's justifications with."
+  "An `:engine-dump` reader map with no `:replay-belief!`: it checks the version and
+  decodes a frame, and the belief path has nothing to read the dump's justifications with."
   {:name "round-trip-test" :versions #{1} :decode-frame identity})
 
 (def ^:private opened-by-replay
@@ -1292,7 +1292,7 @@
                                             (concat (take 3 fs) [planted] (drop 4 fs))
                                             {:compression :none :chunk-size 2}))
             ;; the refusal, the destination after it, and a retry of `good` into the
-            ;; same KB, which the empty-destination gate refuses when anything is left
+            ;; same KB, which the empty-destination check refuses when anything is left
             check  (fn [kb ty opts]
                      (is (= empty-state (stored-state kb)) "the destination starts empty")
                      (is (= ty (:type (refusal-of kb bad opts))))
@@ -1379,13 +1379,13 @@
       (finally (rm-rf! dump)))))
 
 (deftest a-dump-this-build-cannot-read-is-refused-before-the-first-write
-  ;; Four gates read `meta.edn` and refuse on it, and each lands before a record is
+  ;; Four checks read `meta.edn` and refuse on it, and each lands before a record is
   ;; stored — which is what makes a refused import safe to retry with no `clear!` in
   ;; between.  A version, a variant or a framing this build does not read has to be a
   ;; named refusal rather than a half-filled store: a dump read up to the point of failure
   ;; leaves a fraction of a KB nobody chose, and nothing downstream can tell it from a
   ;; corpus that really is that small.
-  (let [dump    (temp-dir "gates")
+  (let [dump    (temp-dir "meta-checks")
         kb      (memory-kb)
         meta!   (fn [m] (spit (io/file dump "meta.edn") (pr-str m)))
         refusal (fn [] (try (imp/import-dump kb dump)
@@ -1419,7 +1419,7 @@
   ;; holds and what each is called — a rename on one side alone produces a dump the
   ;; other reports as *missing* rather than misnamed, and the discovery moment is a
   ;; restore.  So the names live once, in `frames` beside the framing they name, and
-  ;; this pins them to the literal on-disk spellings: the layout is a **frozen wire
+  ;; this asserts them against the literal on-disk spellings: the layout is a **frozen wire
   ;; contract** (existing dumps must stay readable), so a change here is a format
   ;; version, never a refactor.
   (is (= "meta.edn"                     frames/meta-file))

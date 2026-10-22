@@ -159,7 +159,7 @@
   believed in `context` — `#{}` when the network is inconsistent.
 
   This is the algebra read directly rather than through a goal, so a caller that needs to
-  know *how much* is pinned down — rather than whether one named relation is entailed —
+  know *how much* is determined — rather than whether one named relation is entailed —
   asks here."
   [kb context i1 i2]
   (qkb/possible instants kb context i1 i2))

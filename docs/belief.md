@@ -151,7 +151,7 @@ doing the believing, so the reader's merges are the right ones and congruence ap
 An attitude is the case where somebody else is.
 
 A **`rewriteOf` spelling rename does** reach into the quotation, exactly as it reaches into
-a `quoting_function`'s arguments: it retires a *name*, and both the belief and the question
+a quoting function's (`Quote`, `Quasiquote`) arguments: it retires a *name*, and both the belief and the question
 follow it. A `sameAs` / `equals` identity merge does not. That is the same split
 [equality.md](equality.md) opens with — three relations, one closure, and only one of them
 is about spelling.
@@ -169,7 +169,7 @@ outside one.
 
 NAT reification does not read the marker either. A ground reifiable NAT inside the
 proposition reifies to its constant before the congruence walk runs, and the constant is
-found through the `termOfUnit` map under the merges `CxUniverse` holds
+found through the `natFormula` map under the merges `CxUniverse` holds
 ([nat.md](nat.md#what-reification-does-not-cover)). With `(sameAs Apple Pomme)` in
 `CxUniverse` and `(likes Tom (FruitFn Apple))` in `CxAgentAnn`, `(believes Ann (likes Tom
 (FruitFn Pomme)))` is true, although `CxAgentAnn` does not see the merge. A stored `(believes

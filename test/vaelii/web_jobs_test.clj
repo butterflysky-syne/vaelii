@@ -9,7 +9,6 @@
             [vaelii.browser.jobs :as jobs]
             [vaelii.browser.web :as web]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.impl.checks :as checks]
             [vaelii.test-util :as tu]))
 
@@ -18,7 +17,7 @@
 ;; On the shipped default the entailment mints a type per declared argument position, so
 ;; the base KB is larger and every chain here runs longer.  The chaining runs on a job
 ;; thread, which reads the *root* value of `*assertive-arg-types?*` rather than any
-;; test-thread binding — so this namespace pins the root off for the duration and restores
+;; test-thread binding — so this namespace sets the root off for the duration and restores
 ;; it.  These tests are about the job mechanism, not the entailment (`argtype-entail-test`
 ;; covers that).
 (use-fixtures :once
@@ -36,7 +35,7 @@
 (use-fixtures :each
   (fn [f]
     (catalog/reset-registry!)
-    (let [kb (doto (tu/fresh) core-context/load-into)]
+    (let [kb (doto (tu/fresh) tu/load-core!)]
       (catalog/register! "base" "Base KB" kb {:source (catalog/source "core")})
       (binding [tu/*kb* kb, *app* (web/app (catalog/holder kb))]
         (try (f)
@@ -106,8 +105,8 @@
 ;; ---- the fast path -------------------------------------------------------
 
 (deftest a-run-that-finishes-inside-the-fast-path-answers-with-its-result
-  ;; The window is widened to a minute, so the claim is the mechanism — a job that settles
-  ;; inside the window is answered with its result — and not the 250 ms a loaded or
+  ;; The fast-path time window is widened to a minute, so the claim is the mechanism — a
+  ;; job that settles inside the time window is answered with its result — and not the 250 ms a loaded or
   ;; instrumented run can miss.  The outlasting branch is the test below.
   (let [r (with-redefs [jobs/fast-path-ms 60000]
             (POST "/chain" {"max-derivations" "5000"}))]

@@ -4,9 +4,12 @@
   "The arity family: a stored tuple whose length breaks its functor's length is held in
   the `:out` forced set, and two exact bindings of one predicate, or of two predicates a
   `genl` edge relates, whose lengths differ are a pair the settle places one
-  `contradicts` of in CxUniverse (`chain/sync-arity-pairs!`).  See docs/nmtms.md, \"The
-  forced sets\", and docs/taxonomy.md, \"Arity\"."
+  `contradicts` of in CxUniverse (`chain/sync-arity-pairs!`).  A `negates` declaration
+  whose sides' lengths rule out a shared argument list is a one-member clash
+  (`negates-clash`, `chain/sync-negates-lengths!`).  See docs/nmtms.md, \"The forced
+  sets\", and docs/taxonomy.md, \"Arity\"."
   (:require [vaelii.impl.caches :as caches]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.naming :as nm]
             [vaelii.impl.predicates :as predicates]
@@ -18,7 +21,7 @@
 
 ;; ---- arity ---------------------------------------------------------------
 ;;
-;; The bindings are the roster spellings, read as storage (`sx/arity-binding`) off the
+;; The bindings are the forced-monotonic spellings, read as storage (`sx/arity-binding`) off the
 ;; index family `:arity-binding` (docs/indexing.md, "The arity bindings").  What binds a
 ;; relation's length is one function, read the same at every context (`relation-length`).
 ;;
@@ -104,7 +107,7 @@
   it reaches an exact-arity class (`[::reaches t]`): an end's specializations read where
   they number no more than `lru`'s entries (`tax/specs-global-within`), else each entry
   asked whether it reaches the end.  Unscoped, since the entries are the unscoped
-  closure's, a superset over every reader (`decide/write-view`)."
+  closure's, a superset over every reader (`decide/unscoped-closures`)."
   [tax lru ends]
   (doseq [end ends
           :let [n (caches/lru-size lru)]
@@ -189,12 +192,14 @@
             found))))
 
 (defn- own-entry
-  "`{:own :mins}`: `f`'s own exact lengths and `arityMin` floors, one probe of the bound
-  predicates and `f`'s kinds where it holds one."
+  "`{:own :mins :var?}`: `f`'s own exact lengths, `arityMin` floors and whether it stores
+  a `variable_arity` binding, one probe of the bound predicates and `f`'s kinds where it
+  holds one."
   [kb f]
   (let [idx   (:index kb)
         kinds (when (reads/stored-arity-bound? idx f) (reads/as-stored-arity-binding-kinds idx f))]
-    {:own (values-of kinds :exact) :mins (values-of kinds :min)}))
+    {:own (values-of kinds :exact) :mins (values-of kinds :min)
+     :var? (boolean (some #(= :var (first %)) kinds))}))
 
 (defn- exact-xf
   "Each term's stored exact lengths (`exact-at`)."
@@ -289,6 +294,25 @@
   `admitsArgnum` and the integrity pass's undeclared-arity read beside it."
   [kb q]
   (boolean (seq (:var (held-bindings kb q)))))
+
+(defn unary-consistent?
+  "Does `t`'s own arity admit one argument and no other: an engine term's `:shape` of
+  exactly one, or, for any other term, no IN binding of a length other than one, no
+  `variable_arity` release and no `arityMin` floor above one?  A type bound to one length
+  and another admits neither, so a declaration naming it mints nothing.  The stored
+  bindings, held in the length entries (`own-held`), answer when every one of them admits
+  one, since then every IN subset of them does; otherwise the IN bindings answer
+  (`held-bindings`), so no OUT binding decides.  No `genl` closure is read, so a length
+  `t` inherits is not consulted (`checks/mintable-type?`, docs/argtypes.md)."
+  [kb t]
+  (if-let [s (shape-length t)]
+    (= 1 (:exact s))
+    (let [ok? (fn [exacts var? mins]
+                (and (every? #(= 1 %) exacts) (not var?) (every? #(<= (long %) 1) mins)))
+          {:keys [own mins var?]} (own-held kb (reasoning/taxonomy kb) t)]
+      (or (ok? own var? mins)
+          (let [{:keys [exact var min]} (held-bindings kb t)]
+            (ok? (keys exact) (seq var) (keys min)))))))
 
 (defn- bound-above
   "The predicates above `q`, `q` left out, storing an exact or `variable_arity` binding,
@@ -397,28 +421,34 @@
       out?)
     false))
 
+(defn broken-binding
+  "The binding a tuple of `n` arguments of `q` breaks, as `{:length n :via p :grounds [h …]
+  :route [h …]}` with `:length` an exact length, or `{:min m …}` for a floor, or nil when
+  it breaks none (`relation-length` with its grounds).  `:route` holds the IN supporters of
+  one path of `genl` edges from `q` up to `:via` (`tax/genl-path-edges`), empty for a
+  length `q` binds itself."
+  [kb q n]
+  (let [b   (relation-length kb q true)
+        tax (reasoning/taxonomy kb)
+        tms (reasoning/tms kb)]
+    (when (breaks? b n)
+      (cond-> {:via     (:via b)
+               :grounds (vec (sort (:grounds b)))
+               :route   (if (= q (:via b))
+                          []
+                          (into [] (comp (mapcat #(keys (tax/supporters tax (into [:genl] %))))
+                                         (filter #(jtms/in? tms %))
+                                         (distinct))
+                                (tax/genl-path-edges tax q (:via b))))}
+        (:exact b) (assoc :length (:exact b))
+        (:min b)   (assoc :min (:min b))))))
+
 (defn inert-binding
-  "The binding a stored tuple `sx` in the `:out` forced set breaks, as `{:length n :via p
-  :grounds [h …] :route [h …]}` with `:length` an exact length, or `{:min m …}` for a
-  floor, or nil when `sx` breaks none (`relation-length` with its grounds).  `:route`
-  holds the IN supporters of one path of `genl` edges from the functor up to `:via`
-  (`tax/genl-path-edges`), empty for a length the functor binds itself."
+  "The binding a stored tuple `sx` in the `:out` forced set breaks (`broken-binding`), or
+  nil when `sx` breaks none."
   [kb sx]
   (when-let [[q n] (fact-shape sx)]
-    (let [b   (relation-length kb q true)
-          tax (reasoning/taxonomy kb)
-          tms (reasoning/tms kb)]
-      (when (breaks? b n)
-        (cond-> {:via     (:via b)
-                 :grounds (vec (sort (:grounds b)))
-                 :route   (if (= q (:via b))
-                            []
-                            (into [] (comp (mapcat #(keys (tax/supporters tax (into [:genl] %))))
-                                           (filter #(jtms/in? tms %))
-                                           (distinct))
-                                  (tax/genl-path-edges tax q (:via b))))}
-          (:exact b) (assoc :length (:exact b))
-          (:min b)   (assoc :min (:min b)))))))
+    (broken-binding kb q n)))
 
 (defn- refresh-shapes!
   "Move the stored tuples of `q` into or out of the `:out` forced set for each length
@@ -432,7 +462,9 @@
         now   (into #{} (filter #(shape-breaks? kb tax q %)) (reads/as-stored-shape-lengths idx q))]
     (doseq [n (sort (into check (remove #(= (contains? was %) (contains? now %))) (into was now)))
             :let [on? (contains? now n)]]
-      (let [hs (into [] (remove #(= on? (jtms/forced? tms :out %)))
+      (let [hs (into [] (remove #(or (= on? (jtms/forced? tms :out %))
+                                     ;; a fact the argument family holds stays OUT
+                                     (and (not on?) (argument/held? kb %))))
                      (reads/as-stored-shape-tuples-global idx q n))]
         (when (seq hs) (jtms/set-forced tms :out hs on?))))
     (when (not= was now)
@@ -446,9 +478,9 @@
     (swap! (reasoning/nogood-candidates kb) update ::bound
            #(reduce (fn [m [p k v]] (update m p (fnil conj #{}) [k v])) % bs))))
 
-(defn- relabelled-held
-  "The handles among `hs` whose node this window did not create, that the TMS still
-  holds, and whose network label moved in the window (`jtms/touched-in`): a created or
+(defn relabelled-held
+  "The handles among `hs` whose node this settle did not create, that the TMS still
+  holds, and whose network label moved in this settle (`jtms/touched-in`): a created or
   removed binding is queued at the store and removal choke points (`note-arity!`), and a
   redundant justification moves no label, so only these are read."
   [kb hs]
@@ -464,13 +496,27 @@
   [kb hs]
   (boolean (seq (relabelled-held kb hs))))
 
+(defn- negates-declaration?
+  "Is the stored record `sx` a `(negates P Q)` declaration?"
+  [sx]
+  (let [s (:sentence sx)]
+    (and (nil? (:antecedent sx)) (seq? s) (= 'negates (first s)) (= 3 (count s)))))
+
+(defn- queue-negates!
+  "Queue the handles `hs` of `negates` declarations under `::neg`
+  (`chain/sync-negates-lengths!`)."
+  [kb hs]
+  (when (seq hs)
+    (swap! (reasoning/nogood-candidates kb) update ::neg (fnil into #{}) hs)))
+
 (defn note-relabelled!
   "Queue the predicates of the bindings among the relabelled handles `hs` (`drain!`): a
   binding a rule concludes goes OUT with its antecedents, and a binding OUT binds nothing
-  (`held-bindings`)."
+  (`held-bindings`).  A relabelled `negates` declaration is queued under `::neg`."
   [kb hs]
-  (queue-bound! kb (into [] (keep #(some-> (p/get-sentex (:records kb) %) binding-of))
-                         (relabelled-held kb hs))))
+  (let [sxs (into [] (keep #(p/get-sentex (:records kb) %)) (relabelled-held kb hs))]
+    (queue-bound! kb (into [] (keep binding-of) sxs))
+    (queue-negates! kb (into [] (comp (filter negates-declaration?) (map :id)) sxs))))
 
 (defn- note-arity!
   "A binding of `p` stored or removed: evict the length entries at or below `p` and its
@@ -544,13 +590,26 @@
                (not= (::class-gen c) (tax/relation-gen tax :genl))
                (not= (::class-epoch c) (tax/relation-epoch tax)))))
 
-(defn moved?
+(defn- lengths-moved?
   "Does the settle owe a refresh (`drain!`): the shapes owed whole, a queued predicate, or
   a `genl` edge moved since the generation `::gen` of the candidate index `c`?"
   [tax c]
   (boolean (or (::owed c) (seq (::bound c)) (seq (::fresh c))
                (not= (::gen c) (tax/relation-gen tax :genl))
                (not= (::epoch c) (tax/relation-epoch tax)))))
+
+(defn moved?
+  "Does the settle owe the family work: a refresh (`lengths-moved?`), or a `negates`
+  declaration queued under `::neg`?"
+  [tax c]
+  (boolean (or (seq (::neg c)) (lengths-moved? tax c))))
+
+(defn take-negates!
+  "The `negates` declarations queued under `::neg` since the last call, the queue
+  emptied."
+  [kb]
+  (let [[old _] (swap-vals! (reasoning/nogood-candidates kb) dissoc ::neg)]
+    (::neg old #{})))
 
 (defn- at-or-below
   "`t` and the terms below it over the unscoped closure."
@@ -577,13 +636,14 @@
 
 (defn drain!
   "Refresh the inert shapes (`refresh-shapes!`) of every functor whose length can have
-  moved since the last call, and answer `{p dirs}`, the predicates whose arity pairs the
-  settle places again (`pair-sets`): `:both` for a queued predicate and those below it,
-  whose own binding or whose lengths above moved, and `:up` for an exact-bound predicate at
-  or below the lower end of a `genl` edge moved since `::gen`.  Everything is refreshed
-  when the shapes are owed whole (a recover), on the first call, and when the `genl`
-  relation was rebuilt: every functor of a stored fact, and `:up` for every bound
-  predicate."
+  moved since the last call, and answer `{:pairs {p dirs} :moved ts}`.  `:pairs` holds the
+  predicates whose arity pairs the settle places again (`pair-sets`): `:both` for a queued
+  predicate and those below it, whose own binding or whose lengths above moved, and `:up`
+  for an exact-bound predicate at or below the lower end of a `genl` edge moved since
+  `::gen`.  `:moved` is the set of terms whose length can have moved, or `:all`.
+  Everything is refreshed when the shapes are owed whole (a recover), on the first call,
+  and when the `genl` relation was rebuilt: every functor of a stored fact, `:up` for
+  every bound predicate, and `:moved` `:all`."
   [kb]
   (let [tax     (reasoning/taxonomy kb)
         idx     (:index kb)
@@ -619,7 +679,7 @@
       (refresh-shapes! kb tax f (if whole?
                                   (get-in @(reasoning/nogood-candidates kb) [::out f] #{})
                                   (get-in old [::fresh f] #{}))))
-    ps))
+    {:pairs ps :moved (if whole? :all fs)}))
 
 ;; ---- the pairs ---------------------------------------------------------------
 
@@ -675,14 +735,43 @@
   (into [] (keep (fn [[h kind]] (when (= :exact kind) h)))
         (reads/as-stored-arity-bindings (:index kb) q #{sx/root-context})))
 
+(defn negates-clash
+  "The clash of the declaration `(negates P Q)` that the lengths of `P` and `Q`
+  (`relation-length`) give, as `{:kind k :grounds #{h}}` with `:grounds` the bindings
+  stating the lengths, else nil.  `:negates-arity`: no argument list fits both, an exact
+  length differing from the other side's exact length or below its floor.
+  `:negates-unary`: both sides are bound to one argument, where `disjoint` is the
+  declaration that says it (docs/taxonomy.md, \"Predicate metadata\")."
+  [kb [_ p q]]
+  (when (and (symbol? p) (symbol? q))
+    (let [a (relation-length kb p true)
+          b (relation-length kb q true)
+          apart? (fn [x y] (and (:exact x)
+                                (or (and (:exact y) (not= (:exact x) (:exact y)))
+                                    (and (:min y) (< (:exact x) (:min y))))))
+          grounds (into (set (:grounds a)) (:grounds b))]
+      (cond
+        (or (apart? a b) (apart? b a)) {:kind :negates-arity :grounds grounds}
+        (= 1 (:exact a) (:exact b))    {:kind :negates-unary :grounds grounds}))))
+
+(defn binding-handle?
+  "Is the stored record at `h` a binding of a relation's length (`binding-of`)?"
+  [kb h]
+  (boolean (binding-pred kb h)))
+
 (defn kind-of
   "`:arity-descension` for the member handles `ms` of two exact bindings (`binding-of`)
-  of different lengths, else nil."
+  of different lengths; the kind `negates-clash` gives a lone `negates` declaration;
+  else nil."
   [kb ms]
-  (when (= 2 (count ms))
-    (let [[a b] (map #(some-> (p/get-sentex (:records kb) %) binding-of) ms)]
-      (when (and a b (= :exact (second a) (second b)) (not= (nth a 2) (nth b 2)))
-        :arity-descension))))
+  (case (count ms)
+    2 (let [[a b] (map #(some-> (p/get-sentex (:records kb) %) binding-of) ms)]
+        (when (and a b (= :exact (second a) (second b)) (not= (nth a 2) (nth b 2)))
+          :arity-descension))
+    1 (let [sx (p/get-sentex (:records kb) (first ms))]
+        (when (and sx (negates-declaration? sx))
+          (:kind (negates-clash kb (:sentence sx)))))
+    nil))
 
 (defn below-pair?
   "Is the member of the pair `ms` other than a binding of `q` a binding of a predicate
@@ -695,7 +784,7 @@
                    ms))))
 
 (def family
-  "The arity family's entry in `decide/registry`: the roster spellings it reads as
+  "The arity family's entry in `decide/registry`: the forced-monotonic spellings it reads as
   bindings, and the write hook that queues a binding's predicate (`note-arity!`) and
   holds a stored tuple breaking its functor's length in the `:out` forced set.  A
   recover empties the length entries and owes the shapes whole (`::owed`), which the
@@ -705,6 +794,7 @@
    :note!     (fn [kb _w sx stored?]
                 (note-arity! kb sx)
                 (note-class! kb sx stored?)
+                (when (and stored? (negates-declaration? sx)) (queue-negates! kb [(:id sx)]))
                 ;; every creation path passes here, so a tuple a mint, lift or rewrite
                 ;; stores is held OUT as an asserted one is (`checks/force-sentex!`)
                 (when (and stored? (inert-tuple? kb sx))
@@ -746,8 +836,8 @@
   :at [[:nogood-candidates ::out] [:nogood-candidates ::bound] [:nogood-candidates ::gen]
        [:nogood-candidates ::epoch] [:nogood-candidates ::owed] [:nogood-candidates ::fresh]
        [:nogood-candidates ::classes] [:nogood-candidates ::class-gen]
-       [:nogood-candidates ::class-epoch]]
-  :bound "one entry per functor with a tuple in the `:out` forced set, holding its inert lengths, one per predicate whose binding moved since the last settle pass, one per functor with a tuple decided inert since then on a shape not recorded, one per class-shaped record stored since then whose store path did not sync its class memberships, and the `genl` generation and epoch the last class sync read"
+       [:nogood-candidates ::class-epoch] [:nogood-candidates ::neg]]
+  :bound "one entry per functor with a tuple in the `:out` forced set, holding its inert lengths, one per predicate whose binding moved since the last settle pass, one per functor with a tuple decided inert since then on a shape not recorded, one per class-shaped record stored since then whose store path did not sync its class memberships, and the `genl` generation and epoch the last class sync read, and one per `negates` declaration stored or relabelled since the last pass"
   :note "the lengths of each functor whose tuples the `:out` forced set holds for breaking its length, recorded as a tuple is stored and at each refresh; the predicates a binding write or relabel queued, and the `genl` generation the last refresh read, which the settle drains (`drain!`), and the class-shaped records stored since the last pass (`take-classes!`) and the `genl` generation the last class sync read (`take-class-ends!`); a recover owes them whole (`::owed`), and the first drain rebuilds `::out` from the forced set and refreshes every functor"})
 
 (caches/register-derived

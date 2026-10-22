@@ -16,7 +16,7 @@
   (is (re-find #"belief-status" (:doc (meta #'v/in?)))
       "the raw-IN read points a caller at the diagnostic for contextual disagreement"))
 
-(tu/deftest-kb contextual-belief-status-separates-every-gate
+(tu/deftest-kb contextual-belief-status-separates-every-condition
   (tu/with-terms [bright gem CxTop CxSibling CxLeaf]
     (v/assert kb (list 'genlCx CxTop 'CxWell) 'CxUniverse {:strength :monotonic})
     (v/assert kb (list 'genlCx CxSibling 'CxWell) 'CxUniverse {:strength :monotonic})

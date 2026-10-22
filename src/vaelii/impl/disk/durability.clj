@@ -20,7 +20,9 @@
   (:require [clojure.string :as str]
             [taoensso.trove :as trove]
             [vaelii.impl.config :as config])
-  (:import [java.util.concurrent Executors ExecutorService ScheduledExecutorService TimeUnit]))
+  (:import [java.util.concurrent ConcurrentHashMap Executors ExecutorService
+            ScheduledExecutorService TimeUnit]
+           [java.util.concurrent.atomic AtomicBoolean]))
 
 (defn auto-compact?
   "Is background/opportunistic compaction enabled (`vaelii.disk.auto-compact`)?  Public
@@ -42,9 +44,9 @@
 (defonce ^:private compaction-in-flight (atom #{}))
 (defonce ^:private last-compact-check-ms
   ;; `{registrant-id ms}` — when each backend's dead ratio was last **asked for**, which
-  ;; is what `vaelii.disk.compact-min-interval-ms` throttles.  Stamped before the ratio is
-  ;; read and again when a compaction finishes, so the interval floors the probe and the
-  ;; rewrite alike.
+  ;; is what `vaelii.disk.compact-min-interval-ms` throttles.  Recorded before the ratio
+  ;; is read and again when a compaction finishes, so the interval floors the probe and
+  ;; the rewrite alike.
   (atom {}))
 (defonce ^:private compaction-paused
   ;; How many pauses are open.  A count and not a flag, so two imports that overlap each
@@ -87,8 +89,8 @@
   on the backend lock each time — pause for the load's duration and let the next tick
   compact once afterwards.  Each call opens one pause and is paired with one
   `resume-compaction!`, or the load is wrapped in `call-with-compaction-paused`; the
-  daemon stays paused while any pause is open.  Only the daemon's automatic firing is
-  gated: a manual `compact!` and the dead-ratio bookkeeping are untouched."
+  daemon stays paused while any pause is open.  Only the daemon's automatic firing
+  pauses: a manual `compact!` and the dead-ratio bookkeeping are untouched."
   [] (swap! compaction-paused inc) nil)
 
 (defn resume-compaction!
@@ -161,7 +163,7 @@
            ;;
            ;; It is the *early* skip, not the airtight one: it runs outside the
            ;; store's own lock, so a close can still land between here and
-           ;; `compact!` acquiring it.  What closes that window differs by store, and
+           ;; `compact!` acquiring it.  What closes that race window differs by store, and
            ;; only one of the two closes it on its own.  The disk KV does: it holds
            ;; its lock for the whole of `compact!` and consults its closed flag after
            ;; taking it, so a task already inside it blocks the close rather than
@@ -186,7 +188,7 @@
              (trove/log! {:level :error :msg (str "disk-durability auto-compact of " label
                                                   " failed: " (.getMessage t))}))
            (finally
-             ;; re-stamped at the *end* of the rewrite, so the floor is measured from
+             ;; recorded again at the *end* of the rewrite, so the floor is measured from
              ;; when the backend was last left alone rather than from when the probe
              ;; that queued this ran
              (swap! last-compact-check-ms assoc id (System/currentTimeMillis))
@@ -209,8 +211,8 @@
   "One pass over the registrants: probe each backend's dead ratio and queue a rewrite
   where it has crossed the threshold.
 
-  `vaelii.disk.compact-min-interval-ms` gates the probe as well as the rewrite: a backend
-  is probed at most once per interval, and a finished rewrite re-stamps it, so detection
+  `vaelii.disk.compact-min-interval-ms` limits the probe as well as the rewrite: a backend
+  is probed at most once per interval, and a finished rewrite records its time, so detection
   latency is bounded by the same interval.  A probe reads no file content.  The record
   store answers from the live frame bytes it maintains per kind as it writes
   (`record-store/dead-ratio`), and the KV store from its frame count (`kv/dead-ratio`)."
@@ -241,7 +243,7 @@
 (def ^:private close-phases
   "The order `close-all!` closes registrants in, lowest first.
 
-    :image   a derived structure written out *whole* on close and stamped against
+    :image   a derived structure written out *whole* on close and validated against
              another component's live state — the mapped index snapshot.  It has to be
              written while that component is still open, so it goes first
     :store   a component owning a WAL and file handles, closed after
@@ -249,15 +251,121 @@
   Registration order says nothing about this dependency: the registry holds every
   directory at once, a record store registers when its KB's `:records` axis resolves and
   the snapshot writer only after the whole KB value exists.  Closing in insertion order
-  therefore closes the records out from under the image's own stamp, which throws — and
-  the throw is caught and logged, so the image is simply never written.  `close-dir!`
-  runs the same two phases explicitly for one directory; this is the JVM-shutdown path."
+  therefore closes the records out from under the image's own fingerprint read, which
+  throws — and the throw is caught and logged, so the image is simply never written.
+  `close-dir!` runs the same two phases explicitly for one directory; this is the
+  JVM-shutdown path."
   {:image 0 :store 1})
 
 (defn- close-all! []
   ;; `sort-by` is stable, so registrants within a phase keep their registration order
   (doseq [entry (sort-by #(close-phases (:phase % :store) 1) (vals @registry))]
     (close-one-safely! entry)))
+
+;; ---- the public writes a shutdown waits for -------------------------------------
+;; docs/storage.md, "A shutdown under a running write".
+
+(defonce ^:private writes-in-flight
+  ;; thread id -> the op of the outermost public write that thread is running
+  (ConcurrentHashMap.))
+(defonce ^:private abort-requested (AtomicBoolean.))
+
+(def ^:dynamic *writing?*
+  "True for the extent of a public write `call-as-write` counts, so a nested one is
+  counted once."
+  false)
+
+(def ^:dynamic *nested-write?*
+  "True inside a public write that runs within another, which owns the unit a stop rolls
+  back."
+  false)
+
+(def ^:dynamic *abortable?*
+  "True while the running public write may stop at a clean point (`check-abort!`): only
+  inside `as-unit`.  A rollback binds it false, so the undo of a stopped write runs to its
+  end."
+  false)
+
+(defn call-as-write
+  "Run `f`, the public write `op`, counted in flight while it runs; a write nested in
+  another runs uncounted, under `*nested-write?*`."
+  [op f]
+  (if *writing?*
+    (binding [*nested-write?* true] (f))
+    (let [t (.getId (Thread/currentThread))]
+      (.put ^ConcurrentHashMap writes-in-flight t op)
+      (try (binding [*writing?* true] (f))
+           (finally (.remove ^ConcurrentHashMap writes-in-flight t))))))
+
+(defn as-unit
+  "Run `f`, the part of the outermost public write that a throw rolls back as a unit, with
+  a shutdown's stop request honoured at its clean points (`check-abort!`).  Inside a
+  nested write the enclosing write decides, so `f` runs under its binding."
+  [f]
+  (if *nested-write?* (f) (binding [*abortable?* true] (f))))
+
+(defn check-abort!
+  "Throw `:shutdown-abort` when a shutdown has asked the running public write to stop and
+  the write is inside `as-unit`.  Called at the write's clean points: after a rule firing
+  and at the start of a settle pass, where every record written so far has its premise
+  mark or its justification."
+  []
+  (when (and *abortable?* (.get ^AtomicBoolean abort-requested))
+    (throw (ex-info (str "the process is shutting down, and this write stopped at a clean"
+                         " point; its writes are rolled back as a unit")
+                    {:type :shutdown-abort}))))
+
+(def ^:private shutdown-wait-ms
+  "How long a shutdown waits for the running public writes to end on their own before it
+  asks them to stop (`check-abort!`)."
+  10000)
+
+(defn- running-ops
+  "The ops of the public writes in flight, sorted."
+  []
+  (vec (sort (vals writes-in-flight))))
+
+(defn- await-writes!
+  "Wait up to `ms` for no public write to be in flight; true when none is."
+  [ms]
+  (let [deadline (+ (System/currentTimeMillis) (long ms))]
+    (loop []
+      (cond (.isEmpty ^ConcurrentHashMap writes-in-flight) true
+            (>= (System/currentTimeMillis) deadline) false
+            :else (do (Thread/sleep 10) (recur))))))
+
+(defn quiesce-writes!
+  "Wait up to `:wait-ms` for the public writes in flight to end.  Past it, log at `:warn`,
+  ask each to stop at its next clean point (`check-abort!`), and wait up to `:unwind-ms`
+  (default `vaelii.disk.shutdown-unwind-ms`) more for it to end, logging the ops still
+  running at `:error`.  Returns true when no write is in flight.  Under `:release? true`
+  the stop request is withdrawn on return; the shutdown hook keeps it, so a write started
+  during the close stops too."
+  [{:keys [wait-ms unwind-ms release?] :or {wait-ms shutdown-wait-ms}}]
+  (let [unwind-ms (or unwind-ms (config/disk-shutdown-unwind-ms))]
+    (try
+      (or (await-writes! wait-ms)
+          (do (trove/log! {:level :warn :id ::shutdown-write-running
+                           :msg (str "a write was still running " wait-ms "ms into the"
+                                     " shutdown; asking it to stop at its next clean point")
+                           :data {:ops (running-ops)}})
+              (.set ^AtomicBoolean abort-requested true)
+              (or (await-writes! unwind-ms)
+                  (let [ops (running-ops)]
+                    (trove/log! {:level :error :id ::shutdown-write-unwound-late
+                                 :msg (str "the writes " (pr-str ops) " were still running "
+                                           unwind-ms "ms (vaelii.disk.shutdown-unwind-ms)"
+                                           " after the stop request; closing the stores under"
+                                           " them, as a crash would, and the next open reports"
+                                           " the records they left unsupported")
+                                 :data {:ops ops :unwind-ms unwind-ms}})
+                    false))))
+      (finally
+        (when release? (.set ^AtomicBoolean abort-requested false))))))
+
+(defn- shutdown! []
+  (quiesce-writes! {})
+  (close-all!))
 
 (defn- start-scheduler! [interval-ms]
   (when (and (pos? interval-ms) (nil? @scheduler))
@@ -275,7 +383,7 @@
   (when (nil? @shutdown-hook)
     (locking lifecycle
       (when (nil? @shutdown-hook)
-        (let [t (Thread. ^Runnable close-all! "disk-durability-shutdown")]
+        (let [t (Thread. ^Runnable shutdown! "disk-durability-shutdown")]
           (.addShutdownHook (Runtime/getRuntime) t)
           (reset! shutdown-hook t))))))
 

@@ -24,7 +24,7 @@
   **Snapshot reads through the ANCESTOR SET.**  A channel sees its agents' own-context sentexes up
   the `genlCx` ancestor set; `sentexes-matching` does NOT walk the ancestor set (it scopes to a context's
   own sentexes) but `query` does — so the snapshot is `channel/query`, whose solution set is
-  the same view the standing-query feed delivers.
+  the same set the standing-query feed delivers.
 
   Wire-only: the ring, the cursor, and lag exist on the wire feed (`vaelii.host.subscribe`).
   An in-process medium has no ring to fall off, so `-feed-open`/`-feed-poll` throw there and
@@ -87,13 +87,13 @@
   [handle goal context]
   (into #{} (map #(ground goal %)) (ch/query handle goal context)))
 
-;; ---- the consumer: a materialized view kept in sync ----------------------
+;; ---- the consumer: a replica kept in sync -------------------------------
 
 (defn open
   "A CDC consumer for `goal`/`context` over the WIRE channel `handle`, with a client-side
-  `store` for the durable cursor.  Holds a materialized view — a SET of sentences — the
-  agent's replica of the channel's truth for `goal`.  `initial-view` seeds it: on a restart,
-  pass the view the agent persisted (its durable state), so an in-ring resume tails onto it
+  `store` for the durable cursor.  Holds a replica — a SET of sentences — of the
+  channel's truth for `goal`.  `initial-replica` seeds it: on a restart,
+  pass the replica the agent persisted (its durable state), so an in-ring resume tails onto it
   without a snapshot; omit it (empty) for a fresh agent.
 
   **One consumer, one driving thread.**  A consumer is an agent's replica and `sync!` is
@@ -101,41 +101,41 @@
   and the cursor makes the reason concrete — a stored position is a claim about what this
   replica has applied, and two drivers each advancing it apply half the stream apiece.
   `sync!` takes the consumer's own monitor (`:lock`) so an interleaving cannot corrupt the
-  view outright, but the serialization it buys is a floor, not a licence: what the second
+  replica outright, but the serialization it buys is a floor, not a licence: what the second
   caller gets is whatever the first left, which is rarely what it asked for."
   ([handle goal context store] (open handle goal context store #{}))
-  ([handle goal context store initial-view]
-   {:handle handle :goal goal :context context :store store :view (atom initial-view)
+  ([handle goal context store initial-replica]
+   {:handle handle :goal goal :context context :store store :replica (atom initial-replica)
     ;; the monitor `sync!` holds — per consumer, so two consumers never contend, and
     ;; uncontended within one because a consumer has a single driving thread
     :lock (Object.)}))
 
-(defn view-of
-  "The consumer's current materialized view — the SET of sentences it believes for its
+(defn replica-of
+  "The consumer's current replica — the SET of sentences it believes for its
   goal.  A plain read of the replica; `sync!` is what keeps it current."
   [consumer]
-  @(:view consumer))
+  @(:replica consumer))
 
 (defn- apply-events
-  "Fold feed `events` into `view`: add every `:believed-added` sentence, drop every
+  "Fold feed `events` into `replica`: add every `:believed-added` sentence, drop every
   `:believed-removed` one.  Set-based on sentence identity, so replaying an event a second
-  time is a no-op (the channel's idempotence) — a re-read and a replayed tail reach the same view."
-  [view events]
+  time is a no-op (the channel's idempotence) — a re-read and a replayed tail reach the same replica."
+  [replica events]
   (reduce (fn [v e]
             (as-> v v
               (into v (map :sentence) (:believed-added e))
               (reduce disj v (map :sentence (:believed-removed e)))))
-          view events))
+          replica events))
 
 (defn sync!
-  "Advance the consumer to the channel's current state and return its view (a set of
+  "Advance the consumer to the channel's current state and return its replica (a set of
   sentences).  CDC snapshot+tail:
 
   - **Resume** from the stored cursor when there is one and it is still in the ring: apply
-    the tailed events onto the (durable) view, no snapshot needed — the in-ring happy path.
+    the tailed events onto the (durable) replica, no snapshot needed — the in-ring happy path.
   - **Snapshot** when `poll` reports `:lagged` non-zero (the cursor fell off the ring) or the
     subscription was reaped (`:unknown-subscription`): re-read current state, reconcile the
-    view set-based, and resume tailing from the newest cursor.  This is the correctness
+    replica set-based, and resume tailing from the newest cursor.  This is the correctness
     core — the failure it prevents is SILENT loss, so it re-reads rather than trusting a
     stream it knows is incomplete.
   - **Bootstrap** a fresh consumer (no stored cursor): open a subscription, snapshot, tail.
@@ -148,10 +148,10 @@
   in a `sync!` that re-reads the whole context forever without returning.
 
   Polls non-blocking and drains to the ring's head, persisting the final position.
-  Idempotent: calling it again when nothing moved is a no-op that returns the same view.
+  Idempotent: calling it again when nothing moved is a no-op that returns the same replica.
 
   **One driving thread per consumer** (`open`).  The body is a read-modify-write over the
-  stored cursor and the view, so it runs under the consumer's own monitor — cheap, and
+  stored cursor and the replica, so it runs under the consumer's own monitor — cheap, and
   uncontended when the contract above is kept.  The monitor keeps two callers from
   corrupting the replica; it does not make two drivers a sensible arrangement.
 
@@ -159,15 +159,15 @@
   transport that throws something else — or an `ex-info` with no `:type` at all — is still
   the poll not having answered: it is re-thrown with the original as the cause rather than
   falling through to the drained-to-head arm, which would persist a nil cursor and hand
-  back the stale view as though the stream were current.
+  back the stale replica as though the stream were current.
 
   **A pass that throws closes the subscription it opened** (`-feed-close`), unless the
   stored position names it.  Nothing else holds that token, so the next pass opens
   another, and the daemon would keep each one until its idle reap."
   [consumer]
-  (let [{:keys [handle goal context store view lock]} consumer
+  (let [{:keys [handle goal context store replica lock]} consumer
         m         (:medium handle)
-        snapshot! (fn [] (reset! view (snapshot handle goal context)))
+        snapshot! (fn [] (reset! replica (snapshot handle goal context)))
         ;; the subscription this pass opened last, the one a throw leaves unstored
         opened    (volatile! nil)
         open!     (fn [] (let [sub (koinii-types/-feed-open m goal context)]
@@ -193,7 +193,7 @@
                   ;; below branch on `err` itself and read the type only to *classify* it
                   err-type (:type (ex-data err))]
               (cond
-                ;; the subscription was reaped (idle past the daemon's window) — re-open,
+                ;; the subscription was reaped (idle past the daemon's idle window) — re-open,
                 ;; snapshot, and tail the fresh subscription (its early events overlap the
                 ;; snapshot; set-safe).  Bounded on the same budget a lag spends: a daemon
                 ;; whose idle window closes between every open and the poll that follows
@@ -217,9 +217,9 @@
                 (some? err)
                 ;; The default is a **keyword literal**, and the pass-through is the
                 ;; override laid over it — not `(or err-type :koinii/feed-error)`, whose
-                ;; `:type` is a form.  The refusal rosters read the sources for a literal
+                ;; `:type` is a form.  The refusal-type tests read the sources for a literal
                 ;; `:type :<kw>` inside an `ex-info` (`type_contract_test`), so a
-                ;; form-valued one is a word of the vocabulary neither roster can see:
+                ;; form-valued one is a word of the vocabulary neither test can see:
                 ;; untested and undocumented while every check stays green.
                 (throw (ex-info (str "koinii: catch-up feed error — the poll on subscription "
                                      (pr-str token) " answered "
@@ -248,7 +248,7 @@
                     ;; handed back — the surviving ring events are already in the snapshot.
                     ;; **Every** lag re-snapshots, not only the first: a second lag in one
                     ;; pass means events were dropped AFTER the earlier snapshot, so applying
-                    ;; the partial batch onto that view would install a hole and advance the
+                    ;; the partial batch onto that replica would install a hole and advance the
                     ;; cursor past it — the exact silent loss this whole path exists to
                     ;; prevent.  A bound catches a consumer that cannot keep up at all,
                     ;; which is a real condition to surface rather than thrash on forever.
@@ -262,14 +262,14 @@
                                       {:type :koinii/catchup-thrashing :condition :lagged
                                        :token token :snapshots snaps})))
 
-                    ;; drained to the head — persist the position and return the view
+                    ;; drained to the head — persist the position and return the replica
                     (empty? events)
                     (do (write-position! store {:token token :cursor next-cursor})
-                        @view)
+                        @replica)
 
-                    ;; in-ring: apply the batch onto the durable view and keep draining
+                    ;; in-ring: apply the batch onto the durable replica and keep draining
                     :else
-                    (do (swap! view apply-events events)
+                    (do (swap! replica apply-events events)
                         (write-position! store {:token token :cursor next-cursor})
                         (recur {:token token :cursor next-cursor} snaps))))))))
         (catch Throwable t

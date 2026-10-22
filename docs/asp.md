@@ -136,7 +136,7 @@ versions: the backends load a program differently (ASPIF text against the backen
 accessors), so their searches differ, and a program near the limit can finish on one and
 not the other. Which backend solves is configuration, not speed — `VAELII_ASP_SOLVER`,
 and in auto mode the program's size and whether libclingo loads — so two installations
-that must agree on such a program pin `VAELII_ASP_SOLVER`.
+that must agree on such a program set `VAELII_ASP_SOLVER`.
 
 ### The time limit
 
@@ -172,7 +172,7 @@ solve after **about one**. Both are correct — every individual solve was cance
 time, and what the readings show is the multiplier rather than a wall clock.
 
 So size the variable against the *solve*, and read the table for what an operation then
-costs. `asp_edge_test` and `solve_context_test` pin the counts, because a doc that names
+costs. `asp_edge_test` and `solve_context_test` assert the counts, because a doc that names
 them and code that changes them is worse than either alone.
 
 An interrupted solve that found no model reports `:interrupted`, and **that is not an
@@ -303,7 +303,7 @@ depend on the order the knowledge arrived — the engine-wide invariant in
   render in hash order.
 - Level 0 makes defeating the greatest content-key cheapest, mirroring the stub.
 
-`asp_edge_test` pins the three directly, on hand-built configurations whose handles are
+`asp_edge_test` asserts the three directly, on hand-built configurations whose handles are
 swapped so that a handle-keyed allocation would render a different program from a
 content-keyed one. It separately runs all 24 orderings of a Nixon diamond through a KB
 with `edge-solver` installed and demands one distinct outcome — but that permutation
@@ -341,7 +341,7 @@ empty sets, not two `:supportable` handles. A Nixon diamond is exactly that shap
 makes it the illustration `classify` cannot be shown with: to classify one, commit to a
 labeling first with `do/labeling` ([labeling.md](labeling.md)), which is the mechanism
 that does build a program from a dilemma. `asp_edge_test`'s
-`the-asp-solver-does-not-decide-a-nixon-diamond` pins the absence.
+`the-asp-solver-does-not-decide-a-nixon-diamond` asserts the absence.
 
 ### Two things keep `classify` from reporting a tie as forced
 
@@ -358,7 +358,7 @@ why the KB carries it.
 
 ### Concert with the TMS
 
-Two invariants, held by construction and pinned in `asp_label_test`:
+Two invariants, held by construction and asserted in `asp_label_test`:
 
 ```
 :true  ⊆ believed          cautious holds in the committed model, which is an optimum
@@ -441,7 +441,7 @@ solver entirely ([stp.md](stp.md)).
 
 ## Tests
 
-- `asp_aspif_test` — the lower layer. The wire format is pinned *literally*, because
+- `asp_aspif_test` — the lower layer. The wire format is frozen *literally*, because
   ASPIF is an external contract with clingo and clasp: a silent encoding change is
   not a refactor, it is a different program. Semantics are then checked by solving.
 - `asp_edge_test` — the translation and the `Solver` contract: minimal defeat,
@@ -451,5 +451,5 @@ solver entirely ([stp.md](stp.md)).
 
 A test that needs a solver skips when no backend is reachable, rather than silently
 asserting the stub's behaviour and proving nothing — the whole of `asp_label_test` and
-nearly all of `asp_edge_test`. `asp_aspif_test` gates only the tests that solve: the
+nearly all of `asp_edge_test`. `asp_aspif_test` makes only the tests that solve conditional on a solver: the
 wire format and the atom table are checkable without a backend, so those always run.

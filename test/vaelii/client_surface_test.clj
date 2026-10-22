@@ -77,7 +77,7 @@
       (doseq [nm (sort (keys (wrappers ns-sym)))]
         (is (contains? by-name nm)
             (str ns-sym "/" nm " names no op — either it is an op wrapper whose op went"
-                 " away, or it belongs in this test's hand-written roster"))))))
+                 " away, or it belongs in this test's hand-written list"))))))
 
 (deftest no-op-resolves-under-both-spellings
   ;; The generator tries the bare `vaelii.core` name and then the `!`-marked one, since
@@ -281,7 +281,7 @@
   ;; The client's floor under the promise that every failure carries a `:type`
   ;; (`docs/operations.md`): a reply from an older daemon, or from something standing in
   ;; front of one, may carry none — and an `ex-info` with none is the one refusal a
-  ;; caller cannot discriminate on at all.  `send-edn` is pinned, so no socket opens.
+  ;; caller cannot discriminate on at all.  `send-edn` is redefined, so no socket opens.
   (let [conn     (client/client "localhost" 4200 {:token nil})
         data-of  (fn [reply]
                    (with-redefs [client/send-edn (fn [& _] [400 reply])]

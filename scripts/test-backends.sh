@@ -116,7 +116,7 @@ case "${1:-}" in
   --no-tty) SUITE_TTY=0; shift ;;
 esac
 
-# The roster, and the environment that selects each: `scripts/lib/suite-configs.sh`,
+# The configuration set, and the environment that selects each: `scripts/lib/suite-configs.sh`,
 # shared with `test-sweeps.sh` and `test-matrix.sh` so a new backend is one edit.
 # `overlay` is a ninth run and not a ninth pair: it is the DECORATOR — a private
 # writable fork over a shared read-only base (docs/overlay.md) — with the base left
@@ -322,11 +322,11 @@ for backend in "${BACKENDS[@]}"; do
   # whole group STOPS: 0% CPU, an empty log, no output ever, indistinguishable
   # from a hang until `ps` shows the state as `T`.  `lein test` has no use for
   # stdin, so give it none.
-  # the stamp first, then append: a log has to say what it was run *against*, or a
+  # the header first, then append: a log has to say what it was run *against*, or a
   # count that moved because the tree moved is indistinguishable from one that moved
   # because a run skipped something.  Labelled with the backend, so a per-config log
   # names its config on line 1 as well as the revision
-  revision_stamp "backend $backend" > "$log"
+  revision_header "backend $backend" > "$log"
   RUN_START=$start                                 # the clock a `lines` run times against
   env "${envv[@]}" lein test "$SELECTOR" < /dev/null 2>&1 | tee -a "$log" | ns_progress &
   child_pid=$!
@@ -388,7 +388,7 @@ fi
 # ---- did every run run the same suite? ---------------------------------------
 # A green set of runs has still said nothing if one of them ran fewer assertions than the
 # rest: a namespace that failed to load, a `deftest` that stood aside without saying so, a
-# gate that inherited a switch and measured nothing.  Every one of those is green.
+# check that inherited a switch and measured nothing.  Every one of those is green.
 # `config_expected_delta` in suite-configs.sh expects no shortfall anywhere, and says why
 # no configuration stands aside; any shortfall is reported here and fails the run.  Skipped when something
 # already failed — an error aborts the rest of its namespace, so the shortfall means

@@ -30,7 +30,7 @@
 (def ^:private ^:const F-RULE-A  4)
 (def ^:private ^:const F-RULE-C  5)
 (def ^:private ^:const F-EXC-P   6)
-(def ^:private ^:const F-ROSTER  7)
+(def ^:private ^:const F-WATCHED 7)
 ;; The count tries' nodes, from 8 up: their members are contexts, held as their ids in the
 ;; shared dictionary (`token-members?`).  `[:argument-root :children [pred pos term]]` rides
 ;; the `(pred, pos)` scope; the other three nodes `[key]` hold `key` in the term field and
@@ -72,7 +72,7 @@
 (def ^:private ^:const F-ABIND-CTX  25)
 ;; The name sets, their members held as ids in the shared dictionary: the keys a handle
 ;; installs `[:tax-installs h]`, its term field the handle itself (`raw-term?`); the slot
-;; roster `[:argument-slot pos term]`, its position in `pos`; one family per `[tag name]`
+;; predicate set `[:argument-slot pos term]`, its position in `pos`; one family per `[tag name]`
 ;; set; and every one-key set `[tag]` under one family, its term the tag.
 (def ^:private ^:const F-TAX-INST   26)
 (def ^:private ^:const F-SLOT       27)
@@ -86,8 +86,11 @@
 ;; are: its leaf `[:shape-tuple :handles [f n ctx]]` and its node's children.
 (def ^:private ^:const F-SHAPE      34)
 (def ^:private ^:const F-SHAPE-CTX  35)
+;; The opposed bodies by functor, two name sets `[tag f]` like `[:unary-denied pred]`.
+(def ^:private ^:const F-OFUNC      36)
+(def ^:private ^:const F-OBETWEEN   37)
 
-(def ^:private roster-key (bit-shift-left (long F-ROSTER) 56))   ; the exception roster, a single posting
+(def ^:private watched-key (bit-shift-left (long F-WATCHED) 56))  ; the watched-rule set, a single posting
 
 ;; Each field is masked to its own width, and those widths are the invariant that makes
 ;; `unpack` the *exact* inverse of `route` rather than an inverse over the values the
@@ -239,7 +242,7 @@
   - `[:leaf-only f]` — a count trie whose leaf `[ctx]` packs under `f`, its node and
     count in the fallback;
   - `[:arg leaf node]` — the argument trie, its count read off the leaves;
-  - `[:exception f]` — `[tag pred]` under `f`, and the roster key;
+  - `[:exception f]` — `[tag pred]` under `f`, and the watched-rule key;
   - `[:names f]` — `[tag name]` under `f`, a set of names;
   - `[:slot f]` — `[tag pos name]` under `f`, `pos` in the position field, a set of names;
   - `[:by-handle f]` — `[tag h]` under `f`, the handle in the term field, a set of names;
@@ -269,9 +272,11 @@
    :unary-slot           [:names F-USLOT]
    :unary-kept           [:names F-UKEPT]
    :unary-denied         [:names F-UDENIED]
+   :opposed-functor      [:names F-OFUNC]
+   :opposed-between      [:names F-OBETWEEN]
    :arity-binding-kinds  [:names F-ABKINDS]
    :shape-lengths        [:names F-SHAPELEN]
-   :term-roster          [:single F-SINGLE]
+   :term-names           [:single F-SINGLE]
    :unary-multi          [:single F-SINGLE]
    :unary-kept-types     [:single F-SINGLE]
    :unary-denied-types   [:single F-SINGLE]
@@ -301,7 +306,7 @@
                      :count    :count
                      :fallback)
         :exception (if (= :rules (nth k 1))
-                     roster-key                                     ; already a boxed Long
+                     watched-key                                    ; already a boxed Long
                      (fam-key dict (nth r 1) 0 (nth k 1) intern?))
         :names     (fam-key dict (nth r 1) 0 (nth k 1) intern?)
         :slot      (fam-key dict (nth r 1) (nth k 1) (nth k 2) intern?)
@@ -335,8 +340,8 @@
 
 (def ^:private raw-term-families
   "True where the packed key's term field is not a token id, so a snapshot's remap leaves
-  it alone: the exception roster's key, and a handle's installed keys."
-  (doto (boolean-array 256) (aset (int F-ROSTER) true) (aset (int F-TAX-INST) true)))
+  it alone: the watched-rule set's key, and a handle's installed keys."
+  (doto (boolean-array 256) (aset (int F-WATCHED) true) (aset (int F-TAX-INST) true)))
 
 (defn- token-members?
   "Does packed key `pk` hold token ids (a node's contexts, a set's names) rather than
@@ -399,7 +404,9 @@
       32 [:shape-lengths term]
       33 [term]
       34 (nleaf :shape-tuple)
-      35 [:shape-tuple :children (node)])))
+      35 [:shape-tuple :children (node)]
+      36 [:opposed-functor term]
+      37 [:opposed-between term])))
 
 ;; ---- the mapped tail ----------------------------------------------------
 ;; A snapshot's roots are three columns: the packed keys sorted ascending (`mkeys`), the

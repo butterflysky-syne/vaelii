@@ -112,7 +112,7 @@
   ;; `(reached NodeN)` rests on `(reached NodeN-1)` rests on … — no repeated handle,
   ;; so the cycle guard never fires and only the depth cap stands between the walk
   ;; and an unbounded proof tree.  The walk itself is iterative, so its depth is not
-  ;; the JVM stack's depth — pinned below on a deliberately small stack.
+  ;; the JVM stack's depth — asserted below on a deliberately small stack.
   (tu/with-terms [nextOf reached CxChain]
     (let [n     300
           nodes (vec (repeatedly (inc n) #(tu/tmp-ind "Node")))]
@@ -141,7 +141,7 @@
               "and a small one truncates sooner"))
         (testing "the deep walk spends no JVM stack: it returns on a small one"
           ;; The regression this closed: `why` was real stack recursion, and this very
-          ;; chain overflowed a Linux CI stack the macOS one absorbed.  Pinned platform-
+          ;; chain overflowed a Linux CI stack the macOS one absorbed.  Asserted platform-
           ;; independently by running the 300-deep walk on a thread with a 256 KB stack —
           ;; ample for the iterative walk, far short of what 300 recursive frames need.
           (let [out (atom nil), err (atom nil)

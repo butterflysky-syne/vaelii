@@ -116,7 +116,7 @@
     ;; A declaration naming a predicate nothing can state: `different` is refused by
     ;; `wff`, so no claim about it can exist and `TransitiveInArgProver` will find none.
     ;; The guard fires anyway — it reads the declaration, not the claims — and that is
-    ;; the point being pinned.
+    ;; the point being asserted.
     (v/assert kb (list 'transitiveInArgInverse 'different 1 'genl) ctx)
     (let [plan (v/query-plan kb (list 'different Ann Bob) ctx)]
       (is (= 100 (:completeness (prover-entry plan "DifferentProver")))

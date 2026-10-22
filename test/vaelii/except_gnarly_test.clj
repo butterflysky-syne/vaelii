@@ -21,9 +21,10 @@
 ;; ---- helpers ------------------------------------------------------------
 
 (defn- ex-type
-  "The `:type` on the ex-info a thunk throws, or nil if it does not throw."
+  "The `:type` a write thunk meets: the ex-info it throws, or the argument conviction its
+  fact is held inert under (`tu/write-type`), or nil."
   [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+  (tu/write-type tu/*kb* f))
 
 ;; ---- 1. cross-context except --------------------------------------------
 
@@ -340,11 +341,11 @@
                     edges)
         _     (doseq [[e c] excepted]
                 (vswap! hs conj (v/assert kb (list 'except (sx/sentex-handle (by e))) c M)))
-        views (fn [] (into {} (map (fn [d] [d [(set (tax/context-up tx d)) (set (tax/context-up-global tx d))]]))
-                           (tax/context-down-global tx sub)))
-        before (views)
+        ancestor-sets (fn [] (into {} (map (fn [d] [d [(set (tax/context-up tx d)) (set (tax/context-up-global tx d))]]))
+                                   (tax/context-down-global tx sub)))
+        before (ancestor-sets)
         eh     (v/assert kb (list 'genlCx sub super) 'CxUniverse M)
-        after  (views)
+        after  (ancestor-sets)
         diff   (fn [i] (into #{} (mapcat (fn [[d v]] (remove (nth (get before d) i #{}) (nth v i)))) after))
         shown  (special/context-move kb sub super)
         _      (v/retract! kb eh)
@@ -433,7 +434,7 @@
   ;; A genlCx declaration is forced into CxUniverse, but its effect can be excepted
   ;; from a concrete reader.  From that reader's ancestor set it behaves as if retracted;
   ;; an ancestor that cannot see the exception keeps the edge.  The ordinary genl
-  ;; test below pins the degenerate declaration-and-except-in-one-context case.
+  ;; test below asserts the degenerate declaration-and-except-in-one-context case.
   (tu/with-terms [shiny gold CxChild CxParent]
     (v/assert kb (list 'genlCx CxParent 'CxWell) 'CxUniverse {:strength :monotonic})
     (let [edge-h (v/assert kb (list 'genlCx CxChild CxParent) 'CxUniverse {:strength :monotonic})]
@@ -509,9 +510,9 @@
               "read again from the memo"))))))
 
 (tu/deftest-kb an-except-on-an-unrelated-fact-leaves-context-down-on-the-raw-path
-  ;; The whole-KB gate says an except exists; the relation gate says whether it reaches
-  ;; a `genlCx` supporter.  One on an ordinary fact reaches none, so no candidate pays a
-  ;; filtered walk — the answer is the raw closure, which is the same set.
+  ;; The whole-KB presence check says an except exists; the relation check says whether
+  ;; it reaches a `genlCx` supporter.  One on an ordinary fact reaches none, so no
+  ;; candidate pays a filtered walk — the answer is the raw closure, which is the same set.
   (tu/with-terms [shiny gold CxChild CxParent]
     (let [tx (reasoning/taxonomy kb)]
       (v/assert kb (list 'genlCx CxParent 'CxWell) 'CxUniverse {:strength :monotonic})
@@ -580,7 +581,7 @@
 ;; A visibility `except` is one of the structural integrate arms — nothing about its
 ;; functor is in the special-predicate table, so it is dispatched on the sentence's
 ;; shape (`special/structural-integrate`).  The derivation path has to reach that arm
-;; too, and the two halves of what it does there are what these pin: `recheck-except`
+;; too, and the two halves of what it does there are what these assert: `recheck-except`
 ;; queues the firings that used the hidden handle, and the scoped reads, memoized under
 ;; the change clock, read the except at the next read.
 ;;
@@ -593,8 +594,8 @@
   ;; The first half.  The rule fires while nothing hides its antecedent; the except then
   ;; arrives **by derivation**, and the conclusion is left resting on a fact its own
   ;; context can no longer see unless the derivation path queues the sweep.
-  ;; `hide` is put on the forced-monotonic roster where the rule is stated, so a rule
-  ;; reading it may conclude an `except` there (docs/nmtms.md, "The forced-monotonic roster")
+  ;; `hide` is made forced-monotonic where the rule is stated, so a rule
+  ;; reading it may conclude an `except` there (docs/nmtms.md, "The forced-monotonic set")
   (tu/with-terms [q p hide Aa trigger CxSub]
     (v/assert kb (list 'forced_monotonic_predicate hide) CxSub)
     (v/assert kb (list 'genlCx CxSub 'CxWell) 'CxUniverse {:strength :monotonic})
@@ -613,7 +614,7 @@
 
 (tu/deftest-kb a-rule-derived-except-retires-the-scoped-reads-a-stated-one-retires
   ;; The second half, and the one a memo can hide.  `relation-filter-active?` and
-  ;; `context-down`'s reverse answer are both memoized; the roster they read is written
+  ;; `context-down`'s reverse answer are both memoized; the except set they read is written
   ;; at the store primitive.  A memo the derived except does not retire hides it from
   ;; every warm read — and the KB then disagrees with `recover` over one store, which is
   ;; the property the derivation path exists to keep.
@@ -920,10 +921,11 @@
      (v/assert kb (list 'genl root 'thing) CxAG {:strength :monotonic})
      (v/assert kb (list 'genl sub root) CxAG {:strength :monotonic})
      (let [agh (v/assert kb (list 'genlArg typeRel 1 root) CxAG {:strength :monotonic})]
-       (testing "genlArg constraint is active — subtype passes, sibling fails"
+       (testing "genlArg constraint is active — subtype passes, a disjoint sibling fails"
          (is (v/assert kb (list typeRel sub (tu/tmp-type)) CxAG))
          (tu/with-terms [other]
            (v/assert kb (list 'genl other 'thing) CxAG {:strength :monotonic})
+           (v/assert kb (list 'disjoint other root) CxAG {:strength :monotonic})
            (is (= :arg-genl (ex-type #(v/assert kb (list typeRel other (tu/tmp-type)) CxAG))))))
        (let [eh (v/assert kb (list 'except (sx/sentex-handle agh)) CxAG {:strength :monotonic})]
          (testing "the genlArg sentex is hidden from query"

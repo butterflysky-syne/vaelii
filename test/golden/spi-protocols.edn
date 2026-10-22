@@ -8,8 +8,8 @@
  vaelii.impl.protocols/BulkLoading
  {open-justification-sink "[[store opts]]",
   open-sentex-sink "[[store opts]]"},
- vaelii.impl.protocols/ImageStamping
- {belief-stamp "[[store]]", index-stamp "[[store]]"},
+ vaelii.impl.protocols/ImageFingerprinting
+ {belief-fingerprint "[[store]]", index-fingerprint "[[store]]"},
  vaelii.impl.protocols/IndexStore
  {children "[[store prefix]]",
   clear-index! "[[store]]",

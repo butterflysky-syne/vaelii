@@ -77,9 +77,9 @@
   ## Validity is the whole design
 
   The failure to fear is a stale snapshot that passes its check: one can be perfectly
-  self-consistent and describe a KB that no longer exists.  So the stamp covers the
-  **records**, not the snapshot's own bytes, and it is checked on **every** open — never
-  behind a flag.  Three things must agree or the snapshot is discarded and `reindex` runs:
+  self-consistent and describe a KB that no longer exists.  So the snapshot carries a
+  fingerprint of the **records**, not of its own bytes, and the fingerprint is checked on
+  **every** open — never behind a flag.  Three things must agree or the snapshot is discarded and `reindex` runs:
   the format and `kv/index-layout-version`, the byte-order tag (the sections are always
   little-endian, so this guards a future format that changes the order, not this machine's
   architecture), and `record-store/slot-fingerprint`.  The
@@ -115,6 +115,7 @@
             [vaelii.impl.disk.tokens :as dtok]
             [vaelii.impl.io.thaw :as safe]
             [vaelii.impl.kv :as kv]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.sentex :as sx]
             [vaelii.impl.tokens :as tok]
@@ -248,8 +249,8 @@
   moves it (`note-image!`).  The *clock* is a different claim — how recently a refresh was
   attempted — and it has to advance whether or not one landed: a save that throws, and a
   save that declines (`:unchanged`, `:empty`), both leave the drift exactly where it was,
-  so a cadence stamped only on success reads due again on the very next write.  That turns
-  a broken directory into an image-sized write per assert.  Stamped here, it retries once
+  so a cadence recorded only on success reads due again on the very next write.  That turns
+  a broken directory into an image-sized write per assert.  Recorded here, it retries once
   a floor, which is the cadence the floor exists to impose.
 
   A no-op for a directory with no cadence state: `due?` cannot fire without one, so
@@ -528,10 +529,11 @@
     {:keys k :handles h :scopes a}))
 
 (defn save!
-  "Write a mapped snapshot of `store` (a columnar `IndexStore`) under `dir/index`, stamped
-  with `(stamp-fn)`.  Returns `{:index :saved …}`, or `{:index :skipped :reason r}`.
+  "Write a mapped snapshot of `store` (a columnar `IndexStore`) under `dir/index`, with
+  `(fingerprint-fn)` as its records fingerprint.  Returns `{:index :saved …}`, or `{:index
+  :skipped :reason r}`.
 
-  The stamp arrives as a thunk rather than as a record store: what an image is valid
+  The fingerprint arrives as a thunk rather than as a record store: what an image is valid
   against is a *fingerprint of the records*, and which store computed it is none of this
   namespace's business — `record-store/slot-fingerprint` is what the disk KB passes.
   A thunk, so `load!` can decline before paying for it.
@@ -546,11 +548,11 @@
   once all of them are complete, so a throw anywhere before that leaves the previous
   image whole and readable, **and takes the temps it had written with it**: a section is
   the size of the index, and one left behind by a save that never committed is a file
-  nothing reads and nothing else deletes.  The stamp is taken *first*, before a byte
+  nothing reads and nothing else deletes.  The fingerprint is taken *first*, before a byte
   moves, because it is the one input that lives in another component: on the shutdown
   path that component can already be closed, and taking it late would trade a working
   image for none."
-  [dir store stamp-fn]
+  [dir store fingerprint-fn]
   (let [root (snapshot-root dir)]
     (f/ensure-dir! root)
     (cond
@@ -570,91 +572,92 @@
       {:index :skipped :reason :unchanged}
 
       :else
-      (let [t0    (System/nanoTime)
-            stamp (stamp-fn)
-            ;; **Freezing the live trie under an unconsumed lazy read is safe**, and it is
-            ;; worth noting so, because the write entry point reaches here mid-life while a caller
-            ;; may be holding one: `core/sentexes-matching` promises a seq that is lazy over
-            ;; live state, and asserting while walking one is the supported pattern
-            ;; `forward-chain` is built on.  What makes it safe is that an index read is
-            ;; eager *per read* — `res/candidate-handles` has realized its handles before
-            ;; `match-one` returns, and `t-lookup` builds its answer with `into #{}` — so no
-            ;; walk is ever part-way through the trie when this runs.  What stays lazy above
-            ;; is the `get-sentex` per handle, which is the record store's, and at a variable
-            ;; context one whole index read per reader (`vantage/fan-distinct`), which lands
-            ;; either side of the freeze and never inside it.  The read primitives dispatch
-            ;; on `frozen?` at call time (`vaelii.impl.columnar`), so the reader after this
-            ;; reads the CSR and answers the same set.
-            _     (col/compact! store)
-            csr   (snapshot-types/snapshot-read (:trie store) nil)
-            dict  (:dict store)
-            rts   (:roots store)
-            tmp   #(str % ".tmp")
-            ;; named out here so the `finally` can reach them: a save that throws
-            ;; part-way leaves the previous image whole, but it also leaves behind
-            ;; whatever `.tmp` sections it had already written — index-sized files,
-            ;; which on a KB that is never reopened sit in the directory for good.
-            ;; They are cleared on the way out unless the meta committed, and deleting
-            ;; a temp that was already renamed is a harmless false.
-            temps [(tmp (trie-path root)) (tmp (roots-path root)) (tmp (fallback-path root))]
-            done  (volatile! false)
-            ;; this fn's own handle on the durable dictionary, and every step below it
-            ;; can throw — a full disk mid-write, a mapped section that will not read.
-            ;; It closes in a `finally`, or a failed save would leak a file handle on
-            ;; exactly the directory a `close-dir!` is trying to let go of.
-            tl    (dtok/open-token-log root)]
-        (try
-          (let [remap (durable-remap dict tl)
-                etok  (remap-edges (:edge-tok csr) remap)
-                ;; a copy, because `sort-edge-runs!` permutes it and the live index's own
-                ;; array must not move.  The skeleton is heap `int[]` in every trie mode —
-                ;; only the leaf pair is ever mapped (`trie/snapshot-read`), and the walk reads
-                ;; edge targets at every frontier node, so they never page — so this is an
-                ;; array clone, never a buffer read.
-                etgt  (aclone ^ints (:edge-tgt csr))
-                _     (sort-edge-runs! (:offsets csr) etok etgt (:nodes csr))
-                cols  (merge (snapshot-types/snapshot-read rts {:remap remap})
-                             (roots/argfam-table rts remap))
-                tstat (write-trie!  (tmp (trie-path root))
-                                    (assoc csr :edge-tok etok :edge-tgt etgt))
-                rstat (write-roots! (tmp (roots-path root)) cols)
-                fents (vec (roots/fallback-entries rts))]
-            ;; beside its target rather than over it, so the blob the previous meta
-            ;; describes stays intact until the swap below
-            (f/write-nippy-atomic! (tmp (fallback-path root)) fents)
-            (dtok/fsync tl)
-            ;; the meta is the commit point: drop it, swap the sections in, write it last
-            (.delete (File. (meta-path root)))
-            (rename! (tmp (trie-path root))     (trie-path root))
-            (rename! (tmp (roots-path root))    (roots-path root))
-            (rename! (tmp (fallback-path root)) (fallback-path root))
-            (f/write-nippy-atomic!
-             (meta-path root)
-             {:format       format-version
-              :index-layout kv/index-layout-version
-              :byte-order   byte-order-tag
-              :records      stamp
-              :trie         tstat
-              :roots        rstat
-              ;; the blob carries the counters the planner prices a scan by, so its size
-              ;; is recorded and checked like the CSR sections'
-              :fallback     {:entries (count fents)
-                             :bytes   (.length (File. (fallback-path root)))}
-              :tokens       (dtok/token-count tl)})
-            (vreset! done true)
-            (note-image! dir (p/count-at store []))
-            (let [ms (/ (- (System/nanoTime) t0) 1e6)]
-              (trove/log! {:level :info :id ::saved
-                           :msg (format "wrote the mapped index snapshot at %s in %.0f ms (%d nodes, %d leaf handles, %d root postings)"
-                                        root ms (long (:nodes tstat)) (long (:leaves tstat)) (long (:keys rstat)))})
-              {:index :saved :ms ms :trie tstat :roots rstat}))
-          ;; the deletes first, because `.delete` answers false where the close throws:
-          ;; a token log that will not close must not be the reason index-sized temps
-          ;; are left behind, and it is still the failure the caller reads.
-          (finally
-            (when-not @done
-              (doseq [^String p temps] (.delete (File. p))))
-            (dtok/close! tl)))))))
+      (with-open [_ (progress/start ::save (str (.getName (File. (str dir))) ": write the index snapshot") nil)]
+        (let [t0    (System/nanoTime)
+              fp    (fingerprint-fn)
+              ;; **Freezing the live trie under an unconsumed lazy read is safe**, and it is
+              ;; worth noting so, because the write entry point reaches here mid-life while a caller
+              ;; may be holding one: `core/sentexes-matching` promises a seq that is lazy over
+              ;; live state, and asserting while walking one is the supported pattern
+              ;; `forward-chain` is built on.  What makes it safe is that an index read is
+              ;; eager *per read* — `res/candidate-handles` has realized its handles before
+              ;; `match-one` returns, and `t-lookup` builds its answer with `into #{}` — so no
+              ;; walk is ever part-way through the trie when this runs.  What stays lazy above
+              ;; is the `get-sentex` per handle, which is the record store's, and at a variable
+              ;; context one whole index read per reader (`vantage/fan-distinct`), which lands
+              ;; either side of the freeze and never inside it.  The read primitives dispatch
+              ;; on `frozen?` at call time (`vaelii.impl.columnar`), so the reader after this
+              ;; reads the CSR and answers the same set.
+              _     (col/compact! store)
+              csr   (snapshot-types/snapshot-read (:trie store) nil)
+              dict  (:dict store)
+              rts   (:roots store)
+              tmp   #(str % ".tmp")
+              ;; named out here so the `finally` can reach them: a save that throws
+              ;; part-way leaves the previous image whole, but it also leaves behind
+              ;; whatever `.tmp` sections it had already written — index-sized files,
+              ;; which on a KB that is never reopened sit in the directory for good.
+              ;; They are cleared on the way out unless the meta committed, and deleting
+              ;; a temp that was already renamed is a harmless false.
+              temps [(tmp (trie-path root)) (tmp (roots-path root)) (tmp (fallback-path root))]
+              done  (volatile! false)
+              ;; this fn's own handle on the durable dictionary, and every step below it
+              ;; can throw — a full disk mid-write, a mapped section that will not read.
+              ;; It closes in a `finally`, or a failed save would leak a file handle on
+              ;; exactly the directory a `close-dir!` is trying to let go of.
+              tl    (dtok/open-token-log root)]
+          (try
+            (let [remap (durable-remap dict tl)
+                  etok  (remap-edges (:edge-tok csr) remap)
+                  ;; a copy, because `sort-edge-runs!` permutes it and the live index's own
+                  ;; array must not move.  The skeleton is heap `int[]` in every trie mode —
+                  ;; only the leaf pair is ever mapped (`trie/snapshot-read`), and the walk reads
+                  ;; edge targets at every frontier node, so they never page — so this is an
+                  ;; array clone, never a buffer read.
+                  etgt  (aclone ^ints (:edge-tgt csr))
+                  _     (sort-edge-runs! (:offsets csr) etok etgt (:nodes csr))
+                  cols  (merge (snapshot-types/snapshot-read rts {:remap remap})
+                               (roots/argfam-table rts remap))
+                  tstat (write-trie!  (tmp (trie-path root))
+                                      (assoc csr :edge-tok etok :edge-tgt etgt))
+                  rstat (write-roots! (tmp (roots-path root)) cols)
+                  fents (vec (roots/fallback-entries rts))]
+              ;; beside its target rather than over it, so the blob the previous meta
+              ;; describes stays intact until the swap below
+              (f/write-nippy-atomic! (tmp (fallback-path root)) fents)
+              (dtok/fsync tl)
+              ;; the meta is the commit point: drop it, swap the sections in, write it last
+              (.delete (File. (meta-path root)))
+              (rename! (tmp (trie-path root))     (trie-path root))
+              (rename! (tmp (roots-path root))    (roots-path root))
+              (rename! (tmp (fallback-path root)) (fallback-path root))
+              (f/write-nippy-atomic!
+               (meta-path root)
+               {:format       format-version
+                :index-layout kv/index-layout-version
+                :byte-order   byte-order-tag
+                :records      fp
+                :trie         tstat
+                :roots        rstat
+                ;; the blob carries the counters the planner prices a scan by, so its size
+                ;; is recorded and checked like the CSR sections'
+                :fallback     {:entries (count fents)
+                               :bytes   (.length (File. (fallback-path root)))}
+                :tokens       (dtok/token-count tl)})
+              (vreset! done true)
+              (note-image! dir (p/count-at store []))
+              (let [ms (/ (- (System/nanoTime) t0) 1e6)]
+                (trove/log! {:level :info :id ::saved
+                             :msg (format "%s: wrote the index snapshot in %.1f s (%,d nodes, %,d leaf handles, %,d root postings)"
+                                          (.getName (File. (str dir))) (/ ms 1e3) (long (:nodes tstat)) (long (:leaves tstat)) (long (:keys rstat)))})
+                {:index :saved :ms ms :trie tstat :roots rstat}))
+            ;; the deletes first, because `.delete` answers false where the close throws:
+            ;; a token log that will not close must not be the reason index-sized temps
+            ;; are left behind, and it is still the failure the caller reads.
+            (finally
+              (when-not @done
+                (doseq [^String p temps] (.delete (File. p))))
+              (dtok/close! tl))))))))
 
 ;; ---- reading ------------------------------------------------------------
 
@@ -670,7 +673,7 @@
   truncated image therefore pays that scan before being rejected.  It adds no work that
   matters, since every rejection falls through to a rebuild that reads the records
   anyway, and the ordering buys a diagnosis that names the store rather than the file."
-  [root m stamp-fn]
+  [root m fingerprint-fn]
   (let [{:keys [nodes edges leaves]} (:trie m)
         {kn :keys hn :handles}       (:roots m)]
     (cond
@@ -684,7 +687,7 @@
       (not= format-version (:format m))              :layout-changed
       (not= kv/index-layout-version (:index-layout m)) :layout-changed
       (not= byte-order-tag (:byte-order m))          :byte-order
-      (not= (:records m) (stamp-fn))                 :records-differ
+      (not= (:records m) (fingerprint-fn))                 :records-differ
       (or (nil? nodes) (nil? kn))                    :entries-truncated
       (< (file-len (trie-path root))
          (+ 24 (* 4 (+ (long nodes) (inc (long nodes)) (long edges) (long edges)
@@ -820,8 +823,13 @@
       ;; `canon`, since a `[::subterm k]` marker and a rule's antecedent are vectors and
       ;; canonicalizing would flatten both to lists.
       (let [durable (dtok/token-count tl)]
-        (dotimes [i durable]
-          (tok/intern-token! dict (sx/intern-deep (dtok/token tl i))))
+        (with-open [r (progress/start ::load-dictionary
+                                      (str (.getName (.getParentFile (File. root)))
+                                           "/index: load the tokens into the dictionary")
+                                      durable)]
+          (dotimes [i durable]
+            (tok/intern-token! dict (sx/intern-deep (dtok/token tl i)))
+            (progress/tick! r)))
         (let [loaded (long (tok/token-count dict))]
           (when (not= loaded durable)
             (throw (ex-info (str "the durable token dictionary at " root " reloaded as "
@@ -867,7 +875,7 @@
   A `VirtualMachineError` in a failed map's cause chain (`safe/vm-error`) empties `store`
   and is rethrown as itself, not answered `:unreadable`: the heap ran out, and a rebuild
   from the records needs more heap than the map."
-  [dir store stamp-fn]
+  [dir store fingerprint-fn]
   (let [root (snapshot-root dir)
         m    (f/read-nippy-file (meta-path root) nil)]
     ;; sized from the image's count whatever the decision, since a rebuild thaws every
@@ -877,7 +885,7 @@
       (not (col/columnar? store)) {:index :rebuild :reason :absent}
       (nil? m)                    {:index :rebuild :reason :absent}
       :else
-      (if-let [why (decision root m stamp-fn)]
+      (if-let [why (decision root m fingerprint-fn)]
         {:index :rebuild :reason why}
         (try
           (let [t0 (System/nanoTime)]
@@ -889,8 +897,8 @@
             (note-image! dir (p/count-at store []))
             (let [ms (/ (- (System/nanoTime) t0) 1e6)]
               (trove/log! {:level :info :id ::mapped
-                           :msg (format "mapped the index snapshot at %s in %.0f ms (%d tokens, %d nodes)"
-                                        root ms (long (:tokens m)) (long (:nodes (:trie m))))})
+                           :msg (format "%s: mapped the index snapshot in %.1f s (%,d tokens, %,d nodes)"
+                                        (.getName (File. (str dir))) (/ ms 1e3) (long (:tokens m)) (long (:nodes (:trie m))))})
               {:index :mapped :ms ms :trie (:trie m) :roots (:roots m)}))
           (catch Throwable t
             (when-let [e (safe/vm-error t)]

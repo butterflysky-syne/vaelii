@@ -54,7 +54,7 @@
       (v/assert kb (list 'nonTangentialProperPart (node i) (node (quot (dec i) 3))) ctx))))
 
 (defn- interval-chain
-  "`(before Ii Ii+1)` over `n` intervals — a total order, so path consistency pins all
+  "`(before Ii Ii+1)` over `n` intervals — a total order, so path consistency determines all
   n² pairs. The densest satisfiable network of this algebra."
   [kb n ctx]
   (let [node #(symbol (str "Iv" % "Node"))]
@@ -89,12 +89,12 @@
           [pass-ms pc]  (ms-min 3 #(qcn/path-consistent net nodes (:algebra (bare))))
           [naive-ms _]  (ms-min 3 #(qcn/path-consistent-naive net nodes (:algebra (bare))))
           k             (count nodes)
-          pinned        (when (map? pc)
+          determined    (when (map? pc)
                           (count (filter (fn [[[i j] r]] (and (not= i j) (= 1 (count r)))) pc)))]
       {:label label :n k :facts (count (filter (fn [[[i j] _]] (neg? (compare (str i) (str j)))) net))
        :triples (* k (max 0 (dec k)) (max 0 (- k 2)))
        :read-ms read-ms :pass-ms pass-ms :naive-ms naive-ms
-       :pairs (count net) :pinned pinned})))
+       :pairs (count net) :determined determined})))
 
 (defn -main [& args]
   (let [maxn  (or (some-> (first args) Long/parseLong) 160)
@@ -111,15 +111,15 @@
              ["Allen total order"      interval-chain   iv/allen]]]
       (println (str "  " label))
       (println (format "  %-8s %10s %14s %10s %10s %10s %8s %10s"
-                       "nodes" "facts" "triples/pass" "read ms" "queue ms" "naive ms" "speedup" "pinned"))
+                       "nodes" "facts" "triples/pass" "read ms" "queue ms" "naive ms" "speedup" "determined"))
       (println (str "  " (apply str (repeat 88 \-))))
       (doseq [n sizes]
-        (let [{:keys [n facts triples read-ms pass-ms naive-ms pinned]} (bench-one label load calc n)]
+        (let [{:keys [n facts triples read-ms pass-ms naive-ms determined]} (bench-one label load calc n)]
           (println (format "  %-8s %10s %14s %10.2f %10.2f %10.2f %7.2fx %10s"
                            (format "%,d" n) (format "%,d" facts) (format "%,d" triples)
                            read-ms pass-ms naive-ms
                            (if (pos? pass-ms) (/ naive-ms pass-ms) 0.0)
-                           (format "%,d" (or pinned 0))))))
+                           (format "%,d" (or determined 0))))))
       (println))
     (println "  Reading:")
     (println "  - triples/pass is n(n-1)(n-2), and BOTH implementations make one full sweep of it,")
@@ -128,7 +128,7 @@
     (println "    triples that read a pair which actually narrowed.")
     (println "  - speedup is therefore a function of how much of the network a pass moves. A sparse")
     (println "    shape narrows few pairs and drains them for a rounding error on one sweep. A shape")
-    (println "    that pins EVERY pair would cost about two sweeps to drain, so the driver sweeps")
+    (println "    that determines EVERY pair would cost about two sweeps to drain, so the driver sweeps")
     (println "    again instead — draining and sweeping are both counted, and it takes the smaller.")
     (println "    That is why the dense shape still wins: it pays two sweeps where the naive pays")
     (println "    three, rather than paying three to avoid two.")
@@ -136,10 +136,10 @@
     (println "    long, the network is a flat long array for the duration, intersection is bit-and,")
     (println "    and composition is a table read. Sets are still what goes in and comes out. That")
     (println "    is 31x on the tree at 160 nodes and 41x on the total order, and it changes no")
-    (println "    answer — the pinned column is identical either way.")
+    (println "    answer — the determined column is identical either way.")
     (println "  - KB read is linear in stored facts and independent of the pass. Where it is the")
     (println "    larger column, the per-query network memo (bound by RuleProver) is what matters.")
-    (println "  - pinned counts pairs path consistency narrowed to a single base relation: the")
-    (println "    answer the work bought. A total order pins every pair; a tree pins only pairs")
+    (println "  - determined counts pairs path consistency narrowed to a single base relation: the")
+    (println "    answer the work bought. A total order determines every pair; a tree only pairs")
     (println "    sharing an ancestor line, which is why the two shapes cost differently per node.")
     (shutdown-agents)))

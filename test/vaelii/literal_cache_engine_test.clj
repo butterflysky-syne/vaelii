@@ -146,7 +146,7 @@
       (is (= 1 (count (entries kb))) "running dry is what stores it"))))
 
 (tu/deftest-kb forward-chaining-leaves-no-stale-answer-behind
-  ;; a scope that writes while it reads (chain/process-datum, under observe/with-pin)
+  ;; a scope that writes while it reads (chain/process-datum, under observe/with-held-values)
   ;; moves the clock under its own reads, so nothing it computed can be served after it
   (tu/with-terms [dog animal Rex CxFarm]
     (v/assert kb (list 'genl dog animal) CxFarm)

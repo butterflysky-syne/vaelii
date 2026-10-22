@@ -10,7 +10,7 @@
   asked, and leave a report somebody can read afterwards.  That shape is here once.
 
   **A job** is `{:id :label :kind :status :progress :started :finished :error :summary
-  :result-url}`, plus a cancel flag and the future, which no view carries.  `submit`
+  :result-url}`, plus a cancel flag and the future, which no public job carries.  `submit`
   returns the id; `job` reads one; `jobs` lists them, newest first.  The caller's `work`
   is handed a `progress!` fn and nothing else: what it records shows up under
   `:progress`, and what it *throws* is how cancellation lands, because a tight assert
@@ -101,7 +101,7 @@
 
 (defn- settled? [j] (not (#{:running :cancelling} (:status j))))
 
-(defn- view
+(defn- public-job
   "A job as something safe to render or send: the cancel flag, the future, the thread and
   its release fence, and the KB it writes all dropped, elapsed time filled in.  `:writes?`
   survives the dropping because it is what decides the cancel tier and what a refusal is
@@ -140,23 +140,23 @@
   "Apply `f` to job `id` — **and only while the registry still holds it**.  Every write to
   a job goes through here, because a `swap!` reaching `[:jobs id]` for an id the sweep or
   `reset-registry!` has already dropped does not fail: it *recreates* the job as a
-  fragment, a `:status` with no `:started` for `view` to subtract from, absent from
+  fragment, a `:status` with no `:started` for `public-job` to subtract from, absent from
   `:order` and so invisible to every listing that would have shown it up."
   [id f]
   (swap! state (fn [s] (cond-> s (contains? (:jobs s) id) (update-in [:jobs id] f))))
   nil)
 
 (defn job
-  "Job `id`, as a view, or nil once it has been swept."
+  "Job `id`, as a public job, or nil once it has been swept."
   [id]
-  (view (get-in @state [:jobs id])))
+  (public-job (get-in @state [:jobs id])))
 
 (defn jobs
   "Every job the registry still holds, newest first — the order `/jobs` lists them in.
   Sweeps the registry first."
   []
   (let [{js :jobs :keys [order]} (swap! state sweep)]
-    (into [] (comp (map js) (keep view)) (reverse order))))
+    (into [] (comp (map js) (keep public-job)) (reverse order))))
 
 (defn running
   "The jobs that have not settled, newest first.  What a panel polls on, and what the
@@ -177,12 +177,12 @@
   (first (filter :writes? (running))))
 
 (defn kb-writer
-  "The unsettled job whose `:writes` is **this** KB, by identity, as a view — or nil.
+  "The unsettled job whose `:writes` is **this** KB, by identity, as a public job — or nil.
   What a refusal about `kb` names: the catalog's unload refuses `:still-writing` with it."
   [kb]
   (when kb
-    (view (some (fn [j] (when (and (not (settled? j)) (identical? kb (:writes j))) j))
-                (vals (:jobs @state))))))
+    (public-job (some (fn [j] (when (and (not (settled? j)) (identical? kb (:writes j))) j))
+                      (vals (:jobs @state))))))
 
 (defn writes-kb?
   "Is a job writing **this** KB, by identity?  Reading beside a writer is sound and
@@ -218,7 +218,7 @@
   | key | |
   |---|---|
   | `:label` | what the job is called on screen |
-  | `:kind` | `:load` / `:export` / `:chain` / `:sync` — what a panel filters on |
+  | `:kind` | `:load` / `:export` / `:chain` / `:sync` / `:edit` / `:backup` — what a panel filters on |
   | `:writes` | the KB this job writes, or `true` for one it will open |
   | `:interruptible?` | may its thread be interrupted on cancel?  Only for a job that writes nothing |
   | `:progress` | the first progress reading, before the work has said anything |
@@ -383,7 +383,7 @@
      (when-not (settled? j)
        (reset! (:cancel j) true)
        ;; guarded inside the swap: the job's own thread may file its terminal status
-       ;; between the read above and this write, and :cancelling stamped over :done
+       ;; between the read above and this write, and :cancelling written over :done
        ;; is a job that never settles — the sweep keeps it, `writer` keeps naming it,
        ;; and every later writing job is refused against a job that already finished
        (update-job! id (fn [j] (cond-> j (not (settled? j)) (assoc :status :cancelling))))
@@ -392,7 +392,7 @@
        true))))
 
 (defn wait
-  "Block up to `ms` for job `id` to settle, then answer its view — settled or not, so the
+  "Block up to `ms` for job `id` to settle, then answer its public job — settled or not, so the
   caller decides what to do about a job that is still going.  This is what the fast path
   is: submit, wait `fast-path-ms`, and answer with the result if it is already there.
   A job whose status arm threw ends its future with that throw; the status `submit`'s

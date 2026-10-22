@@ -18,7 +18,7 @@
   A background rebuild's install replaces the whole value with one `vreset!`
   (`vaelii.impl.recovery`), so the belief a KB holds changes in one step.  A reader
   that must read the network and the taxonomy of one belief reads them through one
-  dereference: `vaelii.impl.kb/read-view` returns a KB whose volatile holds the current
+  dereference: `vaelii.impl.kb/read-copy` returns a KB whose volatile holds the current
   value and is never reset, and `vaelii.core`'s public reads run against it while an
   install is pending.
 
@@ -54,14 +54,14 @@
 ;; `:histogram` the distribution of `:iterations` since the last reset.
 ;;
 ;; `qcn` is where a qualitative constraint network **lives between reads**: an atom of
-;; `{[calculus-name context] -> {:read … :clock n}}`, stamped with `observe/change-clock`
+;; `{[calculus-name context] -> {:read … :clock n}}`, keyed by `observe/change-clock`
 ;; and re-derived the moment that has moved (`vaelii.impl.qcn-kb`).  Per KB rather than
 ;; global, because two KBs in one JVM share the clock but not their content.
 ;;
 ;; `matches` is the literal cache (`vaelii.impl.literal-cache`): an atom of
 ;; `{[canonical-literal context hierarchical? arg-root?] -> {:value … :clock n}}` holding
 ;; what `matches-visible` answered, α-renamed so two spellings of one question share an
-;; entry and stamped with `observe/change-clock` so any mutation retires it.  Per KB for
+;; entry and keyed by `observe/change-clock` so any mutation retires it.  Per KB for
 ;; the same reason `qcn` is.  A declared field rather than a key on the record's extension
 ;; map, because `matches-visible` reads it on every retrieval and an extension-map key
 ;; costs a hash lookup where a field costs none.  Every other field here is declared for

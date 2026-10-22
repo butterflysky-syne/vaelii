@@ -4,7 +4,7 @@
 ;; Print the believed genl edges of the shipped ontology as JSON, for
 ;; scripts/ontology-graph.py. Loads the upper ontology (or, with `middle`, the starter)
 ;; into an in-memory KB and reads the taxonomy through the public API, so every edge is
-;; one the engine installed: a stated genl, a cover roster part or an intersection
+;; one the engine installed: a stated genl, a part a cover declaration names, or an intersection
 ;; conjunct. Each row is [sub super minimal?], where minimal? marks a super in
 ;; `min-genls`, the transitive reduction.
 ;;

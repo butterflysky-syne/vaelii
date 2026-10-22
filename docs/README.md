@@ -9,7 +9,7 @@ Sentexes live in a **record store**, keyed by integer handle, and are found thro
 **index store** — derived from the records and rebuildable from them — that holds six
 indexes over the same sentexes: a positional **trie**, secondary **roots** (context /
 functor / argument), a **rule index**, an **exception re-check index**, an inverted **term
-index**, and the **term roster** beside it.
+index**, and the **term-name set** beside it.
 
 What ships is schema: `vaelii.host.starter` loads the upper and middle contexts from
 `resources/kb/`, and nothing contingent — no cast, no facts of a story — comes with it.
@@ -69,7 +69,7 @@ page costs a sentence rather than a section.
 [arriving.md](arriving.md) routes; these four are the mappings, each one-way orientation
 rather than a compatibility claim.
 
-- [from-cyc.md](from-cyc.md) — the OpenCyc and ResearchCyc vocabulary: `Mt` to context, collections as unary predicates, the four privileged contexts you already have names for, and the argument-type check that gates on the way in.
+- [from-cyc.md](from-cyc.md) — the OpenCyc and ResearchCyc vocabulary: `Mt` to context, collections as unary predicates, the four privileged contexts you already have names for, and the argument-type check that refuses on the way in.
 - [from-asp.md](from-asp.md) — answer set programming: choice rules, integrity and weak constraints, the three negations, and the two structural differences — no grounding step, and belief is one labeling rather than a set of models.
 - [from-defeasible-logic.md](from-defeasible-logic.md) — defeasible logic as SPINdle implements it: facts, strict and defeasible rules, defeaters, superiority compiled into `exceptWhen`, and the tie between two defaults that is believed on both sides rather than withheld.
 - [from-prolog.md](from-prolog.md) — Prolog and Datalog: the capitalization that means nearly the opposite here, clause order that is not control, the cut that does not exist, and retraction that reaches what rested on the premise.
@@ -78,7 +78,7 @@ rather than a compatibility claim.
 ## Core model & storage
 
 - [namespaces.md](namespaces.md) — the file map: what lives in each namespace under `src/`.
-- [predicates.md](predicates.md) — the engine's own grammar as one declaration per term: the eleven fields and five closed vocabularies an interpreted predicate is written from, the contract each facet commits it to, the arms it is joined to, the rosters that derive from it rather than repeat it, the twenty refusals that fire at namespace load, the sequence for adding one and what adding one comes to, and the three things the declaration deliberately leaves outside itself — the prover registry, the structural connectives, and the two joins stated by hand.
+- [predicates.md](predicates.md) — the engine's own grammar as one declaration per term: the eleven fields and five closed vocabularies an interpreted predicate is written from, the contract each facet commits it to, the arms it is joined to, the tables that derive from it rather than repeat it, the twenty refusals that fire at namespace load, the sequence for adding one and what adding one comes to, and the three things the declaration deliberately leaves outside itself — the prover registry, the structural connectives, and the two joins stated by hand.
 - [canonicalization.md](canonicalization.md) — the canonical form: how sentences and rules identical up to variable names, literal order, symmetric arguments or comparison direction dedup to one handle, and how a conjunctive consequent or a disjunctive antecedent unfolds into several.
 - [naming.md](naming.md) — the KB naming invariants (predicates, individuals, types, contexts).
 - [storage.md](storage.md) — record + index stores, the protocols, nippy serialization, the single-writer contract.
@@ -89,16 +89,16 @@ rather than a compatibility claim.
 - [taxonomy.md](taxonomy.md) — the `genl` type hierarchy, `isa?`, `disjoint` / `disjoint_metatype`.
 - [inherit.md](inherit.md) — argument-position preservation: `(transitiveInArg P n R)` / `(transitiveInArgInverse P n R)`, whether a claim about two kinds reaches their subkinds, the specificity that lets a stated claim undercut an inherited default, the `(asymmetric P)` that lets a strict one conflict instead, and how a forward rule fires on an inherited claim by naming what the claim was read from.
 - [argtypes.md](argtypes.md) — `arg` / `genlArg` read as **entailments** as well as constraints: the type an argument declaration says a term has, minted as a derived justified sentex, both arrival directions, and why only a locally-written declaration entails. On by default.
-- [predall.md](predall.md) — the `predAll` quantifier family: eight relations that quantify one argument position of a binary predicate and fix the other, in three classes — the *Instance* pair that stamps a rule per declaration, the *Exists* four that derive nothing beside a sanctioned placeholder functor, and the *Specified* pair that audits for a determinate filler; plus the extensible `indeterminate_term` category, the identity exemption it carries, and the stratification refusal that comes with it.
+- [predall.md](predall.md) — the `predAll` quantifier family: eight relations that quantify one argument position of a binary predicate and fix the other, in three classes — the *Instance* pair that generates a rule per declaration, the *Exists* four that derive nothing beside a sanctioned placeholder functor, and the *Specified* pair that audits for a determinate filler; plus the extensible `indeterminate_term` category, the identity exemption it carries, and the stratification refusal that comes with it.
 - [defns.md](defns.md) — `defnNecessary` / `defnSufficient` / `defnIff`: tying a collection's membership to a defining condition on the member `?x`, expanded into ordinary forward rules justified by the `defn*` fact so retraction and belief follow it, the two registry provers that evaluate a condition at query time, and the open-world boundary that draws no non-membership from the condition's absence.
 
 ## Inference & belief
 
 - [inference.md](inference.md) — rules as sentexes, rule direction, forward/backward chaining, predicate subsumption, incremental matching, the prover engine.
-- [generators.md](generators.md) — a rule whose consequent is a rule: the hole/own-variable split that needs no declaring, what a firing stamps out, why a mint retracts like any conclusion, and the nesting that lets a level further out fill a functor.
+- [generators.md](generators.md) — a rule whose consequent is a rule: the hole/own-variable split that needs no declaring, what a firing generates, why a mint retracts like any conclusion, and the nesting that lets a level further out fill a functor.
 - [anytime.md](anytime.md) — resource-bounded / anytime inference: the budget, the resumable partial-result contract, the qualitative `cost` tier.
 - [levels.md](levels.md) — the lookup-to-query stack: eight named levels from a raw index read to full backchaining.
-- [abduction.md](abduction.md) — `abduce`: what would have to be true for a goal to be provable, minted as a defeasible hypothesis in a scratch context — the dead-end observer, the grant that gates it, and the isolation that makes an ignored call free.
+- [abduction.md](abduction.md) — `abduce`: what would have to be true for a goal to be provable, minted as a defeasible hypothesis in a scratch context — the dead-end observer, the grant the abducibility check requires, and the isolation that makes an ignored call free.
 - [exceptions.md](exceptions.md) — `exceptWhen`: how a rule states its own exception, and why the exception is never stored.
 - [naf.md](naf.md) — negation as failure: `unknown` / `thereExists`, evaluated at level 6, storing nothing (and why a justification has no out-list).
 - [aggregate.md](aggregate.md) — aggregation as a query operator: the five reductions over a query's solutions, where GROUP BY comes from, and how a firing that rests on a count is maintained.
@@ -137,12 +137,12 @@ rather than a compatibility claim.
 - [feed.md](feed.md) — `watch`: an application told that belief moved instead of asking again, off the settle that already computed it — one settle one event, standing queries as a filter over the moved region rather than a re-run, and what is refused because the region cannot answer it.
 - [operations.md](operations.md) — the operational surface: the `cli` driver, the headless EDN-over-HTTP daemon that is the single writer, and the zero-dep client threading an explicit connection.
 - [koinii.md](koinii.md) — multi-agent coordination over one KB: agents as contexts, moves as sentexes, the change feed as medium; the single-writer deployment shape, identity and the write boundary, speech acts, disputes and the split-by-policy adjudication, belief projection, CDC catch-up, and the content-addressed independent-seat topology.
-- [quality.md](quality.md) — `kb-quality`: seven readings about the knowledge rather than the engine — which rules never fire, how skewed the predicate extents are, how deep the rule graph's chains reach, how much of the taxonomy reaches a root, which argument declarations name a position their predicate does not have, which rules another rule already covers, which rule pairs would contradict each other if both fired — each off state that already exists, and none of them a gate.
-- [profile.md](profile.md) — the workload instrument: which shapes of question a KB is asked, which index families answer them, what a trie walk costs in node probes, and what one assert or one retraction costs each family — off by default and a deref when off. Also the count-based gate built on it, which fails the suite when a change adds an index operation to either write path, the class `lein perf`'s ratios cannot see.
+- [quality.md](quality.md) — `kb-quality`: seven readings about the knowledge rather than the engine — which rules never fire, how skewed the predicate extents are, how deep the rule graph's chains reach, how much of the taxonomy reaches a root, which argument declarations name a position their predicate does not have, which rules another rule already covers, which rule pairs would contradict each other if both fired — each off state that already exists, and none of them fails a build.
+- [profile.md](profile.md) — the workload instrument: which shapes of question a KB is asked, which index families answer them, what a trie walk costs in node probes, and what one assert or one retraction costs each family — off by default and a deref when off. Also the counted test built on it, which fails the suite when a change adds an index operation to either write path, the class `lein perf`'s ratios cannot see.
 - [web.md](web.md) — the reitit-ring browser for terms, sentexes, and justifications;
   a term page opens with its shape drawn, server-side and inside a read budget.
 - [catalog.md](catalog.md) — the KB catalog: what a process can load (shipped, generated, corpus, dump, on-disk store), loading one in the background with progress and cancellation, and switching which one every page reads.
-- [caches.md](caches.md) — the cache register: the derived, droppable structures a process holds beside the stores, each self-declared with its scope, unit and bound; the wholesale-clear policy; `caches` / `clear-caches`; and a snapshot roster of all eighteen with their sizes.
+- [caches.md](caches.md) — the cache register: the derived, droppable structures a process holds beside the stores, each self-declared with its scope, unit and bound; the wholesale-clear policy; `caches` / `clear-caches`; and a snapshot list of all eighteen with their sizes.
 - [foreign.md](foreign.md) — the formats we read and do not write: no reader ships here, and a bridge is a plugin that declares itself in one edn resource on the classpath.
 
 ## Generated

@@ -2,7 +2,7 @@
 # scripts/perf-ab.sh — `lein perf-ab <base-rev>`: the working tree against an older
 # revision, in absolute time, on this machine and this JDK.
 #
-# `lein perf` gates the growth of a cost between two sizes, so a cost added to every
+# `lein perf` judges the growth of a cost between two sizes, so a cost added to every
 # operation moves both readings and passes; `test/vaelii/assert_cost_test.clj` counts
 # index operations, so a slower operation that reads no more of the index passes too.
 # This is the check for that class: the probes in `vaelii.bench.ab`, run in fresh JVMs
@@ -61,7 +61,7 @@ mkdir -p "$BASE_TREE/bench/vaelii/bench"
 cp bench/vaelii/bench/ab.clj "$BASE_TREE/bench/vaelii/bench/ab.clj" || exit 1
 
 runlog_start
-{ revision_stamp "perf-ab against $BASE"
+{ revision_header "perf-ab against $BASE"
   echo "# base $(git log -1 --format='%h %s' "$BASE")"
   echo "# $REPS rep(s), threshold ${THRESHOLD}x"; } >"$LOG"
 cat "$LOG"

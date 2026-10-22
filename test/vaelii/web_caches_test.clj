@@ -12,7 +12,6 @@
             [vaelii.browser.jobs :as jobs]
             [vaelii.browser.web :as web]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.impl.caches :as caches]
             [vaelii.impl.config :as config]
             [vaelii.test-util :as tu]))
@@ -22,7 +21,7 @@
 (use-fixtures :each
   (fn [f]
     (catalog/reset-registry!)
-    (let [kb (doto (tu/fresh) core-context/load-into)]
+    (let [kb (doto (tu/fresh) tu/load-core!)]
       (catalog/register! "base" "Base KB" kb {:source (catalog/source "core")})
       (binding [tu/*kb* kb, *app* (web/app (catalog/holder kb))]
         (try (f) (finally (catalog/reset-registry!) (tu/clear-kb! kb)
@@ -89,7 +88,7 @@
 
 (deftest with-the-dependency-absent-the-page-says-so-rather-than-linking-nowhere
   ;; `lein test` runs without the `:repl` profile, so this is the absent case, and it is
-  ;; the one worth pinning: a dead link to a port nothing is listening on is the failure
+  ;; the one asserted here: a dead link to a port nothing is listening on is the failure
   ;; a `requiring-resolve` call site exists to avoid.
   (let [body (:body (GET "/caches"))]
     (is (re-find #"<h3>Profiler</h3>" body))
@@ -103,17 +102,17 @@
   ;; already listening on, which is the thing the state exists to prevent.  Eight threads
   ;; released from one latch, and the dependency stubbed so nothing real binds a port.
   (let [starts (atom 0)
-        gate   (java.util.concurrent.CountDownLatch. 1)
+        latch  (java.util.concurrent.CountDownLatch. 1)
         state  @#'web/profiler-state]
     (try
       (with-redefs-fn {#'config/profiler?      (constantly true)
                        #'web/profiler-serve-ui (constantly (fn [_port] (swap! starts inc)))}
         (fn []
           (let [threads (into [] (repeatedly 8 #(doto (Thread. ^Runnable
-                                                       (fn [] (.await gate)
+                                                       (fn [] (.await latch)
                                                          (web/start-profiler)))
                                                   (.start))))]
-            (.countDown gate)
+            (.countDown latch)
             (doseq [^Thread t threads] (.join t 30000)))))
       (is (= 1 @starts) "one UI, whoever asked")
       (is (= {:port (config/profiler-port)} @state) "and the state names the port it is on")

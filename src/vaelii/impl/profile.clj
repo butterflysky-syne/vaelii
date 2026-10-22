@@ -8,7 +8,7 @@
   and which of them pays for itself is a question about a *workload*, not about the code:
   a KB whose every pattern leads with a ground first argument pays for three secondary
   root families it never reads, and a KB that asks `(?type Muffet)` a thousand times a
-  second lives or dies on the argument-slot roster.  Nothing in the engine answers that
+  second lives or dies on the slot predicate set.  Nothing in the engine answers that
   from the outside, so this is the instrument that does.
 
   Seven tallies, one per question:
@@ -35,15 +35,15 @@
     `:goals`, and the read-efficiency reading a layout change is judged on.
   * **`:fetches`** — every `RecordStore` read, by kind: the three record fetches
     (`:sentex`, `:justification`, `:provenance`), `:premise-strength`, and the three
-    whole-roster reads (`:sentex-ids`, `:justification-ids`, `:premise-ids`), each
-    counted once per call whatever the roster's size.  **The other index**: a `:reads`
+    whole-store enumerations (`:sentex-ids`, `:justification-ids`, `:premise-ids`), each
+    counted once per call whatever the enumeration's size.  **The other index**: a `:reads`
     figure prices what the trie and the roots were asked, and says nothing at all about
     the records those handles then name.  The two come apart exactly where it hurts — a
     probe that narrows to one index read and then fetches a record per candidate handle
     reads *well* by `:reads` and badly by this — and on the durable store a fetch is a
     positional slot read, a positional frame read and a nippy thaw past the LRU, which is
-    orders above what any index read costs.  `record_fetch_cost_test` is the gate set from
-    it.
+    orders above what any index read costs.  `record_fetch_cost_test` is the counted test
+    set from it.
   * **`:writes`** — what one `index-sentex` wrote, per family, keyed by functor.  Every
     family is a tax on every assert, so a policy that *adds* one is priced here.
   * **`:retracts`** — the same for `unindex-sentex!`, and a separate tally rather than a
@@ -52,7 +52,7 @@
     when the last sentex under it goes and how often that happens is a property of how
     much prefix the corpus shares.  `:dead` is that number — trie nodes this retraction
     emptied — and it is the one quantity here a corpus can move without changing what it
-    holds.  Merged into `:writes`, the per-assert constant a gate is set from would stop
+    holds.  Merged into `:writes`, the per-assert constant a counted test is set from would stop
     being readable.
 
   ## The shape key
@@ -92,7 +92,7 @@
     which covers every backend the `KvBackend` adapters reach — the flat map, the dense
     one, the on-disk WAL, an overlay.  `vaelii.impl.columnar` walks its own native trie
     and counts no node probes, so a columnar run reports **no fan at all** rather than a
-    fabricated one, and `profile_test` pins that silence.  The other six hold on both:
+    fabricated one, and `profile_test` asserts that silence.  The other six hold on both:
     that store keeps `:reads`, `:writes` and `:retracts` itself, because it writes and
     walks the index rather than going through `KvIndexStore` to do it, and the remaining
     three are no index's to keep — `:goals` and `:sift` are the matchers'
@@ -150,8 +150,8 @@
        :fan     {first-token {:calls :visits :widest :handles :decades {n count}}}
        :sift    {[functor polarity adornment path] {:calls :returned :unified :matched}}
        :fetches {kind count}
-       :writes  {functor {:asserts :levels :terms :roots :roster :slots}}
-       :retracts {functor {:retracts :levels :terms :roots :roster :slots :dead}}}"
+       :writes  {functor {:asserts :levels :terms :roots :term-names :slots}}
+       :retracts {functor {:retracts :levels :terms :roots :term-names :slots :dead}}}"
   []
   (read-out @tally))
 
@@ -178,7 +178,7 @@
   whose compare-and-set `stop` beats is applied to nil on the retry.  What that leaves is
   a fragment with no `:t0`: `profiling?` answers true for the life of the process, every
   later read pays the CAS the switch promised it would not, and `snapshot` reads `(long
-  nil)` off the missing stamp.  `jobs/update-job!` guards the same shape against the same
+  nil)` off the missing `:t0`.  `jobs/update-job!` guards the same shape against the same
   recreation.
 
   Answers nil, since every call site here is called for effect."
@@ -225,6 +225,21 @@
 
 ;; ---- the read tally -----------------------------------------------------
 
+(def ^:dynamic *handle-sink*
+  "nil, or a fn of one handle, called with each sentex handle a `RecordStore` fetch reads
+  (`record-fetch`'s two-argument arity) and each handle an `IndexStore` posting read
+  answers (`record-posting`).  The handle twin of `reads/*contexts-read*`: a test binds it
+  around a write to bound the stored sentexes the write reads (`padding_blindness_test`).
+  A count, a child-token or a name-set read answers no handle and calls nothing."
+  nil)
+
+(defn record-posting
+  "`hs`, the handles one `IndexStore` read answers, after passing each to
+  `*handle-sink*` when it is bound."
+  [hs]
+  (when-let [f *handle-sink*] (run! f hs))
+  hs)
+
 (defn record-read
   "Tally one `IndexStore` read against the family that answered it.  This is the tally
   that says whether a family pays for itself, so the names are the families and not the
@@ -248,9 +263,13 @@
   a support walk, the provenance nothing but the browser reads — and a per-handle key
   would hold the whole workload.
 
-  A deref and a `nil?` check when the instrument is off, like every call site here."
-  [kind]
-  (tallying [:fetches kind] (fnil inc 0)))
+  A deref and a `nil?` check when the instrument is off, like every call site here.  With
+  `id`, the fetched record's handle also goes to `*handle-sink*`."
+  ([kind]
+   (tallying [:fetches kind] (fnil inc 0)))
+  ([kind id]
+   (when-let [f *handle-sink*] (f id))
+   (tallying [:fetches kind] (fnil inc 0))))
 
 ;; ---- the sift tally -----------------------------------------------------
 
@@ -319,13 +338,13 @@
     (let [b (sx/body sentex)]
       (if (and (sequential? b) (seq b) (symbol? (first b))) (first b) :other))))
 
-(defn- bump-write [row {:keys [levels terms roots roster slots]}]
+(defn- bump-write [row {:keys [levels terms roots term-names slots]}]
   (-> row
       (update :asserts (fnil inc 0))
       (update :levels  (fnil + 0) (long levels))
       (update :terms   (fnil + 0) (long terms))
       (update :roots   (fnil + 0) (long roots))
-      (update :roster  (fnil + 0) (long roster))
+      (update :term-names (fnil + 0) (long term-names))
       (update :slots   (fnil + 0) (long slots))))
 
 (defn record-index-write
@@ -335,13 +354,13 @@
   [sentex counts]
   (tallying [:writes (write-key sentex)] bump-write counts))
 
-(defn- bump-retract [row {:keys [levels terms roots roster slots dead]}]
+(defn- bump-retract [row {:keys [levels terms roots term-names slots dead]}]
   (-> row
       (update :retracts (fnil inc 0))
       (update :levels   (fnil + 0) (long levels))
       (update :terms    (fnil + 0) (long terms))
       (update :roots    (fnil + 0) (long roots))
-      (update :roster   (fnil + 0) (long roster))
+      (update :term-names (fnil + 0) (long term-names))
       (update :slots    (fnil + 0) (long slots))
       (update :dead     (fnil + 0) (long dead))))
 

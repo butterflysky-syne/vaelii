@@ -38,12 +38,12 @@ in each of its scenarios — and under `transitiveInArg` a claim about a narrow 
 reaches the ones above it.
 
 Naming the relation is what keeps this from being a `genl` special case. An argument can
-be preserved along `partOf` just as readily:
+be preserved along `tangiblePartOf` just as readily:
 
 ```clojure
-(transitive partOf)
-(partOf Engine Car)  (partOf Piston Engine)
-(transitiveInArgInverse needs_maintenance 1 partOf)
+(transitive tangiblePartOf)
+(tangiblePartOf Engine Car)  (tangiblePartOf Piston Engine)
+(transitiveInArgInverse needs_maintenance 1 tangiblePartOf)
 (needs_maintenance Car)
 ;; => (needs_maintenance Piston)   two hops, no types involved
 ```
@@ -52,7 +52,8 @@ The two names exist so neither direction requires declaring an inverse predicate
 has no other purpose. Both are ordinary stored sentexes read through
 `matches-visible`, exactly as `arg` and `genlArg` are — context-scoped and
 belief-following, with no cache of their own. Several declarations may name **one**
-position; their reaches union, since each independently licenses the claim.
+position, and their reaches compose
+([below](#declarations-at-one-position-compose-with-each-other-and-with-p)).
 
 A declaration is read for the goal's **own** predicate. It no more descends to a
 sub-predicate than `transitive` or `symmetric` does: distribution over subkinds is a
@@ -91,9 +92,9 @@ directions at once:
 
 Position 1 of `capabilityType` carries a claim about a kind *down* to its subkinds — a
 kind of bird flies with nothing written about it — while position 2 of both predicates
-carries it *up* the `genl` hierarchy of event kinds: `flying` is a kind of `travelling`, so
-whatever can fly can travel. The second position of both predicates is an event kind,
-`(genlArg hasCapability 2 event)`, so `(hasCapability Tweety flying)` says Tweety can be
+carries it *up* the `genl` hierarchy of happening kinds: `flying` is a kind of `travelling`,
+so whatever can fly can travel. The second position of both predicates is a happening kind,
+`(genlArg hasCapability 2 happening)`, so `(hasCapability Tweety flying)` says Tweety can be
 the doer of a flying event.
 
 The size claims are also where the sharp edge shows. Preservation runs downward, so
@@ -138,6 +139,66 @@ dependency order. `seed/load-sentences` retries a sentence refused for what has 
 arrived yet, and throws only once a round changes nothing, so where an author filed a
 sentence is not a property of the knowledge.
 
+## Declarations at one position compose with each other and with `P`
+
+The reach of a position is the closure of the goal's term under the **union** of the
+relations its declarations name. A claim one declaration carries to a term is a
+conclusion another declaration applies to in turn, so a reach may mix relations:
+
+```clojure
+(transitive partOf)  (transitive heldIn)
+(partOf Piston Engine)  (heldIn Engine Crate)
+(transitiveInArgInverse needsCheck 1 partOf)
+(transitiveInArgInverse needsCheck 1 heldIn)
+(needsCheck Crate Monday)
+;; => (needsCheck Engine Monday)   one heldIn step
+;; => (needsCheck Piston Monday)   heldIn, then partOf
+```
+
+The same holds for one relation declared in both directions at one position.
+`(transitiveInArg flagged 1 genl)` carries `(flagged mammal)` up to `(flagged animal)`,
+and `(transitiveInArgInverse flagged 1 genl)` carries that conclusion down to
+`(flagged reptile)`: the pair holds of every kind connected to `mammal`.
+
+**A binary `P` declared `(transitive P)` is one more relation at its own preserved
+positions** (`inherit/self-positions`): `(P a w)` and a claim `(P w b)` compose to `(P a
+b)`, so `P` walks against its arrow at position 1 and along it at position 2. The
+composition is what answers a declaration and a transitivity together:
+
+```clojure
+(transitive partOf)  (transitive locatedIn)
+(transitiveInArgInverse locatedIn 1 partOf)
+(partOf Piston Engine)  (partOf Engine Car)
+(locatedIn Car Garage)  (locatedIn Garage House)
+;; => (locatedIn Piston House)   partOf twice, then locatedIn
+```
+
+`TransitivePredicateProver` walks the stored `locatedIn` edges alone, and
+`(locatedIn Piston …)` has none: an inherited conclusion is not a hop of that walk
+([taxonomy.md](taxonomy.md#predicate-metadata), "The step relation"). The
+composition is therefore `TransitiveInArgProver`'s, through the reach.
+
+Two limits apply to the self relation:
+
+- **A denial does not move along it.** `(P a w)` beside `(not (P w b))` leaves `(P a b)`
+  open, so `claims` reads an explicit negation, a converse and their readings over the
+  declared relations alone. Specificity (`below?`) still compares along the whole reach:
+  a denial at `Car` is below a claim at `Garage`.
+- **A forward rule concluding on `P` or below it walks no self relation**
+  (`inherit/*concluding*`, `chain/walks-its-own-conclusion?`): such a rule stores its
+  conclusions inside the closure the self relation reads, and the walk would name a
+  different route depending on how far the rule had run. A forward antecedent on a
+  preserved transitive `P` otherwise joins on both the walk and the reach.
+
+A firing over a reach that mixes relations rests on every relation it walked: the edges,
+the declaration licensing each relation, and `(transitive R)` for each fact relation
+(`inherit/joint-move-supports`, one `tax/uncovered-routes` walk over `[term relation]`
+pairs).
+
+A relation named in a declaration is walked over its stored facts and its cached
+closure, never over what another declaration derives about it. `(transitiveInArgInverse
+partOf 2 S)` leaves the `partOf` edges a `locatedIn` reach walks unchanged.
+
 ## From whose vantage
 
 Everything here is read from the asking context. The declarations come through
@@ -165,7 +226,7 @@ kinds at once, which the meta-ontology refuses.
 
 Preservation moves an **argument** along a relation; the predicate, and the level it
 relates at, are left alone. Crossing the line is a different claim: it links two
-predicates and has a quantifier reading to pin down (every member? some member?). The
+predicates and has a quantifier reading to settle (every member? some member?). The
 vocabulary for it is `(typeToInstancePred TypePred InstancePred)` — declared in
 `core.txt` and **deliberately inert**: it records the pairing for a reader and the
 engine infers nothing from it, because the quantifier reading is exactly the thing
@@ -177,10 +238,10 @@ argument to be marked, and a marked predicate takes one argument-check family fo
 position — `arg` throughout for an instance relation, `genlArg` throughout for a type
 one. A predicate relating one individual to a *kind* satisfies neither and is left
 unmarked, which `relation_kind`'s own comment says of `result` and
-`functionCorrespondingPredicate`. `hasCapability` is the third: one animal, one event
+`functionCorrespondingPredicate`. `hasCapability` is the third: one causal thing, one event
 kind. So `capabilityType`/`hasCapability` are named as a pair in their comments and not by
 the predicate that exists to name pairs — declaring the mark to satisfy it would trade an
-argument check that convicts for a link nothing reads. `partType`/`partOf` is the pair the
+argument check that convicts for a link nothing reads. `partType`/`tangiblePartOf` is the pair the
 link does state, both halves relating individuals to individuals.
 
 ## Specificity, and why it is not the deleted axis
@@ -486,16 +547,16 @@ that set, which sends the goal down the union path where this prover is consulte
 Without it, declaring `(transitiveInArgInverse partOfRegion 1 genl)` beside a registered `:rcc8`
 reasoner leaves the declaration inert and `query-plan` listing a prover that never runs.
 
-That read is on the hot path, and it is gated twice over. `positions` is asked by
+That read is on the hot path, and it runs behind a two-step presence check. `positions` is asked by
 `TransitiveInArgProver.applicable?` *and* by `shadowing-channels`, so it runs for every
 goal's functor in the KB, and each real read is two `matches-visible` calls. So
 `declared-about?` answers first: a cardinality read on the declaration functors' roots,
 false for nearly every KB there is, and only then an intersection with the argument
 root at position 1 — where a declaration's predicate sits — which is exact in the
-negative direction whatever anyone believes. Ungated, **one** declaration anywhere made
-a `genl` goal cost roughly 3× what it costs in a KB with none (~15 µs → ~40 µs), a tax
-every query paid for a feature almost none of them use. Gated, the two cases are ~16 µs
-and ~21 µs, and the difference is the declared predicate's own read.
+negative direction whatever anyone believes. Without the presence check, **one**
+declaration anywhere makes a `genl` goal cost roughly 3× what it costs in a KB with none
+(~15 µs → ~40 µs), a cost every query pays for a feature almost none of them use. With
+it, the two cases are ~16 µs and ~21 µs, and the difference is the declared predicate's own read.
 
 ## Forward chaining on a claim nobody stored
 
@@ -714,16 +775,16 @@ predicate-extent counts per datum. A KB that declares one reads the two functor 
 well, and the `[P R]` pairs are cached on those postings (`inherit/preserved-pairs`); one
 that writes no rule over them matches each datum against the pairs in memory and then
 probes the antecedent index for nothing. A `genl` datum whose moved predicates carry a
-rule pays the narrowing on top (`inherit/crossing-claim?`): one slot-roster read per term
+rule pays the narrowing on top (`inherit/crossing-claim?`): one slot-set read per term
 of its closure per preserved
 position, four predicate-extent reads for the permuting marks, and, when a declaration or a
 mark has changed since the last edge, one record fetch per declaration on `genl` and per
 mark. A closure past `inherit/crossing-closure-cap` terms skips those reads and moves
-every predicate preserved along `genl`. The forward join's own gate,
-`chain/preserving-antecedent?`, is the O(1) cardinality read on the declaration
+every predicate preserved along `genl`. The forward join's own presence
+check, `chain/preserving-antecedent?`, is the O(1) cardinality read on the declaration
 functors' roots that the query path already uses, read once per chaining run.
 
-Where both gates pass, the cost is the one the feature is: a conclusion per licensed
+Where both presence checks pass, the cost is the one the feature is: a conclusion per licensed
 tuple, so the product of the reaches at the preserved positions, per claim — and each
 candidate tuple is admitted by a full `surviving` read before it fires. That is paid on
 the assert path rather than per query, which is the trade a materialized conclusion
@@ -744,14 +805,17 @@ feature:
 
 `found-claims` weighs one against the other per goal: the predicate extents of every
 predicate the probe fans over (the sub-predicates for a positive probe, the
-super-predicates for a negated one), capped by the most selective pinned argument
-position, against the product's size. A predicate that stores nothing while a
+super-predicates for a negated one), capped by the most selective ground argument
+position, against the product's size. A negated probe walks the negative rows alone, so
+each predicate of its fan counts its stored denials
+(`inherit_test/a-denial-probe-is-priced-at-the-stored-denials`, `lein perf`'s
+`recover-preserved-negated-fan`). A predicate that stores nothing while a
 sub-predicate stores the facts is priced at the sub-predicate's extent, since that is
 what the open probe walks
 (`inherit_test/the-extent-estimate-counts-the-sub-predicates-the-probe-fans-over`).
-The pinned position is read at the place the probe will actually **put** it, which is
+The ground position is read at the place the probe will actually **put** it, which is
 not always the tuple index — the converse an asymmetric predicate is denied by swaps
-them, so a term pinned at tuple index 0 is looked up at argument position 2, and
+them, so a ground term at tuple index 0 is looked up at argument position 2, and
 counting it at position 1 would price a probe nobody is about to make.
 
 Both paths go through `matches-visible`, so subsumption through a sub-predicate, the
@@ -827,12 +891,12 @@ then again per *pair* of claims inside `undercut?`, and for a fact-relation each
 a `matches-visible` per node. Neither answer can change while one question is being
 answered — a query never mutates belief — so the memo lives for the question and needs
 no invalidation protocol. A KB that declares no preservation reaches none of this: an
-O(1) gate on the declaration functors having any extent at all sits in front of
+O(1) presence check on the declaration functors having any extent at all sits in front of
 `positions`.
 
 The multiplier the memo removes is the one `undercut?` introduces: it compares every claim
 against every other, so a reach walked per comparison is quadratic in the claims and a
-reach walked per question is linear in them. Both readings are gated —
+reach walked per question is linear in them. Both readings have regression tests:
 `inherit_test/the-reach-walk-is-linear-in-the-claims-and-not-quadratic` counts
 `matches-visible` calls at three sizes and holds the second difference to a doubling
 rather than a quadrupling, and `lein perf`'s `inherit-reach-memo` prices 8× the claims at
@@ -915,6 +979,6 @@ membership of a separated type and a separation decide it for a unary `P` too, a
 [exceptions.md](exceptions.md) has the general shape, of which this is one of three
 instances.
 
-The whole path is gated on some rule carrying an `exceptWhen` at all, and then on the
-declaration functors having a non-empty extent, so a KB using one feature and not the
+The whole path runs only when some rule carries an `exceptWhen` at all, and then only
+when the declaration functors have a non-empty extent, so a KB using one feature and not the
 other pays a set-cardinality read.

@@ -13,6 +13,7 @@
             [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
             [vaelii.host.sync :as sync]
+            [vaelii.impl.io.text :as text]
             [vaelii.test-util :as tu]))
 
 (def ^:private ships
@@ -85,6 +86,30 @@
                       (is (nil? (v/handle-of kb note 'CxUniverse)))
                       (is (= in-sync (sync/plan kb @ships)))))))
 
+(deftest a-sync-one-change-at-a-time-reports-each-and-stops-between-two
+  (let [other '(comment bird "another author's note")]
+    (in-orders :each
+               {"reported" [#(v/assert % note 'CxUniverse) #(v/assert % other 'CxUniverse)]}
+               (fn [kb]
+                 (let [seen (atom [])]
+                   (is (= {:added 0 :removed 2 :refused []}
+                          (sync/sync-each! kb @ships #(swap! seen conj %))))
+                   (is (= [0 1 2] (map :done @seen)) "each change, then the end")
+                   (is (every? #(= 2 (:total %)) @seen) "the plan's size, known from the start")
+                   (is (= #{note other} (set (keep (comp :form :op) @seen))))
+                   (is (every? #(= :remove (:op (:op %))) (butlast @seen)))
+                   (is (= in-sync (sync/plan kb @ships))))))
+    (in-orders :each-stopped
+               {"stopped" [#(v/assert % note 'CxUniverse) #(v/assert % other 'CxUniverse)]}
+               (fn [kb]
+                 (is (thrown? clojure.lang.ExceptionInfo
+                              (sync/sync-each! kb @ships
+                                               #(when (= 1 (:done %)) (throw (ex-info "stop" {}))))))
+                 (is (= 1 (count (:remove (sync/plan kb @ships))))
+                     "the first change settled; the rerun's plan is what is left")
+                 (is (= {:added 0 :removed 1 :refused []} (sync/sync-each! kb @ships (fn [_]))))
+                 (is (= in-sync (sync/plan kb @ships)))))))
+
 (deftest a-premise-naming-a-term-the-engine-does-not-ship-survives-the-sync
   (let [fact '(unary_predicate shipped_authored_kind)
         rule '(implies (bird ?x) (shipped_flagged ?x))]
@@ -97,6 +122,22 @@
                       (is (= {:added 0 :removed 0 :refused []} (sync/sync! kb @ships)))
                       (is (some? (v/handle-of kb fact 'CxUniverse)))
                       (is (some? (v/handle-of kb rule 'CxBiology)))))))
+
+(deftest a-premise-naming-an-authors-term-is-never-rendered-by-the-plan
+  ;; a corpus keeps its own content in CxUniverse; the plan reads past it by its terms
+  ;; rather than rendering each premise as a file form and dropping it afterwards
+  (let [foreign '(comment shipped_authored_kind "an author's note on an author's term")]
+    (in-orders :rendered
+               {"authored" [#(v/assert % foreign 'CxUniverse)]}
+               (fn [kb]
+                 (let [rendered (atom #{})
+                       entries  @#'text/premise-entries]
+                   (with-redefs [text/premise-entries
+                                 (fn [kb sxs] (swap! rendered into (map v/sentence-of sxs))
+                                   (entries kb sxs))]
+                     (is (= in-sync (sync/plan kb @ships))))
+                   (is (seq @rendered) "the premises about the engine's own terms are read")
+                   (is (not (contains? @rendered foreign))))))))
 
 (deftest an-author-genlcx-edge-survives-the-sync
   (tu/with-terms [CxAuthorAbove CxAuthorBelow]
@@ -145,7 +186,7 @@
 (deftest a-stale-kb-is-brought-to-what-ships
   (let [;; a shipped fact the KB lost
         missing   (shipped-form 'CxUniverse plain-fact?)
-        ;; a known-true one the KB holds at :default, off the forced-monotonic roster
+        ;; a known-true one the KB holds at :default, outside the forced-monotonic set
         weakened  (let [kb (open-kb :pick tu/load-core!)]
                     (try
                       (first (filter #(and (= 'CxUniverse (:context %))

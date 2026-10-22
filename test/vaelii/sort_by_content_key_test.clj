@@ -3,7 +3,7 @@
 (ns vaelii.sort-by-content-key-test
   "`nm/sort-by-content-key` / `nm/min-by-content-key` / `nm/print-key` — the
   decorate-sort-undecorate the engine's content orders share, and the one guarded
-  printer they use when a key is printed at all.  What is pinned here is the contract
+  printer they use when a key is printed at all.  This namespace asserts the contract
   every caller leans on: the key is built **once per element** (not once per
   comparison), the sort short-circuits below two so a one-element listing builds no key
   at all, ties fall to arrival order, and `min-by-content-key` is
@@ -222,7 +222,7 @@
 
   A key is not \"the rest of the line\".  Written below its call — a `juxt` broken over two
   lines, a `pr-str` on the continuation — it is invisible to a scan that cuts the line
-  after the call, and that one-line window is how every site this file has ever missed was
+  after the call, and that one-line scan is how every site this file has ever missed was
   missed.  Reading to
   the key's own closing paren sees all of it, however far down the page it runs, **and
   stops there** — so the collection argument, which may legitimately print what the sort
@@ -277,7 +277,7 @@
   "Every `[path line-number line]` in `src/vaelii` that hands a bare `str` to an ordering
   call.  The guarded answers are `nm/print-key` (a collection-capable value), `nm/name-key`
   (a scalar one) and `nm/compare-form` (no key at all), none of which contains a bare
-  `str` — so a converted site simply stops matching, and no second roster has to be kept
+  `str` — so a converted site simply stops matching, and no second list has to be kept
   in step with this one.  The allowlist above is the one exception, and `naming.clj` is
   skipped for the reason the printed scan skips it.
 
@@ -314,7 +314,7 @@
 (def ^:private plain-sort-by
   "`sort-by` itself, and not the cure.  `sort-by-content-key` and `min-by-content-key`
   both continue past a `-`, which the lookahead refuses, so a converted site simply stops
-  matching and no second roster has to be kept in step with this one."
+  matching and no second list has to be kept in step with this one."
   #"\((?:nm/|naming/)?sort-by(?![\w/-])")
 
 (def ^:private kb-reading-key
@@ -391,7 +391,7 @@
 
 (def ^:private handle-ordering-call
   "The calls whose first argument is an ordering **key**, for the handle scan.  `group-by`
-  is absent where the printed roster has it: bucketing on a handle groups a unique key and
+  is absent where the printed list has it: bucketing on a handle groups a unique key and
   orders nothing, so it cannot carry arrival order into an answer."
   #"sort-by|min-by-content-key|max-key|min-key")
 
@@ -503,13 +503,13 @@
         :let  [line   (nth lines i)
                m      (re-find match-call line)
                prefix (when m (subs line 0 (str/index-of line m)))
-               window (str/join " " (subvec lines i (min (count lines) (+ i 3))))]
+               span   (str/join " " (subvec lines i (min (count lines) (+ i 3))))]
         :when (and m
                    (or (re-find positional-take prefix)
                        (and (re-find threaded-take prefix)
                             (re-find #"(?<![\w-])(?:first|ffirst|second|last)(?![\w-])"
-                                     window)))
-                   (not (re-find content-ordered window))
+                                     span)))
+                   (not (re-find content-ordered span))
                    (not-any? #(str/includes? line %) handle-key-allowed))]
     [path (inc i) (str/trim line)]))
 

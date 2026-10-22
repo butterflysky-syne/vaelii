@@ -1,16 +1,16 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
-(ns vaelii.index-layout-gate-test
+(ns vaelii.index-layout-check-test
   "The durable index's key-layout sentinel (`dfiles/index-layout-decision`).
 
   A `:disk-log` index log written under another `kv/index-layout-version` replays
   cleanly and then misses every read whose key shape moved — counts look populated
   while ground asks answer false — so `open-kb` clears such an index and rebuilds it
-  from the records, stamping `layout.edn` only after the rebuild.  An absent
+  from the records, writing `layout.edn` only after the rebuild.  An absent
   sentinel over a populated log is the same case: that is what an index written
   before the sentinel existed looks like.  Each test asserts the repair *and* that
-  the KB answers afterwards — the disease this gate exists for is precisely a store
-  that looks healthy and answers nothing."
+  the KB answers afterwards: the layout check exists for a store that reports
+  populated counts and answers nothing."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
             [vaelii.impl.disk.backend :as backend]
@@ -42,7 +42,7 @@
     (backend/close-dir! dir)
     ok?))
 
-(deftest a-fresh-durable-index-is-stamped-on-open
+(deftest a-fresh-durable-index-gets-its-layout-version-on-open
   (let [dir (tmpdir)]
     (try
       (built-kb! dir)
@@ -53,7 +53,7 @@
       (finally (rm-rf! dir)))))
 
 (deftest an-absent-sentinel-over-a-populated-log-rebuilds
-  (testing "the pre-sentinel store: bytes present, stamp missing"
+  (testing "the pre-sentinel store: bytes present, sentinel missing"
     (let [dir (tmpdir)]
       (try
         (built-kb! dir)
@@ -61,11 +61,11 @@
         (is (true? (answers? dir)) "the open cleared, rebuilt from the records, and answers")
         (is (= kv/index-layout-version
                (:index-layout (read-string (slurp (layout-file dir)))))
-            "and the sentinel is re-stamped at the current layout")
+            "and the sentinel is rewritten at the current layout")
         (finally (rm-rf! dir))))))
 
 (deftest a-stale-sentinel-rebuilds
-  (testing "an index stamped by another layout"
+  (testing "an index whose sentinel names another layout"
     (let [dir (tmpdir)]
       (try
         (built-kb! dir)
@@ -73,7 +73,7 @@
         (is (true? (answers? dir)) "the open cleared, rebuilt from the records, and answers")
         (is (= kv/index-layout-version
                (:index-layout (read-string (slurp (layout-file dir)))))
-            "and the sentinel is re-stamped at the current layout")
+            "and the sentinel is rewritten at the current layout")
         (finally (rm-rf! dir))))))
 
 (deftest a-current-sentinel-is-left-alone
@@ -91,29 +91,30 @@
         root (str dir "/index")]
     (try
       (.mkdirs (File. root))
-      (is (= :unstamped (dfiles/index-layout-decision root 2 false))
-          "absent + empty needs the stamp, and says so rather than writing one")
+      (is (= :unwritten (dfiles/index-layout-decision root 2 false))
+          "absent + empty needs the sentinel, and says so rather than writing one")
       (is (false? (.exists (layout-file dir)))
           "and it wrote nothing — the caller owns that write, since a base is read-only")
-      (dfiles/stamp-index-layout! root 2)
+      (dfiles/write-index-layout! root 2)
       (is (= :current (dfiles/index-layout-decision root 2 true))
-          "the stamp the caller wrote matches")
+          "the sentinel the caller wrote matches")
       (is (= :stale (dfiles/index-layout-decision root 3 true))
-          "a mismatched stamp is stale")
-      (dfiles/stamp-index-layout! root 3)
+          "a mismatched sentinel is stale")
+      (dfiles/write-index-layout! root 3)
       (is (= :current (dfiles/index-layout-decision root 3 true))
-          "the rebuild's stamp commits the new layout")
+          "the rebuild's sentinel commits the new layout")
       (.delete (File. root "layout.edn"))
       (is (= :stale (dfiles/index-layout-decision root 3 true))
           "absent over a populated log is stale, not adoptable")
       (finally (rm-rf! dir)))))
 
-(deftest the-gate-reads-the-index-kind-and-so-never-fires-on-a-fork
+(deftest the-layout-check-reads-the-index-kind-and-so-never-fires-on-a-fork
   ;; `index-durable?` is not the discriminant: on the `:overlay` axis it says only that
-  ;; the *merged view holds something*.  A fork inherits no `:dir`, so `disk/disk-dir`
+  ;; the *merged contents hold something*.  A fork inherits no `:dir`, so `disk/disk-dir`
   ;; synthesizes the default `<tmpdir>/vaelii-disk/space-0` — the same directory a bare
-  ;; `{:backend :disk-log}` uses — and a gate keyed on the flag would clear the fork's merged
-  ;; index (permanently hiding the base's) and stamp a directory it never read.
+  ;; `{:backend :disk-log}` uses — and a layout check keyed on the flag would clear the fork's
+  ;; merged index (permanently hiding the base's) and write a sentinel into a directory it
+  ;; never read.
   (let [dir  (tmpdir)
         ;; a real durable KB at the default location, carrying no sentinel: the state a
         ;; machine has after any 0.2.0-era `{:backend :disk-log}` open
@@ -124,25 +125,25 @@
     (try
       (v/assert base '(dog Muffet) 'CxUniverse {:strength :monotonic})
       (let [default-index (File. (str (backend/disk-dir {}) "/index"))
-            stamp-before  (when (.isDirectory default-index)
-                            (.exists (File. default-index "layout.edn")))
+            sentinel-before (when (.isDirectory default-index)
+                              (.exists (File. default-index "layout.edn")))
             f (v/fork base)]
         (is (= '#{(dog Muffet)}
                (set (map :sentence (v/sentexes-matching f '(dog ?x) 'CxUniverse))))
-            "the fork sees its base through an index the gate left alone")
+            "the fork sees its base through an index the layout check left alone")
         (v/assert f '(dog Rex) 'CxUniverse {:strength :monotonic})
         (is (= 2 (count (v/sentexes-matching f '(dog ?x) 'CxUniverse)))
             "and still answers over both halves after a fork-local write")
         (testing "and it wrote no sentinel into the default disk directory"
-          (is (= stamp-before
+          (is (= sentinel-before
                  (when (.isDirectory default-index)
                    (.exists (File. default-index "layout.edn"))))
-              "a fork must not stamp a directory it never gated")))
+              "a fork writes no sentinel into a directory it never read")))
       (finally (rm-rf! dir) (v/clear! base)))))
 
 (deftest a-crash-mid-rebuild-reads-as-stale-and-not-as-a-fresh-directory
-  ;; the window the mark exists for: an absent stamp over an index the rebuild just
-  ;; cleared is empty, which without the mark reads as `:unstamped` — a fresh
+  ;; the crash window the mark exists for: an absent layout version over an index the rebuild just
+  ;; cleared is empty, which without the mark reads as `:unwritten` — a fresh
   ;; directory needing no rebuild, over records that are all still there
   (let [dir (tmpdir)
         root (str dir "/index")]
@@ -153,7 +154,7 @@
           "the cleared index is empty, and the mark is what keeps it from reading fresh")
       (is (= :stale (dfiles/index-layout-decision root 3 true))
           "and populated reads the same")
-      (dfiles/stamp-index-layout! root 3)
+      (dfiles/write-index-layout! root 3)
       (is (= :current (dfiles/index-layout-decision root 3 true))
-          "the rebuild's own stamp is what clears the mark")
+          "the rebuild's own sentinel write clears the mark")
       (finally (rm-rf! dir)))))

@@ -1,15 +1,16 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.computing-test
-  "CxComputing: the relations over software tools, their invocations and receipts, media
-  resources and network names, shipped as an opt-in theory below CxUniverse.  CxWell does
-  not see the theory, so a context below CxWell reads no computing relation, and a user's own context opts in by placing itself under CxComputing.
+  "The computing vocabulary of CxTra: the relations over software tools, their invocations
+  and receipts, media resources and network names, shipped in the opt-in theory CxTra
+  below CxUniverse.  CxWell does not see the theory, so a context below CxWell reads no
+  computing relation, and a user's own context opts in by placing itself under CxTra.
 
   The ten relations, their argument declarations and the sixteen kinds the relations are
-  typed over are all stated in CxComputing, so a context reads a kind's `genl` edges and
+  typed over are all stated in CxTra, so a context reads a kind's `genl` edges and
   its disjointness only where it sees the theory: CxUniverse and CxWell read none.
-  CxComputing states no rule: an invocation is concluded neither causal nor acausal from
-  its tool."
+  The computing relations state no rule: an invocation is concluded neither causal nor
+  acausal from its tool."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.test-util :as tu]))
@@ -17,10 +18,10 @@
 (use-fixtures :once (tu/loaded tu/load-starter!))
 (use-fixtures :each (tu/neutral))
 
-(def ^:private CPT 'CxComputing)
+(def ^:private CPT 'CxTra)
 
 (def ^:private binary-relations
-  '[toolName invokesTool resourceUrl receipt probesPredicate dnsResolvesTo agentHasTool])
+  '[toolName toolInvoked resourceUrl receipt probesPredicate dnsResolvesTo agentHasTool])
 
 (def ^:private ternary-relations
   '[toolInvocationArg toolArgType toolArgComment])
@@ -42,10 +43,13 @@
      (count (v/ask tu/*kb* (list 'quotedArg p '?n '?t) ctx))))
 
 (defn- problem-types
-  "The `:type` of each problem `check` reports for `sentence` in `ctx`, under the
-  constraint-only reading of the argument declarations."
+  "The `:type` of each problem `check` reports for `sentence` in `ctx`, or of the argument
+  conviction `assert` holds it inert under, under the constraint-only reading of the
+  argument declarations."
   [sentence ctx]
-  (tu/without-entailing (mapv :type (v/check tu/*kb* sentence ctx))))
+  (tu/without-entailing
+   (or (not-empty (mapv :type (v/check tu/*kb* sentence ctx)))
+       (into [] (keep :type) [(tu/write-conviction tu/*kb* sentence ctx)]))))
 
 (tu/deftest-kb the-theory-is-opt-in-below-cxuniverse
   (testing "the theory sees the upper ontology through CxUniverse"
@@ -99,15 +103,15 @@
     (tu/with-entailing
       (v/assert kb (list 'read_only_software_tool Grep) CxDesk)
       (v/assert kb (list 'write_capable_software_tool Remove) CxDesk)
-      (v/assert kb (list 'invokesTool CallOne Grep) CxDesk)
-      (v/assert kb (list 'invokesTool CallTwo Remove) CxDesk)
+      (v/assert kb (list 'toolInvoked CallOne Grep) CxDesk)
+      (v/assert kb (list 'toolInvoked CallTwo Remove) CxDesk)
       (v/assert kb (list 'receipt CallOne Slip) CxDesk)
       (v/assert kb (list 'resourceUrl Clip "https://example.org/clip") CxDesk))
     (testing "a read-only tool is acausal and a write-capable tool is causal"
       (is (v/isa? kb Grep 'acausal CxDesk))
       (is (v/isa? kb Remove 'causal CxDesk))
       (is (v/isa? kb Grep 'intangible CxDesk)))
-    (testing "the first argument of invokesTool is derived a tool_invocation"
+    (testing "the first argument of toolInvoked is derived a tool_invocation"
       (doseq [call [CallOne CallTwo]]
         (is (v/isa? kb call 'tool_invocation CxDesk))
         (is (v/isa? kb call 'event CxDesk))))
@@ -119,7 +123,7 @@
       (is (v/isa? kb Clip 'information_bearing_thing CxDesk)))
     ;; Two rewrites reach a rule concluding either side from a tool.  Unbounded, the node
     ;; engine expands every CxWell rule concluding a spec of `causal`, about 30x per level.
-    (testing "the theory states no rule, so an invocation is concluded neither side from its tool"
+    (testing "no rule of the theory concludes either side of an invocation from its tool"
       (doseq [call [CallOne CallTwo] side '[causal acausal]]
         (is (false? (v/provable? kb (list side call) CxDesk {:max-depth 2})) (str call " " side))))
     (testing "no clash is reported"
@@ -131,7 +135,7 @@
   (tu/with-terms [CxElsewhere Grep CallOne]
     (v/assert kb (list 'genlCx CxElsewhere 'CxWell) 'CxUniverse)
     (v/assert kb (list 'read_only_software_tool Grep) CxElsewhere)
-    (v/assert kb (list 'invokesTool CallOne Grep) CxElsewhere)
+    (v/assert kb (list 'toolInvoked CallOne Grep) CxElsewhere)
     (doseq [ctx [CxElsewhere 'CxWell 'CxUniverse]]
       (testing (str "no other declaration of a computing relation is read in " ctx)
         ;; The exact-arity classes and `functional` are decontextualized marks, so each
@@ -145,10 +149,10 @@
           (is (zero? (declared-positions p ctx)) (str p " in " ctx))
           (is (empty? (v/sentexes-matching kb (list 'comment p '?c) ctx)) (str p " in " ctx)))))
     (testing "the stated fact holds and no argument type is derived from it"
-      (is (holds-ask (list 'invokesTool CallOne Grep) CxElsewhere))
+      (is (holds-ask (list 'toolInvoked CallOne Grep) CxElsewhere))
       (is (not (v/isa? kb CallOne 'tool_invocation CxElsewhere))))
     (testing "a wrongly typed argument is not convicted there"
-      (is (empty? (problem-types (list 'invokesTool CallOne 5) CxElsewhere)))
+      (is (empty? (problem-types (list 'toolInvoked CallOne 5) CxElsewhere)))
       (is (empty? (problem-types (list 'toolName Grep 5) CxElsewhere))))
     (testing "the kinds are the theory's, so no context that does not see it reads a placement"
       (doseq [ctx [CxElsewhere 'CxWell 'CxUniverse] k kinds]
@@ -159,7 +163,7 @@
         (is (not-any? swept kinds))))))
 
 (tu/deftest-kb check-convicts-a-wrongly-typed-argument-under-the-constraint-only-reading
-  ;; `check` is asked under the constraint-only reading: under the default reading an
+  ;; the conviction is read under the constraint-only reading: under the default reading an
   ;; argument declaration derives the type it names and convicts no symbol.
   (tu/with-terms [CxDesk Grep CallOne CallTwo Pebble]
     (v/assert kb (list 'genlCx CxDesk 'CxWell) 'CxUniverse)
@@ -169,16 +173,16 @@
     (v/assert kb (list 'tool_invocation CallTwo) CxDesk)
     (v/assert kb (list 'stone Pebble) CxDesk)
     (testing "a well-typed sentence draws no problem"
-      (is (empty? (problem-types (list 'invokesTool CallOne Grep) CxDesk)))
+      (is (empty? (problem-types (list 'toolInvoked CallOne Grep) CxDesk)))
       (is (empty? (problem-types (list 'toolName Grep "grep") CxDesk)))
       (is (empty? (problem-types (list 'dnsResolvesTo "example.org" "192.0.2.1") CxDesk)))
       (is (empty? (problem-types (list 'probesPredicate Grep 'parentOf) CxDesk)))
       (is (empty? (problem-types (list 'toolArgType Grep "pattern" 'string) CxDesk))))
-    (testing "invokesTool takes a software tool in position 2"
-      (is (= [:arg-type] (problem-types (list 'invokesTool CallOne Pebble) CxDesk))
+    (testing "toolInvoked takes a software tool in position 2"
+      (is (= [:arg-type] (problem-types (list 'toolInvoked CallOne Pebble) CxDesk))
           "a stone is tangible and a software tool is intangible")
-      (is (= [:arg-type] (problem-types (list 'invokesTool CallOne 5) CxDesk)))
-      (is (= [:arg-type] (problem-types (list 'invokesTool CallOne "grep") CxDesk))))
+      (is (= [:arg-type] (problem-types (list 'toolInvoked CallOne 5) CxDesk)))
+      (is (= [:arg-type] (problem-types (list 'toolInvoked CallOne "grep") CxDesk))))
     (testing "receipt takes a tool receipt in position 2"
       (is (= [:arg-type] (problem-types (list 'receipt CallOne CallTwo) CxDesk))
           "a tool invocation is disjoint from a tool receipt"))

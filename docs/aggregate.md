@@ -75,7 +75,7 @@ In a rule, whether the rest of the rule names a remaining variable decides its r
 
 `?x` is bound by the generator, so the aggregate runs **once per `?x`** and yields one `?n`
 each, which is the grouped count. An aggregate is a deferred literal
-(`sentex/deferred-predicates`), so canonical antecedent order and the planner both pin it
+(`sentex/deferred-predicates`), so canonical antecedent order and the planner both place it
 after its binders, whichever order it is written in.
 
 The reduction variable is **local**, like a `thereExists` binder: `?a` appearing outside
@@ -303,7 +303,7 @@ order would pick the answer. The aggregate bodies' predicates, one per conjunct,
 | `provers/default-provers` | one `AggregateProver` beside `->UnknownProver` / `->ThereExistsProver` |
 | `provers/conjunction-solutions` | the joined evaluator the census body runs through |
 | `wff/naf-problems` | the five, through `special/entries` |
-| `sentex/deferred-predicates` | the five, so canonical order and the planner pin them after their binders |
+| `sentex/deferred-predicates` | the five, so canonical order and the planner place them after their binders |
 | `sentex/free-vars` | one arm subtracting both slots |
 | `sentex/deferred-input-vars` / `-output-vars` | what a computed literal reads and what it writes |
 | `sentex/census-bound-vars` | what a census body binds for itself, read by the assert-time check and by the prover's applicability |
@@ -344,7 +344,7 @@ variable from a fact in the context you mean to count.
 Backward chaining (`prove` and the node engine) evaluates the aggregate in the goal's
 context and forward chaining in the conclusion's placement context; both are the context
 the conclusion is about, the answer [exceptions.md](exceptions.md) gives to the same
-question. Tests pin the two chainers' agreement on the comparison-on-a-count shape.
+question. Tests assert the two chainers' agreement on the comparison-on-a-count shape.
 
 ## Scope
 

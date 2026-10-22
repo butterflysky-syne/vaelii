@@ -236,7 +236,7 @@
       {:culprits culprits})))
 
 (defn- allen-from-points-pair-by-pair
-  "The Allen relations the point network pins down in `ctx`, each endpoint comparison and
+  "The Allen relations the point network determines in `ctx`, each endpoint comparison and
   its support asked of the point network as a goal of its own: the reference the interval
   network's point narrowing, which reads all of them off one closed network, is held to."
   [kb ctx]

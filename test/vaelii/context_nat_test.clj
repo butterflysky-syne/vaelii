@@ -6,19 +6,18 @@
   A ground application in a sentex's context slot reifies to an opaque `cx/` context
   constant, so `(CxTimeFn CxMonad (DatetimeFn \"2000\"))` is a context a sentex can be stored
   in and a `genlCx` node — while its unreifiable argument stays structural in the
-  `termOfUnit` map, readable to the producer.  A read names the context through the
+  `natFormula` map, readable to the producer.  A read names the context through the
   application while CxUniverse believes `(result CxTimeFn context)`.  `(contextArgSubrelation F pos R)` then orders
   sibling contexts structurally: `(CxTimeFn CxMonad (DatetimeFn \"2000-01\"))` is a spec of
   `(CxTimeFn CxMonad (DatetimeFn \"2000\"))` because January 2000 is inside 2000, with nobody
   asserting the `genlCx` edge."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
-            [vaelii.host.core-context :as core-context]
             [vaelii.impl.context-nat :as cn]
             [vaelii.impl.nat :as nat]
             [vaelii.test-util :as tu]))
 
-(use-fixtures :once (tu/loaded core-context/load-into))
+(use-fixtures :once (tu/loaded tu/load-core!))
 (use-fixtures :each (tu/neutral))
 
 (def ^:private ctr (atom 0))
@@ -46,9 +45,9 @@
     (testing "the context slot is a reified cx/ constant that classifies as a context"
       (is (nat/reified-context-symbol? k))
       (is (= :context (v/term-role k))))
-    (testing "the unreifiable datetime argument stays structural in the termOfUnit map"
-      (is (= [(list 'termOfUnit k expr)]
-             (map :sentence (v/sentexes-matching kb (list 'termOfUnit k '?e) 'CxUniverse)))))
+    (testing "the unreifiable datetime argument stays structural in the natFormula map"
+      (is (= [(list 'natFormula k expr)]
+             (map :sentence (v/sentexes-matching kb (list 'natFormula k '?e) 'CxUniverse)))))
     (testing "the fact reads back from the compound context (read-side reify is symmetric)"
       (is (= [{'?x 'Ann}] (v/ask kb '(likes Tom ?x) expr))))
     (testing "the same compound dedups to one context constant"
@@ -68,11 +67,11 @@
 
 ;; ---- the stored set and the readings are functions of the offered set ----
 
-;; An `except` of the declaration in CxUniverse, or a monotonic denial of it, hides it from
-;; every reader: `assert` stores the fact in the `cx/` context whichever arrives first, and a
-;; read naming the slot is refused.  An `except` in a sub-context leaves the declaration
-;; believed at CxUniverse, and the slot reads.  `recover` rebuilds the same reading in
-;; either order.
+;; An `except` of the declaration in CxUniverse hides it from every reader: `assert` stores
+;; the fact in the `cx/` context whichever arrives first, and a read naming the slot is
+;; refused.  `result` is forced-monotonic, so a monotonic denial of the
+;; declaration is never believed and the slot reads, as it does under an `except` in a
+;; sub-context.  `recover` rebuilds the same reading in either order.
 (defn- hide-mark!
   "Hide the `(result cxfn context)` declaration `mark` the way `where` names."
   [kb where mark cxfn sub]
@@ -94,7 +93,7 @@
 
 (tu/deftest-kb a-context-declaration-no-reader-believes-stores-and-reads-alike-in-either-order
   (doseq [[where want] [[:universe {:stored 1 :cx? true :at-cx true :slot :refused}]
-                        [:denial {:stored 1 :cx? true :at-cx true :slot :refused}]
+                        [:denial {:stored 1 :cx? true :at-cx true :slot true}]
                         [:sub {:stored 1 :cx? true :at-cx true :slot true}]]
           order        [[:hide :fact] [:fact :hide]]]
     (tu/with-terms [Winter NewYear holiday CxSub]
@@ -161,7 +160,7 @@
         (is (re-find #"\(result CxBogusFn context\)" (str (:message err))))))))
 
 (tu/deftest-kb a-declaration-admits-the-slot-only-where-cxuniverse-sees-it
-  ;; The slot resolves through the `termOfUnit` map in CxUniverse, so the declaration is
+  ;; The slot resolves through the `natFormula` map in CxUniverse, so the declaration is
   ;; read there: stated in CxUniverse or in a context above it, it admits the slot; stated
   ;; in an unwired context or in a spec of CxUniverse, it does not.
   (doseq [where [:universe :above :unwired :below]]
@@ -342,7 +341,7 @@
             kcx  (:context (v/sentex kb (:slot hs)))
             knat (nth (:sentence (v/sentex kb (:arg hs))) 2)
             maps (set (map #(second (:sentence %))
-                           (v/sentexes-matching kb (list 'termOfUnit '?k E) 'CxUniverse)))]
+                           (v/sentexes-matching kb (list 'natFormula '?k E) 'CxUniverse)))]
         (testing (str order " the slot and the argument name two constants")
           (is (nat/reified-context-symbol? kcx))
           (is (nat/reified-object-symbol? knat))
@@ -358,10 +357,10 @@
           (is (v/ask? kb (list likes Tom Ann) E))
           (is (v/ask? kb (list visited Tom E) 'CxUniverse)))))))
 
-;; ---- the context-slot shape gate does not depend on the naming policy ------
+;; ---- the context-slot shape check does not depend on the naming policy -----
 
 (tu/deftest-kb naming-off-still-refuses-a-non-symbol-context-for-shape
-  ;; `check-shape!` runs independent of the naming policy, and the gate checks that
+  ;; `check-shape!` runs independent of the naming policy, and it checks that
   ;; reification yields a symbol — so a non-ground compound context is a `:shape` refusal
   ;; even under `:naming :off`, never a raw list in a sentex's context slot
   ;; (docs/context-nat.md).
@@ -418,7 +417,7 @@
   ;; `maybe-reify-context` mints on the write path and dedups on the read one, and the
   ;; two have to resolve an application to the same term or a fact stored under one
   ;; spelling is unreachable by the other.  A `(rewriteOf T E)` is the rank that shows it:
-  ;; the write path resolves the slot to `T` and mints no `termOfUnit`, so a read that
+  ;; the write path resolves the slot to `T` and mints no `natFormula`, so a read that
   ;; consulted the dedup probe alone would answer `no-match` for a context it had just
   ;; stored into.
   (tu/with-terms [CxAlias Slot likes Tom Ann]
@@ -582,10 +581,10 @@
 ;; ---- the computed edge's supporters, stated below the context it is stored in ----
 ;;
 ;; `materialize-edge` stores the computed `genlCx` in CxUniverse and justifies it by the two
-;; `termOfUnit` sentexes, the `contextArgSubrelation` declaration and, for a dimension
+;; `natFormula` sentexes, the `contextArgSubrelation` declaration and, for a dimension
 ;; resolved by stored facts, the `(R a b)` evidence.  Nothing requires the declaration or
 ;; the evidence to be stated where CxUniverse can see it, so the edge can rest on a
-;; supporter in a context below its own.  These two tests pin that shape, and
+;; supporter in a context below its own.  These two tests assert that shape, and
 ;; `VAELII_AUDIT_SUPPORT` reports both justifications.
 
 (defn- supporter-contexts

@@ -57,8 +57,9 @@
 (tu/deftest-kb a-membership-is-recorded-on-the-marks-storage-not-its-belief
   ;; `(M T)` is a *supporter* of T's membership, so the member arm records it whenever
   ;; the mark is stored, whatever the mark's label; the cache reads the network, and a
-  ;; scoped read filters the mark through the read walk.  Gated on belief instead, the same four facts would separate the pair in
-  ;; one arrival order and not the other.
+  ;; scoped read filters the mark through the read walk.  An arm that recorded only a
+  ;; believed mark would make the same four facts separate the pair in one arrival order
+  ;; and not the other.
   (let [species (tu/tmp-pred) dog (tu/tmp-type) cat (tu/tmp-type)
         t (reasoning/taxonomy kb)]
     (v/assert kb (list 'disjoint_metatype species) 'CxUniverse)
@@ -162,7 +163,7 @@
 (tu/deftest-kb argisa-constrains-a-predicate-valued-position
   ;; (arg typeToInstancePred 1 type_relation_predicate) is only enforceable because
   ;; the argument check reaches past CapitalCamelCase individuals
-  ;; Pinned to the constraint reading: the position holds a symbol, so with the entailment
+  ;; Forced to the constraint reading: the position holds a symbol, so with the entailment
   ;; on the declaration mints the metatype rather than convicting the predicate that lacks
   ;; it (docs/argtypes.md).
   (tu/without-entailing
@@ -170,14 +171,15 @@
          typeLevel (tu/tmp-pred) instanceLevel (tu/tmp-pred) unclassified (tu/tmp-pred)]
      (v/assert kb (list 'genl typeKind 'thing) 'CxUniverse)
      (v/assert kb (list 'genl otherKind 'thing) 'CxUniverse)
+     (v/assert kb (list 'disjoint typeKind otherKind) 'CxUniverse)
      (v/assert kb (list 'arg link 1 typeKind) 'CxUniverse)
      (v/assert kb (list typeKind typeLevel) 'CxUniverse)
      (v/assert kb (list otherKind unclassified) 'CxUniverse)
      (testing "a correctly classified predicate satisfies the constraint"
        (is (v/assert kb (list link typeLevel instanceLevel) 'CxUniverse)))
-     (testing "a predicate typed as something else violates it"
-       (is (thrown? clojure.lang.ExceptionInfo
-                    (v/assert kb (list link unclassified instanceLevel) 'CxUniverse))))
+     (testing "a predicate typed as a disjoint kind violates it"
+       (is (= :arg-type (tu/write-type kb #(v/assert kb (list link unclassified instanceLevel)
+                                                     'CxUniverse)))))
      (testing "open-world survives: a predicate with no type at all cannot violate"
        (is (v/assert kb (list link (tu/tmp-pred) instanceLevel) 'CxUniverse))))))
 
@@ -236,7 +238,7 @@
 ;;; ── which context may hold the conflicting membership ────────────────
 
 ;; The check has two halves, both context-scoped, and a three-context lattice is what
-;; pins each.  Two incomparable specifics under one general:
+;; tests each.  Two incomparable specifics under one general:
 ;;
 ;;      CxUniverse
 ;;            │

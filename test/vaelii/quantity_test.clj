@@ -91,7 +91,7 @@
 (tu/deftest-kb a-quantity-comparison-in-a-rule-antecedent-derives
   (tu/with-terms [heavy Boulder Pebble]
     (v/assert kb '(dimensionOf Kilogram Mass) C)
-    ;; the comparison is a deferred antecedent, pinned after (mass ?o ?q) binds ?q
+    ;; the comparison is a deferred antecedent, placed after (mass ?o ?q) binds ?q
     (v/assert-rule kb [(list 'mass '?o '?q)
                        (list 'quantityGreaterThan '?q '(QuantityFn 100 Kilogram))]
                    (list heavy '?o) C {:direction :forward})
@@ -101,7 +101,7 @@
       (is (v/ask? kb (list heavy Boulder) C) "150 kg > 100 kg ⇒ heavy")
       (is (not (v/ask? kb (list heavy Pebble) C)) "50 kg is not > 100 kg"))))
 
-;; ---- structural pass-through (01's gate) ---------------------------------
+;; ---- structural pass-through (01's check) --------------------------------
 
 (tu/deftest-kb a-stored-measure-keeps-its-compound-and-is-never-minted
   (tu/with-terms [Obj]
@@ -210,7 +210,7 @@
   (v/assert kb '(conversionFactor Gram Kilogram 0.002) C)
   (let [forward (factor-of kb 'Gram)]
     (tu/with-neutral-kb [other #(doto (tu/isolated-fresh)
-                                  (core-context/load-into))]
+                                  (tu/load-core!))]
       (v/assert other '(conversionFactor Gram Kilogram 0.002) C)
       (v/assert other '(conversionFactor Gram Kilogram 0.001) C)
       (v/assert other '(dimensionOf Gram Mass) C)
@@ -235,7 +235,7 @@
     (v/assert kb '(spanOf Trail (QuantityFn 1 Furlong)) C)
     (v/assert kb '(spanOf Trail (QuantityFn 2 Chain)) C)
     (tu/with-neutral-kb [other #(doto (tu/isolated-fresh)
-                                  (core-context/load-into))]
+                                  (tu/load-core!))]
       (table! other)
       (v/assert other '(spanOf Trail (QuantityFn 2 Chain)) C)
       (v/assert other '(spanOf Trail (QuantityFn 1 Furlong)) C)

@@ -75,7 +75,7 @@
 ;; ---- layout -------------------------------------------------------------
 ;;
 ;; Three shapes, and they are the whole layout engine.  A row for a taxonomy level, a
-;; column for the relation flanks, a ring for the ego view.  None of them iterates to a
+;; column for the relation flanks, a ring for the ego graph.  None of them iterates to a
 ;; fixpoint or simulates anything: given the boxes, each is one pass of arithmetic, so
 ;; the picture is a pure function of what was read and re-renders identically.
 
@@ -90,6 +90,52 @@
                       (+ x (:w n) gap)])
                    [[] (- cx (/ total 2.0))]
                    nodes))))
+
+(def ^:private frame-pad
+  "The clear space between a group frame and the boxes it encloses, on the sides and top."
+  6)
+
+(def ^:private frame-label-h
+  "The band under a group's boxes that holds the frame's label, inside the frame."
+  18)
+
+(def ^:private frame-char-w
+  "Advance of one character in a frame label: `char-w` scaled from `--g-label` (13.5px) to
+  `--g-edge` (12px), the size the sheet sets frame and edge labels at."
+  8.0)
+
+(defn- frame-label-w [label]
+  (if label (* frame-char-w (count (str label))) 0))
+
+(defn grouped-row
+  "Place `runs` side by side as one row centred on `cx` at height `y`: each run is
+  `{:nodes [measured …] :label s-or-nil}`, its nodes `gap` apart, two runs `group-gap`
+  apart.  A run with a label gets a frame enclosing its nodes with the label in a band
+  under them, and is at least as wide as its label; a run without one is laid out as
+  `row` lays out its nodes.  Returns `{:nodes [placed …] :frames [{:x :y :w :h :label}]}`,
+  `:x`/`:y` of a frame being its top-left corner."
+  [runs cx y gap group-gap]
+  (let [runs   (filterv #(seq (:nodes %)) runs)
+        span   (fn [ns] (+ (reduce + 0 (map :w ns)) (* gap (max 0 (dec (count ns))))))
+        width  (fn [{:keys [nodes label]}]
+                 (if label
+                   (max (+ (span nodes) (* 2 frame-pad)) (+ (frame-label-w label) (* 2 frame-pad)))
+                   (span nodes)))
+        total  (+ (reduce + 0 (map width runs)) (* group-gap (max 0 (dec (count runs)))))
+        top    (- y (/ node-h 2.0) frame-pad)]
+    (first
+     (reduce (fn [[out x] {:keys [nodes label] :as run}]
+               (let [w      (width run)
+                     placed (row nodes (+ x (/ w 2.0)) y gap)]
+                 [(cond-> (update out :nodes into placed)
+                    label (update :frames conj
+                                  {:x (long (Math/round (double x))) :y (long (Math/round (double top)))
+                                   :w (long (Math/round (double w)))
+                                   :h (long (+ node-h frame-pad frame-label-h))
+                                   :label label}))
+                  (+ x w group-gap)]))
+             [{:nodes [] :frames []} (- cx (/ total 2.0))]
+             runs))))
 
 (defn column
   "Place measured `nodes` in a vertical column beside the centre, stacked `gap` apart and
@@ -177,14 +223,22 @@
 
 ;; ---- emitters -----------------------------------------------------------
 
+(def arrow-tones
+  "The arrowhead markers, one per stroke colour, keyed by the `:tone` an edge carries:
+  nil for the muted stroke, `:sub` for a subsumption edge, `:disjoint` for a `disjoint`
+  edge.  A marker paints its own fill, so each stroke colour needs its own marker."
+  {nil "g-arrow" :sub "g-arrow-sub" :disjoint "g-arrow-disjoint"})
+
 (defn- arrow-defs
-  "The shared arrowhead marker.  One marker, referenced by every edge: direction is
-  carried by the head and by the edge label, never by colour alone."
+  "The arrowhead markers.  Direction is carried by the head and by the edge label, never
+  by colour alone; the colour repeats the edge's stroke."
   []
-  [:defs
-   [:marker {:id "g-arrow" :viewBox "0 0 10 10" :refX "9" :refY "5"
-             :markerWidth "5" :markerHeight "5" :orient "auto-start-reverse"}
-    [:path {:d "M 0 0 L 10 5 L 0 10 z" :class "g-arrowhead"}]]])
+  (into [:defs]
+        (for [[tone id] (sort-by val arrow-tones)]
+          [:marker {:id id :viewBox "0 0 10 10" :refX "9" :refY "5"
+                    :markerWidth "5" :markerHeight "5" :orient "auto-start-reverse"}
+           [:path {:d "M 0 0 L 10 5 L 0 10 z"
+                   :class (str "g-arrowhead" (when tone (str " g-" (name tone))))}]])))
 
 (def ^:private node-corner
   "The corner radius of a node box.  A box, not a pill: a label is set flush left-to-right
@@ -206,24 +260,38 @@
     (if href [:a {:href href} g] g)))
 
 (defn- edge-el
-  "One edge: a line with the shared arrowhead, and — when it carries one — the relation
-  name centred on it.  `:kind` becomes a class, which is how a `genlCx` edge is told
-  from a `genl` edge without either of them being a different colour of the same claim.
-  `:back?` puts a head at the other end too, for a pair related both ways."
-  [{:keys [x1 y1 x2 y2 label kind back?]}]
-  [:g {:class (str "g-edge " (or kind ""))}
-   [:line (cond-> {:x1 x1 :y1 y1 :x2 x2 :y2 y2 :marker-end "url(#g-arrow)"}
-            back? (assoc :marker-start "url(#g-arrow)"))]
-   (when label
-     [:text {:x (long (/ (+ x1 x2) 2)) :y (- (long (/ (+ y1 y2) 2)) 5)
-             :text-anchor "middle" :class "g-edge-label"}
-      (str label)])])
+  "One edge: a line with an arrowhead, and — when it carries one — the relation name
+  centred on it.  `:kind` becomes a class, which is how a `genlCx` edge is told from a
+  `genl` edge (a dash) and a `disjoint` edge from another relation (a stroke colour).
+  `:back?` puts a head at the other end too, for a pair related both ways.  `:tone` picks
+  the arrowhead marker (`arrow-tones`)."
+  [{:keys [x1 y1 x2 y2 label kind back? tone]}]
+  (let [head (str "url(#" (arrow-tones tone "g-arrow") ")")]
+    [:g {:class (str "g-edge " (or kind ""))}
+     [:line (cond-> {:x1 x1 :y1 y1 :x2 x2 :y2 y2 :marker-end head}
+              back? (assoc :marker-start head))]
+     (when label
+       [:text {:x (long (/ (+ x1 x2) 2)) :y (- (long (/ (+ y1 y2) 2)) 5)
+               :text-anchor "middle" :class "g-edge-label"}
+        (str label)])]))
+
+(defn- frame-el
+  "One group frame: the box drawn behind the group's nodes."
+  [{:keys [x y w h]}]
+  [:rect {:x x :y y :width w :height h :rx node-corner :class "g-frame"}])
+
+(defn- frame-label-el
+  "A group frame's label, in the band under the group's nodes.  Drawn over the edges, so
+  an edge from the row below passes under the text."
+  [{:keys [x y h label]}]
+  [:text {:x (+ x frame-pad) :y (- (+ y h) 5) :class "g-frame-label"} (str label)])
 
 (defn- bbox
   "The rectangle everything drawn fits inside — node boxes, edge endpoints, and an edge
   label's own extent, which reaches past the segment it sits on."
-  [nodes edges]
-  (let [pts (concat (mapcat (fn [{:keys [x y w h]}]
+  [nodes edges frames]
+  (let [pts (concat (mapcat (fn [{:keys [x y w h]}] [[x y] [(+ x w) (+ y h)]]) frames)
+                    (mapcat (fn [{:keys [x y w h]}]
                               [[(- x (/ w 2.0)) (- y (/ h 2.0))]
                                [(+ x (/ w 2.0)) (+ y (/ h 2.0))]])
                             nodes)
@@ -249,9 +317,9 @@
   is the crop, and an intrinsic pixel `width`/`height` (one user unit to one CSS px) draws
   the graph at its natural size — a wide one scrolls inside `.kb-graph-fig` rather than
   shrinking to an unreadable strip on a narrow column."
-  [{:keys [nodes edges aria-label]}]
+  [{:keys [nodes edges frames aria-label]}]
   (when (seq nodes)
-    (let [[x0 y0 x1 y1] (bbox nodes edges)
+    (let [[x0 y0 x1 y1] (bbox nodes edges frames)
           w (+ (- x1 x0) (* 2 margin))
           h (+ (- y1 y0) (* 2 margin))]
       [:svg {:class "kb-graph" :role "img" :aria-label (str aria-label)
@@ -263,6 +331,9 @@
              ;; shrinking to an unreadable strip on a narrow (portrait) column
              :width w :height h :preserveAspectRatio "xMidYMid meet"}
        (arrow-defs)
+       ;; frames behind everything, so an edge crossing one stays visible
+       (map frame-el frames)
        ;; edges first, so a line is never drawn over the label it connects
        (map edge-el edges)
+       (map frame-label-el frames)
        (map node-el nodes)])))

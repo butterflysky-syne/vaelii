@@ -7,7 +7,7 @@
   the engine interprets: integrate, disintegrate, rebuild and wff all walk it.  What
   makes that safe is `check-entries`, which runs at namespace load and refuses an
   entry whose cache arms are partial — the add/remove/rebuild mirroring the old
-  hand-written conds left to review is now a build failure.  These tests pin the
+  hand-written conds left to review is now a build failure.  These tests assert the
   validator's enforcement and the table's required contents; no KB is involved, so no
   fixture is either."
   (:require [clojure.spec.alpha :as s]
@@ -56,7 +56,7 @@
 
 (deftest the-live-table-passes-its-own-check
   ;; `entries` is defined through `check-entries`, so namespace load already proves
-  ;; this — asserting it here keeps the wiring itself pinned (a refactor that stops
+  ;; this — asserting it here keeps the wiring itself tested (a refactor that stops
   ;; routing the def through the validator would pass load and fail here).
   (is (= special/entries (special/check-entries special/entries)))
   (is (= special/table (into {} special/entries))))
@@ -130,6 +130,7 @@
     [commutativeInArgs                [:integrate :disintegrate :rebuild :wff]       nil                        true]
     [inverse                          [:integrate :disintegrate :rebuild :wff]       nil                        true]
     [genlInverse                      [:integrate :disintegrate :rebuild :wff]       nil                        true]
+    [negates                          [:integrate :disintegrate :rebuild :wff]       nil                        true]
     [decontextualized_predicate        [:integrate :disintegrate :rebuild :wff]       :decontextualized          false]
     [forced_decontextualized_predicate  [:integrate :disintegrate :rebuild :wff]       :forced-decontextualized   true]
     [forced_monotonic_predicate         [:integrate :disintegrate :rebuild :wff]       :forced-monotonic          true]
@@ -141,7 +142,6 @@
     [modal_predicate                   [:integrate :disintegrate :rebuild :wff]       :modal                     true]
     [reifiable_function                [:integrate :disintegrate :rebuild :wff]       :reifiable                 true]
     [unreifiable_function              [:integrate :disintegrate :rebuild :wff]       :unreifiable               true]
-    [quoting_function                  [:integrate :disintegrate :rebuild :wff]       :quoting                   true]
     [contextArgSubrelation            [:wff]                                         nil                        false]
     [functionCorrespondingPredicate   [:wff]                                         nil                        false]
     [equals                           [:integrate :disintegrate :rebuild :wff]       nil                        false]
@@ -164,6 +164,8 @@
     [defnSufficient                   [:wff]                                         nil                        false]
     [defnIff                          [:wff]                                         nil                        false]
     [different                        [:wff]                                         nil                        false]
+    [minCommonGenl                    [:wff]                                         nil                        false]
+    [maxCommonSpec                    [:wff]                                         nil                        false]
     [unknown                          [:wff]                                         nil                        false]
     [thereExists                      [:wff]                                         nil                        false]
     [forall                           [:wff]                                         nil                        false]

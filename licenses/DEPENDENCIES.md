@@ -97,7 +97,7 @@ itself is offered.
 |  | `org.ring-clojure/ring-core-protocols` | 1.15.5 | MIT | The MIT License |
 |  | `org.ring-clojure/ring-jakarta-servlet` | 1.15.5 | MIT | The MIT License |
 |  | `org.ring-clojure/ring-websocket-protocols` | 1.15.5 | MIT | The MIT License |
-| * | `org.roaringbitmap/RoaringBitmap` | 1.6.23 | Apache-2.0 | Apache 2 |
+| * | `org.roaringbitmap/RoaringBitmap` | 1.6.24 | Apache-2.0 | Apache 2 |
 |  | `org.slf4j/slf4j-api` | 2.0.20 | MIT | MIT |
 | * | `org.slf4j/slf4j-nop` | 2.0.20 | MIT | MIT |
 | * | `org.tukaani/xz` | 1.12 | 0BSD | 0BSD |

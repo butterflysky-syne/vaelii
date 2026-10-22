@@ -220,7 +220,7 @@
 (tu/deftest-kb an-edge-written-default-leaves-the-conclusion-as-strong-as-its-grounds
   ;; a conclusion is never stronger than what it rests on, and the edge its placement
   ;; was seen over is one of those things — but a `genlCx` edge is stored `:monotonic`
-  ;; whatever it was written at (docs/nmtms.md, "The forced-monotonic roster"), so
+  ;; whatever it was written at (docs/nmtms.md, "The forced-monotonic set"), so
   ;; known-true fact + bare rule + an edge written `:default` is a known-true conclusion
   (tu/with-terms [bird flies Tweety CxLow CxHigh]
     (under! kb CxLow CxHigh)
@@ -275,10 +275,10 @@
 (tu/deftest-kb a-second-path-keeps-the-conclusion-where-the-rule-sits-off-the-edge
   ;; the **meet** shape, and the one the chain above cannot reach.  There the departing
   ;; edge lay on the line between the rule and the fact, so the rule was in its ancestor set
-  ;; and the seeding gate found it.  Here the placement sees the rule down one branch and
+  ;; and the seeding check found it.  Here the placement sees the rule down one branch and
   ;; the fact down another, and the edge that goes is on neither: nothing that matters
-  ;; sits in either of its ancestor sets.  A gate reading only those two ancestor sets therefore seeds
-  ;; nothing, and the revival a surviving route still licenses never happens — which is
+  ;; sits in either of its ancestor sets.  A seeding check reading only those two ancestor
+  ;; sets therefore seeds nothing, and the revival a surviving route still licenses never happens — which is
   ;; the arrival-order dependence this whole file exists to remove, since the same KB
   ;; built without the direct edge derives the conclusion perfectly well.
   (tu/with-terms [bird flies Tweety CxPlace CxRule CxVia CxFact]
@@ -302,7 +302,7 @@
           (is (not= before after)
               "as a re-derivation: the sweep took the record the named edge held up"))))))
 
-(tu/deftest-kb the-revival-a-removal-owes-is-not-gated-on-the-departing-edges-own-ancestor-sets
+(tu/deftest-kb the-revival-a-removal-owes-is-not-conditional-on-the-departing-edges-own-ancestor-sets
   ;; the control for the case above, stated as the rule rather than the shape: a KB that
   ;; never held the direct edge derives the same conclusion, so a KB that held it and
   ;; lost it must end in the same place.  Anything else makes belief a function of

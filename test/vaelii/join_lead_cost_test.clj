@@ -8,8 +8,8 @@
   membership question.  Through the trie it is one walk per member of `broad`'s
   sub-predicate closure, so the firing's read count grows with how wide the type
   hierarchy under the antecedent is; through the argument lead it is the term's own
-  postings, kept to the closure through the slot roster, and flat in that width.  Same set either
-  way — `matches_hierarchical_test` pins that — and this pins the cost half, as a
+  postings, kept to the closure through the slot predicate set, and flat in that width.  Same set either
+  way — `matches_hierarchical_test` asserts that — and this asserts the cost half, as a
   **count** rather than a duration, for `assert_cost_test`'s reasons: an integer the
   engine computes, identical across runs and machines.
 
@@ -31,7 +31,7 @@
   The retrieval switch would have moved the settle and the placement reads too, and at
   width 0 those are the whole difference between the arms.
 
-  The **storage is inherited** and the **switches are pinned**, which is the opposite
+  The **storage is inherited** and the **switches are forced**, which is the opposite
   split from `assert_cost_test` and the right one here: what is claimed is a *shape* —
   flat against growing — and a shape holds on every backend, so running it on all eight is
   coverage rather than noise.  What a shape cannot survive is a different reader
@@ -61,10 +61,10 @@
   that fires the rule over the trigger is measured.
 
   **Every switch the reading depends on is bound rather than inherited**, for the reason a
-  count is pinned at all: it is a claim about one configuration.  `tu/with-shipped-config`
+  count is asserted at all: it is a claim about one configuration.  `tu/with-shipped-config`
   hands back the shipped default of each, and `chain/*matcher*` is bound within it because
   that one is the axis under test.  It is also the one that bites the other way: under
-  `VAELII_RETE=1`, whose `enable!` root-binds the alpha matcher, an unpinned run would
+  `VAELII_RETE=1`, whose `enable!` root-binds the alpha matcher, a run without the binding would
   answer both arms out of RAM and read the identical count — the `rete` extension point behaving as
   `join-matches` documents, not a lead that regressed."
   [lead? width]
@@ -104,11 +104,11 @@
         (str "at width 16 the lead must read fewer than the trie fan ("
              lead-wide " vs " trie-wide ")"))))
 
-(deftest the-pin-holds-both-axes-that-were-measured-to-move-this-reading
-  ;; The gate on the gate, and it is inexpensive enough to live in the default suite: the
-  ;; matrix took twenty-four minutes to report that this file was reading the alpha
-  ;; matcher's join, and the reading it reported was a plausible number rather than an
-  ;; error.  Installed here is a matcher that cannot be mistaken for one — it throws —
+(deftest the-fixture-forces-both-axes-that-were-measured-to-move-this-reading
+  ;; This test checks this file's own configuration override, and it is inexpensive enough
+  ;; to live in the default suite: the matrix took twenty-four minutes to report that this
+  ;; file was reading the alpha matcher's join, and the reading it reported was a
+  ;; plausible number rather than an error.  Installed here is a matcher that cannot be mistaken for one — it throws —
   ;; so the claim is not "the count came out the same" but "the sweep's reader was never
   ;; asked".  `binding` rather than `alter-var-root` because a test that moves a root
   ;; hands it to whatever shares its shard.
@@ -116,16 +116,16 @@
             (fn [& _] (throw (ex-info "with-shipped-config let the sweep's matcher through"
                                       {:type ::matcher-leaked})))]
     (is (pos? (firing-reads-at-width true 4))
-        "the measured firing reads the index through the pinned reference matcher")
+        "the measured firing reads the index through the forced reference matcher")
     (is (pos? (firing-reads-at-width false 4))
-        "and so does the trie arm, which is the same pin one binding further in"))
+        "and so does the trie arm, which is the same binding one level further in"))
   ;; The second axis, and the one that does not announce itself: `:scoped` leads the
   ;; join from one predicate-scoped bucket per spec, so the reading stops being flat
   ;; (27 at width 4 against 39 at width 16, measured) and the claim above it inverts.
   ;; Nothing installs `:scoped` globally today — this is what makes sure nothing can.
   (binding [res/*lead-side* :scoped]
     (is (= (firing-reads-at-width true 4) (firing-reads-at-width true 16))
-        "the pin restores `:auto`, so the join stays flat in the subtype width")))
+        "the shipped-config binding restores `:auto`, so the join stays flat in the subtype width")))
 
 (deftest with-no-sub-predicates-the-join-reads-what-the-reference-reads
   ;; The lead exists to collapse a fan.  With nothing under the antecedent's functor there
@@ -140,8 +140,9 @@
           (str "a functor with no sub-predicates has no fan to collapse, so the join must "
                "read exactly what the reference matcher reads (" reference " vs " shipped
                ") — the argument lead is being taken over nothing"))))
-  ;; ...and the gate is a gate, not a deletion: the lead must still be taken where the fan
-  ;; is real, which is what separates this from removing `matches-hierarchical` outright.
-  (testing "the fanned case is still led, so the gate did not turn the lead off"
+  ;; ...and the width-0 condition narrows the lead rather than deleting it: the lead must
+  ;; still be taken where the fan is real, which is what separates this from removing
+  ;; `matches-hierarchical` outright.
+  (testing "the fanned case is still led, so the width-0 condition did not turn the lead off"
     (is (< (firing-reads-at-width true 16) (firing-reads-at-width false 16))
         "at width 16 the shipped join must still beat the reference matcher")))

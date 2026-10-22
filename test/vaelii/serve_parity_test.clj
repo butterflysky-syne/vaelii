@@ -105,13 +105,13 @@
     (v/assert kb (list dog Muffet) CxAuditToo)
     (let [handler (open-app kb)
           h (v/handle-of kb (list dog Muffet) CxAudit)]
-      (testing "the live handle roster crosses as a sorted vector"
+      (testing "the live handle set crosses as a sorted vector"
         ;; the store's own answer is a java.util.Set that is deliberately not an
         ;; IPersistentSet at scale (docs/storage.md) and has no EDN print form; sorting
         ;; it is also what makes two daemons over one store answer the same bytes
         (let [hs (ok-result handler :handles [])]
           (is (vector? hs))
-          (is (= (sort hs) (seq hs)) "the roster is sorted, so the bytes are stable")
+          (is (= (sort hs) (seq hs)) "the handle set is sorted, so the bytes are stable")
           (is (contains? (set hs) h))))
       (testing "the contexts one sentence is asserted in"
         (is (= #{CxAudit CxAuditToo}
@@ -136,11 +136,11 @@
 
 ;; ---- the ops that take no KB --------------------------------------------
 
-(tu/deftest-kb the-kb-less-ops-are-served-and-rostered
+(tu/deftest-kb the-kb-less-ops-are-served-and-listed
   (tu/with-terms [dog fed CxKbLess]
     (v/assert kb (list 'genlCx CxKbLess 'CxUniverse) 'CxUniverse)
     (let [handler (open-app kb)]
-      (testing "the roster is data, because two generators read the table"
+      (testing "the op table is data, because two generators read it"
         ;; a closure cannot be asked whether its first vaelii.core parameter is the KB
         ;; the daemon supplies or an argument the caller sends
         (is (= #{:levels :calculi :readable-sentence :sentence-of :quality-report}
@@ -283,14 +283,14 @@
 (tu/deftest-kb the-lifecycle-fns-are-not-reachable-over-the-wire
   ;; Stated as a test rather than left to the table's absence: a lifecycle operation
   ;; belongs to whoever owns the process, and the daemon's callers do not.  Every one of
-  ;; these is a `vaelii.core` fn, so nothing but this roster keeps it off the wire.
+  ;; these is a `vaelii.core` fn, so nothing but this list keeps it off the wire.
   (let [handler (open-app kb)]
     (doseq [op [:import :recover :reindex :clear :close]]
       (let [r (post-op handler op [])]
         (is (false? (:ok r)) (str op))
         (is (= :unknown-op (:type r)) (str op))
         (is (= 400 (:status r)) (str op))))
-    (testing "and the refusal hands back the roster, so a caller discovers the surface"
+    (testing "and the refusal hands back the op list, so a caller discovers the surface"
       (is (some #{:assert} (:ops (post-op handler :recover [])))))))
 
 ;; ---- a KB fn is an op, or docs/operations.md says why it is not ---------

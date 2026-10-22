@@ -1,7 +1,7 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.abduce
-  "Abduction: the scratch-context lifecycle, the gate on what may be assumed, and the
+  "Abduction: the scratch-context lifecycle, the check on what may be assumed, and the
   mint/re-prove loop over the dead ends `res/prove` reports.  See docs/abduction.md.
 
   Everything this namespace needs from `vaelii.core` arrives in one `ops` map —
@@ -101,13 +101,13 @@
     (merge-with + (drop! (reads/as-stored-in-context (:index kb) actx))
                 (drop! (edge-handles kb actx)))))
 
-;; ---- the gate --------------------------------------------------------------
+;; ---- the abducibility check -----------------------------------------------
 
 (defn abducible?
   "May `sentence` be hypothesized in `context`?  True when it is a ground literal whose
   predicate `abducible_predicate` grants (read scoped from `context`), that `assert`
   would admit (`special/inadmissible`), and whose negation is not visible and believed
-  from `context`.  Cheapest test first; the reasons are docs/abduction.md, \"The gate\"."
+  from `context`.  Cheapest test first; the reasons are docs/abduction.md, \"The abducibility check\"."
   [kb sentence context]
   (boolean
    (and (seq? sentence)
@@ -140,9 +140,9 @@
   "Split `dead-ends` into `:candidates` (within `:max-depth` and `abducible?`) and
   `:refused`, each distinct, in content order, with the already-`minted` removed.
 
-  Equal `[goal depth]` pairs collapse before the gate: a search reports a dead end per
-  arrival, so a subgoal a converging rule graph reaches a thousand times would otherwise
-  run the gate a thousand times."
+  Equal `[goal depth]` pairs collapse before the abducibility check: a search reports a
+  dead end per arrival, so a subgoal a converging rule graph reaches a thousand times
+  would otherwise run the check a thousand times."
   [kb actx {:keys [max-depth]} minted dead-ends]
   (let [{yes true no false}
         (group-by (fn [[g depth]] (and (or (nil? max-depth) (<= depth max-depth))

@@ -40,7 +40,7 @@
   "Handles per hint on a walk that consumes **all** of them — `reindex` over the records,
   `recover` over the justifications.
 
-  Such a walk needs no setting to gate it and does not have one.  The chunk size on the
+  Such a walk needs no setting to switch it on and does not have one.  The chunk size on the
   *query* path is a trade (a consumer that stops early has over-fetched a chunk), which is
   why that one is off by default; a recovery walk reads every handle it is given, so a
   hint there can only save round trips and never waste one.  Large, because the only cost
@@ -68,7 +68,7 @@
 
   **The return type depends on `hint`**: `ids` itself when nil (a set stays a set), a lazy
   seq when not.  A caller that needs set operations — `contains?` above all — must hold the
-  enumeration it was given rather than the hinted view, since `contains?` on a seq throws.
+  enumeration it was given rather than the hinted lazy seq, since `contains?` on a seq throws.
   Every caller here consumes the result sequentially and none of them keeps it."
   [hint n ids]
   (if hint
@@ -84,7 +84,7 @@
 
 (defn count-sentexes
   "How many live sentexes `store` holds.  `p/Tallying`'s answer when it has one, else the
-  cardinality of the roster — the same number either way."
+  cardinality of the handle set — the same number either way."
   ^long [store]
   (if (satisfies? p/Tallying store)
     (long (p/sentex-tally store))
@@ -158,7 +158,7 @@
 (defn sentex-sink
   "An open bulk write for sentexes — the store's own when it bulk-loads, else `put-sentex`
   per record.  `opts` is `{:premises? bool}`, default true: whether a record carrying a
-  `:strength` is rostered a premise by the write.
+  `:strength` joins the premise set by the write.
 
   Close it (`with-open`) before reading any of what was written back."
   ([store] (sentex-sink store {}))
@@ -168,7 +168,7 @@
      (loop-sink store p/put-sentex premises?))))
 
 (defn justification-sink
-  "`sentex-sink`'s twin for justifications, which carry no strength and roster no premise."
+  "`sentex-sink`'s twin for justifications, which carry no strength and mark no premise."
   ([store] (justification-sink store {}))
   ([store opts]
    (if (satisfies? p/BulkLoading store)

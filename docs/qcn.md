@@ -195,7 +195,7 @@ contained.
 Revisiting is done by **whichever is cheaper**, and the two costs are directly
 comparable: draining is `2 × changed × (n-2)` triple visits, another sweep is
 `n(n-1) × (n-2)`. A sparse network moves a handful of pairs and drains for a rounding
-error; a network that pins nearly *every* pair would cost about two sweeps to drain, and
+error; a network that determines nearly *every* pair would cost about two sweeps to drain, and
 sweeping again is less work. That is not a heuristic with a threshold in it — it is the
 two counts, compared. Either route runs the same step to the same fixpoint, so the choice
 is cost and nothing else.
@@ -213,7 +213,7 @@ first drain is **budgeted** at one sweep's worth of pops and gives up rather tha
 Giving up adds no work that was earned — the array only ever narrows, and the fixpoint
 below the network it started from is unique — so the sweep route simply finishes from
 there. The two outcomes are exactly the two shapes: the containment tree closes with **no
-sweep at all**, the total order bails and sweeps, and `qcn_queue_test` pins both by
+sweep at all**, the total order bails and sweeps, and `qcn_queue_test` asserts both by
 counting sweeps and checking each answer against the re-sweeping reference.
 
 `path-consistent-naive` is the re-sweeping reference, kept and public. `qcn_queue_test`
@@ -291,7 +291,7 @@ each the fastest of three runs, with `path-consistent-naive` alongside as the re
 
 The queue's win is **8.9× on the sparse tree** at 160 nodes and grows with size (1.4× at
 20, 3.2× at 40, 4.1× at 80); on the dense total order it is 1.2–1.7× and does not, because
-that shape pins every pair and the driver ends up sweeping either way. Both shapes are
+that shape determines every pair and the driver ends up sweeping either way. Both shapes are
 below the noise at ten nodes, where a whole pass is a tenth of a millisecond.
 
 The **re-sweeping** column is the floor a sweep-based pass cannot get under: cubic in
@@ -371,7 +371,7 @@ same size reads differently in each, and only the ratio within a table means any
 | 160 | 1.15 s | 37 ms | 5.0 s | 121 ms |
 
 **31× on the tree and 41× on the total order**, at 160 nodes, and the gap widens with size
-because what it removes is allocation. Every `pinned` count is identical, which is the
+because what it removes is allocation. Every `determined` count is identical, which is the
 check that matters: the representation changed, the answers did not.
 
 Two things the measurements settled rather than assumed. Composition and converse are a
@@ -502,7 +502,7 @@ possible(a, b) ∩ denotation(P) = ∅
 Note the asymmetry with the positive reading, which needs containment where this needs
 disjointness. A pair the network leaves genuinely open satisfies neither, and answers
 nothing either way. So a chain of NTPPs answers `(not (spatiallyDisconnected A D))` as
-readily as it answers `(partOfRegion A D)` — the composition pinned the pair, and DC is
+readily as it answers `(partOfRegion A D)` — the composition determined the pair, and DC is
 not in what is left. The soundness runs one way only: **a refutation is real, and a
 failure to refute is still "not provable", never "provably true".** All four goal shapes
 behave identically under either polarity.
@@ -647,7 +647,7 @@ Three caches, answering different questions:
   a node the goal names but no fact mentions is isolated, every constraint it takes part
   in is the universe, and the universe composes to itself, so it can tighten nothing.
 * the **network read is resident**, on the KB's own `:qcn` atom, keyed `[calculus context]`
-  and stamped with `observe/change-clock` — the KB is read once and the network reused
+  and keyed by `observe/change-clock` — the KB is read once and the network reused
   until the engine mutates something. See the next section.
 * the **support-carrying pass** has its own atom, so an ordinary query never pays to
   propagate support nobody asked for. Its key is the network *and* the asserted support,
@@ -704,18 +704,21 @@ perf`'s `qcn-arrival-beside-an-unmoved-network` bounds an arrival in a sibling c
 such a chain at 2.5× over 6× the regions; the pair-by-pair comparison reads 4.3×. The read
 itself stays. Invalidating finer than the clock would need every relabelled handle tested
 against the calculus's extent in both TMS representations, and the standing nogoods, the
-`except` roster and the merges besides.
+stored `except`s and the merges besides.
 
-**One thing the clock cannot supply**, and it is the reason `observe/*pin*` exists.
+**One thing the clock cannot supply**, and it is the reason `observe/*held-values*` exists.
 Forward chaining writes while it reads: a rule's join is a lazy seq, and each solution
 taken off it is *placed* — a store and a justification — before the next is realized. With
-the clock as the only stamp, such a join would re-derive the network per solution and join
-half of its bindings against a state the other half never saw. So the resident values are
-**pinned** for the length of one agenda datum (`chain/process-datum`) and one backward
-search step (`observe/with-search-scope`), and held fixed there. That is not an approximation of
-the fixpoint, it *is* the fixpoint: an immediate-consequence step is by definition computed
-from one state, and what a step enables is picked up by the next round rather than
-mid-step. Outside such a scope there is nothing to hold fixed and the clock answers alone.
+the clock as the only cache key, such a join would re-derive the network per solution and
+join half of its bindings against a state the other half never saw. So the resident values
+are **held fixed** for the length of one agenda datum (`chain/process-datum`) and one backward
+search step (`observe/with-search-scope`). That is not an
+approximation of the fixpoint,
+it *is* the fixpoint: an immediate-consequence step is by
+definition computed from one
+state, and what a step enables is picked up by the next round
+rather than mid-step. Outside such a scope there is nothing to hold fixed and the clock
+answers alone.
 
 Residency is **not** conditional on a prover being registered. `qualitative-network` and
 `possible-relations` are reads, and a network is a property of the stored facts whether or
@@ -736,7 +739,7 @@ paying for a network:
 
 ```clojure
 (v/add-reasoner kb :rcc8 :cardinal :allen)         ; topology, direction, intervals
-(v/reasoners)                                      ; the roster, sorted
+(v/reasoners)                                      ; the list, sorted
 ```
 
 `add-reasoner` names them, so opting in needs nothing from `vaelii.impl.*` — the
@@ -841,7 +844,7 @@ unioning their answers — never by reading every context's facts into one netwo
 never by reading wherever happens to be convenient. [why the reader set is exact, not a
 convenience](defenses.md#a-variable-context-goal-fans-over-readers-rather-than-reading-one-unioned-network)
 The union network is still what `qcn-kb/network` returns for a variable context, and it is
-a diagnostic view of everything stored rather than anything a reader sees; no goal is
+a diagnostic reading of everything stored rather than anything a reader sees; no goal is
 answered off it. Placement is unaffected either way: a conclusion is placed from the
 contexts of its support handles, so one solved at the meeting context lands there because
 the facts that entailed it meet there.
@@ -892,7 +895,7 @@ retraction — and every conclusion keeps at least one justification. What the n
 drops is redundancy the stated contract never promised: support names *a* witness rather
 than every witness ([above](#support-what-an-entailed-relation-rests-on)).
 
-`qcn_integration_test` pins both halves separately, because "the conclusions are right" is
+`qcn_integration_test` asserts both halves separately, because "the conclusions are right" is
 also what a delta that always answered `:all` would produce. Three tests compare an
 interleaved load against a deferred one and against a KB that saw only the survivors of a
 retraction — including the rule with two qualitative antecedents, and a second calculus,
@@ -937,8 +940,8 @@ Three things hold that shape, and the order of them is the useful part. **The re
 first half, and it is not the pass**: without residency a load pays a full network read
 per consulting call — seventeen thousand of them against thirty-nine asserts at 40
 regions, where the pass itself costs about a millisecond of the seventy an assert takes.
-Residency takes those seventeen thousand to seventy-eight. Two gates hold that, from the
-two sides a cost has: `qcn_chain_test/network-reads-grow-with-the-calls-and-not-with-the
+Residency takes those seventeen thousand to seventy-eight. Two regression tests enforce that, from
+the two sides a cost has: `qcn_chain_test/network-reads-grow-with-the-calls-and-not-with-the
 -asserts` counts the builds (exact, and blind to a loaded box), and `lein perf`'s
 `qcn-network-residency` prices a repeated consultation against 8× the stored extent of the
 calculus the asking context cannot see. Neither subsumes the other — a count cannot see a
@@ -974,5 +977,5 @@ where only pairs sharing an ancestor line compose:
 | 80 | 5.1 ms | 5.8 ms | 64 ms | 48 ms |
 
 **8.25× cheaper than the chain at 80 regions**, and it is the same code — the difference is
-entirely how much of the network the facts pin. Both columns are worth having in view: the
+entirely how much of the network the facts constrain. The table reports both columns: the
 chain says what the worst case costs, the tree says what a KB is likely to pay.

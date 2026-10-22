@@ -10,7 +10,7 @@
   generalizes that from \"which representation\" to \"which shape\": hold the corpus and
   the question set fixed, vary the layout, and report what each costs.
 
-  ## The gate: a layout may change cost and may not change answers
+  ## The answer check: a layout may change cost and may not change answers
 
   Mechanical, not reviewed.  Every layout answers the identical probe set, and each
   probe's answer is fingerprinted as `[handle-count (hash handle-set)]` — content, not
@@ -24,7 +24,7 @@
   report is printed **first**, before any number that could be mistaken for a verdict,
   and a layout whose path histogram diverges from the reference's is called out by name.
   `vaelii.impl.profile`'s `:goals` tally is where it comes from — keyed by shape *and*
-  by the path the shape chose, with `test/vaelii/profile_test.clj` pinning each of the
+  by the path the shape chose, with `test/vaelii/profile_test.clj` asserting each of the
   nine labels.
 
   ## What is measured, and what is measured elsewhere
@@ -44,7 +44,7 @@
   Two quantities are deliberately absent because they exist:
 
   * **Write cost per assert, per family** is `test/vaelii/assert_cost_test.clj`, which
-    pins the exact operation counts, and `lein bench-profile`, which reads them out over
+    asserts the exact operation counts, and `lein bench-profile`, which reads them out over
     a whole corpus.  Deriving a second write number here would be a second answer to a
     settled question.
   * **Allocations per lookup** is `vaelii.bench.alloc`.  The choice of instrument is deliberate: that
@@ -70,7 +70,7 @@
 
   ## Methodology, taken from `vaelii.bench.perf`
 
-  Four of that gate's decisions were each learned from a *comfortable pass* that turned
+  Four of that harness's decisions were each learned from a *comfortable pass* that turned
   out to be a measurement error, and three of them transfer directly:
 
   * **Warm every layout to the same amount.**  Warming proportionally to the work a
@@ -78,12 +78,12 @@
     timed while the fast one is still climbing to it.  Here the analogue is the inner
     repetition count: it is calibrated **once, on the reference layout**, and every
     layout then runs that same count.
-  * **Summarize the tail rather than the run**, over a fixed window at every layout, so
-    two answers cover windows of equal width.  The summary is the **median** rather than
+  * **Summarize the tail rather than the run**, over a fixed count at every layout, so
+    two answers cover the same number of readings.  The summary is the **median** rather than
     perf.clj's mean, and the difference is that perf.clj re-runs a check that exceeded
     its bound and keeps the better run.  Nothing here has a bound to exceed, so one GC
-    pause in the *reference's* window would scale a whole row — which it did, once, by
-    3x — and a median over the same window is that defence with no verdict to hang it on.
+    pause in the *reference's* tail would scale a whole row — which it did, once, by
+    3x — and a median over the same tail is that defence with no verdict to hang it on.
   * **Report `noise` below the floor rather than a green light.**  A ratio between two
     readings that are mostly timer jitter means nothing, so a timed unit is padded with
     inner repetitions until it clears the floor by two orders of magnitude, and a unit
@@ -133,7 +133,7 @@
     wall-clock is the reading docs/density.md declines to trust under contention, so the
     read path is held here to the weaker standard.  `vaelii.bench.alloc` is the
     structural counterpart.
-  * **A family this workload does not read.**  The term index and the term roster are
+  * **A family this workload does not read.**  The term index and the term-name set are
     read by `terms` / `find-terms` / `find-sentexes` and by no reasoning at all, so a
     layout that moves them — `:deep-terms` moves exactly that — shows up here as bytes
     and as nothing else.  `lein bench-profile`'s interactive arm is the one that reads
@@ -181,7 +181,7 @@
                 probe drives.
         all     the three.
 
-  A corpus run wants a heap, and `:bench` pins `-Xmx6g`.  An environment `JVM_OPTS` is
+  A corpus run wants a heap, and `:bench` sets `-Xmx6g`.  An environment `JVM_OPTS` is
   placed before the project's own options and loses to it silently, so edit the vector on
   the way past — `with-profile` first, `update-in` second.  The `corpus` arm reads
   `:cyc-corpus`, so link the reader first (`scripts/link-checkouts.sh`):
@@ -390,7 +390,7 @@
 
 (def ^:private tail-units
   "How many units from the **end** of a run the answer is taken over.  The end, and the
-  same count at every layout, so two answers are summaries of windows of equal width
+  same count at every layout, so two answers are summaries of the same number of units
   rather than of a fraction of two runs of different length."
   10)
 
@@ -401,11 +401,11 @@
   "The **median** of the last `tail-units` readings.
 
   `perf.clj` takes the mean of its tail and defends against a GC pause landing in one
-  window by re-running a check that exceeded its bound and keeping the better run.  This
+  run by re-running a check that exceeded its bound and keeping the better run.  This
   harness has no bound to exceed — every row is a ratio against the reference, so there
-  is nothing to trip a re-run — and one pause in the *reference's* window scales a whole
+  is nothing to trip a re-run — and one pause in the *reference's* tail scales a whole
   row.  It happened on the first interleaved run: a `2-ary bb` reading three times its
-  neighbours' put every other layout in that row at 0.4x.  A median over the same window
+  neighbours' put every other layout in that row at 0.4x.  A median over the same tail
   is the same defence with no verdict to hang it on."
   ^double [xs]
   (let [v (vec xs)
@@ -435,7 +435,7 @@
     (System/gc)
     (vec (repeatedly unit-reps unit))))
 
-;; ---- the answer gate ----------------------------------------------------
+;; ---- the answer check ---------------------------------------------------
 
 (defn- fingerprint
   "One entry per probe: `[answer-count (hash handle-set)]`.  Content rather than order —
@@ -509,7 +509,7 @@
     (println "    duration alone would have reported as a fair loss.")))
 
 (defn- answer-report [rows groups]
-  (banner "THE GATE — a layout may change cost and may not change answers")
+  (banner "THE ANSWER CHECK — a layout may change cost and may not change answers")
   (let [ref (get (into {} rows) reference-id)]
     (doseq [[id r] rows]
       (let [bad (keep (fn [[gi g]]
@@ -808,12 +808,12 @@
       (banner "what this harness cannot see")
       (println "  * the write path.  A layout change that moves cost from the read path to the")
       (println "    write path is invisible to a read-only workload, and every workload here is")
-      (println "    one.  test/vaelii/assert_cost_test.clj pins the per-family assert cost.")
+      (println "    one.  test/vaelii/assert_cost_test.clj asserts the per-family assert cost.")
       (println "  * allocations and bytes on the walk — vaelii.bench.alloc, which drives these")
       (println "    same layouts through #'vaelii.bench.index/layouts.")
       (println "  * the context ancestor set: every probe is asked at ?ctx, so nothing here walks the")
       (println "    genlCx up-closure.")
-      (println "  * a family this workload never reads.  The term index and the term roster are")
+      (println "  * a family this workload never reads.  The term index and the term-name set are")
       (println "    read by terms / find-terms / find-sentexes and by no reasoning at all, so a")
       (println "    layout that moves them shows up here as bytes and as nothing else.")
       (println "  * the four KvIndexStore tallies on a layout that is not one — see the n/a")

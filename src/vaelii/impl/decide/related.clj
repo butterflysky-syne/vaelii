@@ -63,7 +63,7 @@
       (when-let [[w ps] (tax/cover-parts s)] [w (set ps)]))))
 
 (defn- orthogonal-functors
-  "`orthogonal` and every predicate the unscoped `genl` closure (the write view `w`) places
+  "`orthogonal` and every predicate the unscoped `genl` closure (in `w`) places
   under it, in content order."
   [w]
   (into (sorted-set) (filter symbol?) (conj ((:specs-global w) 'orthogonal) 'orthogonal)))
@@ -118,8 +118,8 @@
                  (naming kb fs [1 2] ts)))))
 
 (defn- related?
-  "Does one of the types `a`, `b` reach the other over the unscoped `genl` closure (the
-  write view `w`)?"
+  "Does one of the types `a`, `b` reach the other over the unscoped `genl` closure (in
+  `w`, `decide/unscoped-closures`)?"
   [w [a b]]
   (let [genl? (:genl?-global w)] (or (genl? a b) (genl? b a))))
 
@@ -213,7 +213,7 @@
 
 (defn kind-of
   "The kind of the related-types nogood over the member handles `ms`, read off their
-  sentences through the write view `w`: `:disjoint` for one `disjoint`, `:orthogonal` for
+  sentences through the unscoped closures `w`: `:disjoint` for one `disjoint`, `:orthogonal` for
   one fact stating an `orthogonal` (`orthogonal-args`), `:cover` for a cover beside a
   `disjoint`, else nil."
   [w recs ms]
@@ -397,7 +397,7 @@
   otherwise the subsumption between the two in each direction the closure holds and
   each separation of the two (`tax/separation-routes`).  A fact whose functor `f` is a
   `genl` of `orthogonal` adds the subsumption `f` to `orthogonal` to each route.  `w` is
-  `decide/write-view`'s."
+  `decide/unscoped-closures`'s."
   [w recs {:keys [members kind]}]
   (let [sx    (p/get-sentex recs (first members))
         genl? (:genl?-global w)
@@ -420,7 +420,7 @@
 (defn exempt-at?
   "Does a reader with ancestor set `up` read no conviction of the `orthogonal` nogood
   `members`: one declaration over two distinct types no `genl` edge relates over the
-  unscoped closure (`w`, `decide/write-view`) and `tax/disjoint?` over `up` does not
+  unscoped closure (`w`, `decide/unscoped-closures`) and `tax/disjoint?` over `up` does not
   separate.  A `siblingDisjointException` the reader sees removes a mark separation its
   placement reads, as for a membership nogood (`membership/exempt-at?`).  False for any
   other nogood."

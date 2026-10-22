@@ -24,7 +24,7 @@
 
 (tu/deftest-kb orthogonal-is-a-declared-term-of-the-grammar
   (is (some? (v/interpreted 'orthogonal))
-      "CxUniverse declares orthogonal, and the vocabulary roster answers for it")
+      "CxUniverse declares orthogonal, and the vocabulary classification answers for it")
   (is (true? (v/ask? kb '(binary_predicate orthogonal))))
   (is (true? (v/ask? kb '(symmetric orthogonal))))
   (is (true? (v/ask? kb '(type_relation_predicate orthogonal)))))
@@ -214,14 +214,14 @@
     (v/assert kb (list 'orthogonal subA subB) 'CxUniverse)
     (is (= #{#{(list 'orthogonal subA subB)}} (clashes kb)))))
 
-(tu/deftest-kb orthogonal-is-on-the-forced-monotonic-roster
+(tu/deftest-kb orthogonal-is-forced-monotonic
   (is (true? (v/has-prop? kb :forced-monotonic 'orthogonal)))
   (is (= :unforced-definitional-declaration
          (get checks/uncleared-forcing ['forced_monotonic_predicate 'orthogonal]))
       "held on every KB, as disjoint is, and its declaration is not retracted"))
 
 (tu/deftest-kb a-default-declaration-the-taxonomy-contradicts-is-a-hard-clash
-  ;; `orthogonal` is on the forced-monotonic roster, so a declaration written at `:default`
+  ;; `orthogonal` is forced-monotonic, so a declaration written at `:default`
   ;; keeps that strength and is never the loser: its one-member nogood is a hard clash
   ;; `conflicts` lists, every member stays believed, and the pair reads both statuses.
   (tu/with-terms [alphaKind betaKind]
@@ -452,7 +452,7 @@
 ;; subtype of one may be disjoint from the other, and a supertype of one may subsume the
 ;; other.  CxUniverse denies both directions of preservation along genl at both positions.
 ;;
-;; Neither `transitiveInArg` nor `transitiveInArgInverse` is on the forced-monotonic roster,
+;; Neither `transitiveInArg` nor `transitiveInArgInverse` is forced-monotonic,
 ;; so the four denials are stored and believed alike.  Nothing concludes any of the four
 ;; preservations, so orthogonal is inherited neither way.
 
@@ -495,7 +495,7 @@
               (genl siblingDisjointException orthogonal)]]
     (is (some? (v/handle-of kb s 'CxUniverse)) (str (pr-str s) " is stated in CxUniverse")))
   (is (nil? (v/handle-of kb '(termsRelated disjoint orthogonal) 'CxUniverse))
-      "the pairwise link the two rosters cover is gone"))
+      "the pairwise link the two termsRelated lists cover is gone"))
 
 ;; ---- the upper ontology's axes ---------------------------------------------------
 

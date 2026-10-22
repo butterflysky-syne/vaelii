@@ -2,9 +2,10 @@
 
 - **Covers:** the `RecordStore` / `IndexStore` protocols and the optional `Prefetching`,
   `Tallying`, `BulkLoading` and `BulkAnnotating` capabilities, what the three enumerations promise and what a
-  roster costs per handle, the sink an `import!` writes its records through, the eight legal record×index backend pairings and the optional `:sqlite` and
+  handle set costs per handle, the sink an `import!` writes its records through, the eight legal record×index backend pairings and the optional `:sqlite` and
   `:pg` records adapters, nippy serialization, what one fact of a bulk load costs phase by
-  phase, and the single-writer contract.
+  phase, what an open reports of a record nothing supports, what a shutdown waits for,
+  and the single-writer contract.
 - **Not here:** the six index families' key layout and retrieval →
   [indexing.md](indexing.md); the dense/columnar backends that replace the default
   map-based structures → [density.md](density.md).
@@ -64,11 +65,11 @@ reader's ancestor set names the sentinel at its call site.
 
 `family-apply!` takes `[:post f leaf-path h]` and `[:retire f leaf-path h]` and lands them
 as one `kv-batch`. A count-trie post adds `h` to the leaf, the context to the node's
-children and one to its count, and enters the root roster (the family's `:root`) when
+children and one to its count, and enters the root set (the family's `:root`) when
 the node was empty; a retire undoes each of them where it empties. A flat-set op adds or
-removes the member, and the root roster follows the set's first and last member. A
+removes the member, and the root set follows the set's first and last member. A
 count-trie retire's leaf path may end in `p/any-context`, which retires `h` from whichever
-context's leaf holds it; a flat set keeps no roster of its contexts, so its retire throws
+context's leaf holds it; a flat set keeps no list of its contexts, so its retire throws
 `:bad-args` on one. The reply per op is the node's count (a set's size) after it, or nil when it
 changed nothing. **The batch equals its ops applied one call at a time, in order**: each op
 is decided against the store as the ops before it left it, so two posts of one handle are
@@ -77,9 +78,9 @@ one post and a retire after a post cancels it
 by `index-sentex` alone, and `family-apply!` refuses it.
 
 A read or write that is one family method under another name is no method of its own.
-`vaelii.impl.reads` answers the context root, the term index and its roster, the rule
+`vaelii.impl.reads` answers the context root, the term index and its term-name set, the rule
 indexes and the re-check index over `family-leaf`, `family-count`, `family-member?` and
-`family-handles`. It composes the predicate-agnostic argument reads from the slot roster
+`family-handles`. It composes the predicate-agnostic argument reads from the slot predicate set
 (`:argument-slot`, or `:unary-slot` for the unary slice) and one `:argument-root` node per
 predicate in it, and `rules/index-rule`, `rules/unindex-rule!`, `rules/index-exception`
 and `rules/unindex-exception!` write the rule and re-check families through
@@ -104,7 +105,7 @@ record read per sentex at that one leaf (none for a ground sentence), and the `:
 each of those
 fetches is a positional slot read, a positional frame read and a nippy thaw past the LRU —
 orders above what any index read costs. `test/vaelii/record_fetch_cost_test.clj` is the
-gate: a non-ground `handle-of` must fetch **no** records, whatever the extent of the
+regression test: a non-ground `handle-of` must fetch **no** records, whatever the extent of the
 pattern's shape.
 
 The tally sits on the protocol method rather than inside a backend's own fetch, so it
@@ -223,7 +224,7 @@ given, so a hint there can only save round trips and can never waste one. The qu
 setting exists because a consumer that stops early has over-fetched a chunk — a trade a
 recovery walk does not make. `capabilities/recovery-hint-chunk` is the size.
 
-### The enumerations, and what a roster costs
+### The enumerations, and what a handle set costs
 
 `sentex-ids`, `justification-ids` and `premise-ids` answer **a `java.util.Set` of
 handles** — and the gap between that and *a Clojure set of handles* is the whole of what a
@@ -233,11 +234,11 @@ store may decide for itself. The protocol promises what the engine does to them:
 the copy is paid at the call site that asked for it — [why a Set, not a Clojure
 set](defenses.md#the-enumerations-promise-a-set-not-a-clojure-set).
 
-`vaelii.impl.roster` is the substitution that licence exists for: the same handles as a
+`vaelii.impl.handle-set` is the substitution that licence exists for: the same handles as a
 `Roaring64Bitmap` behind a `java.util.Set`, at a fraction of a `PersistentHashSet<Long>`'s
 residency. It is a `java.util.Set` precisely so that no caller can tell the difference,
 and `enumeration_shape_test` is where core proves it: one session run
-against a store answering rosters and one answering Clojure sets, compared at the KB level
+against a store answering handle sets and one answering Clojure sets, compared at the KB level
 — beliefs, answers, `reindex`, `recover`, `export!` — rather than at the protocol call.
 
 **The memory store answers Clojure sets**, because that is what its own state already
@@ -259,7 +260,7 @@ before a single record is fetched. The same handles as a `Roaring64Bitmap` measu
 handle space with holes where records were deleted.
 
 `sentex-ids`, `justification-ids` and `premise-ids` hand back the snapshot itself, an
-immutable `HandleRoster`, so a call allocates the bitmap's size rather than the extent. A
+immutable `HandleSet`, so a call allocates the bitmap's size rather than the extent. A
 caller that wants `conj`, `disj` or `clojure.set` converts with `(set …)` and pays the
 extent at that call site.
 
@@ -267,11 +268,11 @@ The bitmap is mutated in place and is not thread-safe, so **a read of the live s
 the kind lock**, which the boxed set did not need. That is the whole price: a tally and a
 first handle are O(1) under a monitor the writer holds only for two file writes, and a
 read that hands the set onward takes a snapshot inside the lock — a bitmap copy, costing
-the roster's size rather than the corpus's. Left unsynchronized the failure is real and
+the handle set's size rather than the corpus's. Left unsynchronized the failure is real and
 measured, not theoretical: an iterator over a bitmap being written throws
 `ArrayIndexOutOfBoundsException` once the handle space is spread widely enough for the ART
 trie to restructure under it, which a store whose handles interleave with two other kinds'
-is (`disk_record_store_test`, the live roster beside a writer).
+is (`disk_record_store_test`, the live handle set beside a writer).
 
 The kind lock is a `ReentrantReadWriteLock`, not a bare monitor. The live-set read above,
 and every write — `store!`, `kill!`, `mark-premise`, compaction, `close` — take it
@@ -284,19 +285,19 @@ the engine's own bulk sweeps — `export!`, `reindex`, the `recover` read side �
 on one thread. `fetch` never takes the write lock, so a
 read cannot upgrade and deadlock against itself.
 
-The premise set is a `LiveRoster` too, and still resident. A premise is a sentex handle,
+The premise set is a `LiveHandleSet` too, and still resident. A premise is a sentex handle,
 so the set sits under the sentexes kind lock for reads and writes alike. A handle joins it
 after its record lands, in a second acquisition, so a write that fails leaves no handle in
 `premise-ids` whose `get-sentex` is nil.
 
-### `Tallying` — the questions that do not need the roster
+### `Tallying` — the questions that do not need the handle set
 
 `(count (sentex-ids store))` is how the engine asks *how many records is this*, and
 `(first (sentex-ids store))` how it asks *does this store hold anything*. On a store whose
 enumeration is a read of its own state, both added no work. On one whose enumeration is a
-**query** they cost the whole table — every handle over the wire and a roster built out of
+**query** they cost the whole table — every handle over the wire and a handle set built out of
 it, to answer with one number — and `open-kb` asks them before the KB has answered
-anything: the durable index's coverage gate counts the records, and the recovery branch
+anything: the durable index's coverage check counts the records, and the recovery branch
 asks whether there are any.
 
 So a store that can answer without enumerating implements `Tallying` — `sentex-tally`,
@@ -335,8 +336,8 @@ handle a sink still holds.
 `capabilities/sentex-sink` and `justification-sink` are the callers' entry point, and they fall back
 the way `Tallying`'s helpers do: a store with no capability gets a sink that is
 `put-sentex` per record plus the premise mark, which is the loop the import paths ran
-before. `{:premises? bool}` is the one option — whether a record carrying a `:strength` is
-rostered a premise by the write. The records-only pass marks inline and says true; the
+before. `{:premises? bool}` is the one option — whether a record carrying a `:strength`
+joins the premise set by the write. The records-only pass marks inline and says true; the
 belief pass says false, because there the mark is an **aggregate** (dump ids that collapse
 onto one handle keep the strongest strength, where the record carries the first frame's)
 and only the whole stream decides it.
@@ -365,8 +366,8 @@ past that would answer for a handle `premise-ids` does not name.
 
 The `:disk` store's `mark-premise-batch` decides each handle from its idx slot, and reads
 the slots in handle order, so the reads walk the idx and the log forward. A slot whose
-strength rank equals the wanted strength's is a mark already on disk, and the handle is
-rostered without its record being paged. An import's sink writes each record carrying its
+strength rank equals the wanted strength's is a mark already on disk, and the handle
+joins the premise set without its record being paged. An import's sink writes each record carrying its
 strength, so its marks page no record. A slot whose rank is unrecorded or different sends
 the handle to its record, which is read without the hot-cache put and re-stored when its
 `:strength` differs. `lein perf`'s `bulk-premise-mark-record-size` holds the cost per
@@ -429,7 +430,7 @@ naming a pair, spelled **`<records>-<index>`**.
 | `:sqlite` | durable (SQLite file) | RAM map | an Apache adapter, resolved lazily — below |
 | `:pg-memory` | durable (Postgres) | RAM map | an Apache adapter — rebuilt on open, every open |
 | `:pg-disk-log` | durable (Postgres) | durable, **local** | the index files belong to the writer's host, not to the KB |
-| `:pg-snapshot` | durable (Postgres) | native trie, **mapped from a local image** | `:disk-snapshot`'s two images, kept on the writer's host and stamped by the adapter |
+| `:pg-snapshot` | durable (Postgres) | native trie, **mapped from a local image** | `:disk-snapshot`'s two images, kept on the writer's host and fingerprinted by the adapter |
 | `:overlay` | a decorator | a decorator | a fork over a frozen base — [overlay.md](overlay.md) |
 
 `:memory` is the one pair that is the same store on both axes, named for the store rather
@@ -446,7 +447,7 @@ map is in RAM and whose log buys the restart.
 - **Disk records** (`vaelii.impl.disk.record-store`) — an on-disk log-structured store in a directory
   (`:dir`, or derived from the space number). Durable across a process restart and
   crash-safe, with no server. Selected for the whole suite with
-  `VAELII_TEST_BACKEND=disk-log lein test` (durability parity gate: identical results).
+  `VAELII_TEST_BACKEND=disk-log lein test` (durability parity check: identical results).
   Detailed below.
 - **SQLite records** (`com.vaelii/sqlite`, the `vaelii.sqlite.record-store` adapter) — an
   embedded-SQLite store in a single file (`<dir>/records.sqlite`) under `:dir`, durable
@@ -471,6 +472,14 @@ map is in RAM and whose log buys the restart.
   `backend_parity_test`'s "identical across every pair" is a claim about the pairs that
   run by default and not about this one — a backend whose tests need a server is covered
   by the adapter's own run against one, not by the matrix.
+- **An adapter from this repository.** The `+with-sqlite` and `+with-postgres` profiles
+  add the released adapter jar to any lein task, and the jar's pom brings its drivers:
+  `lein with-profile +with-postgres browser`, or `lein with-profile
+  +with-postgres,+with-sqlite uberjar` for a standalone jar that opens both. The default
+  `lein uberjar` and the published pom carry neither. `scripts/link-checkouts.sh` links
+  the adapters' live source, which shadows the jar's namespaces. A link without the
+  profile has no drivers, and selecting the backend then refuses with `:missing-adapter`,
+  naming the namespace that failed to load.
 - **A derived index** — the RAM map, the dense postings, the columnar trie — holds
   nothing that is not recomputable, so it is never written. Over durable records that
   costs one `reindex` per open (below); in exchange, every density experiment can be run
@@ -489,7 +498,7 @@ test-backends`) runs the whole suite on all eight, one log and one ✔/✘ per r
 ninth over the `overlay` decorator; `./scripts/test-matrix.sh` runs those nine and the
 seven sweeps concurrently, which is the same coverage in a fraction of the wall
 clock, since a durable run's store is `<vaelii.disk.dir>/space-<n>` and each gets its
-own directory. A bare matrix run is the **routine** roster, which stands two of the
+own directory. A bare matrix run is the **routine** configuration set, which stands two of the
 three durable-records-with-a-derived-index pairs down — one claim written three times,
 and `mixed_backend_test` holds the protocol in an ordinary `lein test` — and `full` is all
 sixteen. `./scripts/test-matrix.sh --owed` runs what the changed files owe and prints
@@ -509,7 +518,8 @@ rebuilt before it can answer anything. `recover` alone is **not** that: it rebui
 TMS and taxonomy *by reading the index* (`special/rebuild-taxonomy` reads the supporter
 families), so over an empty one it would recover an empty KB and report nothing wrong. The
 repair is `reindex` — rebuild the index from the records, *then* recover — and
-`{:recover? :auto}`, the default, runs it and logs how long it took.
+every recovering mode (`:trust`, the default, `:auto`, `:background`) runs it and logs how
+long it took.
 
 That log line is the point of interest: the rebuild is O(records) on **every** open, so
 whether it is worth buying back — by persisting a snapshot of the derived index, which
@@ -556,7 +566,7 @@ refusal as a problem, since they answer for the entry point.
 has no node for. A **stored premise** is not an inert sentex however alike they look to a
 node test, and the dependency sweep a retraction owes cannot be computed over a network
 that was never built (`:unrecovered-premise`). A **derived** record is the third case and
-is told apart from neither: it carries no strength, so the premise roster does not name
+is told apart from neither: it carries no strength, so the premise set does not name
 it, while the store holds the justifications that concluded it and any naming it as an
 antecedent — and the store keeps no index from a handle to the justifications citing it,
 so nothing per-handle can separate it from an inert one. Where belief was never built the
@@ -567,7 +577,7 @@ teardown of a handle whose dependents cannot be computed. `*bulk-load?*` deliber
 not that opt — it skips the dedup walk that is already missing.
 
 `preview` refuses where `edit!` does, which is the point of it. It implements a `:remove`
-as a premise suspension gated on `jtms/premise?`, false for every stored handle here, so
+as a premise suspension conditional on `jtms/premise?`, false for every stored handle here, so
 it reports that nothing would change while `edit!` on the same batch deletes the record —
 a dry run silent about exactly the operation that cannot be taken back.
 
@@ -583,21 +593,22 @@ rather than as a phantom, and neither is visible to a reader afterwards.
 `:index :snapshot` writes that rebuilt index to disk and **maps it back** instead of
 recomputing it — `vaelii.impl.disk.index-snapshot`.
 
-**It pairs with records whose store stamps an image** (`p/ImageStamping`): `:disk`, whose
-stamp is a reading of its own slot files taken under its own kind locks, and `:pg`
-(`:pg-snapshot`), whose adapter keeps one row a trigger moves in the same transaction as
-every write. So `{:index :snapshot}` over `:memory` or `:sqlite` records is refused with
-`:unknown-backend` (`:mismatch :illegal-pair`), and a `:pg` adapter that predates the
-protocol is refused at open with `:missing-adapter`.
+**It pairs with records whose store fingerprints its records for an image**
+(`p/ImageFingerprinting`): `:disk`, whose fingerprint is a reading of its own slot files
+taken under its own kind locks, and `:pg` (`:pg-snapshot`), whose adapter keeps one row a
+trigger moves in the same transaction as every write. So `{:index :snapshot}` over
+`:memory` or `:sqlite` records is refused with `:unknown-backend` (`:mismatch
+:illegal-pair`), and a `:pg` adapter that predates the protocol is refused at open with
+`:missing-adapter`.
 
 **It is a representation, and it is not a promise that the image is valid.** Those are
 two different things and the name carries only the first. What `{:backend
 :disk-snapshot}` says is that this KB's index is meant to be read from bytes rather than
 rebuilt — recorded in the opts map, where a reader of the KB's own configuration can see
-it. What it does *not* say is that an image will be there: the stamp is checked on every
-open, any doubt discards it, and the KB reindexes and answers correctly. The difference a
-name makes is that such an open **warns**, naming the mismatch class, rather than passing
-for a fast one that quietly took an hour.
+it. What it does *not* say is that an image will be there: the fingerprint is checked on
+every open, any doubt discards it, and the KB reindexes and answers correctly. The
+difference a name makes is that such an open **warns**, naming the mismatch class, rather
+than passing for a fast one that quietly took an hour.
 
 The compacted trie's CSR arrays and the roots' packed postings are already flat `int`
 runs, so the image is a write rather than a serialization. **Resident on open**: the CSR
@@ -620,7 +631,7 @@ holds — and floored by `vaelii.disk.compact-min-interval-ms`, the same floor t
 store's compaction takes. A directory with no image drifts from zero, so its *first* image
 is written mid-life rather than at a close it may never reach.
 
-**Only `assert` reaches the cadence.** The gate hangs off the write entry point, so a store filled
+**Only `assert` reaches the cadence.** The cadence check runs at the write entry point, so a store filled
 by `reindex` or by the importer's inline bulk load — both of which post through
 `reindex/index-one!` to `p/index-sentex` directly — never crosses it, and gets exactly one
 image, at the close, whatever the threshold says. A batch build is therefore already on the
@@ -657,7 +668,7 @@ a KB that cannot afford the pause at all takes `:disk-columnar` and pays the reb
 open instead.
 
 The bytes on disk are **derived state**, and everything else follows from that. The image
-is stamped with the disk record store's slot fingerprint and checked on every open — never
+is written with the disk record store's slot fingerprint and checked on every open — never
 behind a flag — and any doubt at all (format, `kv/index-layout-version`, byte order,
 records that moved, a short section, a missing commit marker) discards it and runs the
 same `reindex` above. That is what makes the backend safe to name: the index is
@@ -718,21 +729,22 @@ and the next open installs it in place of the recover (`vaelii.impl.reasoning-im
   order so two images of one network are equal bytes;
 - `state.nippy` — the taxonomy's relations and caches, less the slots the live KB owns
   (`reasoning-image/taxonomy-side-slots`), and the KB atoms recovery fills or the closing
-  settle leaves (`reasoning-image/state-atoms`), the placed nogoods' rosters among them;
-- `manifest.edn` — the stamp, written last, so a directory with no manifest holds no image.
+  settle leaves (`reasoning-image/state-atoms`), the placed nogoods' handle sets among them;
+- `manifest.edn` — what the image is valid against, written last, so a directory with no
+  manifest holds no image.
 
-**The stamp** holds the two layout numbers, the records' `record-store/reasoning-fingerprint`,
-the **source identity** of the engine code that derived the belief
-([glossary.md](glossary.md)), and the two policies that move belief:
-`VAELII_ASSERTIVE_ARG_TYPES`, and the forced-monotonic roster the stored declarations give
-(`reasoning-image/declared-roster`, [nmtms.md](nmtms.md#the-forced-monotonic-roster)). The records fingerprint reads the justifications kind's
-slots beside the sentexes kind's, where the index image's `slot-fingerprint` reads the
-sentexes alone: a justification stored over sentexes that did not change moves belief and
-not the index. A premise mark re-stores its sentex, so the sentex slots cover it. Both
-fingerprints carry the clear epoch described above, so an image of records a `clear!`
-removed is declined.
+**The manifest** holds the two layout numbers, the records'
+`record-store/reasoning-fingerprint`, the **source identity** of the engine code that
+derived the belief ([glossary.md](glossary.md)), and the two policies that move belief:
+`VAELII_ASSERTIVE_ARG_TYPES`, and the forced-monotonic declarations the store holds
+(`reasoning-image/declared-forced`, [nmtms.md](nmtms.md#the-forced-monotonic-set)). The
+records fingerprint reads the justifications kind's slots beside the sentexes kind's,
+where the index image's `slot-fingerprint` reads the sentexes alone: a justification
+stored over sentexes that did not change moves belief and not the index. A premise mark
+re-stores its sentex, so the sentex slots cover it. Both fingerprints carry the clear
+epoch described above, so an image of records a `clear!` removed is declined.
 
-**An open installs the image** only when every part of the stamp equals the KB's own, the
+**An open installs the image** only when every part of the manifest equals the KB's own, the
 KB's provers and solver are the defaults — a registered prover or evaluatable runs code the
 source identity does not cover — and both sections read in full into a scratch network
 before anything moves into the KB's own. Any mismatch, a registered prover, or a torn
@@ -769,45 +781,58 @@ The sections are written to temp files beside the image on disk and renamed over
 once both are complete, so a write that throws or runs out of heap, at a close or a seal,
 leaves the image the directory held installable. A
 KB opened over an empty store registers the close-time write at open, since it builds its
-belief assert by assert and never recovers. A KB whose network holds fewer nodes than it has
-stored sentexes — a loader filled it and skipped the recover, or it holds `assert-inert`
-sentexes — writes none, and recovers at its next open.
+belief assert by assert and never recovers. A KB holding a stored sentex that is no network
+node and carries no `:inert` provenance mark (a loader filled it and skipped the recover)
+writes none, and recovers at its next open. An `assert-inert` record has no node and carries
+the mark, so a KB holding one writes an image, and the install holds no node for the record
+where a recover adds an OUT one; belief is the same
+(`reasoning_image_test/an-inert-sentex-is-imaged-and-reopens-stored-and-not-believed`).
 
 **Rebuilding behind an image.** `open-kb` with `:recover? :background` installs an image
-whose stamp differs from the KB's only in its source digest, which is the image an earlier
-engine build wrote over the same records under the same policies. The open then returns,
-and the KB answers from that image. Belief is rebuilt under the running build on a daemon
-thread, over a second KB (`kb/rebuild-kb`). The second KB takes the records, the index,
-the provers, the solver, the naming policy and the constraints from the open KB
+whose manifest differs from the KB's only in its source digest, which is the image an
+earlier engine build wrote over the same records under the same policies. The open then
+returns, and the KB answers from that image. Belief is rebuilt under the running build on
+a daemon thread, over a second KB (`kb/rebuild-kb`). The second KB takes the records, the
+index, the provers, the solver, the naming policy and the constraints from the open KB
 (`kb/rebuild-shared`). It holds its own directory fields, operation log, change feed and
 hazard record (`kb/rebuild-own`), and starts with an empty `Reasoning` value
-(`kb/empty-reasoning`).
-A KB field named in none of the three is not copied, and `background_rebuild_test` fails
-on one. When the rebuild finishes, its belief replaces the installed belief: a KB holds its
-network, taxonomy and derived atoms as one `Reasoning` value in a volatile
-(`vaelii.impl.types.reasoning`), and the install is one `vreset!` of it. The image is then
-rewritten under the running source, and the change feed receives the handles whose belief
-the replacement moved (`dense/moved-between`). Until then the KB
+(`kb/empty-reasoning`). A KB field named in none of the three is not copied, and
+`background_rebuild_test` fails on one. When the rebuild finishes, its belief replaces the
+installed belief: a KB holds its network, taxonomy and derived atoms as one `Reasoning`
+value in a volatile (`vaelii.impl.types.reasoning`), and the install is one `vreset!` of
+it. The image is then rewritten under the running source, and the change feed receives the
+handles whose belief the replacement moved (`dense/moved-between`). Until then the KB
 reports `{:stale-belief true}` from `write-hazards`, and every write entry point refuses
 with `:unrecovered-kb`, `*write-unrecovered?*` included: a write would be checked against
 the earlier build's belief, and the rebuild might not see its record. While the install is
-pending, every public read entry point in `vaelii.core` runs against `kb/read-view`, a copy
-of the KB holding the belief the read began with. A read that begins before the install
-reads the installed belief to its end, and a lazy sequence it returns reads that belief
-when realized; no public read sees the network of one belief beside the taxonomy of the
-other. A KB with no install pending is passed through unchanged after one atom read.
+pending, every public read entry point in `vaelii.core` runs against `kb/read-copy`, a
+copy of the KB holding the belief the read began with. A read that begins before the
+install reads the installed belief to its end, and a lazy sequence it returns reads that
+belief when realized; no public read sees the network of one belief beside the taxonomy of
+the other. A KB with no install pending is passed through unchanged after one atom read.
 
-**Trusting an image.** `open-kb` with `:recover? :trust` installs the same image
+**Trusting an image.** `open-kb` with `:recover? :trust`, the default, installs the same image
 `:background` would, and keeps it: no rebuild runs, the KB is writable at once, and
 `write-hazards` reports no `:stale-belief`. Belief moves under the running build only where
 a settle reaches, so a record no write touches keeps the label the earlier build gave it,
-and `recover` re-derives all of it under this build on demand. The close-time image write
-stamps the source the image was read under, not the running one, so the image goes on naming
-the source its belief was last derived under in full: a later `:auto` open still declines it,
-and a later `:trust` open keeps it again. The open logs `::reasoning-image-trusted` with that
-source. It is the mode for a development prompt whose engine changes between opens, where a
-recover or a rebuild per change costs the time the image exists to save; a caller that needs
-belief this build derived in full opens with `:auto` (docs/web.md).
+and `recover` re-derives all of it under this build on demand. An image whose candidate
+index carries no argument family, written by a build without that family, installs
+with the family adopted as read (`argument/installed!`): the first settle decides only the
+declarations and terms its writes queue, and reads no declaration whole
+(`reasoning_image_test/an-image-without-the-argument-family-installs-with-no-whole-argument-read`). The first settle after the
+install draws no withheld mint a departure releases, as no settle `recover` runs does: the
+image carries the owed releases, and `release-withheld!` draws them
+([argtypes.md](argtypes.md#pruning-what-the-kb-says-more-specifically--vaelii_prune_subsumed_mints-on)). The close-time image write
+records the source the image was read under, not the running one, so the image goes on
+naming the source its belief was last derived under in full: a later `:auto` open still
+declines it, and a later `:trust` open keeps it again. The open logs
+`::reasoning-image-trusted` with that source. It is the default because the engine source
+moves with every commit to belief-deriving code, and under `:auto` each one turns the next
+open of every store into a full recover, an hour or more at millions of sentexes. A caller
+that needs belief this build derived in full says so: it opens with `:auto`, calls
+`recover`, or runs `lein cli upgrade`, which opens with `:auto` and writes the image the
+next trusted open installs as current. An open with `:oplog?` and no `:recover?` takes
+`:auto` ("The operation log").
 
 **The rebuild writes no record.** The rebuild KB reads the open KB's record store through
 `overlay.frozen/frozen-records`, which refuses every write with `:unrecovered-kb`, so no
@@ -818,25 +843,26 @@ whose closing settle, or whose re-fire of the rules that can refuse, places a co
 the image's records lack ends at that write as a rebuild that throws does (below), with a
 message naming `recover`. The KB keeps answering from the image with writes refused, and
 does not become writable until a caller runs `recover`, which rebuilds on the calling
-thread and writes the conclusion there. `background_rebuild_test` pins both. The rebuild
+thread and writes the conclusion there. `background_rebuild_test` asserts both. The rebuild
 stops when `close!` closes the directory or `recover` is called; `recover` then runs the
 rebuild on the calling thread. The rebuild reads a stop request during the network
 replay, after it, before the closing settle and before the install. It reads none inside
 the taxonomy replay or the settle, so a `close!` can wait out a whole step. `close-dir!`
 waits before it takes the process-wide store registry's monitor, so the wait delays that
 close alone and no other directory's open or close. An image declined for its records, its layout or its policies is not
-installed, and the open recovers as `:auto` does. The browser opens a store with belief this
-way under `VAELII_DEV`, and with `:auto` otherwise (docs/web.md).
+installed, and the open recovers as `:auto` does. The browser, the daemon and the CLI open a
+store with the default (docs/web.md).
 
-`core/rebuild-progress` reports where a rebuild has got to: the step running, of eight (the
-six steps of a recover from the records, the install, and the image write), the time since
-the rebuild began, and the source digests of the image and of the running build. Each step
+`core/rebuild-progress` reports where a rebuild has got to: the step running, of nine
+(the seven steps of a recover from the records, the install, and the image write), the
+time since the rebuild began, and the source digests of the image and of the running
+build. Each step
 is logged at `:info` as it begins. A recover from the records records its step timings in
-the KB, and the stamp carries them as `:recover`, which `decision` does not read; an
+the KB, and the manifest carries them as `:recover`, which `decision` does not read; an
 installed image hands them on to the next image the KB writes. Against an image's
 `:recover`, `rebuild-progress` answers `:fraction`, the share of that recover the steps
-done so far took. A recover with no rebuild around it logs its six steps at `:info` over a
-store of a million sentexes or more, and at `:debug` below that.
+done so far took. A recover with no rebuild around it logs its seven steps at `:info`
+over a store of a million sentexes or more, and at `:debug` below that.
 
 **A rebuild that throws** is logged at `:error`, and the KB keeps answering from the image
 and refusing writes, since `:stale-belief` still holds. `rebuild-progress` keeps reporting
@@ -856,13 +882,14 @@ them in place of the recover it would otherwise run. A dump image written under 
 engine source is installed and trusted as `:recover? :trust` trusts a store's, and the
 summary's `:reasoning-image` names that source under `:trusted`: a dump moves a KB between
 stores, and a recover on landing would redo the derivation the dump carries. The records half of a dump image's
-stamp is content rather than slots, because a dump lands in a different store: the export
-folds `fingerprint/record-hash` over the sentex frames and `fingerprint/justification-hash`
-over the justification frames it writes, and the import folds the same two over the
-records it lands. The network is read after both walks, so the export writes no image when
-the change clock moved during it: a write between the walks and the network would stamp
-labels the streamed records never had with those records' fingerprints. The import tries the image only when it kept every handle the dump
-gave, since the network names its nodes by handle; the summary's `:reasoning-image` reports
+fingerprint is content rather than slots, because a dump lands in a different store: the
+export folds `fingerprint/record-hash` over the sentex frames and
+`fingerprint/justification-hash` over the justification frames it writes, and the import
+folds the same two over the records it lands. The network is read after both walks, so the
+export writes no image when the change clock moved during it: a write between the walks
+and the network would put those records' fingerprints on labels the streamed records
+never had. The import tries the image only when it kept every handle the dump gave, since
+the network names its nodes by handle; the summary's `:reasoning-image` reports
 `{:reasoning :installed}` (with `:trusted` when the image's source differs) or
 `{:reasoning :recovered :reason r}`.
 
@@ -874,9 +901,9 @@ discarded whole, and never reconciled against the records:
 
 #### The operation log
 
-`open-kb` with `:oplog?` attaches an **operation log** to a `:disk-snapshot` KB
-(`vaelii.impl.oplog`, `vaelii.impl.seal`). Each outermost public write is appended to
-`<dir>/oplog/ops.log` as the call that made it, and a **seal** writes the index image and
+`open-kb` with `:oplog?` attaches an **operation log** to a `:disk-snapshot` or
+`:pg-snapshot` KB (`vaelii.impl.oplog`, `vaelii.impl.seal`). Each outermost public write
+is appended to `<dir>/oplog/ops.log` as the call that made it, and a **seal** writes the index image and
 the reasoning image and starts the log's next generation. An open after a crash installs
 the images the last seal wrote and replays the operations logged since, in place of the
 index rebuild and the recover the records would otherwise need.
@@ -887,10 +914,16 @@ index rebuild and the recover the records would otherwise need.
 | `true`, `:each` | attached | fsynced before the operation runs |
 | `:tick` | attached | on the durability daemon's tick (`vaelii.disk.sync-ms`), and before the operation writes a record the log's generation began with |
 
-The log is read on `{:backend :disk-snapshot}` with `:recover? :auto` only. Another
-backend, a `:recover?` of `:background`, `:trust`, `:warn` or `false`, and a value outside the table
-are refused with `:unknown-option`: a restore installs the images only a `:disk-snapshot`
-KB keeps, and an open with a log builds belief one way or the other.
+The log is read on `{:backend :disk-snapshot}` and `{:backend :pg-snapshot}` with
+`:recover? :trust`, the default, or `:auto`. Another backend, a `:recover?` of
+`:background`, `:warn` or `false`, and a value outside the table are refused with
+`:unknown-option`: a restore installs the images only the `:snapshot` index keeps, and an
+open with a log builds belief one way or the other. Under `:trust` a restore installs and
+keeps a reasoning image written under other engine source, as an open without the log does
+("Trusting an image"), and each seal's manifest names the source that belief was last
+derived under in full. The browser opens a `:snapshot` store it recovers with `:oplog?
+true`. Over `:pg-snapshot` the log, the seal and both images are files under
+`:dir` on the writer's host, and the seal's fingerprints are the adapter's counter row.
 
 **An open.** A directory holding a seal (`<dir>/oplog/seal.nippy`) is opened `{:recover? false}`
 and restored (`seal/restore!`): both images install against the fingerprints the seal
@@ -899,11 +932,14 @@ points, each replayed write checked against the record stored at its handle. A c
 seals, so the open after it replays no frame. The restore declines when the log is
 unusable, an image does not install, a replayed write differs from the stored record, or
 the store holds a record no replayed frame accounts for. The directory is then closed
-without writing an image, opened again with `:recover? :auto`, and sealed. A directory with
-no seal is opened and sealed the same way. The open logs which path ran, at `:info` for a
-restore or a directory with no seal and at `:warn` for a decline with its reason, and the
-log keeps the report (`oplog/opened`): `{:restored true :frames n :ms t}` or `{:restored
-false :reason r :ms t}`.
+without writing an image, opened again with the caller's `:recover?`, and sealed. A directory with
+no seal is opened and sealed the same way. A write by a KB opened without `:oplog?`,
+under any disk backend over the directory, renames the seal to `retired.nippy`
+(`seal/retire-unlogged!`): the write reaches the records and no log, and the next open
+with the log opens from the images or the records and seals again. The open
+logs which path ran, at `:info` for a restore or a directory with no seal and at `:warn`
+for a decline with its reason, and the log keeps the report (`oplog/opened`): `{:restored
+true :frames n :ms t}` or `{:restored false :reason r :ms t}`.
 
 **A seal** runs when `vaelii.core/seal` is called, when the directory closes, when the
 index drifts past `vaelii.index.snapshot-drift`, and when a `:seal`-class operation
@@ -966,13 +1002,13 @@ The term reaching a
 key is canonical — `vaelii.impl.kv` canonicalizes at both boundaries, because a lazy seq
 and the `PersistentList` it is `=` to freeze to different nippy bytes.
 
-`kv-member?` is there for a *cost* rather than an answer. `reads/watched-rule?` — the gate
-the firing path takes once per candidate rule per new datum — asks whether one handle is
-in the roster, and a backend that packs a posting (`vaelii.impl.dense-kv`,
-`vaelii.impl.dense-roots`) has to answer by probing it, not by materializing the roster
-and testing the result. On the two backends above the two roads read identically, which
+`kv-member?` is there for a *cost* rather than an answer. `reads/watched-rule?` — the membership
+check the firing path takes once per candidate rule per new datum — asks whether one handle
+is in the posting of watched rules, and a backend that packs a posting
+(`vaelii.impl.dense-kv`, `vaelii.impl.dense-roots`) has to answer by probing it, not by
+materializing the posting and testing the result. On the two backends above the two roads read identically, which
 is exactly why nothing behavioural catches the difference: `lein perf --only
-exception-roster-gate` is what defends it, and `kv_membership_test` is what says every
+watched-rule-membership` is what defends it, and `kv_membership_test` is what says every
 adapter's probe agrees with its own `kv-members`.
 
 So a new backend (SQL, overlay) is a new `KvBackend` rather than a second index,
@@ -1125,7 +1161,7 @@ answering out of the other's handles. And a directory deliberately pointed at th
 database is not caught by the coverage check below it, which compares record **counts**:
 two unrelated stores of the same size agree, and what gets through is worse than an empty
 index, because a re-assert of a sentence this store does hold mints a second handle for it.
-So the index directory is stamped with the database identity on first use, and an open over
+So the index directory records the database identity on first use, and an open over
 a different one is refused (`:type :stale-index-records`) rather than answered. Give each
 KB its own `:dir`, or delete the directory to rebuild against the records now behind it.
 
@@ -1136,19 +1172,26 @@ exclusive lock.
 
 `:pg-snapshot` is `:disk-snapshot` with the records in Postgres: the index image and the
 reasoning image live under `:dir` on the writer's host, and an open installs both instead
-of reindexing and recovering, as it does over `:disk` records. Each image is stamped with
-the adapter's stamp row — a uuid minted with the store and a count a statement-level trigger
-on the record table moves with every insert, update, delete, truncate and `COPY`, in the
-same transaction — so one row read at open says whether the records moved since the images
-were written, and the uuid says whether they are the same records at all. The directory is
-held to one database as `:pg-disk-log`'s is, needs `:dir` for the same reason, and takes
-the single-writer lock itself, since no component opens there.
+of reindexing and recovering, as it does over `:disk` records. Each image is written with
+the adapter's fingerprint row — a uuid minted with the store and a count a statement-level
+trigger on the record table moves with every insert, update, delete, truncate and `COPY`,
+in the same transaction — so one row read at open says whether the records moved since the
+images were written, and the uuid says whether they are the same records at all. The
+directory is held to one database as `:pg-disk-log`'s is, needs `:dir` for the same
+reason, and takes the single-writer lock itself, since no component opens there.
+
+**The directory names its server.** Both `:pg-*` backends write into `index/records.edn`
+the host, port, database and schema the index was built against, so a reopen needs only
+the directory: `{:backend (v/store-backend dir) :dir dir}` with no `:pg` connects to the
+recorded server, as `PGUSER` (else the OS user) with `PGPASSWORD` when it is set. An
+explicit `:pg` is used as given and still has to match the records identity. The browser's
+catalog lists such a directory as a store and loads it this way.
 
 Over `:disk-snapshot` it adds the server's `pg_dump`, PITR and replication of the
 records. Each record fetch the LRU does not answer is a round trip, so a settle that
 reaches widely, or a full recover, runs slower than over local records. A write that
-reaches the records while the images do not (a crash, another writer) moves the stamp, and
-the next open discards both images and rebuilds.
+reaches the records while the images do not (a crash, another writer) moves the
+fingerprint, and the next open discards both images and rebuilds.
 
 ### Durability, and whose it is
 
@@ -1282,11 +1325,11 @@ per record, that is `capacity / records` of the sweep's own cost, a ratio the pe
 cost cancels out of, so a store too large for the page cache does not change it.
 Measured on an 800,000-record store at the 65,536 default: a skewed stream holding a
 ~84% hit rate at ~1 µs/query drops to ~69% over the 25,000 queries following a full sweep
-and is back inside a point five windows later — **tens of milliseconds of added latency
+and is back inside a point five 25,000-query spans later — **tens of milliseconds of added latency
 in all, against a sweep that itself took seconds**.  At 200,000 records, three times the
 cache and where that ratio is at its worst, the shape is the same and the sweep is the
 larger cost by an order of magnitude.  A skewed stream's head is much smaller
-than the cache, which is why the refill lands well inside one window: the sweep displaces
+than the cache, which is why the refill lands well inside one 25,000-query span: the sweep displaces
 65,536 entries, of which a few thousand are ones anything asks for again.
 
 **A closure sweep is the reader with no reuse inside it.**  A transitive-predicate walk
@@ -1304,7 +1347,7 @@ tick and a JVM shutdown hook closes them.  Logs are recovered on open: finish an
 interrupted compaction, truncate a torn tail, tombstone any slot now past EOF.
 
 Finding that torn tail reads the frame **lengths** and decodes nothing
-(`files/log-tail-offset`): a prefix, a skip, repeat, through a positional read window,
+(`files/log-tail-offset`): a prefix, a skip, repeat, through a positional read buffer,
 since a `RandomAccessFile` is unbuffered and a `seek` per frame is syscall-bound —
 [why lengths, not frames](defenses.md#torn-tail-recovery-reads-lengths-not-frames).
 The length chain suffices because a frame is appended **before** the
@@ -1328,7 +1371,7 @@ Each log answers the refusal by what it holds:
 - `tokens.log` — the open refuses.  Frame *i* is id *i*, so no later frame can be read
   past the damaged one, and the records citing them are not crash skew.
 - `kv.log` — the replay keeps the ops before the frame and flags the store
-  `:damaged-frame`, and the coverage gate below rebuilds the index from the records.
+  `:damaged-frame`, and the coverage check below rebuilds the index from the records.
   The log is left as it is until that rebuild empties it.
 - the operation log — truncated at the frame and marked unusable (`[:damaged-frame
   offset]`), so a restore declines and the open recovers from the records.
@@ -1346,7 +1389,7 @@ The walk finds a frame boundary; it cannot say whether what remains is *everythi
 and a short index opens populated-looking and answers short forever — re-asserting a
 fact it cannot find mints a second handle for a sentence already stored.  Two
 instruments close that, each for the loss that defeats the other, and `open-kb`'s
-coverage gate reads both.  The **batch-seal counter** (`kv/sealed-prefix`) is
+coverage check reads both.  The **batch-seal counter** (`kv/sealed-prefix`) is
 incremented as the *last* op of every `index-sentex` batch and decremented as the
 last op of an unindex's cleanup, so it equals the indexed-sentex count exactly when
 every batch landed whole: a torn append-mode tail keeps a batch's prefix — the root
@@ -1356,7 +1399,7 @@ before the marker is consumed: a compacted log is one flat `[:put]` per key in h
 order, so a tail lost at rest — a short restore, a partial copy — is arbitrary keys,
 the seal possibly among the survivors, and only the length says the file is not the
 one that was closed.  A frame inside `kv.log` that does not decode sets the same flag.
-Any of these signs, and the gate rebuilds the index from the records.
+On any of these signs the coverage check rebuilds the index from the records.
 A store whose seal reads zero — one written before the counter, or an index installed
 whole by `import-dump`'s replay — is checked by the root count alone, as before.
 
@@ -1416,21 +1459,21 @@ last left holding — is not the writer's alone, and a field written outside a m
 one another thread can catch mid-pair.
 
 - The **kind lock** covers that kind's log and idx *and* the resident state derived from
-  them — on the read side as well, since the live-handle roster is a bitmap mutated in
+  them — on the read side as well, since the live-handle set is a bitmap mutated in
   place and a read taken beside a concurrent add reads a structure mid-edit. A store, a
   kill, a batch and the compactor's reconcile each take it once and do both halves inside
   it, so no reader finds an id live whose slot says tombstone, or a cleared delta set
   under a writer folding an id into it. The cost is an `addLong` and a map put inside a
   monitor already held for two file writes.
 - **A monitor of the store's own** covers the three that belong to no kind and move
-  together: the handle counter, `counters.nippy`, and the stamp saying what that blob
+  together: the handle counter, `counters.nippy`, and `synced-seq` saying what that blob
   holds. `fsync` reads and writes them on the daemon's thread and `clear-records!` on the
   writer's, and a tick that read the counter before a wipe and wrote the blob after it
-  would leave a wiped store stamped with the pre-wipe high-water mark. It is not a kind
+  would leave a wiped store's blob holding the pre-wipe high-water mark. It is not a kind
   lock because a whole-file blob rewrite held inside one would put a record append behind
   it on every tick that minted a handle.
 
-The premise set is a `LiveRoster` under the sentexes kind lock for every mutation, and
+The premise set is a `LiveHandleSet` under the sentexes kind lock for every mutation, and
 the pairing that would matter — a handle in `premise-ids` whose record is gone
 — is a delete the writer makes, on the thread that reads it back. Its one mutation from
 another thread is the compactor dropping a handle whose frame the log cannot give back,
@@ -1521,7 +1564,7 @@ and index are collectable once its caller drops the KB value.
 `kb/create-sentex` appends the record, which allocates the handle, and then writes the
 index batch keyed on that handle.  An index that refuses the batch — `:compaction-failed`,
 or any other throw — would otherwise leave a record no index names, reported to the
-caller as a failed write.  The next open's coverage gate indexes such a record, and
+caller as a failed write.  The next open's coverage check indexes such a record, and
 recovery then believes it as a premise whose forward rules never fired for it, since
 `recover` rebuilds belief from the stored justifications and does not chain.  An index
 can also refuse part-way through its write: the columnar index writes the trie posting
@@ -1529,8 +1572,11 @@ before the argument roots, and an argument-root scope past the argument-scope
 ceiling refuses in the second step, so the posting would name a handle with no record.
 So the postings the write landed are taken out (`unindex-sentex!`) and the record is
 deleted before the throw travels, and the store holds what it held before the call.  A justification is one record and no index write, so the justification writers
-have no second store to fall out of step with.  A crash between the two writes is the
-coverage gate's to repair, as above.
+have no second store to fall out of step with.  A crash after the record write and
+before the premise mark or the justification that supports it leaves a record both stores
+hold and nothing supports.  The coverage check indexes only a record no index names, so it
+leaves that record as it is, and the open reports it
+([A record no premise and no justification supports](#a-record-no-premise-and-no-justification-supports)).
 
 **A disk store stops at its first fault, and says so on every call after it.**  Each
 store — the record store, the index's `kv.log`, an overlay's metadata log, the operation
@@ -1555,7 +1601,7 @@ latched it as the cause, where each call would otherwise have thrown whichever
 `ClosedChannelException` or `IOException: Stream Closed` its own channel produced, with
 no `:type`.  The first fault is logged once, at `:error`.  Only opening the directory
 again clears the latch: the open walks a log that did not close cleanly and the
-coverage gate checks the index, which is the repair.  A read that fails with an
+coverage check reads the index, which is the repair.  A read that fails with an
 `IOException` on an open channel leaves nothing on disk changed and does not stop the
 store.  `:compaction-failed`, a compaction that failed past its commit marker, is a
 separate latch with its own refusal.
@@ -1566,15 +1612,84 @@ unclean shutdown.  A close whose own flush fails still throws, since that fault 
 close's to report.
 
 **The steps `assert` takes after the write landed do not fail it.**  `assert` stores,
-chains and settles the sentence, then stamps its provenance, re-homes a forced extent and
+chains and settles the sentence, then records its provenance, re-homes a forced extent and
 reconciles NATs.  A store that stops during those three steps is logged at `:error`
 naming the handle, and `assert` returns the handle: the write took effect and a reopen
 holds it with its consequences, and the store refuses the next call.  What a stop leaves
-undone is the stamp or the maintenance, never the write.  A store that stops earlier,
+undone is the provenance or the maintenance, never the write.  A store that stops earlier,
 while the sentence is being stored or chained, throws `:store-unusable` out of `assert`.
 A premise stored before a fault inside the chaining keeps its record, and a reopen
 believes it with only the consequences written before the fault: `recover` rebuilds
 belief from stored justifications and does not chain.
+
+### A record no premise and no justification supports
+
+A stored record whose handle has no premise mark and no justification concluding it stays
+OUT, counts in `count-sentexes`, and answers a belief-blind read.  A crash after the
+record write and before the write that supports it leaves one, and so does a store closed
+under a running write ([below](#a-shutdown-under-a-running-write)).
+
+**The open reports such a record and changes nothing.**  After `recover` builds the
+network, on the records path and the image path alike, `recovery/note-unsupported!` takes
+the network's nodes less its premises and keeps each node no justification concludes.  On
+the dense network the scan is one bitmap subtraction and one supports probe per
+non-premise node: over a 1,000,000-node network of 300,000 premises and 700,000 derived
+nodes with no unsupported one, the scan measured 70–276 ms per open (median 178 ms over
+7 runs).  It reads the provenance of the nodes it keeps, and no record or index.
+A node whose record carries the `:inert` mark drops out.  The open logs the handles at
+`:warn` and holds them in the KB.  `(unsupported kb)` answers `{:n :handles}`, re-checked
+against the network on each read, so a record premise-marked, concluded or retracted since
+the open drops out.  The browser's catalog `:stats` carries the same map under
+`:unsupported`, and the store card shows the count.  `write-hazards` does not name it, and
+no write is refused over it.
+
+**An `assert-inert` record carries an `:inert` mark.**  `assert-inert` stores a record with no
+premise mark and no justification, and writes `:inert true` into a new record's
+provenance, so the scan leaves the record out.  Two cases still read as unsupported:
+
+- an `assert-inert` record an earlier build wrote, before `assert-inert` marked its
+  records, until `mark-inert!` marks it;
+- an `assert-inert` record whose mark did not land.  The mark is a second write after
+  the record, so a crash between the two leaves the record unmarked, and the report is
+  accurate: that write failed.
+
+**A caller removes one on its own evidence.**  `(remove-unsupported! kb {:handles hs})`
+retracts the unsupported records among `hs`, with their postings, and returns
+`{:unsupported-removed n :handles [h …]}`.  The handles are the ones the caller's own
+record of its writes marks failed; the engine keeps no outcome per write.  `{:force?
+true}` removes every record `unsupported` reports, an earlier build's unmarked
+`assert-inert` record included, so `{:handles hs}` is the form to use.  `(mark-inert! kb
+{:handles hs})`, or `{:contexts cs}`, marks the unsupported records it names `:inert`.  Either call
+with no evidence refuses `:unsupported-unattested`.
+
+### A shutdown under a running write
+
+Each public write entry point counts itself in flight while it runs, under its op name
+(`dur/call-as-write`), and so does a `with-deferred-settle` batch's closing settle.  The
+JVM shutdown hook waits up to **10 s** for no write to be in flight, and then closes the
+stores (`dur/quiesce-writes!`).  Past that bound it logs `::shutdown-write-running` at
+`:warn` and asks the running writes to stop.
+
+**A clean stop always rolls back as a unit.**  Only the part of a write that the entry
+point rolls back whole on a throw honours the stop request (`dur/as-unit`): an `assert`,
+and an `edit!` batch's adds with its removals' refusal checks.  Such a write stops at its
+next clean point, after a rule firing or at the start of a settle pass, where every record
+it wrote has its premise mark or its justification, and throws `:shutdown-abort`.  The
+entry point then rolls the write back as it rolls back a refusal, with the stop request
+off for the rollback, and an operation log marks itself unusable, since its frame
+describes a write that did not complete as logged.  Every other write runs with the stop
+request off and the hook waits for it: `edit!`'s removals and the settle after them, a
+`retract!`, a `with-deferred-settle` batch's closing settle, a write nested in another
+public write, and a `*bulk-load?*` write, which keeps no premise audit to roll back.
+
+**Past both bounds the case equals a crash.**  After the stop request the hook waits up to
+`vaelii.disk.shutdown-unwind-ms` more (default `10000`).  Past that bound it logs
+`::shutdown-write-unwound-late` at `:error`, naming the ops still running and the
+setting, and closes the stores under them.  A store closed under a write is in the state a
+crash at that moment leaves: it can hold an unsupported record, which the next open
+reports and `remove-unsupported!` removes on the caller's evidence, and a batch past its
+rollback point is applied in part.  A process that runs settles of many minutes, such as a
+long import into a store of millions of records, sets the bound above its longest batch.
 
 ## The sentex records — `LiteralSentex` and `RuleSentex`
 
@@ -1676,16 +1791,16 @@ is a side map:
   `:created` therefore cannot affect order independence — nothing in `relabel` /
   `settle` reads it.
 
-`assert` stamps `{:creator :created}` on the sentex it creates — `:creator` from
+`assert` records `{:creator :created}` on the sentex it creates — `:creator` from
 `opts :creator` or the dynamic `*creator*`, `:created` from the dynamic `*clock*`
-(epoch millis by default; both bindable, which is how tests pin them). Creation is
-**first-writer-wins**: re-asserting an existing sentex keeps its original stamp,
+(epoch millis by default; both bindable, which is how tests fix them). Creation is
+**first-writer-wins**: re-asserting an existing sentex keeps its original provenance,
 while any `opts :provenance` map is merged in. `add-provenance` layers application
 fields on later; `provenance` reads the map. It is torn down with the record — a
 `retract!` (via `delete-sentex!` / `delete-justification!`) deletes the provenance entry
 alongside the record, so it never leaks past the thing it annotates. The store methods
 are keyed by any handle, so the protocol admits justification-level provenance (derivation
-who/when); only asserted sentexes are stamped.
+who/when); only asserted sentexes carry it.
 
 ## Serialization
 
@@ -1713,7 +1828,7 @@ is refused under the same `:type` for a different reason — it has no canonical
 so `sentex/canon` cannot normalize it to one set of bytes and `nm/form-rank` cannot
 order it ("The canon gotcha" below) — and any other leaf is put through the
 freeze/thaw pair the disk backends run, and refused if either throws
-(`encodable_test` and `check_test` pin the boundary).
+(`encodable_test` and `check_test` assert the boundary).
 
 **That thaw is the guarded one** (`vaelii.impl.io.thaw`), which is what makes the front
 entry point and the file readers hold one opinion rather than two that agree today. A leaf whose
@@ -1745,12 +1860,12 @@ follow. A store directory and a dump are whatever an operator copied.
 ### A directory's sentinel
 
 `records/format.edn` and `index/layout.edn` are read before anything else about a
-directory is. A **missing** `format.edn` is stamped with the current version — a
+directory is. A **missing** `format.edn` is written with the current version — a
 pre-sentinel directory is by definition today's layout — but a **damaged** one is refused
-(`:unreadable-store`), because a stamp cut mid-write is a directory whose records were
+(`:unreadable-store`), because a sentinel cut mid-write is a directory whose records were
 being written at the same moment. A damaged `layout.edn` reads as `:stale` instead and
 the index is rebuilt from the records: it answers whether the entries can be *proved* to
-match this build's key shape, and a torn stamp proves nothing.
+match this build's key shape, and a torn sentinel proves nothing.
 
 Both are read under the manifest byte bound (`dfiles/read-edn-manifest`), as are an
 index directory's `records.edn` and a belief image's `manifest.edn`. A `format.edn` past
@@ -1806,11 +1921,11 @@ store with no durable dictionary, such as the in-memory stores, keeps the 1M def
 The record store, trie, term index, and rule index all persist — durably across a
 restart on `:disk-log`, and within the JVM on `:memory` (the space-number
 registry). The **taxonomy** and **JTMS graph** are in-memory, so a KB constructed
-against an existing store has to rebuild them. `open-kb`'s `:recover? :auto` default
-does it at construction (`true` is an alias for it); `:background` does the same except
-over a reasoning image an earlier engine build wrote, which it installs and rebuilds behind
-("Rebuilding behind an image"), and `:trust` installs that image and keeps it ("Trusting an
-image"); `:warn` leaves them empty and says
+against an existing store has to rebuild them. `open-kb`'s default, `:recover? :trust`,
+does it at construction, and installs a reasoning image an earlier engine build wrote and
+keeps it ("Trusting an image"). `:auto` does the same except over that image, which it
+declines and recovers from the records under this build (`true` is an alias for it);
+`:background` installs it and rebuilds behind it ("Rebuilding behind an image"); `:warn` leaves them empty and says
 so, `false` leaves them empty in silence, and both leave the repair to a `core/recover`
 call of the caller's own. Nothing else is a setting — a value `recover-modes` does not
 name is refused (`:unknown-option`) rather than read as the warn branch, since a KB that
@@ -1920,7 +2035,7 @@ peeled before the record write, which is peeled before canonicalization.
 | index write — key streams, postings, counts | 24.64 | 56.8% |
 | JTMS node + the premise mark on the record store | 9.32 | 21.5% |
 | the special-predicate suite + the violation ledger | 4.55 | 10.5% |
-| the public `assert` prelude — shape checks, NAT gate, rule dispatch | 2.92 | 6.7% |
+| the public `assert` prelude — shape checks, NAT presence check, rule dispatch | 2.92 | 6.7% |
 | record store `put-sentex` | 1.52 | 3.5% |
 | the P/¬P coincidence set | 1.13 | 2.6% |
 | canonicalization (`res/kb-sentex`) | 0.85 | 2.0% |
@@ -1950,8 +2065,8 @@ batch entirely:
 
 | component of the index write | µs/fact | of the load |
 |---|---:|---:|
-| postings — trie child edges and leaves, term index, secondary roots, roster, slots | 15.6–16.8 | 35–39% |
-| key streams, the op list, and the pre-write roster/slot reads | 4.6–6.7 | 11–15% |
+| postings — trie child edges and leaves, term index, secondary roots, term-name set, slots | 15.6–16.8 | 35–39% |
+| key streams, the op list, and the pre-write name-set/slot reads | 4.6–6.7 | 11–15% |
 | count maintenance — one `:increment` per trie level per fact, plus the batch seal | 2.5–4.6 | 6–10% |
 
 The ranges are two independent runs; the split arms are whole loads too, so their
@@ -1980,7 +2095,7 @@ path vectors, where there is no contiguity to hit.
 **A facts/s figure is per writer thread.** This path is single-threaded, and by the
 single-writer contract below it has to be. So a rate is only comparable against another
 rate taken at the same writer count, and a wall-clock load comparison between two engines
-is a comparison of thread counts until both are pinned to one.
+is a comparison of thread counts until both are fixed to one.
 
 ### What a recover spends its time and heap on
 
@@ -1991,11 +2106,15 @@ store carried through `import!`, `reindex`, `export!` and a reimport on `:disk-c
 | step | share of the recover |
 |---|---:|
 | `:settle` | about 50% |
-| `:rosters` | about 25% |
+| `:derived-sets` | about 25% |
 | `:taxonomy` | about 15% |
 | `:network` | about 6% |
 | `:depths` | about 4% |
 | `:refusals` | under 1% |
+
+`:refusals` holds the re-fire of the rules that can refuse and the settle a re-fire owes.
+`:placement` holds the settle that places the nogoods the rebuilt candidate index queued
+(`chain/placement-queued?`). The table's measurement counts that settle under `:refusals`.
 
 The recover's heap peak is about twice the import's, so the recover sets the heap a store
 needs (`VAELII_HEAP`). A `:disk-snapshot` open that installs the reasoning image takes
@@ -2012,15 +2131,15 @@ writes:
 
 - *Two threads, one process:* every TMS mutation applies atomically — the reference
   network through `jtms/swap-with-result!`/`swap!` on its atom, the dense one under a
-  `StampedLock` write stamp — so concurrent operations **compose** and none is silently
+  `StampedLock` write lock — so concurrent operations **compose** and none is silently
   lost. That is a liveness floor, not a semantics: interleaved `assert`/`retract!`
   sequences are not serializable (find-or-create and the settle pipeline are
   check-then-act), so concurrent *writing* still needs a single writer: two threads
   asserting one sentence can store it at two handles, both believed, and the store keeps
   both across `recover`. A reader thread
   beside a writer thread (the web browser over a REPL's KB) is the supported shape, and
-  **both** TMS representations give that reader a consistent view — the reference out of
-  its persistent-map snapshot, the dense one out of an optimistic read stamp validated
+  **both** TMS representations give that reader a consistent snapshot — the reference out of
+  its persistent-map snapshot, the dense one out of an optimistic read validated
   against the writer's, so neither ever shows a partially-applied relabel
   (`jtms_concurrency_test`).
 
@@ -2037,14 +2156,14 @@ writes:
   settle, the belief before it and then the belief after it, and never one in between
   (`kb_concurrency_test`). Three things keep that exact:
   - **The caches.** A thread reading a hold's belief reads the change clock as
-    `-1 - clock` (`observe/change-clock`), so no clock-stamped cache hands it an entry the
+    `-1 - clock` (`observe/change-clock`), so no clock-keyed cache hands it an entry the
     writer derived from the network it is deciding, and none hands the writer one derived
     from the belief the reader holds.
   - **The taxonomy is read live.** Its closures are memoized where the writer reads them,
     so the two visibility callbacks read what the writer holds now (`observe/live`), and
     `genl?`, `isa?` and the scoped closures answer a reader beside a settle from the
     closures as the settle moves them. The hold covers belief, not the closures.
-  - **The reasoning image.** Its stamp covers the records, and a settle moves belief
+  - **The reasoning image.** Its manifest covers the records, and a settle moves belief
     without writing one, so `reasoning-image/save!` declines while a settle holds the
     network, or when the change clock moved while it wrote.
 
@@ -2077,7 +2196,7 @@ writes:
   publishes through no barrier: a second thread may read an array reference, a
   capacity, the CSR-mode flag or a half-installed mapped section from before a growth,
   a compaction or a snapshot install, with no happens-before edge to stop it. The atom-
-  and lock-based backends give the incidental reader a consistent view; these two do
+  and lock-based backends give the incidental reader a consistent snapshot; these two do
   not, and keeping such a read on the writer's thread or behind a synchronizer is the
   caller's. Two writer threads on them do worse than tear: they can leave an
   open-addressing map with no empty slot, and both threads then probe it without end. The walk reads these fields at every frontier node, the index's hottest

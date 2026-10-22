@@ -3,10 +3,11 @@
 (ns vaelii.impl.decide
   "The nogood candidate index.  Each family keeps its rows of one candidate index
   (`:nogood-candidates`), which the placement detectors read; this namespace runs the
-  families as one index, holds the forced-monotonic roster, and decides a placed nogood
+  families as one index, holds the forced-monotonic set, and decides a placed nogood
   from its members' classes (`verdict`).  See docs/nmtms.md, \"A nogood placed as a
   conclusion\"."
   (:require [vaelii.impl.caches :as caches]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.decide.arity :as arity]
             [vaelii.impl.decide.inherited :as inherited]
             [vaelii.impl.decide.membership :as membership]
@@ -20,7 +21,7 @@
             [vaelii.impl.taxonomy :as tax]
             [vaelii.impl.types.reasoning :as reasoning]))
 
-(defn write-view
+(defn unscoped-closures
   "The unscoped closures of `tax`, under their `tax/…-global` names, and `tax` itself as
   `:tax`: the taxonomy a family keeps its rows through, handed to `:note!`, `:recovered`
   and `:sync`.  The rows are a superset over every reader, kept where no reader exists,
@@ -32,14 +33,15 @@
    :genl?-global        (partial tax/genl?-global tax)
    :genls-global-meets? (partial tax/genls-global-meets? tax)
    :genls-global-among  (partial tax/genls-global-among tax)
+   :covers-over-global  (tax/covers-over-global-fn tax)
    :context-up-global   (partial tax/context-up-global tax)
    :context-down-global (partial tax/context-down-global tax)})
 
 (def registry
-  "Every family, each a map of the parts the candidate index runs, `w` a `write-view`:
+  "Every family, each a map of the parts the candidate index runs, `w` an `unscoped-closures` map:
 
-  * `:grounds`, `{kind #{functor}}`: the roster literals the family reads as stored
-    grounds rather than as members, under the roster kind that reads them
+  * `:grounds`, `{kind #{functor}}`: the forced-monotonic literals the family reads as
+    stored grounds rather than as members, under the declaration kind that reads them
     (`:forced-between-predicates` for a functor read only between predicate-spelled
     arguments).  Absent for a family that reads none.
   * `:note!` `(fn [kb w sx stored?])`, at the store and removal choke points; absent for
@@ -54,139 +56,163 @@
     can move a handle into or out of it journals it (`journal/note`).  Absent for the
     negation family, whose members are an index family (`reads/as-stored-opposed-in`).
   Every family places its nogoods as conclusions (`chain/place-nogoods!`)."
-  [tuple/converse-family arity/family negation/family tuple/marks-family membership/family
-   related/family inherited/family])
+  [tuple/converse-family arity/family argument/family negation/family tuple/marks-family
+   membership/family related/family inherited/family])
 
 (def held-members
-  "The roster members no family reads among its grounds, each with the reason it is on the
-  roster (docs/nmtms.md, \"The forced-monotonic roster\")."
+  "The forced-monotonic predicates no family reads among its grounds, each with the reason
+  it is forced-monotonic (docs/nmtms.md, \"The forced-monotonic set\")."
   '{genlCx     "every context's ancestor set reads the stored edges"
     except     "withdrawing one un-hides its target, so the OUT set of a round would shrink"
+    exceptWhen "withdrawing one unblocks the firings of the rule it names, so the OUT set of a round would shrink"
     orthogonal "the one member of the related-types family's clash of it, which is a conflict and never a defeat"
     rewriteOf  "withdrawing one un-merges two terms, so the OUT set of a round would shrink"
     sameAs     "withdrawing one un-merges two terms, so the OUT set of a round would shrink"
     equals     "withdrawing one un-merges two terms, so the OUT set of a round would shrink"
     injection  "a premise of core.txt's rules concluding (functional P) and (functionalInArg P 1)"
     surjection "a premise of core.txt's rule concluding (functional P)"
-    bijection  "a premise of core.txt's rules concluding (injection P) and (surjection P)"})
+    bijection  "a premise of core.txt's rules concluding (injection P) and (surjection P)"
+    functionCorrespondingPredicate "a premise of core.txt's rules concluding (arg P n T) from a function's result"
+    result     "a premise of core.txt's rules concluding (arg P n T) from a function's result"
+    fixed_arity           "an arity policy, read beside the arity bindings, so it goes OUT only by retraction as a length does"
+    fixed_arity_predicate "an arity policy, read beside the arity bindings, so it goes OUT only by retraction as a length does"
+    fixed_arity_function  "an arity policy, read beside the arity bindings, so it goes OUT only by retraction as a length does"
+    bounded_arity         "an arity policy, read beside the arity bindings, so it goes OUT only by retraction as a length does"
+    unbounded_arity       "an arity policy, read beside the arity bindings, so it goes OUT only by retraction as a length does"
+    at_least_binary       "an arity policy, read beside the arity bindings, so it goes OUT only by retraction as a length does"
+    at_least_ternary      "an arity policy, read beside the arity bindings, so it goes OUT only by retraction as a length does"
+    at_least_quaternary   "an arity policy, read beside the arity bindings, so it goes OUT only by retraction as a length does"
+    at_least_quinary      "an arity policy, read beside the arity bindings, so it goes OUT only by retraction as a length does"
+    arityMax              "an arity policy, read beside the arity bindings, so it goes OUT only by retraction as a length does"
+    admitsArgnum          "an arity policy, read beside the arity bindings, so it goes OUT only by retraction as a length does"
+    relation              "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    predicate             "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    function              "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    truth_valued_relation "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    logical_constant      "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    logical_connective    "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    quantifier            "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    symbol                "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    context               "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    unrepresented_term    "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    boolean               "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    character             "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    keyword               "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    number                "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    integer               "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    negative_integer      "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    non_negative_integer  "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    non_positive_integer  "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    positive_integer      "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    string                "a term kind: a clash between two term kinds is a conflict and never a defeat"
+    greaterThan           "a numeric comparator, a premise of core.txt's rules concluding (at_least_binary R) through (at_least_quinary R)"
+    lessThan              "a numeric comparator, the stored spelling of greaterThan"
+    quantityGreaterThan        "a quantity comparator, computed from the unit table as greaterThan is from the numbers"
+    quantityGreaterThanOrEqual "a quantity comparator, computed from the unit table as greaterThan is from the numbers"
+    quantityLessThan           "a quantity comparator, computed from the unit table as lessThan is from the numbers"
+    quantityLessThanOrEqual    "a quantity comparator, computed from the unit table as lessThan is from the numbers"
+    sameQuantity               "a quantity comparator, computed from the unit table"
+    arg                   "an argument declaration, read beside the arity bindings"
+    arg1                  "a binary projection of arg, concluded from it and concluding it"
+    arg2                  "a binary projection of arg, concluded from it and concluding it"
+    arg3                  "a binary projection of arg, concluded from it and concluding it"
+    arg4                  "a binary projection of arg, concluded from it and concluding it"
+    arg5                  "a binary projection of arg, concluded from it and concluding it"})
 
-(def baseline-roster
-  "The engine's own roster, `{kind #{predicate …}}`: every family's `:grounds` and every
+(def baseline-forced
+  "The baseline forced-monotonic set, `{kind #{predicate …}}`: every family's `:grounds` and every
   `held-members` member, held on every KB whether or not it is stated."
   (reduce #(merge-with into %1 %2)
           {:forced-monotonic (set (keys held-members)) :forced-between-predicates #{}}
           (keep :grounds registry)))
 
-(def roster-kinds "The two roster properties." (set (keys baseline-roster)))
+(def forced-kinds "The two forced-monotonic properties." (set (keys baseline-forced)))
 
 (defn- declarations
-  "`{handle context}` of the stored declarations giving `pred` the roster property
+  "`{handle context}` of the stored declarations giving `pred` the forced-monotonic property
   `kind`, believed or not, or nil when no believed one does.  Read KB-wide: each reader
-  keeps the ones it sees (`on-roster?`)."
+  keeps the ones it sees (`forced-monotonic?`)."
   [tax kind pred]
   (when (tax/has-prop? tax kind pred)
     (tax/prop-supporter-contexts tax kind pred)))
 
 (defn global?
-  "Is `pred` on the global roster as `kind`: a `baseline-roster` member.  Every reader
-  reads it on the roster, and no declaration moves it.  A declaration in any context,
-  CxUniverse's included, puts its predicate on the roster at the readers that believe it
-  (`on-roster?`, docs/nmtms.md, \"The forced-monotonic roster\")."
+  "Is `pred` in the baseline forced-monotonic set as `kind`: a `baseline-forced` member.
+  Every reader reads it forced-monotonic, and no declaration moves it.  A declaration in
+  any context, CxUniverse's included, makes its predicate forced-monotonic at the readers
+  that believe it (`forced-monotonic?`, docs/nmtms.md, \"The forced-monotonic set\")."
   [_tax kind pred]
-  (contains? (baseline-roster kind) pred))
+  (contains? (baseline-forced kind) pred))
 
-(defn on-roster?
-  "Does `pred` carry the roster property `kind` (`:forced-monotonic` or
+(defn forced-monotonic?
+  "Does `pred` carry the forced-monotonic property `kind` (`:forced-monotonic` or
   `:forced-between-predicates`).  The 3-arity is the union over every reader: `global?`,
   or a believed declaration in any context.  The 4-arity is one reader's: `global?`, or
   a declaration `[handle context]` `seen?` holds of."
   ([tax kind pred]
-   (or (contains? (baseline-roster kind) pred) (tax/has-prop? tax kind pred)))
+   (or (contains? (baseline-forced kind) pred) (tax/has-prop? tax kind pred)))
   ([tax kind pred seen?]
    (or (global? tax kind pred)
        (boolean (some (fn [[h c]] (seen? h c)) (declarations tax kind pred))))))
 
 (defn global-reading
-  "The roster reading `(fn [kind pred])` every reader shares (`global?`)."
+  "The forced-monotonic reading `(fn [kind pred])` every reader shares (`global?`)."
   [tax]
   (partial global? tax))
 
 (defn reader-reading
-  "The roster reading `(fn [kind pred])` of a reader that sees the declarations `[handle
-  context]` `seen?` holds of (`on-roster?`, 4-arity)."
+  "The forced-monotonic reading `(fn [kind pred])` of a reader that sees the declarations `[handle
+  context]` `seen?` holds of (`forced-monotonic?`, 4-arity)."
   [tax seen?]
-  (fn [kind pred] (on-roster? tax kind pred seen?)))
+  (fn [kind pred] (forced-monotonic? tax kind pred seen?)))
 
-(defn roster
-  "Every predicate `on-roster?` as `kind`, over every reader."
+(defn forced-predicates
+  "Every predicate `forced-monotonic?` as `kind`, over every reader."
   [tax kind]
-  (into (baseline-roster kind) (tax/props tax kind)))
+  (into (baseline-forced kind) (tax/props tax kind)))
 
 (defn declared
-  "`{[kind pred] {handle context}}`: every predicate on the roster by a believed
-  declaration and off the global roster (`global?`), with its declarations.  Empty on a
+  "`{[kind pred] {handle context}}`: every predicate a believed declaration makes
+  forced-monotonic and the baseline set does not hold (`global?`), with its declarations.  Empty on a
   KB that declares only baseline members.  Read KB-wide, the union over every reader,
   which a read walk splits into the declarations its reader sees and misses."
   [tax]
-  (into {} (for [kind roster-kinds
+  (into {} (for [kind forced-kinds
                  pred (tax/props tax kind)
                  :when (not (global? tax kind pred))]
              [[kind pred] (tax/prop-supporter-contexts tax kind pred)])))
 
-(defn- predicate-spelled?
-  "Is `x` spelled as a predicate of arity 2 or more: `nm/predicate?` and not
-  `nm/type-symbol?`, so camelCase with an uppercase letter after the first character.  A
-  bare lowercase word satisfies the type spelling as well and is read as a type
-  (docs/naming.md)."
-  [x]
-  (and (nm/predicate? x) (not (nm/type-symbol? x))))
-
-(defn roster-literal?
-  "Is `literal` on the forced-monotonic roster: its functor is `on-roster?` as
-  `:forced-monotonic`, or as `:forced-between-predicates` with every argument spelled as a
-  predicate of arity 2 or more.  The 2-arity reads the union over every reader; the
-  3-arity reads the roster reading `on?` (`global-reading`, `reader-reading`)."
-  ([tax literal] (roster-literal? tax literal (partial on-roster? tax)))
+(defn forced-literal?
+  "Is `literal` in the forced-monotonic set: its functor is `forced-monotonic?` as
+  `:forced-monotonic`, or as `:forced-between-predicates` over a literal
+  `nm/between-predicates?`.  The 2-arity reads the union over every reader; the
+  3-arity reads the forced-monotonic reading `on?` (`global-reading`, `reader-reading`)."
+  ([tax literal] (forced-literal? tax literal (partial forced-monotonic? tax)))
   ([_tax literal on?]
    (let [f (nm/functor literal)]
      (boolean (and (symbol? f)
                    (or (on? :forced-monotonic f)
                        (and (on? :forced-between-predicates f)
-                            (next literal)
-                            (every? predicate-spelled? (rest literal)))))))))
+                            (nm/between-predicates? literal))))))))
 
 (defn literal-declarations
-  "`{handle context}` of the stored declarations that put `literal` on the roster and
-  are not `global?`: empty when the global roster holds `literal` or no declaration
+  "`{handle context}` of the stored declarations that make `literal` forced-monotonic and
+  are not `global?`: empty when the baseline set holds `literal` or no declaration
   does."
   [tax literal]
   (let [f (nm/functor literal)]
-    (if (or (not (symbol? f)) (roster-literal? tax literal (global-reading tax)))
+    (if (or (not (symbol? f)) (forced-literal? tax literal (global-reading tax)))
       {}
       (cond-> (or (declarations tax :forced-monotonic f) {})
-        (and (next literal) (every? predicate-spelled? (rest literal)))
+        (nm/between-predicates? literal)
         (merge (declarations tax :forced-between-predicates f))))))
-
-(defn literal-roster
-  "How `literal` is on the roster over every reader (`roster-literal?`), or nil when it is
-  not: `{:predicate f :kind k :global? g :declarations {handle context}}`.  `kind` is the
-  roster property `f` carries, `global?` whether `baseline-roster` holds it, and
-  `declarations` the stored declarations giving it, a `global?` member's included."
-  [tax literal]
-  (when (roster-literal? tax literal)
-    (let [f    (nm/functor literal)
-          kind (if (on-roster? tax :forced-monotonic f) :forced-monotonic :forced-between-predicates)]
-      {:predicate    f
-       :kind         kind
-       :global?      (global? tax kind f)
-       :declarations (or (declarations tax kind f) {})})))
 
 (defn note-candidate!
   "Keep `:nogood-candidates` in step with the fact `sx` arriving (`stored?` true) or
   leaving.  Runs at the store primitive and the removal choke point, after the index
   write."
   [kb sx stored?]
-  (let [w (write-view (reasoning/taxonomy kb))]
+  (let [w (unscoped-closures (reasoning/taxonomy kb))]
     (doseq [{:keys [note!]} registry :when note!]
       (note! kb w sx stored?))))
 
@@ -195,7 +221,7 @@
   `only` `:converse` to the converse candidates alone."
   ([kb sxs] (offer! kb sxs nil))
   ([kb sxs only]
-   (let [w (write-view (reasoning/taxonomy kb))]
+   (let [w (unscoped-closures (reasoning/taxonomy kb))]
      (doseq [sx sxs] (tuple/offer! kb w sx only)))))
 
 (defn rebuild-candidates!
@@ -204,7 +230,7 @@
   fact it reads."
   [kb]
   (let [cands (reasoning/nogood-candidates kb)
-        w     (write-view (reasoning/taxonomy kb))]
+        w     (unscoped-closures (reasoning/taxonomy kb))]
     (reset! cands {})
     (doseq [{:keys [recovered]} registry :when recovered]
       (recovered kb w))
@@ -221,7 +247,7 @@
 
 (defn drop-memos
   "Empty `sync-memo`, and return nil.  It is process-wide and holds the taxonomy value of
-  the last KB read, which holds a view of that KB, so it keeps its records and index
+  the last KB read, which holds references into that KB, so it keeps its records and index
   reachable until another KB is read; `vaelii.core/close!` calls this last.  A KB still
   open recomputes its entry on its next read."
   []
@@ -254,7 +280,7 @@
             _    (reduce (fn [c {:keys [synced? sync]}]
                            (if (or (nil? sync) (synced? tax c))
                              c
-                             (swap! cands #(if (synced? tax %) % (sync kb (write-view tax) %)))))
+                             (swap! cands #(if (synced? tax %) % (sync kb (unscoped-closures tax) %)))))
                          @cands registry)
             c    (swap! cands journal/indexed #(candidate? kb %1 %2)
                         #(:context (p/get-sentex recs %)) #(handles-of-index kb %))]
@@ -315,7 +341,7 @@
         (when (= 2 (count ms))
           (let [[a b] (map #(:sentence (p/get-sentex recs %)) ms)]
             (when (or (= a (list 'not b)) (= b (list 'not a))) :negation)))
-        (let [w (write-view (reasoning/taxonomy kb))]
+        (let [w (unscoped-closures (reasoning/taxonomy kb))]
           (or (membership/kind-of w recs ms) (related/kind-of w recs ms)))
         (tuple/kind-of kb (synced kb) ms) (arity/kind-of kb ms))))
 
@@ -331,26 +357,36 @@
   (let [tax  (reasoning/taxonomy kb)
         recs (:records kb)]
     (or (membership/exempt-at? tax recs ms up)
-        (related/exempt-at? (write-view tax) recs ms up)
+        (related/exempt-at? (unscoped-closures tax) recs ms up)
         (and (seq (tax/equality-edges tax)) (tuple/exempt-at? kb (synced kb) ms up hidden?)))))
 
 (defn verdict
   "The verdict on nogood `members` from `class-of` (`handle -> defeat-class`) and
-  `roster?` (`handle -> boolean`, is the member a roster literal): `{:defeat h}` for a
-  unique weakest defeasible member off the roster, `:dilemma` for a defeasible minimum two
-  such members share, and `:hard` when no member off the roster is defeasible.  A roster
-  member is never a loser, whatever its class (docs/reference.md, item 7 of \"The
-  function\")."
-  [class-of roster? members]
-  (let [ranked (into [] (keep (fn [h] (let [c (class-of h)]
-                                        (when (and (strength/defeasible? c) (not (roster? h)))
-                                          [h c]))))
-                     members)]
-    (if (empty? ranked)
-      :hard
-      (let [floor   (reduce min (map #(strength/rank-of (peek %)) ranked))
-            weakest (filterv #(= floor (strength/rank-of (peek %))) ranked)]
-        (if (= 1 (count weakest)) {:defeat (ffirst weakest)} :dilemma)))))
+  `forced?` (`handle -> boolean`, is the member a forced-monotonic literal): `{:defeat h}`
+  for a unique weakest defeasible member that is not forced-monotonic, `:dilemma` for a
+  defeasible minimum two such members share, and `:hard` when no member outside the
+  forced-monotonic set is defeasible.  A forced-monotonic member is never a loser, whatever
+  its class (docs/reference.md, item 7 of \"The function\").  `sentence-of` (`handle ->
+  sentence`) reads each member's sentence: a member that is the denial `(not S)` of a
+  forced-monotonic member `S`, when it is the only such member, is the loser at any class
+  (docs/nmtms.md, \"The forced-monotonic set\")."
+  [class-of forced? sentence-of members]
+  (let [forced-ss (into #{} (comp (filter forced?) (keep sentence-of)) members)
+        denials   (when (seq forced-ss)
+                    (into [] (filter #(let [s (sentence-of %)]
+                                        (and (seq? s) (= 'not (first s)) (not (forced? %))
+                                             (contains? forced-ss (second s)))))
+                          members))
+        ranked    (into [] (keep (fn [h] (let [c (class-of h)]
+                                           (when (and (strength/defeasible? c) (not (forced? h)))
+                                             [h c]))))
+                        members)]
+    (cond
+      (= 1 (count denials)) {:defeat (first denials)}
+      (empty? ranked)       :hard
+      :else (let [floor   (reduce min (map #(strength/rank-of (peek %)) ranked))
+                  weakest (filterv #(= floor (strength/rank-of (peek %))) ranked)]
+              (if (= 1 (count weakest)) {:defeat (ffirst weakest)} :dilemma)))))
 
 ;; ---- derived state (docs/caches.md, "The derived-state register") ----------------
 

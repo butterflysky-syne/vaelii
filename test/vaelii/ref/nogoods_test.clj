@@ -170,7 +170,13 @@
            :members #{'(w X) '(not (q X)) '(not (p2 X))}
            :ground  #{'(covering w p1 p2) '(genl p1 q)}}]
          (ng/covering (view-of '[(genl p1 w) (genl p2 w) (genl p1 q) (covering w p1 p2)
-                                 (w X) (not (q X)) (not (p2 X))])))))
+                                 (w X) (not (q X)) (not (p2 X))]
+                               '{(genl p1 q) :monotonic})))))
+
+(deftest a-denial-of-a-supertype-of-a-part-denies-the-part-only-over-monotonic-edges
+  ;; a `:default` edge from the part up to the denied type does not contrapose
+  (is (= [] (ng/covering (view-of '[(genl p1 q) (covering w p1 p2)
+                                    (w X) (not (q X)) (not (p2 X))])))))
 
 (deftest a-membership-of-a-subtype-of-the-whole-is-refuted-by-the-cover
   (is (= [{:kind    :covering
@@ -186,7 +192,8 @@
   (is (= #{#{'(w X) '(not (p1 X)) '(not (p2 X))}
            #{'(w X) '(not (q X)) '(not (p2 X))}}
          (member-sets (ng/covering (view-of '[(covering w p1 p2) (genl p1 q) (w X)
-                                              (not (p1 X)) (not (q X)) (not (p2 X))]))))))
+                                              (not (p1 X)) (not (q X)) (not (p2 X))]
+                                            '{(genl p1 q) :monotonic}))))))
 
 (deftest a-membership-in-a-type-separated-from-a-part-denies-the-part
   ;; https://github.com/vaelii/vaelii/issues/183: the separation's denial is a denier of
@@ -295,7 +302,14 @@
            :members #{'(dog Rex) '(not (animal Rex))}
            :ground  #{'(genl dog mammal) '(genl mammal animal)}}]
          (ng/supertype (view-of '[(genl dog mammal) (genl mammal animal)
-                                  (dog Rex) (not (animal Rex))])))))
+                                  (dog Rex) (not (animal Rex))]
+                                '{(genl dog mammal) :monotonic (genl mammal animal) :monotonic})))))
+
+(deftest a-denial-of-a-supertype-above-a-default-edge-is-no-supertype-nogood
+  ;; a `:default` edge applies forward and does not contrapose
+  (is (= [] (ng/supertype (view-of '[(genl dog mammal) (genl mammal animal)
+                                     (dog Rex) (not (animal Rex))]
+                                   '{(genl dog mammal) :monotonic})))))
 
 (deftest a-denial-of-the-type-itself-or-of-a-type-not-above-it-is-no-supertype-nogood
   (is (= [] (ng/supertype (view-of '[(dog Rex) (not (dog Rex))]))))
@@ -343,6 +357,24 @@
          (ng/anti-symmetric (view-of '[(anti_symmetric ancestorOf) (genl parentOf ancestorOf)
                                        (ancestorOf Ann Bob) (parentOf Bob Ann)])))))
 
+;; ---- negates -------------------------------------------------------------------
+
+(deftest a-negates-declaration-convicts-two-tuples-of-one-argument-list
+  (is (= [{:kind :negates :members #{'(admires Eve Fay) '(scorns Eve Fay)}
+           :ground #{'(negates admires scorns)}}]
+         (ng/negates (view-of '[(negates admires scorns) (admires Eve Fay) (scorns Eve Fay)
+                                (scorns Eve Gus)])))))
+
+(deftest a-negates-declaration-reads-sub-predicates-on-both-sides
+  (is (= [{:kind :negates :members #{'(adores Ida Jo) '(sneersAt Ida Jo)}
+           :ground #{'(negates admires scorns) '(genl adores admires) '(genl sneersAt scorns)}}]
+         (ng/negates (view-of '[(negates admires scorns) (genl adores admires)
+                                (genl sneersAt scorns) (adores Ida Jo) (sneersAt Ida Jo)])))))
+
+(deftest a-negates-declaration-of-one-predicate-convicts-each-tuple-alone
+  (is (= [{:kind :negates :members #{'(nullR Ann Bob)} :ground #{'(negates nullR nullR)}}]
+         (ng/negates (view-of '[(negates nullR nullR) (nullR Ann Bob)])))))
+
 ;; ---- order independence -----------------------------------------------------
 
 (deftest every-family-answers-the-same-for-the-same-content-in-any-order
@@ -355,8 +387,10 @@
                           (anti_transitive parentOf) (parentOf Ann Bob) (parentOf Bob Cy)
                           (parentOf Ann Cy) (genl tree plant)
                           (covering w p1 p2) (w X) (not (p1 X)) (not (p2 X))
-                          (genl dog mammal) (dog Rex) (not (mammal Rex))])
-        classes '{(carriesLoad vehicle Bone1) :monotonic (carriesLoad hauler Bone1) :monotonic}
+                          (genl dog mammal) (dog Rex) (not (mammal Rex))
+                          (negates admires scorns) (admires Eve Fay) (scorns Eve Fay)])
+        classes '{(carriesLoad vehicle Bone1) :monotonic (carriesLoad hauler Bone1) :monotonic
+                  (genl dog mammal) :monotonic}
         answer  (fn [sentences]
                   (let [v (view-of sentences classes)]
                     (mapv #(% v) ng/families)))

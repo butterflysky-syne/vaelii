@@ -983,7 +983,7 @@
     * `:sat` — `:one`, but plain **satisfaction** rather than optimization: no
       keep-belief objective, so clingo stops at the first model instead of proving
       cost-optimality over the choice atoms.  For a program whose hard constraints
-      already pin what must be chosen (a graph coloring's hard at-least-one), \"keep as
+      already determine what must be chosen (a graph coloring's hard at-least-one), \"keep as
       much as possible\" is redundant and the optimization is a scaling wall — `:sat`
       finishes where `:one` does not.  Same shape as `:one` (returns one labeling,
       persists nothing).

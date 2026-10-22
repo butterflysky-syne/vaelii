@@ -76,11 +76,11 @@
 (defn- op [f] (fn [kb args] (apply f kb args)))
 
 (defn- op*
-  "The same, for a `vaelii.core` fn that takes **no KB** — the static rosters and the
+  "The same, for a `vaelii.core` fn that takes **no KB** — the static key sets and the
   pure renderers (`levels`, `calculi`, `readable-sentence`, `sentence-of`,
   `quality-report`).  The
   daemon still supplies a KB to every row, so this one drops it; `kbless-ops` below is
-  the roster a caller generating from this table reads, since a closure cannot be asked
+  the list a caller generating from this table reads, since a closure cannot be asked
   which shape it has."
   [f] (fn [_kb args] (apply f args)))
 
@@ -93,8 +93,8 @@
   #{:levels :calculi :readable-sentence :sentence-of :quality-report})
 
 (defn- wire-handles
-  "`core/handles` as a sorted vector.  The whole-KB roster is a `java.util.Set` that is
-  deliberately *not* an `IPersistentSet` at scale (`vaelii.impl.roster`), and such a
+  "`core/handles` as a sorted vector.  The whole-KB handle set is a `java.util.Set` that is
+  deliberately *not* an `IPersistentSet` at scale (`vaelii.impl.handle-set`), and such a
   value has no EDN print form — it would reach a client as `#object[…]`.  Sorted, so two
   daemons over the same store answer the same bytes."
   [kb] (vec (sort (v/handles kb))))
@@ -102,7 +102,7 @@
 (defn- without-resume
   "Wrap an anytime read (`ask-within` / `prove-within`) so its partial result crosses the
   wire.  The contract's `:resume` is a **function** closing over an unrealized lazy tail
-  or a DFS goal stack, and neither a function nor the heap it pins crosses an EDN wire —
+  or a DFS goal stack, and neither a function nor the heap it retains crosses an EDN wire —
   the same wall `:export`'s `:on-progress` hits.  So the key is dropped and replaced by
   **`:resumable`**, the one bit of it a remote caller can act on: the search had more to
   give, and asking for the rest means a fresh call under a larger budget rather than
@@ -125,7 +125,7 @@
   is not the caller's alone: every other request queues behind it.  The two dials a
   caller sets are the two ceilings — `:max-ms` (`config/max-query-ms`) and `:max-depth`
   (`config/max-query-depth`) — and this table says which entry point reads which, because the
-  option rosters differ (`query-opt-keys` has no `:max-ms` to fill in, `search-tree`'s
+  accepted option keys differ (`query-opt-keys` has no `:max-ms` to fill in, `search-tree`'s
   has both, an anytime budget map is `:max-ms` and takes no default of its own).
 
   **The table holds the search bounds of reads, and no write's bound.** A read with no
@@ -137,7 +137,7 @@
 
   **Eight writes name a bound this table does not hold.** `:assert`, `:try-assert`,
   `:assert-many`, `:assert-rule` and `:forward-chain` read `:max-depth` and `:max-derivations`
-  (`core/assert-opt-keys`, `forward-chain`'s roster), and `:edit`,
+  (`core/assert-opt-keys`, `forward-chain`'s accepted keys), and `:edit`,
   `:edit-with-consequences` and `:preview` read the same two keys off each batch entry's
   opts. Both bound the chaining fixpoint (`chain/default-chain-opts`, 64 and 100,000 when
   the request names neither), which runs on the same monitor for its whole length, and a
@@ -381,10 +381,17 @@
     :direct-specs (op v/direct-specs)
     :min-genls    (op v/min-genls)
     :max-specs    (op v/max-specs)
+    ;; the common supertypes / subtypes of a collection of types, and the minimal / maximal
+    ;; ones among them
+    :common-genls     (op v/common-genls)
+    :common-specs     (op v/common-specs)
+    :min-common-genls (op v/min-common-genls)
+    :max-common-specs (op v/max-common-specs)
     :min-context-parents  (op v/min-context-parents)
     :max-context-children (op v/max-context-children)
     :types        (op v/types)
     :relation?    (op v/relation?)
+    :relation-arity (op v/relation-arity)
     :contexts     (op v/contexts)
     :sentex       (op v/sentex)
     :handle-of    (op v/handle-of)
@@ -396,6 +403,10 @@
     :terms        (op v/terms)
     :term-count   (op v/term-count)
     :sentex-count (op v/sentex-count)
+    ;; the withheld-mint releases the daemon's open left undrawn, one count off the queue
+    :owed-releases (op v/owed-releases)
+    ;; the stored records the daemon's open found no premise and no justification for
+    :unsupported  (op v/unsupported)
     :find-terms   (op v/find-terms)
     :forward-chain (op v/forward-chain)
     :chain-stats  (op v/chain-stats)
@@ -446,6 +457,9 @@
     ;; because a remote reader has no other way to ask — the network is not a record — and
     ;; a proof tree drawn without it calls a blocked justification supporting
     :blocked-justifications    (op v/blocked-justifications)
+    ;; the verdict a context reads on each justification of a handle: what a proof page
+    ;; draws as supporting or not, which a remote reader cannot read off belief either
+    :justification-verdicts    (op v/justification-verdicts)
     :lookup       (op v/lookup)
     :escalate     (op v/escalate)
     :explain-levels (op v/explain-levels)
@@ -455,9 +469,11 @@
     :sentexes-with-functor (op v/sentexes-with-functor)
     :count-with-arg        (op v/count-with-arg)
     :count-with-functor    (op v/count-with-functor)
+    :stored-first-args     (op v/stored-first-args)
     :disjoint-metatypes    (op v/disjoint-metatypes)
     :metatype-members      (op v/metatype-members)
     :separating-covers     (op v/separating-covers)
+    :covers-of             (op v/covers-of)
     ;; what a reified term denotes (docs/nat.md).  A remote reader has no other way to
     ;; ask: the constant is opaque by construction, so a client that could not resolve it
     ;; would have to show a reader `nat/g17` — which is the one thing it must not do
@@ -651,7 +667,7 @@
 (def op-names
   "Every op keyword this daemon answers, sorted — the `vaelii.core` allowlist and the
   daemon's own together.  What an `:unknown-op` refusal hands back, so a caller
-  discovering the surface sees one roster rather than the larger half of two."
+  discovering the surface sees one list rather than the larger half of two."
   (vec (sort (concat (keys ops) (keys feed-ops)))))
 
 (defn- wire-safe
@@ -671,7 +687,7 @@
   and the daemon, and feed the log one warning per typo.  A `:type` outside this set keeps
   the 500 default, so a genuine internal fault — a broken solver binary, a store
   error — still reads as one; a *new* refusal type belongs in this set the day it is
-  born, and `wire_contract_test` pins the pairing."
+  born, and `wire_contract_test` asserts the pairing."
   #{:naming :not-well-formed :not-ground :not-range-restricted :not-indexable
     :disjunction-too-wide
     :shape :not-encodable
@@ -753,7 +769,7 @@
   single writer, and on an open loopback daemon nothing above has identified the
   caller, so a page the operator merely *visits* must not be able to drive it:
   `guard/edn-body?` forces a CORS preflight this daemon cannot answer, and
-  `guard/same-origin?` refuses a browser that stamped someone else's origin.  See
+  `guard/same-origin?` refuses a browser that sent someone else's origin.  See
   `vaelii.host.guard`.
 
   Two tables are looked up, in order: the `vaelii.core` allowlist (`ops`, run under the
@@ -765,9 +781,18 @@
   monitor, before an engine op and before `:watch` registers, it answers nil to let the
   op run or `{:status :type :error}` to refuse it with that reply.  The browser passes one
   because its KB can be released while a request waits for the monitor, and only a check
-  made inside the monitor sees that release."
+  made inside the monitor sees that release.
+
+  `host` is nil, or `{:ops :refuse}` from a process that serves this protocol beside
+  something else: `:ops` maps op keywords to fns of the op's args the host answers itself,
+  looked up before both tables and run outside the monitor, since they read the process
+  rather than the KB; `:refuse` is a fn of no arguments asked before any other known op, nil
+  to let it run or `{:status :ok false :type :error}` to refuse it.  The browser answers its catalog and
+  job registry through the first, and refuses a KB op while a job writes the active KB
+  through the second — which leaves the catalog readable while the KB it lists loads."
   ([kb registry monitor req] (handle-op kb registry monitor req nil))
-  ([kb registry monitor req admit]
+  ([kb registry monitor req admit] (handle-op kb registry monitor req admit nil))
+  ([kb registry monitor req admit host]
    (let [edn-reply (fn [status m]
                      {:status status
                       :headers {"content-type" "application/edn"}
@@ -807,9 +832,17 @@
                _ (when-not (or (nil? args) (sequential? args))
                    (throw (ex-info (str "op :args must be a sequence, got " (pr-str args))
                                    {:type :bad-args :op op})))
-               f (ops op)
-               g (when-not f (feed-ops op))]
+               h (get (:ops host) op)
+               f (when-not h (ops op))
+               g (when-not (or h f) (feed-ops op))
+               no (when-let [refuse (when (or f g) (:refuse host))] (refuse))]
            (cond
+             h
+             (edn-reply 200 {:ok true :result (off-worker #(wire-safe (h (vec args))))})
+
+             no
+             (edn-reply (:status no) {:ok false :type (:type no) :error (:error no)})
+
              ;; `wire-safe` inside the monitor, not after it: the walk is what *realizes*
              ;; a lazy answer stream, so releasing the lock around the call alone would
              ;; let a `:query` read its matches while a concurrent `:assert` is settling
@@ -847,7 +880,7 @@
              :else
              (edn-reply 400 {:ok false :error (str "unknown op: " (pr-str op))
                              :type :unknown-op
-                             :ops op-names}))))
+                             :ops (vec (sort (into op-names (keys (:ops host)))))}))))
        (catch clojure.lang.ExceptionInfo e
          (let [ty (:type (ex-data e))]
            (cond
@@ -904,7 +937,7 @@
   well under it or the feature that exists for liveness becomes the thing that stalls
   the daemon.  Left implicit the two numbers were 50 and 64, the wrong way round, and
   nothing said so — 55 parked polls took `/health` from 62 ms to 26 s.  `serve_test`
-  pins the relationship."
+  asserts the relationship."
   50)
 
 (def ^:private loopback
@@ -1215,7 +1248,7 @@
         hosts (host-posture host)
         starter? (boolean (some #{"--starter"} args))
         kb    (cond-> (if dir
-                        (v/open-kb {:backend (dir-backend dir) :dir dir :recover? :auto})
+                        (v/open-kb {:backend (dir-backend dir) :dir dir})
                         (v/open-kb {}))
                 starter? starter/load-into)]
     (trove/log! {:level :info :id ::start
@@ -1224,10 +1257,10 @@
                         :starter starter? :auth posture :hosts hosts}})
     (announce-auth! host posture hosts)
     ;; shrink the derived caches when the heap the daemon runs in fills, and grow them back
-    ;; as it frees — the daemon owns one KB, so the guard's roster is that one
+    ;; as it frees — the daemon owns one KB, so the guard's KB list is that one
     (caches/install-memory-guard! {:kbs (fn [] [kb])})
     ;; `:max-threads` here as in `start`: `http-threads` is one half of the pair
-    ;; `subscribe/max-parked` is pinned against, and a daemon run from the command line
+    ;; `subscribe/max-parked` is checked against, and a daemon run from the command line
     ;; has to hold the same relationship as one a test starts
     (jetty/run-jetty (app kb {:host host :token token})
                      {:port port :host host :join? true :max-threads http-threads})))

@@ -322,7 +322,7 @@
   ;; the mark last runs `special/equate-existing` over the stored extent, and the edge
   ;; last runs `special/equate-under-edge`.  Here every one of them is reached through a
   ;; **derived** mark — `(functional parentOf)` is a rule's conclusion, not a written
-  ;; sentence — which is the combination `equate-under-edge`'s gate got wrong once for
+  ;; sentence — which is the combination `equate-under-edge`'s presence check got wrong once for
   ;; `functionalInArg` (`functional_in_arg_test`).  Two names for one mother, so nothing
   ;; is refused whichever order runs and the reading is the merge.
   (doseq [order [[:mark :edge :f1 :f2] [:mark :f1 :f2 :edge] [:edge :mark :f1 :f2]
@@ -356,7 +356,7 @@
 ;;; ── a mark read only where the reader believes it ─────────────────────
 
 (tu/deftest-kb a-reader-convicts-no-tuple-through-a-mark-its-except-withdraws
-  ;; The mark a rule concludes from a roster literal is not itself hidden where the
+  ;; The mark a rule concludes from a forced-monotonic literal is not itself hidden where the
   ;; literal is excepted; it leaves that reader through the except's closure alone.  One
   ;; row per family that reads marks: CxUniverse's `injection` rule concludes
   ;; `(functionalInArg P 1)` (the tuple-mark family), and a stated rule concludes

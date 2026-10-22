@@ -39,7 +39,7 @@
    (v/assert kb claim (id/context-for agent) {:creator agent :strength strength})))
 
 (defn- clash!
-  "Atlas holds P and Boreas holds ¬P (both :default), stamped at `t0`; channel CxDeploy
+  "Atlas holds P and Boreas holds ¬P (both :default), created at `t0`; channel CxDeploy
   sees both — the canonical open dispute.  Returns the dispute id."
   [kb]
   (binding [v/*clock* (constantly t0)]
@@ -133,7 +133,7 @@
 (tu/deftest-kb a-derived-clash-ages-from-its-premises-and-not-from-nothing
   ;; Neither side is asserted: two rules conclude P and ¬P from facts each agent states,
   ;; so both sides are derived and carry no provenance of their own.  The clash arose when
-  ;; the last premise landed, and it is that stamp the timeout counts from.
+  ;; the last premise landed, and the timeout counts from that time.
   (binding [v/*clock* (constantly t0)]
     (v/assert kb '(set/forwardRule (implies (fast ?x) (reliable ProdCluster))) 'CxDeploy)
     (v/assert kb '(set/forwardRule (implies (flaky ?x) (not (reliable ProdCluster)))) 'CxDeploy)
@@ -401,7 +401,7 @@
             (is (instance? clojure.lang.ExceptionInfo e) "resolution throws, does not rule")
             (is (= :koinii/identity-unverified (:type (ex-data e))))
             (is (= :cooperative (:policy (ex-data e)))))
-          (is (= {:for 2 :against 1} (adj/tally kb ph)) "but tally is ungated — ballots still visible"))
+          (is (= {:for 2 :against 1} (adj/tally kb ph)) "but tally is unrestricted — ballots still visible"))
         (is (d/disputed? kb P 'CxDeploy) "the dispute is untouched — still open"))
       (testing "under :proof-tier (the fixture's policy) the same count carries"
         (let [r (adj/resolve-by-majority kb did ph 'CxDeploy)]
@@ -529,10 +529,10 @@
     (is (nil? (adj/who-ruled kb ph)) "a plain, still-stored claim carries no adjudication provenance")))
 
 (tu/deftest-kb one-arbiter-ruling-two-disputes-the-same-way-holds-both
-  ;; Canonical dedup gives one sentex per (sentence, context), so an arbiter upholding
-  ;; the same claim against two different opponents stamps **one** handle twice.  A
-  ;; single-valued `:adjudication` tag kept only the later id, so the earlier dispute
-  ;; read no standing ruling, skipped the one-per-arbiter guard, and took a second
+  ;; Canonical dedup gives one sentex per (sentence, context), so an arbiter upholding the
+  ;; same claim against two different opponents records an adjudication on **one** handle
+  ;; twice.  A single-valued `:adjudication` tag kept only the later id, so the earlier
+  ;; dispute read no standing ruling, skipped the one-per-arbiter guard, and took a second
   ;; monotonic ruling beside the first — two known-true claims on one clash.
   (let [_    (clash! kb)                                 ; Atlas P vs Boreas ¬P
         _    (holds! kb 'AgentCiel not-P)
@@ -568,7 +568,7 @@
 
 (tu/deftest-kb an-arbiter-who-is-a-party-is-refused
   ;; A ruling lands in the arbiter's own context, so for a party that context already
-  ;; holds a side: ruling their own way would restamp their claim as its own
+  ;; holds a side: ruling their own way would re-record their claim as its own
   ;; adjudication, and ruling the other way would retract it — the disputed claim
   ;; deleted rather than the dispute settled.
   ;; Discriminated on `:type`, not on the message: the keyword is what a caller branches
@@ -719,8 +719,8 @@
 
 (deftest every-order-of-the-same-rulings-reaches-one-belief
   ;; One claim disputed by two opponents is **two** disputes, and one arbiter upholding it
-  ;; against both stamps **one** sentex — canonical dedup gives one per sentence and
-  ;; context.  Which dispute the arbiter is asked about first is a free choice of the
+  ;; against both writes both rulings to **one** sentex — canonical dedup gives one per
+  ;; sentence and context.  Which dispute the arbiter is asked about first is a free choice of the
   ;; caller's, and the belief must not turn on it.  It did: the ruling remembered a single
   ;; dispute, so the other read no standing ruling, skipped the one-per-arbiter guard, and
   ;; took a second monotonic ruling beside the first — `CxDeploy` holding P and ¬P at once
@@ -759,7 +759,7 @@
   ;; the claim, not on a dispute — so the two polls agree on the outcome and differ only in
   ;; which dispute records it, which is exactly the free choice the test above permutes.
   ;; Its own `deftest` rather than a second arm, so that neither exhaustive cross-product
-  ;; carries the other's cost into the default gate.
+  ;; carries the other's cost into `lein gate` at `:default`.
   (testing "the house is polled once per dispute, then swings"
     (let [readings (into {}
                          (for [before [[0 1] [1 0]]

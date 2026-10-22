@@ -22,7 +22,7 @@
     cached per literal (`vaelii.impl.literal-cache`), which removes the walk's store reads
     but not the walk, and the reach set itself is cached per `[direction predicate node
     context]` on the KB (`provers/*closure-answer-limit*`), which removes both.  Both are
-    stamped with the change clock, so one mutation anywhere retires either.  The fetch
+    keyed by the change clock, so one mutation anywhere retires either.  The fetch
     counts are the evidence: a repeat that fetches nothing walked nothing.  The small-class
     block below separates the two by running the repeat with the literal cache off, and
     prints the closed one-hop ask beside them — the dispatch every ask pays, and the floor
@@ -110,7 +110,7 @@
 ;; ---- one mount's state --------------------------------------------------
 
 (defn- mount
-  "Everything a mount's rows are measured against: the KB, a counting view of it, and the
+  "Everything a mount's rows are measured against: the KB, a counting wrapper of it, and the
   handles of the chain's own facts — the very records the walk fetches, so timing a sweep
   over them is the fetch half of the walk and not a different question."
   [backend n]

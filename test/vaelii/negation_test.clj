@@ -8,6 +8,7 @@
             [vaelii.core :as v]
             [vaelii.impl.reads :as reads]
             [vaelii.impl.rules :as vr]
+            [vaelii.impl.settle :as settle]
             [vaelii.order-independence-test :as oi]
             [vaelii.test-util :as tu]))
 
@@ -62,9 +63,9 @@
 
 ;; ---- nogood discovery is driven off the opposed bodies (settle F1) -------
 ;; The negation family reads a body's pairs only when the body is stored in both
-;; polarities (`reads/stored-opposed?`).  These pin the two things that gate could get wrong: it must
-;; not miss a real clash, and a negation with no positive twin must add no work yet still
-;; be believed.
+;; polarities (`reads/stored-opposed?`).  These tests check the two things that existence
+;; check could get wrong: it must not miss a real clash, and a negation with no positive
+;; twin must add no work yet still be believed.
 
 (tu/deftest-kb an-unpaired-negation-forms-no-nogood
   (let [swims (tu/tmp-pred) a (tu/tmp-ind) b (tu/tmp-ind) c (tu/tmp-ind)]
@@ -76,12 +77,12 @@
       (is (empty? (v/contradictions kb)))
       (is (seq (v/sentexes-matching kb (list 'not (list swims a)) 'CxUniverse))))))
 
-(tu/deftest-kb a-symmetric-negation-nogood-survives-the-existence-gate
-  ;; The gate reads a `count-at` of the *stored* body.  A fact normalizes its body
+(tu/deftest-kb a-symmetric-negation-nogood-survives-the-existence-check
+  ;; The existence check reads a `count-at` of the *stored* body.  A fact normalizes its body
   ;; before `not` wraps it, so a symmetric positive `(siblingOf Ann Bob)` and a
   ;; negation written with the arguments swapped `(not (siblingOf Bob Ann))` store the
-  ;; same sorted body — the gate must still pair them.  If the gate keyed on the
-  ;; author's argument order it would look under `[siblingOf Bob Ann]`, find nothing,
+  ;; same sorted body — the existence check must still pair them.  If the check keyed on
+  ;; the author's argument order it would look under `[siblingOf Bob Ann]`, find nothing,
   ;; and silently drop the clash.
   (let [siblingOf (tu/tmp-pred) ann (tu/tmp-ind) bob (tu/tmp-ind)]
     (v/assert kb (list 'symmetric siblingOf) 'CxUniverse)
@@ -95,7 +96,7 @@
 
 (tu/deftest-kb a-symmetric-monotonic-negation-still-defeats-the-swapped-positive
   ;; Same pairing, but with a strength difference so the nogood resolves by defeat
-  ;; rather than standing as a dilemma: the gate must find the pair for either
+  ;; rather than standing as a dilemma: the existence check must find the pair for either
   ;; outcome, and here the weaker (default) positive is the one that gives way.
   (let [siblingOf (tu/tmp-pred) ann (tu/tmp-ind) bob (tu/tmp-ind)]
     (v/assert kb (list 'symmetric siblingOf) 'CxUniverse)
@@ -124,7 +125,7 @@
 (tu/deftest-kb a-body-with-no-twin-is-not-posted-and-still-pairs-later
   ;; The opposed family holds a body only while both polarities are stored, so a body
   ;; with no twin adds no entry.  The order that would expose a wrong
-  ;; gate is a **settle between the two polarities**: the twin's arrival is then the only
+  ;; existence check is a **settle between the two polarities**: the twin's arrival is then the only
   ;; write that can form the pair.
   (let [warm (tu/tmp-pred) sun (tu/tmp-ind) moon (tu/tmp-ind)]
     (v/assert kb (list warm sun) 'CxUniverse)
@@ -356,6 +357,26 @@
           rs    (mapv #(merged-negation-reading terms :same :monotonic %)
                       (oi/permutations [:pos :neg :rule :merge]))]
       (is (= #{false} (into #{} (map (comp last :at-reader)) rs))))))
+
+;; A store written before 0.24.0 holds the firing over the superseded spelling;
+;; `withdraw-retired-firings!` redefined to a no-op writes one.
+(deftest a-recovered-store-withdraws-a-firing-over-a-superseded-spelling
+  (tu/with-terms [pp rr Zz Aa CxA]
+    (let [build (fn [kb]
+                  (v/assert kb (list pp Zz) CxA)
+                  (v/assert kb (list 'not (list pp Aa)) CxA {:strength :monotonic})
+                  (v/assert kb (list 'implies (list pp '?x) (list rr '?x)) CxA {:direction :forward})
+                  (v/assert kb (list 'rewriteOf Aa Zz) CxA {:strength :monotonic}))
+          read  (fn [kb]
+                  {:stored   (into #{} (map (juxt :sentence :context)) (v/sentexes-with-functor kb rr))
+                   :believed (when-let [h (v/handle-of kb (list rr Aa) CxA)] (v/believed? kb h CxA))})
+          fresh (tu/with-neutral-kb [kb tu/fresh] (build kb) (read kb))]
+      (is (false? (:believed fresh)))
+      (tu/with-neutral-kb [kb tu/fresh]
+        (with-redefs-fn {#'settle/withdraw-retired-firings! (constantly false)} #(build kb))
+        (is (true? (:believed (read kb))) "the pre-0.24 write believes (rr Aa)")
+        (v/recover kb)
+        (is (= fresh (read kb)))))))
 
 (deftest a-firing-over-a-superseded-spelling-reads-alike-when-an-except-of-the-merge-comes-and-goes
   ;; An except of the merge in N gives (pp Zz) back to N, which fires it again; the except

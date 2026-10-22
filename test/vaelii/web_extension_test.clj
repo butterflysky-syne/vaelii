@@ -42,8 +42,10 @@
     (v/assert kb (list 'genl dog 'animal) 'CxUniverse)
     (let [app (bweb/app kb)]
       (with-extension :probe
-        {:routes     [["/ext/probe/hello" {:get (fn [view _] [:p.probe "hello " (some? (:kb view))])}]]
-         :term-panel (fn [view term] [:div#probe-panel "panel for " (web/term-link view term)])
+        {:routes     [["/ext/probe/hello" {:get (fn [env _] [:p.probe "hello " (some? (:kb env))])}]]
+         :menu       [["Probe" "/ext/probe/hello"]]
+         :term-actions (fn [_ term] [:a#probe-action {:href "/ext/probe/hello"} "probe " (str term)])
+         :term-panel (fn [env term] [:div#probe-panel "panel for " (web/term-link env term)])
          :stylesheet "public/vaelii.css"
          :script     "public/vaelii.js"}
         (testing "its route answers, as a fragment"
@@ -54,6 +56,14 @@
           (let [body (:body (app {:request-method :get :uri "/term" :query-string (str "q=" dog)}))]
             (is (str/includes? body "id=\"probe-panel\""))
             (is (str/includes? body "panel for "))))
+        (testing "its actions are drawn in the term page's heading, with the term"
+          (let [body    (:body (app {:request-method :get :uri "/term" :query-string (str "q=" dog)}))
+                heading (re-find #"(?s)<h2>.*?</h2>" body)]
+            (is (str/includes? heading "id=\"probe-action\""))
+            (is (str/includes? heading (str "probe " dog)))))
+        (testing "its menu item is in the menubar on every page"
+          (is (re-find #"(?s)<nav class=\"menubar\">.*<a href=\"/ext/probe/hello\">Probe</a>"
+                       (:body (request app :get "/")))))
         (testing "its assets are linked from the head and served under /ext/"
           (let [body (:body (request app :get "/"))]
             (is (str/includes? body "href=\"/ext/probe.css\""))
@@ -69,6 +79,7 @@
         (is (= 404 (:status (request app :get "/ext/probe/hello"))))
         (is (not (str/includes? (:body (app {:request-method :get :uri "/term" :query-string (str "q=" dog)}))
                                 "probe-panel")))
+        (is (not (str/includes? (:body (request app :get "/")) ">Probe</a>")))
         (is (not (str/includes? (:body (request app :get "/")) "/ext/probe.css")))))))
 
 (tu/deftest-kb a-route-carries-the-guard-its-method-names
@@ -76,11 +87,11 @@
         calls (atom [])]
     (with-extension :guarded
       {:routes [["/ext/guarded/read"  {:post  (fn [_ _] (swap! calls conj :post) [:p "read"])}]
-                ["/ext/guarded/write" {:write (fn [view _]
+                ["/ext/guarded/write" {:write (fn [env _]
                                                 (swap! calls conj :write)
                                                 {:status 200
                                                  :headers {"Content-Type" "text/plain"}
-                                                 :body (str (some? (web/local-kb view)))})}]]}
+                                                 :body (str (some? (web/local-kb env)))})}]]}
       (testing "a same-origin :post runs"
         (is (= 200 (:status (request app :post "/ext/guarded/read" {} same-site)))))
       (testing "a cross-origin :post and :write are refused before the handler runs"
@@ -109,6 +120,8 @@
                           ["a route outside the prefix" :probe {:routes [["/term" {:get identity}]]}]
                           ["another extension's prefix" :probe {:routes [["/ext/other/x" {:get identity}]]}]
                           ["an unknown method" :probe {:routes [["/ext/probe/x" {:put identity}]]}]
+                          ["a menu item outside the prefix" :probe {:menu [["Home" "/"]]}]
+                          ["a menu item that is not a pair" :probe {:menu [["Probe"]]}]
                           ["both POST kinds on one path"
                            :probe {:routes [["/ext/probe/x" {:post identity :write identity}]]}]]]
     (is (= :unknown-option
@@ -123,17 +136,17 @@
   (tu/with-terms [dog Rex CxExt]
     (v/assert kb (list 'genlCx CxExt 'CxWell) 'CxUniverse)
     (v/assert kb (list 'genl dog 'animal) CxExt)
-    (let [view (bweb/view kb {})]
+    (let [env (bweb/render-env kb {})]
       (testing "a preview names what would be believed, and stores nothing"
         (let [before (v/sentex-count kb)
-              html   (str (h/html (web/consequences view "Heading"
+              html   (str (h/html (web/consequences env "Heading"
                                                     {:add [[(list dog Rex) CxExt]]})))]
           (is (str/includes? html "Heading"))
           (is (str/includes? html "newly believed"))
           (is (= before (v/sentex-count kb)))))
       (testing "a write's result renders its rows"
         (let [result (v/edit-with-consequences! kb {:add [[(list dog Rex) CxExt]] :remove []})
-              html   (str (h/html (web/stored-sentexes view result)))]
+              html   (str (h/html (web/stored-sentexes env result)))]
           (is (str/includes? html (str Rex)))))
       (testing "read-form reads EDN and answers nil for what does not read"
         (is (= (list dog Rex) (web/read-form (pr-str (list dog Rex)))))
@@ -147,8 +160,8 @@
     (is (= (select-keys ((bweb/handler kb) health) [:status :body])
            (select-keys ((web/handler kb) health) [:status :body])
            (select-keys ((web/handler kb {:host "127.0.0.1"}) health) [:status :body]))))
-  (is (= (str (h/html (bweb/render-form (bweb/view kb {}) '(genl dog animal))))
-         (str (h/html (web/render-form (bweb/view kb {}) '(genl dog animal))))))
+  (is (= (str (h/html (bweb/render-form (bweb/render-env kb {}) '(genl dog animal))))
+         (str (h/html (web/render-form (bweb/render-env kb {}) '(genl dog animal))))))
   (let [refusal (fn [start] (try (start kb {:port 0 :reload? true}) nil
                                  (catch clojure.lang.ExceptionInfo e (ex-data e))))]
     (is (= :unknown-option (:type (refusal web/start))))
@@ -162,9 +175,9 @@
 (deftest a-bounded-preview-says-so-rather-than-implying-completeness
   ;; the renderer directly: making a real batch cascade past the cap costs more than the
   ;; claim is worth, and what is under test here is that the panel *reports* the flag
-  ;; `preview` sets (`preview_test` pins that it sets it)
+  ;; `preview` sets (`preview_test` asserts that it sets it)
   (let [panel  (fn [result]
-                 (str (h/html (#'bweb/consequence-panel (bweb/view tu/*kb* {})
+                 (str (h/html (#'bweb/consequence-panel (bweb/render-env tu/*kb* {})
                                                         "Heading" result))))
         capped (panel {:believed-added [{:sentence '(dog Muffet) :context 'CxWell}]
                        :believed-removed [] :refused [] :violations []

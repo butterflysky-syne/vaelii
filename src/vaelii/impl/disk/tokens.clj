@@ -37,10 +37,12 @@
   the *reverse* map is an atom holding a vector, so a decode — which runs on every fetch,
   under a different lock — reads it without one and still sees a safely published entry."
   (:require [vaelii.impl.disk.files :as f]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.sentex :as sx]
             vaelii.impl.tokens
             [vaelii.impl.types.store :as store-types])
-  (:import [java.util ArrayList HashMap]
+  (:import [java.io File]
+           [java.util ArrayList HashMap]
            [vaelii.impl.tokens Key]))
 
 ;; The forward map is keyed on `tokens/Key`, the same wrapper the in-RAM `TokenDict`
@@ -78,7 +80,9 @@
   (let [path (str dir "/tokens.log")
         log  (f/open-log path)
         fwd  (HashMap.)
-        rev  (volatile! (transient []))]
+        rev  (volatile! (transient []))
+        ;; `<kb>/index` or `<kb>/records`, which a progress line names the log by
+        where (let [d (File. (str dir))] (str (some-> (.getParentFile d) .getName) "/" (.getName d)))]
     ;; the handle is this replay's until the record takes it: a decode that throws
     ;; here propagates to a caller that answers a failed open by releasing the
     ;; directory lock, and a released lock over a handle this JVM still holds is the
@@ -86,16 +90,19 @@
     (try
       (f/truncate-log! log (f/log-tail-offset log))
       (let [toks (ArrayList.)]
-        (f/truncate-log! log (f/scan-log log path (fn [_ tok] (.add toks tok))))
+        (with-open [r (progress/start ::read (str where ": read the token log") nil)]
+          (f/truncate-log! log (f/scan-log log path (fn [_ tok] (.add toks tok) (progress/tick! r)) nil)))
         ;; a reloaded token is pooled, so every record decoded through the dictionary shares
         ;; the one vocabulary object per name with the in-memory store — as it did before
         ;; the restart, when the token came from a canonicalized sentence.  The pool is
         ;; sized to the dictionary first, so interning it does not rotate the names out.
         (sx/size-symbol-pool (.size toks))
-        (doseq [tok toks]
-          (let [tok (sx/intern-sym tok)]
-            (.put fwd (Key. tok) (Integer/valueOf (count @rev)))
-            (vswap! rev conj! tok))))
+        (with-open [r (progress/start ::intern (str where ": intern the tokens") (.size toks))]
+          (doseq [tok toks]
+            (let [tok (sx/intern-sym tok)]
+              (.put fwd (Key. tok) (Integer/valueOf (count @rev)))
+              (vswap! rev conj! tok))
+            (progress/tick! r))))
       (store-types/->TokenLog log path fwd (atom (persistent! @rev)) (Object.))
       (catch Throwable t
         (try (f/close! log) (catch Throwable _ nil))

@@ -105,7 +105,7 @@
 
 (def ^:private tail-blocks
   "How many blocks from the end of a run the answer is the mean of — the same count on
-  both layouts, so the two answers average over windows of equal width."
+  both layouts, so the two answers average over the same number of blocks."
   8)
 
 (defn- tail-mean

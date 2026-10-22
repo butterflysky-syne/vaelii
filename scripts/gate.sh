@@ -17,7 +17,7 @@
 # a gate that always ran it is one people skip, and a skipped gate catches nothing.
 # Two things buy the drop back:
 #   - the CONSTANT-cost class (a fixed op added to every write) is a COUNT, not a
-#     duration, and `assert_cost_test` pins it in the fast test stage — every gate.
+#     duration, and `assert_cost_test` asserts it in the fast test stage of every `lein gate`.
 #   - the SUPER-LINEAR class (a cost that turns quadratic) is what the perf ratios
 #     uniquely catch; CI's `deep.yml` perf job runs them, and `lein release-gate`
 #     runs them here.  When the pending diff touches the retrieval / inference /
@@ -55,7 +55,7 @@
 #   lein gate --all            # test stage at `:all` — the ^:slow tests too
 #   lein gate --jobs 4         # test shards (default: scripts/lib/slots.sh; 1 = one JVM)
 #   lein gate --sequential     # the old shape: one test JVM, one stage at a time
-#   lein gate --brief          # stage verdicts only, without each stage's roster
+#   lein gate --brief          # stage verdicts only, without each stage's list of checks
 #
 # A passing stage prints WHAT IT CHECKED under its row — lint's checks by name
 # and summary, perf's every claim, the suite's shard banner and totals.  Four green
@@ -258,7 +258,7 @@ stop_stages () {
 }
 
 # shellcheck disable=SC2317,SC2329  # ditto — reached only through `interrupted`
-stamp_interrupted () {         # stamp_interrupted <signal-name>
+note_interrupted () {          # note_interrupted <signal-name>
   local sig="$1" note s
   note="gate interrupted (SIG$sig) at $(date '+%Y-%m-%d %H:%M:%S'), $(revision_line)"
   {
@@ -285,7 +285,7 @@ interrupted () {               # interrupted <signal-name>
   # landed — under `lint ‖ test` there are two.  2>/dev/null over both: reaping a
   # signalled job is where bash prints its `Terminated: 15` report, one line per process.
   { stop_stages; wait; } 2>/dev/null
-  stamp_interrupted "$1"
+  note_interrupted "$1"
   printf '%s✗ gate interrupted%s — no verdict; partial logs in %s\n' "$RED" "$RST" "$OUT"
   exit 130
 }
@@ -312,7 +312,7 @@ mkdir -p "$OUT" || exit 1
 ln -sfn "$(basename "$OUT")" "$GATE_ROOT/latest" 2>/dev/null || true
 pass=0; fail=0; failed=(); skipped=()
 
-# Armed here rather than at the top: the handler writes the stamp into `$OUT`, and
+# Armed here rather than at the top: the handler writes `INTERRUPTED` into `$OUT`, and
 # before this line there is neither a directory to write it to nor a stage to stop.
 trap 'interrupted INT' INT
 trap 'interrupted TERM' TERM
@@ -346,14 +346,14 @@ announce () {                  # announce <name> <blurb> <cmd...>
 
 # ---- what each stage actually checked ------------------------------------
 #
-# A stage row is a verdict and not a roster.  `✓ lint` is twelve independent checks
+# A stage row is a verdict and not a list of checks.  `✓ lint` is twelve independent checks
 # and `✓ perf` is forty-odd, and four green rows cannot tell a gate that covered
 # something from one that skipped it — which is the question somebody quoting a
 # green gate is actually being asked, and the reason `--only` and `--skip` exist
 # at all.  So each passing stage prints what it ran.
 #
 # **Read back out of each stage's own log, never listed here.**  Every stage
-# already prints its own roster; a second copy in this file would be one more
+# already prints its own list of checks; a second copy in this file would be one more
 # thing to drift, and it would drift silently, because nothing compares the two.
 # The cost is that this parses another script's output — so each case matches on
 # that script's *indentation contract* rather than on its wording, which is the
@@ -369,7 +369,7 @@ stage_detail () {              # stage_detail <name>
   case "$name" in
     lint)
       # lint.sh indents every check row by two and nothing else — not its header,
-      # not its verdict — so this is its roster verbatim, the clj-kondo version
+      # not its verdict — so this is its check list verbatim, the clj-kondo version
       # note included when it fires.
       grep '^  ' "$log" | sed 's/^  /        /' ;;
     perf)
@@ -417,7 +417,7 @@ report_stage () {              # report_stage <name> <exit-code> <seconds>
     # the earliest failed check (drift and kondo run before cljfmt) off the top and
     # hands you the last check's rows instead, which is how a red `drift kondo`
     # shows nothing but a cljfmt diff.  test and perf logs are thousands of lines,
-    # so those stay a tail.  `^#` drops the revision stamp.
+    # so those stay a tail.  `^#` drops the revision header.
     if [[ "$name" == lint ]]; then
       while IFS= read -r line; do printf '      %s\n' "$line"; done \
         < <(grep -v '^#' "$log")
@@ -480,13 +480,13 @@ run_stage () {                 # run_stage <name> <blurb> <cmd...>
   announce "$name" "$blurb" "$@"
   t0=$SECONDS
   # Captured, never piped: a pipeline reports the *last* command's status, which
-  # is how a green gate over a red suite happens.  The stamp first and the stage
+  # is how a green gate over a red suite happens.  The header first and the stage
   # appended after it — a `#` line the readers of these logs cannot match.
   #
   # Spawned and waited for rather than run in the foreground, so this stage is a
   # process group the interrupt handler can reach.  `wait` is interruptible, which
   # is what lets that handler run at all while a stage is going.
-  revision_stamp "$name" >"$OUT/$name.log"
+  revision_header "$name" >"$OUT/$name.log"
   [[ "$name" == test ]] && gate_slot_note >>"$OUT/$name.log"
   spawn "$OUT/$name.log" "$@"
   # perf alone gets the live bar: it is the one stage that runs by itself with nothing to
@@ -532,7 +532,7 @@ check_test_reflection () {
   wanted test || return 0
   [[ -r "$OUT/test.log" ]] || return 0
   local t0=$SECONDS rc=0
-  revision_stamp reflect >"$OUT/reflect.log"
+  revision_header reflect >"$OUT/reflect.log"
   # `lein test-parallel` keeps each shard's compile output in that shard's log and puts
   # only the summary in test.log, so the warnings are read from all of them.
   cat "$OUT/test.log" "$OUT"/test.shard-*.log >"$OUT/test.reflect.log" 2>/dev/null
@@ -555,7 +555,7 @@ check_jvm_warnings () {
     [[ -r "$f" ]] && logs+=("$f")
   done
   [[ ${#logs[@]} -gt 0 ]] || return 0
-  revision_stamp jvm >"$OUT/jvm.log"
+  revision_header jvm >"$OUT/jvm.log"
   hits=$(grep -hE "$JVM_WARNING" "${logs[@]}" | sort | uniq -c | sort -rn)
   if [[ -n "$hits" ]]; then
     printf '%s\n' "$hits" >>"$OUT/jvm.log"; rc=1
@@ -638,13 +638,13 @@ else
   lint_pid=""; test_pid=""; lint_t0=0; test_t0=0
   if wanted lint; then
     lint_t0=$SECONDS
-    revision_stamp lint >"$OUT/lint.log"
+    revision_header lint >"$OUT/lint.log"
     spawn "$OUT/lint.log" lein lint; lint_pid=$spawned_pid
   else skipped+=(lint); fi
   if wanted test; then
     admit_test "${test_cmd[@]}"
     test_t0=$SECONDS
-    revision_stamp test >"$OUT/test.log"
+    revision_header test >"$OUT/test.log"
     gate_slot_note >>"$OUT/test.log"
     spawn "$OUT/test.log" "${test_cmd[@]}"; test_pid=$spawned_pid
   else skipped+=(test); fi
@@ -704,7 +704,7 @@ fi
 # revision holding these files, not a run per commit.
 #
 # PERF_SENSITIVE_RE.  The fast gate drops perf, and two things buy that back (see PERF in
-# the header): `assert_cost_test` pins the CONSTANT-cost class in the test stage, and CI
+# the header): `assert_cost_test` asserts the CONSTANT-cost class in the test stage, and CI
 # runs the ratios.  What neither the fast gate nor a glance catches is a change to the
 # retrieval / inference / index / TMS core that turns a cost SUPER-LINEAR.  The set is the
 # files whose code runs inside a `perf.clj` claim's timed body or a cost test's measured
@@ -714,7 +714,7 @@ fi
 # `nat_maintenance`, the `types/` records); a file no claim or cost test executes does not
 # (the public API's shims, io, and the domain reasoners without a claim).  Edit it here
 # when a claim starts timing a file or the hot surface moves.
-PERF_SENSITIVE_RE='^src/vaelii/core\.clj$|^src/vaelii/impl/(provers|resolution|except|inherit|chain|settle|settle_phases|recheck|clashes|discovery|decide|decide/[a-z_]+|journal|recovery|reasoning_image|vantage|assert_entry|jtms|dense_jtms|caches|taxonomy|nat|nat_maintenance|context_nat|plan|tactics|rules|rete|strength|levels|special|wiring|checks|violations|abduce|sentex|wff|naming|kb|memory|observe|reindex|literal_cache|tokens|columnar|kv|dense_kv|dense_roots|rewrite|reads|feed|integrate|quasiquote|skolem|capabilities|profile|qcn|qcn_kb|space|stp|quality|roster|overlay/kv|overlay/frozen|asp/solve_context|sign|asp/label|asp/prover)\.clj$|^src/vaelii/impl/(disk|types)/'
+PERF_SENSITIVE_RE='^src/vaelii/core\.clj$|^src/vaelii/impl/(provers|resolution|except|inherit|chain|settle|settle_phases|recheck|clashes|discovery|decide|decide/[a-z_]+|journal|recovery|reasoning_image|vantage|assert_entry|jtms|dense_jtms|caches|taxonomy|nat|nat_maintenance|context_nat|plan|tactics|rules|rete|strength|levels|special|wiring|checks|violations|abduce|sentex|wff|naming|kb|memory|observe|reindex|literal_cache|tokens|columnar|kv|dense_kv|dense_roots|rewrite|reads|feed|integrate|quasiquote|skolem|capabilities|profile|qcn|qcn_kb|space|stp|quality|handle_set|overlay/kv|overlay/frozen|asp/solve_context|sign|asp/label|asp/prover)\.clj$|^src/vaelii/impl/(disk|types)/'
 #
 # SLOW_OWED_RE.  The engine files the `^:slow` tests drive, in three groups: the index
 # (the retrieval, record and posting stores the index oracles compare), the TMS (the

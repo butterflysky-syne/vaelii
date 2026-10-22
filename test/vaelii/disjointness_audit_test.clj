@@ -340,7 +340,7 @@
 ;; `:coextensional` is two distinct types each `genl` the other — a `genl` cycle, which
 ;; `wff` refuses at assertion. It appears only from a belief-state cycle or an equality
 ;; merge, neither of which a net-neutral fixture stages safely, so it has no constructive
-;; case here; the allowed-status assertion above pins it as a legal outcome.
+;; case here; the allowed-status assertion above admits it as a legal outcome.
 
 ;; ---- coverage ratchet -------------------------------------------------------
 ;;
@@ -353,9 +353,11 @@
 ;; The audit sweeps the nodes of the genl hierarchy visible from its vantage (default
 ;; CxWell, the context below every middle context) less each `relation?` there, so the five
 ;; relations CxUniverse puts under a `genl` edge (`orthogonal`, `siblingDisjointException`
-;; and the three arity-class predicates) are not swept: 228 types, 25,878 pairs, 21,456
-;; of them disjoint (82.9%) and 1,829 unknown (7.1%). The 228th is abstract.txt's
-;; `wood`. No opt-in theory's type is among the 228: CxWell does not see one, so the
+;; and the three arity-class predicates) are not swept: 230 types, 26,335 pairs, 21,875
+;; of them disjoint (83.1%) and 1,855 unknown (7.0%). The seven pairs of target_following_predicate
+;; with instance_relation_predicate, binary_predicate, bounded_arity, fixed_arity_predicate,
+;; binary, at_least_binary and fixed_arity read unknown since the example predicates, its
+;; only starter members, left it. No opt-in theory's type is among the 230: CxWell does not see one, so the
 ;; sweep does not either.
 
 (tu/deftest-kb disjointness-coverage-ratchet
@@ -366,9 +368,9 @@
         unknown    (get by-status :unknown 0)
         disjoint-% (* 100.0 (/ disjoint pairs))
         unknown-%  (* 100.0 (/ unknown pairs))]
-    (is (>= disjoint 21456)
-        (format "disjoint pairs must not fall below 21456 (got %d)" disjoint))
-    (is (>= disjoint-% 82.91)
-        (format "disjoint coverage must not regress below 82.91%% (got %.2f%%)" disjoint-%))
-    (is (<= unknown-% 7.07)
-        (format "unknown pairs must not grow above 7.07%% (got %.2f%%)" unknown-%))))
+    (is (>= disjoint 25373)
+        (format "disjoint pairs must not fall below 25373 (got %d)" disjoint))
+    (is (>= disjoint-% 83.51)
+        (format "disjoint coverage must not regress below 83.51%% (got %.2f%%)" disjoint-%))
+    (is (<= unknown-% 6.82)
+        (format "unknown pairs must not grow above 6.82%% (got %.2f%%)" unknown-%))))

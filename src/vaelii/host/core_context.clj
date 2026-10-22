@@ -16,6 +16,7 @@
   (:require [vaelii.core :as v]
             [vaelii.host.seed :as seed]
             [vaelii.impl.naming :as nm]
+            [vaelii.impl.progress :as progress]
             [vaelii.impl.sentex :as sx]))
 
 (defn upper-files
@@ -34,7 +35,14 @@
   ;; `settle` computes belief from current state, so N per-assert reconciliations reach
   ;; the same beliefs as one closing reconciliation (`v/with-deferred-settle`).
   (v/with-deferred-settle kb
-    (seed/load-sentences kb (into [] (mapcat #(seed/read-sentences % "upper")) (upper-files))
+    (seed/load-sentences kb (let [fs (upper-files)]
+                              (with-open [r (progress/start ::upper-files
+                                                            "starter: read the upper files"
+                                                            (count fs))]
+                                (into [] (mapcat (fn [f]
+                                                   (progress/tick! r)
+                                                   (seed/read-sentences f "upper")))
+                                      fs)))
                          sx/root-context)))
 
 (defn comment-of
