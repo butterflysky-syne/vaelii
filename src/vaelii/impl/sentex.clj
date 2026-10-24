@@ -408,13 +408,75 @@
   rule wrappers above and for their reason: it states how the sentence is *asserted*
   rather than anything the sentence says, and never reaches the store as a functor.
 
-  Two entry points read it, in two positions.  The **text KB format**
-  (`vaelii.impl.io.text`) reads it around a whole form and hands `assert` a
-  `{:strength :monotonic}`.  **`assert` itself** reads it around an `exceptWhen`'s
-  *query*, where it states the **exception's** own class — the one thing an `opts`
-  cannot say, since one `opts` reaches both halves of an `exceptWhen`
-  (`peel-exception-strength`)."
+  Read in two positions.  Around a **whole sentence** it is `{:strength :monotonic}`,
+  read by the text KB format and by `assert`, `check` and `try-assert` alike
+  (`peel-strength`).  Around an `exceptWhen`'s *query* it states the **exception's** own
+  class, the one thing an `opts` cannot say, since one `opts` reaches both halves of an
+  `exceptWhen` (`peel-exception-strength`).  Anywhere else, on the wrapper chain or
+  inside the sentence, it is refused (`:shape`)."
   'set/monotonic)
+
+(def inert-wrapper
+  "`(set/inert S)` — `S` stored through `assert-inert`: indexed and durable, never a
+  premise.  Read by the text KB format alone, around a whole form; `assert`, `check` and
+  `assert-inert` refuse it on the wrapper chain and inside the sentence (`:shape`), since
+  it names another entry point rather than an option of theirs."
+  'set/inert)
+
+(defn form-peel
+  "`[sentence opts problem]` for one whole form: `(set/monotonic S)` is `S` with
+  `{:strength :monotonic}`, `(set/inert S)` is `S` with `{:inert true}`, and anything
+  else is itself with nil.  `problem` is the `:shape` refusal of a wrapper around no
+  sentence or two, or around the other wrapper, since an inert sentex has no strength."
+  [form]
+  (let [wrapper? #(and (sequential? %) (#{strength-wrapper inert-wrapper} (first %)))]
+    (if (wrapper? form)
+      (let [w (first form)]
+        (cond
+          (not= 2 (count form))
+          [form nil {:type :shape :form form
+                     :message (str "(" w " …) wraps exactly one sentence, got "
+                                   (dec (count form)) ": " (pr-str form))}]
+
+          (wrapper? (second form))
+          [form nil {:type :shape :form form
+                     :message (str "(" w " …) wraps a sentence, not another (" (first (second form))
+                                   " …): an inert sentex has no strength, and a strength is"
+                                   " stated once: " (pr-str form))}]
+
+          :else [(second form) (if (= w inert-wrapper) {:inert true} {:strength :monotonic}) nil]))
+      [form nil nil])))
+
+(defn strength-peel
+  "`[sentence opts problem]`: `sentence` with a whole-form `(set/monotonic S)` read as `S`
+  and `:strength :monotonic` in `opts`, or both as they came with the `:shape` problem
+  that refuses them, or nil.  A `(set/inert S)` comes back as it came, for the wrapper
+  chain to refuse."
+  [sentence opts]
+  (if (and (sequential? sentence) (= strength-wrapper (first sentence)))
+    (let [[s _ problem] (form-peel sentence)
+          given        (:strength opts)]
+      (cond
+        problem [sentence opts problem]
+
+        (and (some? given) (not= :monotonic given))
+        [sentence opts {:type :shape :sentence sentence :strength given
+                        :message (str "(" strength-wrapper " …) states :monotonic and opts"
+                                      " state :strength " given ": " (pr-str sentence))}]
+
+        :else [s (assoc opts :strength :monotonic) nil]))
+    [sentence opts nil]))
+
+(defn peel-strength
+  "`[sentence opts]`: a whole-form `(set/monotonic S)` read as `S` asserted
+  `{:strength :monotonic}`, as the text KB format reads it, and anything else as it came.
+  Throws `:shape` for a malformed wrapper and for one beside an `opts` `:strength` other
+  than `:monotonic`."
+  [sentence opts]
+  (let [[s o problem] (strength-peel sentence opts)]
+    (when problem
+      (throw (ex-info (:message problem) (dissoc problem :message))))
+    [s o]))
 
 (defn- strength-wrapped
   "`[wrapped]` when `form` is a `(set/monotonic X)`, `::malformed` when it is one written
@@ -428,10 +490,38 @@
   (when (and (sequential? form) (seq form) (= strength-wrapper (first form)))
     (if (= 2 (count form)) [(second form)] ::malformed)))
 
+(defn- misplaced-wrapper-problem
+  "The `:shape` problem a `(set/monotonic …)` or `(set/inert …)` is refused with where
+  `assert` does not read it, or nil when `form` is neither."
+  [form]
+  (when (and (sequential? form) (seq form))
+    (condp = (first form)
+      strength-wrapper
+      {:type :shape :sentence form
+       :message (str "(" strength-wrapper " …) states an assertion's strength, read around"
+                     " a whole sentence or an exceptWhen query and nowhere else: "
+                     (pr-str form))}
+      inert-wrapper
+      {:type :shape :sentence form
+       :message (str "(" inert-wrapper " …) stores a sentence inert, which is assert-inert's"
+                     " entry point; only the text KB loader reads the wrapper: "
+                     (pr-str form))}
+      nil)))
+
+(defn- nested-wrapper-problem
+  "`misplaced-wrapper-problem` of the first form at any depth of `form`, `form` included,
+  that is a `(set/monotonic …)` or a `(set/inert …)`, or nil.  An `(ist Ctx S)` answers
+  nil: every entry point reads S as a whole sentence of its own, and walks it then."
+  [form]
+  ;; 'ist is `ist-functor`, defined with the connectives below
+  (when-not (and (sequential? form) (= 'ist (first form)))
+    (some-> (some-form misplaced-wrapper-problem form) misplaced-wrapper-problem)))
+
 (defn- walk-exception-strength
   "`[form monotonic? problem]` — `form` with a `(set/monotonic …)` taken off every
   `exceptWhen` query on its wrapper chain, whether one was there, and the `:shape`
-  problem a malformed one is refused with.
+  problem the chain is refused with: a malformed query wrapper, or a
+  `nested-wrapper-problem` anywhere else on the chain or inside the sentence it ends at.
 
   One walk answering three questions, because `check` wants the problem and `assert`
   wants the peeled form, and a second traversal is a second reading of the chain to keep
@@ -446,30 +536,34 @@
               w     (strength-wrapped q)
               bad?  (= ::malformed w)
               mono? (vector? w)
+              q'    (if mono? (first w) q)
               [inner inner-mono? inner-problem] (walk-exception-strength (nth form 2))]
-          [(list except-wrapper (if mono? (first w) q) inner)
+          [(list except-wrapper q' inner)
            (or mono? inner-mono?)
            (or (when bad?
                  {:type :shape :sentence form
                   :message (str "(" strength-wrapper " …) on an exceptWhen query wraps"
                                 " exactly one query, got " (dec (count q)) ": "
                                 (pr-str q))})
+               (nested-wrapper-problem q')
                inner-problem)])
 
         (or (= h default-rule-wrapper)
             (= h assumption-rule-wrapper)
+            (= h solve-rule-wrapper)
             (contains? constraint-rule-wrappers h)
             (contains? rule-direction-wrappers h))
         (let [[inner mono? problem] (walk-exception-strength (second form))]
           [(list h inner) mono? problem])
 
-        :else [form false nil]))
+        :else [form false (nested-wrapper-problem form)]))
     [form false nil]))
 
 (defn exception-strength-problem
-  "The `:shape` problem a malformed strength wrapper on an `exceptWhen` query is refused
-  with, or nil.  A value for `check`, and the `ex-info` `peel-exception-strength` throws
-  — so the two entry points refuse the same input in the same words, differing only in the
+  "The `:shape` problem a malformed strength wrapper on an `exceptWhen` query, or a
+  `(set/monotonic …)` / `(set/inert …)` elsewhere on the wrapper chain or inside the
+  sentence, is refused with, or nil.  A value for `check`, and the `ex-info`
+  `peel-exception-strength` throws — so the two entry points refuse the same input in the same words, differing only in the
   delivery."
   [form]
   (nth (walk-exception-strength form) 2))
@@ -561,6 +655,18 @@
 (def and-functor  'and)
 (def or-functor   'or)
 (def ist-functor  'ist)
+
+(def no-match
+  "The reserved constant a read-mode reify resolves a never-minted NAT to, and a goal's
+  application with no correspondence is replaced by.  No stored sentex names it, and it
+  denotes no term, so only the stored-fact prover reads a literal holding it
+  (`provers/applicable-provers`)."
+  'nat/no-match)
+
+(defn names-no-match?
+  "Is `no-match` a direct argument of literal `goal`?"
+  [goal]
+  (and (seq? goal) (boolean (some #{no-match} (rest goal)))))
 
 (def root-context
   "The context the upper ontology is stored in, every `genlCx` edge with it, and the one
@@ -894,17 +1000,9 @@
   logically identical knowledge stores once, and this stores never.  See
   docs/equality.md.
 
-  `unknown` is here for the same operational reason: `(unknown S)` is **negation as
-  failure** — it holds exactly while `S` is *not* derivable — so it consumes the
-  bindings its argument's free variables need and produces none.  Reaching it before
-  those bindings exist would test an open formula, which is meaningless, so like
-  `different` it is placed after the generators that bind it (docs/naf.md).  Its
-  argument's *quantified* variables (a nested `thereExists`) are **not** among the
-  ones that must be bound — that is the whole point of the quantifier — so the placement
-  and closure logic reads `free-vars`, not every variable.  `thereExists` is
-  deliberately **absent**: a *standalone* positive `(thereExists ?x S)` antecedent is
-  desugared to `S` with `?x` a local generator variable (see the constructor), so it
-  never reaches the chainers as its own literal; only `unknown` does.
+  `unknown` is here for the same reason: it consumes the bindings its argument's
+  `free-vars` need and produces none.  `thereExists` is absent, because a standalone one
+  is desugared to its body (`desugar-there-exists`, docs/naf.md).
 
   The **quantity comparisons** (`sameQuantity` / `quantityLessThan` /
   `quantityGreaterThan` / `quantityLessThanOrEqual` / `quantityGreaterThanOrEqual`) are
@@ -946,13 +1044,8 @@
   [l]
   (and (sequential? l) (seq l) (contains? deferred-predicates (first l))))
 
-;; ---- negation as failure: `unknown` and `thereExists` --------------------
-;; `(unknown S)` is closed-world negation: it holds exactly while `S` is *not*
-;; derivable.  `(thereExists ?x S)` existentially quantifies `?x` (or a vector of
-;; variables), so it *closes* those variables off — a query with no free `?x` — which
-;; is what lets `(unknown (thereExists ?x S))` express "there is no `x` such that S".
-;; Both are answered by a prover (`vaelii.impl.provers`); nothing about either is
-;; stored.  See docs/naf.md.
+;; ---- negation as failure: `unknown`, `thereExists` and `forall` -----------
+;; See docs/naf.md.
 
 (def unknown-functor 'unknown)
 (def there-exists-functor 'thereExists)
@@ -973,30 +1066,16 @@
   (and (sequential? form) (= and-functor (first form))))
 
 (defn conjuncts
-  "`form`'s conjunct literals — an `(and …)` **flattened all the way down**, anything
-  else as a one-element vector.
-
-  Flattened because a nested `and` is not a goal any prover claims: left as one conjunct
-  it would be handed to the registry, come back unanswerable, and read as *not
-  derivable*.  Conjunction is associative, so flattening is the reading rather than a
-  normalization of it.  An `(and)` yields no conjuncts, which is the shape
-  `check-naf-closed` refuses rather than a shape anything evaluates."
+  "`form`'s conjunct literals: an `(and …)` flattened all the way down, anything else as
+  a one-element vector.  An `(and)` yields none (docs/naf.md, \"`S` may be a
+  conjunction\")."
   [form]
   (letfn [(flat [q] (if (conjunction? q) (mapcat flat (rest q)) [q]))]
     (vec (flat form))))
 
 (defn naf-query-conjuncts
-  "The conjunct literals an `(unknown …)` antecedent's query is evaluated as — the
-  inner `(and …)` unwrapped, a single literal as a one-element vector.  The `unknown`
-  spelling of `exception-query-conjuncts`, and the same reading: `unknown` is
-  `exceptWhen` inlined per literal, so its query is a closed conjunction evaluated
-  block-if-**all**-hold, and one evaluator (`provers/exception-holds?`) answers both.
-
-  The conjunction is **joined**, left to right in a planned order, so a conjunct may
-  read what an earlier one bound: that is what makes `(unknown (thereExists ?c (and
-  (childOf Tom ?c) (sick ?c))))` mean what it says, one witness satisfying both
-  conjuncts (docs/naf.md).  Closure is still enforced — every variable is either bound
-  before the query runs or bound by a quantifier *inside* it (`check-naf-closed`)."
+  "The conjunct literals an `(unknown S)` antecedent's query is evaluated as:
+  `conjuncts` of `S`.  The `unknown` spelling of `exception-query-conjuncts`."
   [unk]
   (conjuncts (second unk)))
 
@@ -1008,13 +1087,10 @@
   (and (sequential? form) (= forall-functor (first form)) (= 3 (count form))))
 
 (defn quantified-vars
-  "The variables a `thereExists` or `forall` binder introduces, as a set — its second
-  element is a single variable or a *sequence* of them.  A written vector `[?x ?y]` is accepted, but
-  so is the list `(?x ?y)` it becomes once `canon` / variable numbering / goal rewriting
-  have normalized every sequential to a `PersistentList` — so this must not key on
-  `vector?`, or a binder would silently stop binding the moment the form was
-  canonicalized.  Non-variables are dropped, so `free-vars` reads a binder holding a
-  constant without throwing; `check-naf-closed` refuses a rule that holds one."
+  "The variables a `thereExists` or `forall` binder introduces, as a set: its second
+  element is a variable or a sequence of them.  A written vector becomes a list under
+  `canon`, so this keys on `sequential?`, not `vector?`.  Non-variables are dropped;
+  `check-naf-closed` refuses a rule whose binder holds one."
   [form]
   (let [q (second form)]
     (cond
@@ -1056,19 +1132,15 @@
                       {:type :not-well-formed :quantifier q})))))
 
 (defn free-vars
-  "The variables of `form` that must be **bound** before it can be evaluated — every
-  variable it mentions, *minus* any bound by a quantifier within it.
-  `unknown` is transparent (it binds nothing), a `thereExists` and a `forall` each
-  subtract their binder, and every other form contributes all of its variables.  This is what the closure
-  check and the planner read for a NAF literal instead of the raw variable set: the
-  point of `(unknown (thereExists ?x (parentOf ?x Tom)))` is that `?x` is *not* one
-  of the variables an antecedent has to supply."
+  "The variables of `form` that must be bound before it can be evaluated: every variable
+  it mentions, minus those a quantifier inside it binds.  `unknown` is transparent,
+  `thereExists` and `forall` subtract their binder, and an aggregate subtracts its `?v`
+  and its `?n` (docs/naf.md, \"Fully bound to evaluate\")."
   [form]
   (cond
     (unknown? form)      (free-vars (second form))
     (or (there-exists? form) (forall? form))
     (into #{} (remove (quantified-vars form)) (free-vars (nth form 2)))
-    ;; an aggregate subtracts both its slots: `?v` is projected out, `?n` is its output
     (aggregate? form)    (disj (into #{} (free-vars (aggregate-body form)))
                                (aggregate-value-var form)
                                (when (variable? (second form)) (second form)))
@@ -1120,46 +1192,23 @@
           (filter computed cs))))
 
 (defn there-exists-antecedent?
-  "A *standalone* positive `thereExists` antecedent — one not wrapped in `unknown`.
-  These desugar to their body (the quantifier's variable becoming a local matched
-  variable); a `thereExists` *inside* an `unknown` is left intact for the NAF prover."
+  "Is antecedent `form` a standalone positive `thereExists`?  On an antecedent list a
+  `thereExists` under `unknown` is never an element."
   [form]
   (there-exists? form))
 
 (defn desugar-there-exists
-  "Rewrite a rule's antecedent list, replacing every standalone positive `(thereExists
-  ?x S)` with its body `S`.  A standalone existential antecedent is exactly `S` with
-  `?x` a fresh local variable that the match binds and that (by locality) reaches
-  nothing else — so `S` alone is the faithful, native reading, and it needs no special
-  matcher: it joins the store like any generator, one witness per solution.  A
-  `thereExists` under `unknown` is a NAF query, evaluated by the prover, and is not
-  touched here.
-
-  A **conjunctive** body is spliced in as that many antecedents, which is the same
-  reading one step further: the binder's variable is shared across the conjuncts, and
-  antecedents sharing a variable are exactly the join that gives them one witness.  So
-  `(thereExists ?y (and (parentOf ?x ?y) (sick ?y)))` becomes the two-generator body a
-  reader would have written by hand."
+  "Rule antecedents `antes` with each standalone positive `(thereExists ?x S)` replaced
+  by the `conjuncts` of `S`, spliced in (docs/naf.md, \"Standalone positive
+  `thereExists` desugars\")."
   [antes]
   (into [] (mapcat (fn [a] (if (there-exists-antecedent? a) (conjuncts (nth a 2)) [a]))) antes))
 
 (defn- unproducible-inputs
-  "The **quantified** variables a NAF query's computed conjuncts read and no generator
-  conjunct of the same query produces.
-
-  A joined query runs its conjuncts in a planned order, generators first, so a computed
-  conjunct — a nested `(unknown …)`, an evaluable, an aggregate — reads what a generator
-  bound.  A quantifier's own variable has no other source: nothing outside can bind it
-  (that is what the quantifier is for), so a query whose only mention of `?y` is inside
-  a computed conjunct can never run that conjunct, and would answer *not derivable*
-  whatever the KB holds.  Variables the quantifier does **not** bind are the outer
-  closure check's business (`free-vars` counts them), so only the quantified ones are
-  read here.
-
-  Recursive, because a nested query is a query: the inner `unknown` of a `forall`
-  desugar carries its own conjunction and its own binder.  The aggregate's half of the
-  same rule is `check-naf-closed`'s census check, which reads `census-bound-vars`: there
-  the binder is the operator's own `?v` slot rather than a `thereExists`."
+  "The quantified variables of NAF query `q` that a computed conjunct reads and no
+  generator conjunct of the same query produces, recursing into each nested `unknown`.
+  The variables the quantifier does not bind are the outer closure check's (docs/naf.md,
+  \"The conjunction is joined\")."
   [q]
   (let [body     (if (there-exists? q) (nth q 2) q)
         cs       (conjuncts body)
@@ -1171,30 +1220,13 @@
             (mapcat #(unproducible-inputs (second %)) (filter unknown? cs)))))
 
 (defn desugar-forall-literal
-  "The nested NAF an antecedent `(forall ?y (implies Body Head))` **is**:
+  "The nested NAF an antecedent `(forall ?y (implies Body Head))` is:
 
-      (forall ?y (implies Body Head))
-      => (unknown (thereExists ?y (and Body… (unknown Head))))
+      (unknown (thereExists ?y (and Body… (unknown Head))))
 
-  ∀?y (Body ⇒ Head) is ¬∃?y (Body ∧ ¬Head), and in a closed world ¬ is `unknown` — so
-  the universal is two negations around the existential the engine already answers.
-  Nothing new evaluates it: the outer `unknown` is a NAF query, its conjunction is
-  joined (`provers/conjunction-solutions`), and the inner `unknown` is a conjunct like
-  any other, reached once the generators of the same query have bound `?y`.
-
-  A conjunctive `Body` contributes that many conjuncts, so the join sees the generators
-  the author wrote.  `Head` is left whole — an `(and …)` head is one nested `unknown`
-  over a conjunction, which is again a query the join answers.
-
-  The **binder is local**, as every quantifier's is: `?y` may not appear outside the
-  `forall` (`check-naf-closed`'s `:quantifier-not-local`), and every other variable in
-  the body must be bound by an antecedent outside it (`:naf-not-closed`).  The
-  desugared form is what the checks read and what `canonical-sentex` shows — the sugar
-  exists at the entry point and nowhere past it.
-
-  A `forall` whose second argument is not an `(implies …)` is refused: there is nothing
-  to negate the consequent of, and a universal over a bare literal is a claim about every
-  term in the domain rather than a guard."
+  A conjunctive `Body` contributes its conjuncts; `Head` is left whole.  Throws
+  `:not-well-formed` when the second argument is not an `(implies …)` (docs/naf.md,
+  \"`forall` is sugar for a nested `unknown`\")."
   [form]
   (let [inner (nth form 2)]
     (when-not (implies? inner)
@@ -1245,16 +1277,11 @@
       [dir def? exc assum con f])))
 
 (defn desugar-forall-rule
-  "`rule-form` with every `(forall …)` antecedent replaced by the nested NAF it is
-  (`desugar-forall-literal`), or the form unchanged when it carries none.
-
-  Applied at both entry points a rule reaches — the sentex constructor and `rules/inner-rule`,
-  which every pre-storage check reads through — so range restriction, closure, the
-  quantifier locality rule and the stratification graph all see the NAF form rather than
-  the sugar.  A stored rule never holds a `forall`, so the presence check is a `some` that
-  allocates nothing and this is the identity on it."
+  "`rule-form` with every `(forall …)` antecedent replaced by `desugar-forall-literal`'s
+  nested NAF.  A form with none, and a form that is not a rule, is returned unchanged.
+  Called by the sentex constructor and `rules/inner-rule` (docs/naf.md)."
   [rule-form]
-  (let [antes (rule-antecedents rule-form)]
+  (let [antes (when (implies? rule-form) (rule-antecedents rule-form))]
     (if-not (some forall? antes)
       rule-form
       (rule-sentence (mapv #(if (forall? %) (desugar-forall-literal %) %) antes)
@@ -1303,40 +1330,25 @@
                        :exception (vec exception) :antecedents (vec antecedents)})))))
 
 (defn check-naf-closed
-  "Throw unless a rule's negation-as-failure antecedents are usable — the mirror of
-  `check-exception-closed`, pointed at `unknown` / `thereExists`:
+  "Throw unless rule antecedents `antes` (with consequent `conseq` and exception `exc`)
+  use their NAF and deferred literals soundly:
 
-  * **`unknown` is closed.**  Every free variable of an `(unknown S)` antecedent (the
-    ones a nested `thereExists` does not bind) is bound by a *generator* antecedent —
-    a positive literal that produces bindings, which a standalone `thereExists` becomes
-    once desugared, but which `unknown` and the evaluables never are.  `unknown`
-    produces no bindings and consumes them, so reaching one before its inputs exist
-    tests an open formula and silently yields nothing; forbidding it makes the
-    mistake a legible error instead.
-  * **Every quantifier is local.**  A `thereExists` bound variable appears *nowhere*
-    in the rule outside its own `thereExists` literal, so it cannot leak into the
-    consequent (a range-restriction hole) or capture another literal's variable (a
-    silent misjoin).  Both read as working code, so both are refused here.  Locality is
-    what makes a quantified *conjunction* readable: the binder is shared by the
-    conjuncts of one query and by nothing else, which is exactly the scope the join
-    needs (`unproducible-inputs` holds the other half — a quantified variable some
-    generator conjunct of the same query has to produce).
-  * **An aggregate is closed and its reduction variable is local**, by the same two
-    rules.  A body variable the rule names nowhere else is the census's own join, and
-    must be one `census-bound-vars` reaches (`:naf-not-closed`).
-  * **The reduction slot holds a variable** (`:not-well-formed`), and so does every
-    `thereExists`, `forall` and head `exists` binder.
-  * **Every deferred literal's inputs are bound** by a generator antecedent or by a
-    deferred literal written **before** it (an aggregate's `?n`, an `evaluate`'s
-    output), since the chainer throws on an unbound input mid-fixpoint.
+  * every free variable of an `unknown`, aggregate or other deferred literal is bound by
+    a generator antecedent or by a deferred literal written before it
+    (`:naf-not-closed`);
+  * a `thereExists` binder or an aggregate's reduction variable appears nowhere outside
+    its own literal (`:quantifier-not-local`);
+  * a quantified variable a computed conjunct of an `unknown` query reads is produced by
+    a generator conjunct of the same query (`unproducible-inputs`, `:naf-not-closed`),
+    and an aggregate's local census variables are ones `census-bound-vars` reaches;
+  * an `unknown` query is not an empty conjunction, a reduction slot holds a variable, and
+    so does every `thereExists`, `forall` and head `exists` binder (`:not-well-formed`).
 
-  docs/aggregate.md, \"Grouping\" and \"Comparing the count\", gives the reasons."
+  docs/naf.md, \"Fully bound to evaluate\", and docs/aggregate.md, \"Grouping\", give
+  the reasons."
   [antes conseq exc]
   (let [scope    (vec (concat antes [conseq] exc))
-        ;; Every check here is about a form most rules do not contain, and the readings
-        ;; they need are whole-rule walks.  So each is drawn where it is used: a rule
-        ;; with no quantifier never counts occurrences, and one with nothing that
-        ;; consumes bindings never reads what its generators bind.
+        ;; delayed: a rule with no quantifier never counts occurrences
         rule-occ (delay (frequencies (form-vars scope)))
         ;; "does this variable of `lit` reach the rest of the rule": locality reads it to
         ;; refuse a leak, the aggregate to tell a group variable from a local one
@@ -1385,10 +1397,7 @@
                                    " antecedent, and this is neither")
                               {:type :naf-not-closed :unbound (vec loose) :aggregate ag
                                :antecedents (vec antes)})))))]
-    ;; each quantifier's binder holds variables only, and locality: each thereExists /
-    ;; aggregate binder occurs only within its own literal.  One walk for every shape —
-    ;; the rule is descended to *find* a quantifier, and descending it once per kind
-    ;; multiplies what finding them costs.
+    ;; binders and locality, in one walk over every quantifier shape
     (let [quantifiers (forms-where #(or (there-exists? %) (forall? %) (head-exists? %)
                                         (aggregate? %))
                                    scope)]
@@ -1405,7 +1414,6 @@
                                " nothing and no prover can answer it")
                           {:type :not-well-formed :aggregate ag
                            :antecedents (vec antes)})))))
-    ;; an `unknown`'s conjunction is real, and empty is not one of its shapes
     (doseq [unk (filter unknown? antes)]
       (when (empty? (naf-query-conjuncts unk))
         (throw (ex-info (str "unknown antecedent " (pr-str unk) " queries an empty"
@@ -1413,9 +1421,6 @@
                              " unknown always holds and the antecedent guards nothing")
                         {:type :not-well-formed :unknown unk
                          :antecedents (vec antes)})))
-      ;; ...and a joined conjunction runs its computed conjuncts after the generators
-      ;; that bind them, so a quantified variable no generator produces is a conjunct
-      ;; that can never run
       (when-let [loose (seq (distinct (unproducible-inputs (second unk))))]
         (throw (ex-info (str "unknown antecedent " (pr-str unk) " reads "
                              (pr-str (vec loose))
@@ -1424,15 +1429,9 @@
                              " the same query, and no other conjunct can supply it")
                         {:type :naf-not-closed :unbound (vec loose) :unknown unk
                          :antecedents (vec antes)}))))
-    ;; closure: every consuming literal's inputs are bound by the generators or by a
-    ;; deferred literal written before it — so the scan is left to right, accumulating
-    ;; each literal's outputs only once it has been passed.  A rule with nothing that
-    ;; consumes bindings has nothing to close, and the scan below is the identity on it
-    ;; — so what its generators bind is read only where a consumer asks.
+    ;; closure, scanned left to right so a deferred literal's outputs count only after it
     (when (some #(or (unknown? %) (deferred-literal? %)) antes)
-      (let [;; a generator is a positive literal that *produces* bindings by matching —
-            ;; which the deferred literals (aggregates and `unknown` among them) never do
-            generators (remove #(or (unknown? %) (deferred-literal? %)) antes)
+      (let [generators (remove #(or (unknown? %) (deferred-literal? %)) antes)
             matched    (into #{} (mapcat form-vars) generators)]
         (reduce (fn [bound a]
                   (if (or (unknown? a) (deferred-literal? a))
@@ -1818,45 +1817,41 @@
                                              (dec (count form))))))
 
 (defn- sort-conjunction
-  "One conjunction in canonical order: conjuncts sorted blind to variable names,
-  repeats dropped, a lone conjunct unwrapped.  Nil when there is nothing to rewrite
-  (the form is not a conjunction, or is the empty one `check-naf-closed` refuses —
-  rewriting that would erase the form the diagnostic names)."
-  [body]
+  "One conjunction in canonical order: each conjunct rewritten by `f`, then sorted blind
+  to variable names, repeats dropped, a lone conjunct unwrapped.  The conjuncts `held?`
+  names follow the sorted rest in their written order.  Nil when there is nothing to
+  rewrite (the form is not a conjunction, or is the empty one `check-naf-closed` refuses
+  — rewriting that would erase the form the diagnostic names)."
+  [body f held?]
   (when (conjunction? body)
-    (let [cs (vec (distinct (sort cmp-blind (conjuncts body))))]
+    (let [cs (map f (conjuncts body))
+          cs (vec (distinct (concat (sort cmp-blind (remove held? cs)) (filter held? cs))))]
       (cond
         (empty? cs)      nil
         (= 1 (count cs)) (first cs)
         :else            (apply list and-functor cs)))))
 
+(defn- sort-query-conjunctions
+  "`form`, an `unknown` or `thereExists` form, with every conjunction in it in
+  `sort-conjunction`'s canonical order: its own query's, and those of an `unknown` or
+  `thereExists` conjunct at any depth (a `forall` head is one), the conjuncts `held?`
+  names last in their written order.  Any other form is unchanged."
+  [form held?]
+  (letfn [(nested [c]
+            (cond (unknown? c)      (list unknown-functor (query (second c)))
+                  (there-exists? c) (list there-exists-functor (second c) (query (nth c 2)))
+                  :else             c))
+          (query [q] (or (sort-conjunction q nested held?) (nested q)))]
+    (nested form)))
+
 (defn- sort-naf-conjuncts
-  "Put the conjuncts of an `(unknown (and …))` antecedent — or of the conjunction under
-  its `thereExists` — into canonical order and drop repeats, so two spellings of one NAF
-  condition are one rule.  The same claim `sort-conjuncts` makes for an exceptWhen
-  exception.
-
-  Order is not identity even though the query is **joined**: the join runs its conjuncts
-  in a planned order (`provers/conjunction-solutions`), generators before the computed
-  conjuncts that read them, so what the author wrote decides nothing the answer depends
-  on.
-
-  Sorted **blind to variables**, unlike the exception's — an exception's conjuncts are
-  aligned to the rule's canonical varmap before they are sorted (`vaelii.core`), while
-  this runs on the surface literal, where the author's variable names are still what
-  they wrote.
-
-  Nesting goes with the order: `conjuncts` flattens, so a nested spelling and the flat
-  one store as the same rule, and a lone conjunct loses the `and` it never needed."
+  "`form`, an `unknown` antecedent, with every conjunction in its query in canonical
+  order (`sort-query-conjunctions`); any other form unchanged.  Blind to variables,
+  unlike `sort-conjuncts`, because this runs on the surface literal before the rule's
+  variables are numbered; `naf-numberings` breaks the ties it leaves (docs/naf.md,
+  \"`S` may be a conjunction\")."
   [form]
-  (if-not (unknown? form)
-    form
-    (let [q (second form)]
-      (if-let [sorted (sort-conjunction q)]
-        (list unknown-functor sorted)
-        (if-let [sorted (and (there-exists? q) (sort-conjunction (nth q 2)))]
-          (list unknown-functor (list there-exists-functor (second q) sorted))
-          form)))))
+  (if (unknown? form) (sort-query-conjunctions form (constantly false)) form))
 
 (defn- elim-double-not
   "Eliminate double negation from a literal: an even count of leading `not`s becomes the
@@ -1908,25 +1903,35 @@
 
 (def ^:private empty-numbering
   "A fresh canonical-variable numbering: `:n` the next index, `:m` the author's
-  variable → its canonical name, `:vm` the inverse (the `:varmap` a sentex carries)."
+  variable → its canonical name, `:vm` the inverse (the `:varmap` a sentex carries).
+  A numbering inside a `thereExists` also holds `:pool`, its binder's variables → the
+  block reserved for them, and `:free`, each block's names not yet taken
+  (`naf-numberings`)."
   {:n 0 :m {} :vm {}})
 
 (defn- number-form
   "Number every variable in `form` to ?var0, ?var1, … by first occurrence, continuing
   the numbering `st`.  Each anonymous `_` gets its own fresh, unshared name (two
-  occurrences are two different variables).  Returns [numbered-form st']."
+  occurrences are two different variables).  A variable in `:pool` takes the lowest
+  name left in its reserved block instead of `:n`.  Returns [numbered-form st']."
   [st form]
   (let [state (volatile! st)
         fresh (fn [orig]
                 (let [{:keys [n vm]} @state
                       v (intern-sym (symbol (str "?var" n)))]
                   (vswap! state assoc :n (inc n) :vm (assoc vm v orig))
-                  v))]
+                  v))
+        reserved (fn [orig k]
+                   (let [[v & more] (get-in @state [:free k])]
+                     (vswap! state #(-> % (assoc-in [:free k] (vec more))
+                                        (update :vm assoc v orig)))
+                     v))]
     (letfn [(rn [x]
               (cond
                 (and (symbol? x) (= "_" (clojure.core/name x))) (fresh x)
                 (variable? x) (or (get (:m @state) x)
-                                  (let [v (fresh x)]
+                                  (let [k (get (:pool @state) x)
+                                        v (if k (reserved x k) (fresh x))]
                                     (vswap! state update :m assoc x v)
                                     v))
                 (sequential? x) (apply list (map rn x))
@@ -1938,23 +1943,6 @@
   [st forms]
   (reduce (fn [[acc s] f] (let [[r s'] (number-form s f)] [(conj acc r) s']))
           [[] st] forms))
-
-(defn canonical-exception
-  "An `exceptWhen` exception's conjuncts, already in the rule's canonical variables
-  `rule-vars`, in their stored form: sorted (`sort-conjuncts`), with every variable a
-  quantifier inside them binds numbered past the rule's own.  Two exceptions that differ
-  only in a binder's name are then one meta-sentex, as two rules that differ only in a
-  variable's name are one rule.
-
-  Each conjunct is numbered alone first, so the sort reads structure rather than the
-  author's binder names, and then once more across the sorted conjuncts, so two
-  conjuncts' binders stay distinct names."
-  [conjuncts rule-vars]
-  (let [base   {:n (count rule-vars) :m (zipmap rule-vars rule-vars) :vm {}}
-        number (fn [n c] (number-form (assoc base :n n) c))]
-    (first (reduce (fn [[acc n] c] (let [[r st] (number n c)] [(conj acc r) (:n st)]))
-                   [[] (:n base)]
-                   (sort-conjuncts (map #(first (number (:n base) %)) conjuncts))))))
 
 (defn- tie-groups
   "Split a `cmp-blind`-sorted literal vector into maximal runs of mutually tied
@@ -1969,14 +1957,18 @@
 (defn- extend-minimally
   "Extend every partial order in `states` by one literal drawn from its own remaining
   pool, keeping only the extensions whose *canonically numbered* literal is smallest.
-  A state is `{:order [numbered-literal …] :st <numbering> :left [author-literal …]}`."
-  [states]
+  A state is `{:order [numbered-literal …] :st <numbering> :left [author-literal …]}`.
+  `number` is `minimal-orders`'s, and `relevant` the variables that occur after the
+  group."
+  [states number relevant]
   (let [exts (vec (for [{:keys [order st left] :as s} states
                         i (range (count left))
-                        :let [[r st'] (number-form st (nth left i))]]
+                        :let [left' (into (subvec left 0 i) (subvec left (inc i)))]
+                        [r st'] (number st (nth left i)
+                                        (delay (into relevant (mapcat form-vars) left')))]
                     [r (assoc s :order (conj order r)         ; assoc, not a fresh map, so a
                               :st st'                          ; carried tag (:origin) survives
-                              :left (into (subvec left 0 i) (subvec left (inc i))))]))
+                              :left left')]))
         best (reduce (fn [a b] (if (neg? (cmp-term (first b) (first a))) b a)) exts)]
     (into [] (comp (filter #(zero? (cmp-term (first %) (first best))))
                    (map second)
@@ -1985,13 +1977,12 @@
 
 (defn- suffix-vars
   "For each tie group, the author variables that still occur *after* it — in the later
-  groups and in `tail-forms` (the held-back literals, the consequent, the exception).
-  Two survivors that agree on those are interchangeable from there on, whatever they
-  did with the variables nobody mentions again, so this is what collapses the
-  survivor set between groups."
-  [groups tail-forms]
-  (let [base (into #{} (mapcat form-vars) tail-forms)
-        acc  (reduce (fn [a g] (conj a (into (peek a) (mapcat form-vars) g)))
+  groups and in `base`, the variables of the forms numbered after the groups (the
+  held-back literals, the consequent).  Two survivors that agree on those are
+  interchangeable from there on, whatever they did with the variables nobody mentions
+  again, so this is what collapses the survivor set between groups."
+  [groups base]
+  (let [acc  (reduce (fn [a g] (conj a (into (peek a) (mapcat form-vars) g)))
                      [base] (reverse groups))]
     (vec (reverse (subvec acc 0 (count groups))))))
 
@@ -2020,10 +2011,11 @@
       not of the order it was written in.
 
   A group that fails either stays on the exact `extend-minimally` search, whose
-  antecedent minimization already collapses a join to O(k²)."
-  [groups defs]
+  antecedent minimization already collapses a join to O(k²).  `outside` is the
+  variables of every form outside the groups but the projected tail."
+  [groups outside]
   (let [gvars (mapv #(into #{} (mapcat form-vars) %) groups)
-        else  (fn [i] (reduce into (into #{} (mapcat form-vars) defs)
+        else  (fn [i] (reduce into outside
                               (keep-indexed (fn [j vs] (when (not= i j) vs)) gvars)))
         joinless? (fn [g] (let [vs (mapcat seq (literal-var-sets g))]
                             (or (empty? vs) (apply distinct? vs))))]
@@ -2076,11 +2068,26 @@
                   {:seen #{} :out []}
                   (mapcat keep-min (vals (group-by (juxt :origin :order) states)))))))
 
+(defn- number-each
+  "Extend every `{:order :st}` in `states` by `forms` in order, each numbered by `number`
+  (`minimal-orders`'s) under the delay `(later-of j)` of the variables after form `j`.
+  A form with several minimal numberings multiplies the states."
+  [states forms number later-of]
+  (reduce (fn [ss j]
+            (into [] (distinct)
+                  (for [{:keys [order st] :as s} ss
+                        [r st'] (number st (nth forms j) (later-of j))]
+                    (assoc s :order (conj order r) :st st'))))
+          states
+          (range (count forms))))
+
 (defn- minimal-orders
   "Every ordering of the tie `groups` whose canonically-numbered literal vector is
   lexicographically minimal — the candidates the whole-rule tie-break then chooses
-  between.  `tail-forms` are the forms numbered after the generators (the held-back
-  literals, then the consequent); they decide which survivors still differ.
+  between, numbered on from `st0`.  `later` is the variables of the forms numbered
+  after the groups (the held-back literals, then the consequent); they decide which
+  survivors still differ.  `number` numbers one literal, `(fn [st form later-delay])`
+  returning every minimal `[numbered st']` (`naf-numberings`).
 
   This is prefix minimization, not enumeration.  The numbering of a prefix depends
   only on that prefix, and `cmp-literals` is lexicographic over the literal vector,
@@ -2097,38 +2104,110 @@
   `prune-by-tail`, which folds the consequent/exception into the search and keeps only
   the survivors whose projected tail is minimal each round — so the automorphic case
   stays O(k²) too rather than enumerating k!.  Every reduction is exact (see
-  `extend-minimally` and `prune-by-tail`), so the search has no cutoff.  `defs` are the
-  held-back literals and `proj-forms` the consequent then exception."
-  [groups tail-forms defs proj-forms]
-  (if (every? #(= 1 (count %)) groups)
-    ;; nothing tied: one ordering, numbered straight through.  This is the overwhelming
-    ;; majority of rules, and it must not pay for the search.
-    (let [[order st] (number-forms empty-numbering (map first groups))]
-      [{:order order :st st}])
-    ;; `after` / `eligible` are only consulted when a group ties, which a rule with any
-    ;; structure at all never does — so they are computed on demand
-    (let [after    (delay (suffix-vars groups tail-forms))
-          eligible (delay (pruneable-groups groups defs))]
-      (first
-       (reduce (fn [[states i] g]
-                 (let [relevant  (nth @after i)
-                       eligible? (nth @eligible i)
-                       ;; tag each incoming survivor with an origin, so `keep-min` breaks
-                       ;; the group's tie by the consequent only *within* one origin (the
-                       ;; survivors it is antecedent-equal to), never across the distinct
-                       ;; antecedents earlier groups already committed to
-                       init  (if eligible? (map-indexed #(assoc %2 :origin %1) states) states)
-                       prune (if eligible? #(prune-by-tail % proj-forms relevant) identity)
-                       ss (loop [ss (mapv #(assoc % :left (vec g)) init), k (count g)]
-                            (if (zero? k)
-                              ss
-                              ;; prune each round, not just after the group: an automorphic
-                              ;; group would reach k! survivors before the group finished
-                              (recur (prune (extend-minimally ss)) (dec k))))
-                       ss (mapv #(dissoc % :left :origin) ss)]
-                   [(if (next ss) (prune-survivors ss relevant) ss) (inc i)]))
-               [[{:order [] :st empty-numbering}] 0]
-               groups)))))
+  `extend-minimally` and `prune-by-tail`), so the search has no cutoff.  `outside` is
+  `pruneable-groups`'s and `proj-forms` the consequent."
+  [st0 groups later outside proj-forms number]
+  ;; `after` / `eligible` are only consulted when a group ties or a NAF literal is
+  ;; numbered, so they are computed on demand
+  (let [after (delay (suffix-vars groups later))]
+    (if (every? #(= 1 (count %)) groups)
+      ;; nothing tied: one ordering, numbered straight through.  This is the overwhelming
+      ;; majority of rules, and it must not pay for the search.
+      (number-each [{:order [] :st st0}] (mapv first groups) number #(delay (nth @after %)))
+      (let [eligible (delay (pruneable-groups groups outside))]
+        (first
+         (reduce (fn [[states i] g]
+                   (let [relevant  (nth @after i)
+                         eligible? (nth @eligible i)
+                         ;; tag each incoming survivor with an origin, so `keep-min` breaks
+                         ;; the group's tie by the consequent only *within* one origin (the
+                         ;; survivors it is antecedent-equal to), never across the distinct
+                         ;; antecedents earlier groups already committed to
+                         init  (if eligible? (map-indexed #(assoc %2 :origin %1) states) states)
+                         prune (if eligible? #(prune-by-tail % proj-forms relevant) identity)
+                         ss (loop [ss (mapv #(assoc % :left (vec g)) init), k (count g)]
+                              (if (zero? k)
+                                ss
+                                ;; prune each round, not just after the group: an automorphic
+                                ;; group would reach k! survivors before the group finished
+                                (recur (prune (extend-minimally ss number relevant)) (dec k))))
+                         ss (mapv #(dissoc % :left :origin) ss)]
+                     [(if (next ss) (prune-survivors ss relevant) ss) (inc i)]))
+                 [[{:order [] :st st0}] 0]
+                 groups))))))
+
+(defn- naf-numberings
+  "Every minimal numbering of `form` continuing `st`, as `[[numbered st'] …]`: one
+  numbered form, and one numbering per survivor that still differs on the variables
+  `later` (a delay) names.  An `unknown` or `thereExists` form's conjunction is ordered
+  by `minimal-orders` from `st`, so conjuncts `sort-naf-conjuncts` left tied are broken
+  by the rule's canonical numbering as the antecedents are; any other form takes
+  `number-form`.  A `thereExists` binder is a set: its variables are reserved the next
+  block of numbers and take them by first occurrence in the body, and the binder is
+  rendered in number order, a lone variable bare.  The conjuncts `held?` names are not
+  reordered: they follow the rest of their conjunction in the order `form` holds them."
+  ([st form later] (naf-numberings st form later (constantly false)))
+  ([st form later held?]
+   (cond
+     (unknown? form)
+     (for [[q st'] (naf-numberings st (second form) later held?)]
+       [(list unknown-functor q) st'])
+
+     (there-exists? form)
+     (let [b   (second form)
+           vs  (vec (distinct (if (sequential? b) b [b])))
+           n0  (long (:n st))
+           st1 (-> st
+                   (assoc :n (+ n0 (count vs)))
+                   (update :pool merge (zipmap vs (repeat n0)))
+                   (assoc-in [:free n0] (mapv #(intern-sym (symbol (str "?var" (+ n0 (long %)))))
+                                              (range (count vs)))))]
+       (for [[q st2] (naf-numberings st1 (nth form 2) later held?)
+             ;; a binder variable the body never names takes a name left in the block
+             :let [[bs st3] (number-forms st2 vs)
+                   bs       (sort cmp-term bs)]]
+         [(list there-exists-functor (if (next bs) (apply list bs) (first bs)) q)
+          (-> st3 (update :pool #(apply dissoc % vs)) (update :free dissoc n0))]))
+
+     (and (conjunction? form) (next form))
+     (let [number  #(naf-numberings %1 %2 %3 held?)
+           defs    (filterv held? (rest form))
+           dvars   (into #{} (mapcat form-vars) defs)
+           later'  (into @later dvars)
+           outside (into later' (keys (:m st)))
+           tails   (suffix-vars (mapv vector defs) @later)]
+       (for [{:keys [order st]} (-> (minimal-orders st (tie-groups (filterv (complement held?) (rest form)))
+                                                    later' outside [] number)
+                                    (number-each defs number #(delay (nth tails %))))]
+         [(apply list and-functor order) st]))
+
+     :else [(number-form st form)])))
+
+(defn canonical-exception
+  "An `exceptWhen` exception's conjuncts, already in the rule's canonical variables
+  `rule-vars`, in their stored form: sorted (`sort-conjuncts`), with every variable a
+  quantifier inside them binds numbered past the rule's own.  Two exceptions that differ
+  only in a binder's name are then one meta-sentex, as two rules that differ only in a
+  variable's name are one rule.
+
+  Each conjunct is numbered alone first, the conjunctions inside it ordered as a rule's
+  `unknown` antecedent's are (`sort-query-conjunctions`, `naf-numberings`), so the sort
+  reads structure rather than the author's binder names; then once more across the
+  sorted conjuncts, so two conjuncts' binders stay distinct names.  A deferred literal
+  inside a conjunct keeps its written place among the deferred literals of its
+  conjunction, after the generators: the forward join runs a deferred literal whose
+  inputs are not yet bound in that order, and an aggregate binds what a later test
+  reads."
+  [conjuncts rule-vars]
+  (let [base   {:n (count rule-vars) :m (zipmap rule-vars rule-vars) :vm {}}
+        alone  (fn [c] (reduce #(if (neg? (cmp-term %2 %1)) %2 %1)
+                               (map first (naf-numberings base
+                                                          (sort-query-conjunctions c deferred-literal?)
+                                                          (delay #{}) deferred-literal?))))
+        number (fn [n c] (number-form (assoc base :n n) c))]
+    (first (reduce (fn [[acc n] c] (let [[r st] (number n c)] [(conj acc r) (:n st)]))
+                   [[] (:n base)]
+                   (sort-conjuncts (map alone conjuncts))))))
 
 (defn- framed-pred
   "The predicate a literal is *about*, descending the `not` and `ist` frames: `r` for
@@ -2165,7 +2244,9 @@
   in.  Smallest is judged on the **whole** rule (`cmp-render`): antecedents first,
   then the consequent, because two orderings can agree on the antecedents and
   disagree on what the consequent says about them.  The search is `minimal-orders`,
-  which is exact and has no cutoff.
+  which is exact and has no cutoff.  A held-back `unknown` literal's conjunctions are
+  ordered by the same search, from the numbering the rule has reached
+  (`naf-numberings`).
 
   An `exceptWhen` exception is not part of the rule and takes no part here: it is a
   separate meta-sentex whose variables are aligned to this rule's `varmap` when the
@@ -2182,18 +2263,21 @@
         defs       (filterv held? all)
         ;; the generators are numbered by the search; the held-back literals, then the
         ;; consequent continue that same numbering
-        render     (fn [{:keys [order st]}]
-                     (let [[dlits st1] (number-forms st defs)
-                           [conseq' st2] (number-form st1 conseq0)]
-                       [(into order dlits) conseq' (:vm st2)]))
-        candidates (minimal-orders (tie-groups (vec (sort cmp-blind gens)))
-                                   (conj defs conseq0)
-                                   defs
-                                   [conseq0])]
-    (reduce (fn [best cand]
-              (let [r (render cand)]
-                (if (or (nil? best) (neg? (cmp-render r best))) r best)))
-            nil candidates)))
+        tail-vars  (delay (suffix-vars (mapv vector defs) (set (form-vars conseq0))))
+        render     (fn [cand]
+                     (for [{:keys [order st]} (number-each [cand] defs naf-numberings
+                                                           #(delay (nth @tail-vars %)))
+                           :let [[conseq' st'] (number-form st conseq0)]]
+                       [order conseq' (:vm st')]))
+        candidates (minimal-orders empty-numbering
+                                   (tie-groups (vec (sort cmp-blind gens)))
+                                   (into #{} (mapcat form-vars) (conj defs conseq0))
+                                   (into #{} (mapcat form-vars) defs)
+                                   [conseq0]
+                                   naf-numberings)]
+    (reduce (fn [best r]
+              (if (or (nil? best) (neg? (cmp-render r best))) r best))
+            nil (mapcat render candidates))))
 
 ;; ---- definitional collection relations -----------------------------------
 ;; `defnNecessary` / `defnSufficient` / `defnIff` tie a collection's membership to a
@@ -2298,11 +2382,8 @@
         ;; A surface `exceptWhen` wrapper (`_exc`) is stripped and dropped here: the
         ;; exception is not part of the rule and cannot be represented on the record.  The
         ;; assert layer splits it off first and stores it as a meta-sentex (`vaelii.core`),
-        ;; so a pure construction of a wrapped rule stores the bare rule alone.  NAF
-        ;; antecedents still must be closed and their `thereExists` quantifiers local
-        ;; before canonicalization — and a `forall` is desugared into the nested NAF it
-        ;; is before any of that runs, so the sugar exists at the entry point and nowhere past
-        ;; it (`desugar-forall-rule`).
+        ;; so a pure construction of a wrapped rule stores the bare rule alone.
+        ;; `check-naf-closed` reads the surface antecedents, after the `forall` desugar.
         (check-naf-closed antes0 conseq0 nil)
         (let [antes1 (desugar-there-exists antes0)      ; standalone thereExists -> body
               [antes conseq varmap]
@@ -2389,31 +2470,9 @@
   (second (peel-not (canon sentence))))
 
 (defn- ist-rule-problem
-  "The refusal an `(ist Ctx S)` in any rule position carries.
-
-  `ist` names the context a caller asserts a sentence into or asks it in, at the
-  `assert` and read entry points.  A rule is refused one in every position, and the
-  reason differs by position.
-
-  In antecedent or exception position the literal is indexed and matched under the
-  functor `ist` (`rules/antecedent-predicates`, `res/match-pattern`), which no sentex is
-  ever stored with, so it satisfies nothing and no arriving datum triggers it.  A
-  positive antecedent is never satisfied, so the rule cannot fire.  An `exceptWhen`
-  query never matches, so the guard never blocks the conclusion it was written to
-  block.  An `(unknown (ist …))` is satisfied by the same emptiness, so the rule fires
-  unconditionally.
-
-  In consequent position the frame would place the conclusion in `Ctx` whether or not
-  `Ctx` sees the rule or the facts the firing rests on.  `Ctx` would believe a sentex
-  whose support it cannot read.  The rule's `exceptWhen` query would run in `Ctx` and
-  miss the facts stated where the rule is.  The backward chainers read only the rules
-  the asking context sees, so they would not reproduce the conclusion.
-
-  The author wants `S` to be **visible** in some context, and two mechanisms state
-  that: `(decontextualized_predicate P)` takes every `(P ...)` into CxUniverse, which
-  every context below the joint sees, and a `genlCx` edge puts one context in another's
-  ancestor set.
-  Under either the literal is written plainly."
+  "The refusal message an `(ist Ctx S)` in the rule position `role` (`:antecedent`,
+  `:exception` or `:consequent`) carries
+  (docs/contexts.md#ist-find-or-create-in-a-context)."
   [role]
   (if (= :consequent role)
     (str "an (ist Ctx S) consequent places the conclusion in Ctx whether or not Ctx sees"
@@ -2422,6 +2481,10 @@
     (str "an (ist Ctx S) " (clojure.core/name role) " matches no stored sentex, so the"
          " rule never consults Ctx — make S visible with (decontextualized_predicate P)"
          " or a genlCx edge, and write S plainly")))
+
+(def ^:private negated-query-heads
+  "The query operators a condition may not negate (`connective-problems`)."
+  #{unknown-functor there-exists-functor forall-functor})
 
 (defn connective-problems
   "Structural problems with `sentence`'s connective frames, as strings (empty if OK) —
@@ -2453,6 +2516,11 @@
     store a sentence its own key cannot be computed from);
   * a top-level `and` — a conjunction is an antecedent or a query, never one
     assertable sentence; assert its conjuncts;
+  * a top-level `or`, or a `not` over one — nothing expands an `or` outside a rule
+    antecedent (docs/canonicalization.md), so either would store as one opaque literal;
+  * a `not` over `unknown`, `thereExists` or `forall` in an antecedent or an exception,
+    at any depth — no prover answers a negated query, so the condition never holds
+    (docs/naf.md);
   * a combination of `set/*` wrappers the record cannot hold — two directions, two head
     wrappers, or a choice or constraint head under a direction or `set/defaultRule`
     (`wrapper-stack-problems`)."
@@ -2520,6 +2588,19 @@
               [(str "not takes one sentence, got arity " (dec n))]
               (implies? (peek (peel-rule-wrapper (second form))))
               ["a rule cannot be negated; retract it, or state the exception the negation means"]
+              ;; below the top level `rules/disjunction-problems` names the rule rewrite
+              (and (= :sentence role) (disjunction? (second form)))
+              [(str "(not (or A B)) is \"neither A nor B\", a conjunction of negations"
+                    " rather than one assertable sentence; assert each negation as its own"
+                    " fact")]
+              ;; a top-level one is a fact, which `special/wff-problems` refuses
+              (and (contains? #{:antecedent :exception} role)
+                   (sequential? (second form))
+                   (contains? negated-query-heads (first (second form))))
+              [(str "(not (" (first (second form)) " …)) negates a query, and no prover"
+                    " answers it, so the condition never holds; write (unknown (forall …))"
+                    " or (unknown (thereExists …)) for the closed-world reading, and S for"
+                    " (not (unknown S))")]
               :else (operand role h (second form) false))
             (= h ist-functor)
             (cond
@@ -2531,6 +2612,12 @@
             (if (= :sentence role)
               ["a conjunction is not one assertable sentence; assert its conjuncts"]
               (vec (mapcat #(walk role %) (rest form))))
+            (and (= h or-functor) (= :sentence role))
+            [(str "a disjunction is not one assertable sentence: nothing decides which"
+                  " alternative holds, and belief is a label on a sentex rather than on a"
+                  " set of them.  As a rule antecedent an or expands to one rule per"
+                  " alternative; as a conclusion, offer the alternatives to a solve with"
+                  " set/assumptionRule (docs/solving.md)")]
             (= h rule-functor)
             (cond
               (not= 3 n)

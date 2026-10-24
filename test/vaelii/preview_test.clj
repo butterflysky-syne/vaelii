@@ -8,6 +8,7 @@
             [vaelii.core :as v]
             [vaelii.impl.checks :as checks]
             [vaelii.impl.clashes :as clashes]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.integrate :as integrate]
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.protocols :as p]
@@ -853,7 +854,7 @@
 (defn- stored-in? [kb s] (some->> (v/handle-of kb s 'CxUniverse) (v/in? kb)))
 
 (tu/deftest-kb a-preview-keeps-a-withheld-mint-owed-and-the-rollback-discards-the-debt
-  (binding [checks/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
+  (binding [argument/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
     (tu/with-terms [animal dog parentOf Fred Mary]
       (let [h      (withholding! kb animal dog parentOf Fred Mary [])
             before (content kb)
@@ -871,7 +872,7 @@
 (tu/deftest-kb a-deferred-preview-omits-the-clash-a-released-mint-enters
   ;; `(dog Fred)` and `(plant Fred)` stand as a dilemma, and `(animal Fred)` is withheld;
   ;; removing `(dog Fred)` releases the mint into a clash with `(plant Fred)`
-  (binding [checks/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
+  (binding [argument/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
     (tu/with-terms [animal plant dog parentOf Fred Mary]
       (let [h     (withholding! kb animal dog parentOf Fred Mary
                                 [(list 'genl plant 'thing) (list 'disjoint animal plant)
@@ -887,25 +888,28 @@
 
 ;; ---- 16. the refusal record's generations ----------------------------------
 
-;; `(arg wq 1 orphan)` waits on a type bound to two arguments.  The previewed edge moves
-;; the `genl` generation twice, and the next write is a fact no generation reads.
-(tu/deftest-kb a-rolled-back-preview-leaves-the-next-write-no-mint-refusal-to-re-ask
-  (binding [checks/*assertive-arg-types?* true]
+;; `(arg wq 1 orphan)` names a type bound to two arguments.  The previewed edge moves no
+;; type's own bindings, and the next write is a fact no binding reads.
+(tu/deftest-kb a-rolled-back-preview-reads-no-declaration-waiting-on-a-length
+  (binding [argument/*assertive-arg-types?* true]
     (tu/with-terms [wq orphan qtype ptype Wa Wb Zed Yan]
       (doseq [s [(list 'binary_predicate orphan) (list 'arg wq 1 orphan) (list wq Wa Wb)
                  (list 'genl ptype 'thing)]]
         (v/assert kb s 'CxUniverse))
-      (let [stale  #(count (special/mint-refusals kb (special/mint-generations kb)))
-            asks   (fn [batch]
-                     (let [n (atom 0) f special/release-mint!]
-                       (with-redefs [special/release-mint! (fn [& a] (swap! n inc) (apply f a))]
-                         (v/edit! kb batch))
+      (let [dh     (v/handle-of kb (list 'arg wq 1 orphan) 'CxUniverse)
+            sweeps (fn [f]
+                     (let [n (atom 0) real special/entail-existing]
+                       (with-redefs [special/entail-existing (fn [kb s h]
+                                                               (when (= dh h) (swap! n inc))
+                                                               (real kb s h))]
+                         (f))
                        @n))
-            alone  (asks {:add [[(list ptype Zed) 'CxUniverse]]})
-            before (content kb)]
-        (v/preview kb {:add [[(list 'genl qtype 'thing) 'CxUniverse]]})
-        (is (= [1 0 before] [(count (special/mint-refusals kb)) (stale) (content kb)]))
-        (is (= [0 0] [alone (asks {:add [[(list ptype Yan) 'CxUniverse]]})]))))))
+            alone  (sweeps #(v/edit! kb {:add [[(list ptype Zed) 'CxUniverse]]}))
+            before (content kb)
+            prev   (sweeps #(v/preview kb {:add [[(list 'genl qtype 'thing) 'CxUniverse]]}))]
+        (is (= [0 before] [prev (content kb)]))
+        (is (= [0 0] [alone (sweeps #(v/edit! kb {:add [[(list ptype Yan) 'CxUniverse]]}))]))
+        (is (nil? (get @(reasoning/refused kb) dh)) "the record holds nothing for it")))))
 
 ;; ---- the accepted option keys ---------------------------------------------
 

@@ -5,16 +5,14 @@
   the world model (`vaelii.ref.world`) against a KB.
 
   Every expected answer is the one the docs give for the per-context reading, not the one
-  the engine gives; the lattice of each world is written in a comment above it. The
-  definitional families belong to `vaelii.ref.nogoods`; the tests here that need a
-  disjointness clash pass `disjoint-double`, a test double that reads one declaration
-  shape and is not the spec of the family. The tests that need the covering, functional
-  or inherited family read `vaelii.ref.nogoods/families` and print a SKIP line when that
-  namespace is absent. A test asserting a maintainer decision names it as
-  docs/reference.md does, D1 to D17."
+  the engine gives; the lattice of each world is written in a comment above it. A test
+  that needs a disjointness clash passes `disjoint-double`, a test double that reads one
+  declaration shape; one that needs another family reads `vaelii.ref.nogoods/families`.
+  A comment's `DN` is decision N of docs/reference.md."
   (:require [clojure.test :refer [deftest is]]
             [vaelii.core :as v]
             [vaelii.ref.believe :as b]
+            [vaelii.ref.nogoods :as nogoods]
             [vaelii.ref.world :as w]
             [vaelii.test-util :as tu]))
 
@@ -281,9 +279,9 @@
            [(contains? (believed-at r 'CxA) '(rr Zed))
             (contains? (believed-at r 'CxB) '(rr Zed))]))))
 
-;; ---- the review scenarios (2026-09-28) --------------------------------------
+;; ---- defeats across rounds and contexts ---------------------------------------
 
-(deftest scenario-a-a-defeat-releases-an-unknown-rule-in-a-later-round
+(deftest a-defeat-releases-an-unknown-rule-in-a-later-round
   ;; CxA: (disjoint happy sad) (pp Zed) (sad Zed) :monotonic, (happy Zed) :default,
   ;;      a forward rule pp ∧ unknown(happy) ⇒ rr
   (let [v (b/view (world ['(disjoint happy sad) 'CxA :monotonic]
@@ -311,7 +309,7 @@
     (is (= [true false true false] (at 'CxA)) "CxA: the rival loses, and the denial loses to (ta Jay)")
     (is (= [true true false true] (at 'CxU)) "CxU: a dilemma, and the denial defeats (ta Jay)")))
 
-(deftest scenario-b-a-released-edge-leaves-no-clash-at-the-context-that-reads-the-release
+(deftest a-released-edge-leaves-no-clash-at-the-context-that-reads-the-release
   ;; CxB sees CxA and CxD. CxA: (genl chi dog) :default; CxD: (not (genl chi dog))
   ;; :monotonic; CxB: (chi Kit) :default, (cat Kit) :monotonic, (disjoint dog cat)
   (let [r (b/believe (world ['(genl chi dog) 'CxA :default]
@@ -329,7 +327,7 @@
             (get-in r ['CxB :out])]))
     (is (contains? (believed-at r 'CxA) '(genl chi dog)))))
 
-(deftest scenario-b-in-one-context-the-edge-is-decided-before-the-clash-read-through-it
+(deftest in-one-context-the-edge-is-decided-before-the-clash-read-through-it
   ;; CxA holds all five: (genl chi dog) :default, (not (genl chi dog)) :monotonic,
   ;; (chi Kit) :default, (cat Kit) :monotonic, (disjoint dog cat)
   (let [v (b/view (world ['(genl chi dog) 'CxA :default]
@@ -356,7 +354,7 @@
            [(contains? (believed-at r 'CxB) '(chi Kit))
             (contains? (believed-at r 'CxC) '(chi Kit))]))))
 
-(deftest scenario-c-a-context-seeing-the-separation-decides-where-the-joint-view-does-not
+(deftest a-context-seeing-the-separation-decides-where-the-joint-view-does-not
   ;; CxW sees CxA and CxB; CxH sees CxDecl; CxZ sees CxW and CxH.
   ;; CxA: (a_t Pip) :monotonic; CxB: (b_t Pip) :default; CxDecl: (disjoint a_t b_t)
   (let [r (b/believe (world ['(a_t Pip) 'CxA :monotonic]
@@ -376,72 +374,62 @@
            [(contains? (believed-at r 'CxW) '(a_t Pip))
             (contains? (believed-at r 'CxW) '(b_t Pip))]))))
 
-(def ^:private reference-families
-  "`vaelii.ref.nogoods/families` when that namespace loads, nil otherwise."
-  (delay (try @(requiring-resolve 'vaelii.ref.nogoods/families)
-              (catch Exception _ nil))))
-
-(deftest scenario-d-a-cover-refuted-through-a-supertype-denial-takes-the-whole-out
+(deftest a-cover-refuted-through-a-supertype-denial-takes-the-whole-out
   ;; CxA: (genl p1 w) (genl p2 w) (genl p1 q) (covering w p1 p2) :monotonic,
   ;;      (w X) :default, (not (q X)) (not (p2 X)) :monotonic
-  (tu/with-requirement @reference-families "vaelii.ref.nogoods/families is not loadable"
-    (let [v (b/view (world ['(genl p1 w) 'CxA :monotonic]
-                           ['(genl p2 w) 'CxA :monotonic]
-                           ['(genl p1 q) 'CxA :monotonic]
-                           ['(covering w p1 p2) 'CxA :monotonic]
-                           ['(w X) 'CxA :default]
-                           ['(not (q X)) 'CxA :monotonic]
-                           ['(not (p2 X)) 'CxA :monotonic])
-                    'CxA @reference-families)]
-      (is (not (contains? (:believed v) '(w X)))))))
+  (let [v (b/view (world ['(genl p1 w) 'CxA :monotonic]
+                         ['(genl p2 w) 'CxA :monotonic]
+                         ['(genl p1 q) 'CxA :monotonic]
+                         ['(covering w p1 p2) 'CxA :monotonic]
+                         ['(w X) 'CxA :default]
+                         ['(not (q X)) 'CxA :monotonic]
+                         ['(not (p2 X)) 'CxA :monotonic])
+                  'CxA nogoods/families)]
+    (is (not (contains? (:believed v) '(w X))))))
 
-(deftest scenario-e-an-own-denial-under-a-vantage-claim-is-out-with-and-without-a-second-path
+(deftest an-own-denial-under-a-vantage-claim-is-out-with-and-without-a-second-path
   ;; CxLeft sees CxU. CxU :monotonic: (transitiveInArgInverse pP 1 genl) (genl hauler animal)
   ;; (genl vehicle animal); CxU :default: (genl cart hauler) (not (pP cart Bone1));
   ;; CxLeft :monotonic: (genl cart vehicle) (pP vehicle Bone1). The second world adds
   ;; (pP hauler Bone1) :monotonic in CxU.
-  (tu/with-requirement @reference-families "vaelii.ref.nogoods/families is not loadable"
-    (let [base  [['(transitiveInArgInverse pP 1 genl) 'CxU :monotonic]
-                 ['(genl hauler animal) 'CxU :monotonic]
-                 ['(genl vehicle animal) 'CxU :monotonic]
-                 ['(genl cart hauler) 'CxU :default]
-                 ['(not (pP cart Bone1)) 'CxU :default]
-                 ['(genl cart vehicle) 'CxLeft :monotonic]
-                 ['(pP vehicle Bone1) 'CxLeft :monotonic]
-                 ['(genlCx CxLeft CxU) 'CxUniverse :monotonic]]
-          at    (fn [triples]
-                  (contains? (:believed (b/view (apply world triples) 'CxLeft
-                                                @reference-families))
-                             '(not (pP cart Bone1))))]
-      (is (= [false false]
-             [(at base) (at (conj base ['(pP hauler Bone1) 'CxU :monotonic]))])))))
+  (let [base  [['(transitiveInArgInverse pP 1 genl) 'CxU :monotonic]
+               ['(genl hauler animal) 'CxU :monotonic]
+               ['(genl vehicle animal) 'CxU :monotonic]
+               ['(genl cart hauler) 'CxU :default]
+               ['(not (pP cart Bone1)) 'CxU :default]
+               ['(genl cart vehicle) 'CxLeft :monotonic]
+               ['(pP vehicle Bone1) 'CxLeft :monotonic]
+               ['(genlCx CxLeft CxU) 'CxUniverse :monotonic]]
+        at    (fn [triples]
+                (contains? (:believed (b/view (apply world triples) 'CxLeft nogoods/families))
+                           '(not (pP cart Bone1))))]
+    (is (= [false false]
+           [(at base) (at (conj base ['(pP hauler Bone1) 'CxU :monotonic]))]))))
 
 ;; ---- the rounds (D2) -------------------------------------------------------
 
-(deftest a-guarded-conclusion-a-defeat-releases-ties-with-a-default-edge-instead-of-defeating-it
+(deftest a-guarded-conclusion-a-defeat-releases-undercuts-a-reading-through-a-default-edge
   ;; D2 and D14. CxA: (genl chi dog) (chi Kit) :default; (disjoint dog cat) (cat Kit)
   ;; (pp Kit) (transitiveInArgInverse pP 1 genl) (pP dog Bone) :monotonic; a forward rule
   ;; pp ∧ unknown(chi) ⇒ ¬(pP chi Bone). Round 1 takes (chi Kit) OUT and the rule fires.
-  ;; The conclusion is :default (D14), so round 2's inherited nogood ties it with the
-  ;; :default edge. Before D14 the conclusion was :monotonic, round 2 took the edge OUT,
-  ;; and a from-scratch re-decision alternated between the two states.
-  (tu/with-requirement @reference-families "vaelii.ref.nogoods/families is not loadable"
-    (let [v (b/view (world ['(genl chi dog) 'CxA :default]
-                           ['(chi Kit) 'CxA :default]
-                           ['(disjoint dog cat) 'CxA :monotonic]
-                           ['(cat Kit) 'CxA :monotonic]
-                           ['(pp Kit) 'CxA :monotonic]
-                           ['(transitiveInArgInverse pP 1 genl) 'CxA :monotonic]
-                           ['(pP dog Bone) 'CxA :monotonic]
-                           ['(set/forwardRule (implies (and (pp ?x) (unknown (chi ?x)))
-                                                       (not (pP chi Bone)))) 'CxA])
-                    'CxA @reference-families)]
-      (is (= ['#{(chi Kit)} true false #{:dilemma}]
-             [(:out v) (contains? (:believed v) '(not (pP chi Bone)))
-              (contains? (:believed v) '(pP chi Bone))
-              (into #{} (comp (filter #(= :inherited (:kind %))) (map :verdict)) (:nogoods v))])))))
+  ;; The reading of (pP chi Bone) rests on the :default edge, so the conclusion undercuts
+  ;; it and round 2 forms no inherited nogood (docs/reference.md, item 6).
+  (let [v (b/view (world ['(genl chi dog) 'CxA :default]
+                         ['(chi Kit) 'CxA :default]
+                         ['(disjoint dog cat) 'CxA :monotonic]
+                         ['(cat Kit) 'CxA :monotonic]
+                         ['(pp Kit) 'CxA :monotonic]
+                         ['(transitiveInArgInverse pP 1 genl) 'CxA :monotonic]
+                         ['(pP dog Bone) 'CxA :monotonic]
+                         ['(set/forwardRule (implies (and (pp ?x) (unknown (chi ?x)))
+                                                     (not (pP chi Bone)))) 'CxA])
+                  'CxA nogoods/families)]
+    (is (= ['#{(chi Kit)} true false #{}]
+           [(:out v) (contains? (:believed v) '(not (pP chi Bone)))
+            (contains? (:believed v) '(pP chi Bone))
+            (into #{} (comp (filter #(= :inherited (:kind %))) (map :verdict)) (:nogoods v))]))))
 
-;; ---- the forced-monotonic set (D7) ---------------------------------------
+;; ---- the forced-monotonic set -----------------------------------------------
 
 (deftest a-forced-monotonic-member-keeps-its-strength-and-its-denial-loses-to-it
   ;; D7, D10, D11: each mark, declaration and predicate genl edge written :default keeps
@@ -471,23 +459,22 @@
         "a transitiveInArgInverse over a relation other than genl")))
 
 (deftest a-mark-reaches-a-sub-predicate-over-a-predicate-edge-written-default
-  ;; D7, D10. CxA: (functional ageOf) (ageAtDeath Bob 5) :monotonic; (genl ageAtDeath
+  ;; D10. CxA: (functional ageOf) (ageAtDeath Bob 5) :monotonic; (genl ageAtDeath
   ;; ageOf) and (ageOf Bob 6) written :default. The edge keeps its strength and carries
   ;; the mark, so (ageOf Bob 6) is the unique weakest member. A denial of the edge loses
   ;; to it and leaves the verdict as it is.
-  (tu/with-requirement @reference-families "vaelii.ref.nogoods/families is not loadable"
-    (let [base  [['(functional ageOf) 'CxA :monotonic]
-                 ['(ageAtDeath Bob 5) 'CxA :monotonic]
-                 ['(genl ageAtDeath ageOf) 'CxA :default]
-                 ['(ageOf Bob 6) 'CxA :default]]
-          reach (b/view (apply world base) 'CxA @reference-families)]
-      (is (= [:monotonic :default #{'(ageOf Bob 6)} true]
-             [((:class reach) '(functional ageOf)) ((:class reach) '(genl ageAtDeath ageOf))
-              (:out reach) (contains? (:believed reach) '(ageAtDeath Bob 5))]))
-      (is (= [(conj (:out reach) '(not (genl ageAtDeath ageOf))) (:believed reach)]
-             ((juxt :out :believed)
-              (b/view (apply world (conj base ['(not (genl ageAtDeath ageOf)) 'CxA :monotonic]))
-                      'CxA @reference-families)))))))
+  (let [base  [['(functional ageOf) 'CxA :monotonic]
+               ['(ageAtDeath Bob 5) 'CxA :monotonic]
+               ['(genl ageAtDeath ageOf) 'CxA :default]
+               ['(ageOf Bob 6) 'CxA :default]]
+        reach (b/view (apply world base) 'CxA nogoods/families)]
+    (is (= [:monotonic :default #{'(ageOf Bob 6)} true]
+           [((:class reach) '(functional ageOf)) ((:class reach) '(genl ageAtDeath ageOf))
+            (:out reach) (contains? (:believed reach) '(ageAtDeath Bob 5))]))
+    (is (= [(conj (:out reach) '(not (genl ageAtDeath ageOf))) (:believed reach)]
+           ((juxt :out :believed)
+            (b/view (apply world (conj base ['(not (genl ageAtDeath ageOf)) 'CxA :monotonic]))
+                    'CxA nogoods/families))))))
 
 ;; ---- inherited claims (D5) --------------------------------------------------
 
@@ -539,12 +526,11 @@
 (deftest a-weaker-denial-loses-to-a-monotonic-reading-through-the-inherited-family
   ;; D5. CxA: the carrier, (genl cart hauler) :monotonic, (not (carriesLoad cart Bone1))
   ;; :default
-  (tu/with-requirement @reference-families "vaelii.ref.nogoods/families is not loadable"
-    (let [triples (conj carrier ['(genl cart hauler) 'CxA :monotonic]
-                        ['(not (carriesLoad cart Bone1)) 'CxA :default])]
-      (is (= [[true :monotonic true] '#{(not (carriesLoad cart Bone1))}]
-             [(claim-at triples @reference-families)
-              (:out (b/view (apply world triples) 'CxA @reference-families))])))))
+  (let [triples (conj carrier ['(genl cart hauler) 'CxA :monotonic]
+                      ['(not (carriesLoad cart Bone1)) 'CxA :default])]
+    (is (= [[true :monotonic true] '#{(not (carriesLoad cart Bone1))}]
+           [(claim-at triples nogoods/families)
+            (:out (b/view (apply world triples) 'CxA nogoods/families))]))))
 
 (deftest a-stored-claim-is-not-marked-inherited
   ;; CxA: the carrier, (genl cart hauler) :monotonic, and (carriesLoad cart Bone1)
@@ -583,7 +569,7 @@
     (for [x xs, more (permutations (remove #{x} xs))] (cons x more))))
 
 (deftest the-reference-reads-no-write-order
-  ;; scenario (b)'s seven writes, in every seventh of their 5040 orders
+  ;; the released-edge world's seven writes, in every seventh of their 5040 orders
   (let [writes  (:writes (world ['(genl chi dog) 'CxA :default]
                                 ['(not (genl chi dog)) 'CxD :monotonic]
                                 ['(chi Kit) 'CxB :default]

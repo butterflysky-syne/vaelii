@@ -134,7 +134,7 @@
     :var    (list 'variable_arity (ps (:p op)))
     :member (list (ks (:k op)) (ps (:p op)))
     :route  (list 'genl (ks (:k op)) (:c op))
-    :engine (list 'arity (:t op) (:n op))))
+    :engine (list (ks (:k op)) (:t op))))
 
 (defn- length-build!
   "Assert `world` into `kb` in order, over fresh terms, and answer `{:ps :ks :ctx :hs}`,
@@ -289,8 +289,14 @@
       (is (= [] (take 3 after)) (str ncx " contexts")))))
 
 (deftest an-engine-term-s-length-is-its-shape-whatever-the-kb-binds
-  (doseq [world [[{:op :engine :t 'genl :n 3 :cx 0 :st :default}] []]]
-    (is (= [] (:ds (length-run (java.util.Random. 1) world '[genl arity]))))))
+  ;; `assert` refuses `(arity genl 3)` (`:length-against-shape`), so the binding arrives
+  ;; as `(ternary_predicate genl)` the settle stores off a `:monotonic` metatype route
+  (doseq [world [[{:op :engine :t 'genl :k 0 :cx 0 :st :monotonic}
+                  {:op :route :k 0 :c 'ternary_predicate :cx 0 :st :monotonic}]
+                 []]]
+    (let [{:keys [ds stored]} (length-run (java.util.Random. 1) world '[genl arity])]
+      (is (= [] ds))
+      (is (= (set world) stored) "every op is stored"))))
 
 ;; ---- the inert tuples and the pairs against their definition ----------------------
 

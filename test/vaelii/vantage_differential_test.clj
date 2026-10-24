@@ -1,29 +1,14 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.vantage-differential-test
-  "**The two `CxInference` strategies must answer alike, or one of them is wrong.**
-
-  `:fan` asks every reader the ordinary scoped question and is sound by construction —
-  whatever it returns, a real vantage really said. `:post-hoc` asks once unscoped and
-  reconstructs where the answer could be read from, which is faster and is the one that can
-  be wrong: it sees a KB with no context filter, no `except` filter and no retired-spelling
-  filter, and has to put all three back by reasoning about the *placement* instead of the
-  read. Every hand-written case in `query_context_test` is one way it got that wrong.
-
-  Three hand-written cases prove three points. This proves the property, over generated
-  lattices: random contexts, random `genlCx` edges between them, facts scattered across
-  them, and the three complications that make the two strategies come apart — a `genl`
-  edge in one context that lets a fact in another answer a goal, a visibility `except`, and
-  an equality merge. Goals are single literals and two-literal joins, since the joint
-  reading only bites where a join does.
-
-  Deterministic: one seed, printed with any failure, so a red run reproduces exactly.
-  This is `matches_hierarchical_test`'s shape — an oracle and a faster path that must not
-  disagree — applied a layer up.
-
-  **A generated world that answers nothing proves nothing**, so the run asserts that the
-  goals found real answers overall; a generator that drifted into producing empty KBs
-  would otherwise report green forever."
+  "The `:fan` and `:post-hoc` strategies return the same answers and witnesses over
+  generated lattices holding the three filters post-hoc restores at the placement: a `genl`
+  edge in one context that lets a fact in another answer, an `except`, and an equality
+  merge (docs/contexts.md).  Every other world is constraint-only, so a membership the
+  argument-type prover infers is stored nowhere and post-hoc places it by its usage and
+  declaration.  One seed, printed with any failure.  The run also asserts that
+  the goals found answers and that post-hoc ran on most of them, so a generator or a domain
+  that narrowed to nothing fails."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
             [vaelii.impl.vantage :as vantage]
@@ -58,29 +43,30 @@
       (v/assert kb (list (preds (rint r 2)) (inds (rint r 3)) (inds (rint r 3)))
                 (ctxs (rint r nctx))))
     ;; a type membership plus a genl edge, usually in a different context — the
-    ;; subsumption ingredient
+    ;; subsumption ingredient — and sometimes the same edge stated in a second context,
+    ;; which gives a placement two routes
     (v/assert kb (list (types 0) (inds (rint r 3))) (ctxs (rint r nctx)))
     (v/assert kb (list 'genl (types 0) (types 1)) (ctxs (rint r nctx)))
-    ;; An argument-type declaration, sometimes.  Its point is not the declaration but what
-    ;; it does to the *domain check*: `ArgTypeProver` applies only when its argument is an
-    ;; individual, so a type literal is fact-only as written and stops being fact-only once
-    ;; a join binds it.  Without one of these in the world, no generated goal can leave
-    ;; post-hoc's domain halfway through, and the re-ask on the substituted literal is
-    ;; never exercised.
+    (when (zero? (rint r 2))
+      (v/assert kb (list 'genl (types 0) (types 1)) (ctxs (rint r nctx))))
+    ;; an argument-type declaration, sometimes: `ArgTypeProver` applies only to an
+    ;; individual, so a type literal reaches it once a join binds it
     (when (zero? (rint r 2))
       (v/assert kb (list 'arg (preds 0) 1 (types 0)) (ctxs (rint r nctx))))
+    ;; a context no edge wires, sometimes, holding a usage and a declaration of its own:
+    ;; it is a reader only of what it holds
+    (when (zero? (rint r 2))
+      (v/assert kb (list (preds 1) (inds 2) (inds 0)) 'CxGLone)
+      (v/assert kb (list 'arg (preds 1) 1 (types 1)) 'CxGLone))
     ;; an except on one stored fact, sometimes
     (when (zero? (rint r 3))
       (when-let [h (:id (first (v/sort-by-content (juxt :sentence :context)
                                                   (v/sentexes-matching kb (list (preds 0) '?a '?b)
                                                                        '?ctx))))]
         (v/assert kb (list 'except (list 'sentexHandle h)) (ctxs (rint r nctx)))))
-    ;; An equality merge, sometimes — and *deliberately shaped*, because the structure that
-    ;; makes the two strategies disagree is narrow and a uniform random draw does not find
-    ;; it.  Supersession is per reader, so the divergence needs a fact stated ABOVE a merge
-    ;; (stated earlier, so it is not rewritten on the way in) and a placement dragged to or
-    ;; below the merge by a second ingredient — only then does the reader see both the fact
-    ;; and its twin and retire one spelling that an unscoped pass keeps.
+    ;; an equality merge, sometimes, shaped because a uniform draw does not find the
+    ;; shape: a fact stated above the merge before it, and a second ingredient that drags
+    ;; the placement to or below the merge, where the reader sees the fact and its twin
     (when (zero? (rint r 3))
       (let [up  (ctxs 0)
             low (ctxs (max 1 (rint r nctx)))]
@@ -91,28 +77,24 @@
     (into [(list (types 1) '?x)
            (list (preds 0) '?a '?b)
            (list (preds 1) '?a '?b)
-           ;; **A goal naming the merged spelling.**  Equality rewrites a goal by the merges
-           ;; *its reader* sees, and post-hoc matches one rewritten globally — so a reader
-           ;; above the merge is one that could not have asked this question at all.  Every
-           ;; other goal here spells a term no `sameAs` touches, which is why the divergence
-           ;; hid: the shape needs the merged name in the goal, not only in the store.
+           ;; a goal naming the merged spelling, which a reader above the merge asks as
+           ;; written
            (list (preds 1) (inds 1) '?y)
            (list (preds 0) '?a (inds 0))
-           ;; Two goals the stored-fact prover is NOT alone on, so the domain check is
-           ;; exercised rather than assumed: `genl` walks the cached closure (a two-hop
-           ;; answer is in no stored sentex), and a ground membership reaches the argument
-           ;; -type prover.  Both must come back through the fan.
+           ;; `genl` walks the cached closure, outside post-hoc's domain, and a ground
+           ;; membership reaches the argument-type prover, inside it
            (list 'genl (types 0) '?x)
-           (list (types 1) (inds 0))]
+           (list (types 1) (inds 0))
+           (list (types 1) (inds 2))
+           (list (types 0) (inds 1))]
           [[(list (preds 0) '?a '?b) (list (preds 1) '?b '?c)]
            [(list (preds 0) '?a '?b) (list (types 1) '?a)]
            [(list (types 1) '?x) (list (preds 1) '?x '?y)]
            ;; no shared variable on purpose: the join exists to force a placement that
            ;; sees both ingredients, which is what puts the reader below the merge
            [(list (preds 1) '?a '?b) (list (preds 0) '?c '?d)]
-           ;; **Three literals.**  The bail fires at the second stage at the earliest, so
-           ;; only a third literal reduces over what the bail handed back — the one shape
-           ;; that turned an abandoned join into a thrown exception rather than a fan.
+           ;; three literals: the bail fires at the second stage at the earliest, so only a
+           ;; third literal reduces over what it handed back
            [(list (preds 0) '?a '?b) (list (preds 1) '?b '?c) (list (types 1) '?a)]
            [(list (types 1) '?x) (list (preds 0) '?x '?y) (list (preds 1) '?y '?z)]])))
 
@@ -124,58 +106,72 @@
         ran      (atom 0)
         skipped  (atom 0)]
     (dotimes [w n]
-      (let [kb (tu/isolated-fresh)]
+      (let [kb (tu/isolated-fresh)
+            in-reading (if (odd? w) #(tu/without-entailing (%)) #(%))]
         (tu/load-starter! kb)
-        (let [goals (build-world! kb r)]
-          (doseq [goal goals
-                  ;; **both spellings of the joint reading**, since they attach the witness
-                  ;; differently — `CxInference` beside the bindings under `:context`, a
-                  ;; variable unified into itself — and the variable is the one every short
-                  ;; arity takes, so it is the path most reads go down.
-                  ctx  ['CxInference '?home]
-                  ;; **Both sides of the bail.**  At 20 a generated world never outgrows its
-                  ;; budget, so the abandoned path — and the sentinel's trip back out
-                  ;; through three reduces — went untested by construction.  At 1 nearly
-                  ;; every join abandons, and the fan has to answer the same thing.
-                  rpr  [20 1]]
-            (let [fan  (set (binding [vantage/*strategy* :fan
-                                      vantage/*rows-per-reader* rpr]
-                              (v/query kb goal ctx)))
-                  post (set (binding [vantage/*strategy* :post-hoc
-                                      vantage/*rows-per-reader* rpr]
-                              (v/query kb goal ctx)))]
-              (swap! answered + (count fan))
-              (swap! (if (vantage/placeable? kb (if (vector? goal) goal [goal])) ran skipped) inc)
-              (is (= fan post)
-                  (str "world " w " (seed " seed "), goal " (pr-str goal) " at " ctx
-                       ", rows-per-reader " rpr
-                       "\n  fan only:      " (pr-str (sort-by str (remove post fan)))
-                       "\n  post-hoc only: " (pr-str (sort-by str (remove fan post))))))))))
+        (in-reading
+         (fn []
+           (doseq [goal (build-world! kb r)
+                   ;; both spellings of the joint reading, which attach the witness differently
+                   ctx  ['CxInference '?home]
+                   ;; both sides of the bail: at 20 a generated world never outgrows its
+                   ;; budget, and at 1 nearly every join abandons
+                   rpr  [20 1]]
+             (let [fan  (set (binding [vantage/*strategy* :fan
+                                       vantage/*rows-per-reader* rpr]
+                               (v/query kb goal ctx)))
+                   post (set (binding [vantage/*strategy* :post-hoc
+                                       vantage/*rows-per-reader* rpr]
+                               (v/query kb goal ctx)))]
+               (swap! answered + (count fan))
+               (swap! (if (vantage/placeable? kb (if (vector? goal) goal [goal])) ran skipped) inc)
+               (is (= fan post)
+                   (str "world " w " (seed " seed "), goal " (pr-str goal) " at " ctx
+                        ", rows-per-reader " rpr
+                        "\n  fan only:      " (pr-str (sort-by str (remove post fan)))
+                        "\n  post-hoc only: " (pr-str (sort-by str (remove fan post)))))))))))
     (testing "the generator produced worlds that actually answer"
       (is (< 20 @answered)
           (str "only " @answered " answers over " n
                " worlds — a generator drifted into empty KBs agrees with itself trivially")))
     (testing "and post-hoc actually ran on most of them"
-      ;; The failure this guards is a comparison that proves nothing.  `placeable?` hands
-      ;; a goal it cannot place back to the fan, so a domain that quietly narrowed to
-      ;; nothing would make every row above compare the fan with itself — green forever,
-      ;; and testing no second implementation at all.
       (is (< @skipped @ran)
           (str "post-hoc ran on " @ran " goals and was skipped on " @skipped
                " — the comparison is mostly the fan against itself")))))
 
 (deftest fan-and-post-hoc-agree-over-generated-lattices
-  ;; four worlds at :default, 192 answers from them; `…-over-many-generated-lattices`
-  ;; runs all of `worlds`
+  ;; four worlds at :default; `…-over-many-generated-lattices` runs all of `worlds`
   (lattices-agree 4))
 
 (deftest ^:slow fan-and-post-hoc-agree-over-many-generated-lattices
   (lattices-agree worlds))
 
+(deftest post-hoc-places-a-covered-route-where-an-except-hides-the-covering-edge
+  ;; `(genl ta tb)` in CxG and again in CxS below it, `(ta Fido)` in CxR below CxS.  The
+  ;; CxG edge's route covers the CxS edge's, and CxR excepts the CxG edge, so CxR reads
+  ;; `(tb Fido)` through the CxS edge alone.  The control excepts the CxS edge instead.
+  (let [kb (tu/isolated-fresh)]
+    (tu/load-starter! kb)
+    (doseq [hide [:general :specific] open? [false true]]
+      (tu/with-terms [CxG CxS CxR ta tb Fido]
+        (v/assert kb (list 'genlCx CxG 'CxUniverse) 'CxUniverse)
+        (v/assert kb (list 'genlCx CxS CxG) 'CxUniverse)
+        (v/assert kb (list 'genlCx CxR CxS) 'CxUniverse)
+        (let [hg   (v/assert kb (list 'genl ta tb) CxG)
+              hs   (v/assert kb (list 'genl ta tb) CxS)
+              goal (list tb (if open? '?x Fido))
+              run  (fn [s] (binding [vantage/*strategy* s]
+                             (vantage/answers kb [goal] #(v/query kb goal %) {})))]
+          (v/assert kb (list ta Fido) CxR)
+          (v/assert kb (list 'except (list 'sentexHandle (if (= :general hide) hg hs))) CxR)
+          (let [fan (run :fan) post (run :post-hoc)]
+            (is (= :post-hoc (:strategy post)) (pr-str hide goal))
+            (is (= #{CxR}
+                   (set (map vantage/witness-key (:answers fan)))
+                   (set (map vantage/witness-key (:answers post))))
+                (pr-str hide goal))))))))
+
 (deftest post-hoc-hands-a-rule-expanding-read-back-to-the-fan
-  ;; The domain boundary, asserted rather than assumed.  An antecedent fact is not one of
-  ;; `goals`, so its context never reaches a placement — post-hoc cannot answer a read that
-  ;; expands rules, and `answers` says so rather than answering wrongly.
   (let [kb (tu/isolated-fresh)]
     (tu/load-starter! kb)
     (v/assert kb '(genlCx CxRA CxUniverse) 'CxUniverse)

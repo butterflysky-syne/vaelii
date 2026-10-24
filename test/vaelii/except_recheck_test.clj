@@ -44,9 +44,8 @@
   ;; both readings large.
   (doseq [[label rule! firing! trigger]
           [["placed firings" excepted-rule! probe! 'skip_x]
-           ;; the exception fact first, so each firing is refused and recorded
-           ;; (docs/exceptions.md, \"A refused firing is remembered as bindings\")
-           ["refused firings" excepted-rule!
+           ;; the exception fact first, so each firing is placed with a guard defeat
+           ["guarded firings" excepted-rule!
             (fn [kb i] (v/assert kb (list 'skip_x (symbol (str "PX" i))) ctx) (probe! kb i))
             'skip_x]
            ;; narrowed through its query frame, as the index keys it
@@ -78,7 +77,7 @@
   (testing "settling a pass that blocks re-derives what it released, not the rule's
             whole extent"
     ;; A second rule derives the exception for every individual, so every firing is
-    ;; blocked and swept and no pass releases anything.
+    ;; placed with a guard defeat and no pass releases anything.
     (let [cost (fn [n]
                  (tu/with-cleared-kb [kb tu/isolated-fresh]
                    (excepted-rule! kb)
@@ -124,7 +123,7 @@
           "a penguin is not yet flightless: no edge relates the types")
       (v/assert kb '(genl xpenguin xflightless) ctx)
       (is (empty? (v/sentexes-matching kb '(xflies Tweety) '?ctx))
-          "the edge makes the exception hold, and the conclusion is swept"))))
+          "the edge makes the exception hold, and the conclusion is defeated"))))
 
 (deftest a-genlCx-edge-rechecks-only-the-exceptions-in-its-ancestor-set
   (testing "a genlCx edge outside every excepted rule's placement ancestor set re-checks
@@ -154,26 +153,25 @@
           (str "an out-of-ancestor-set genlCx edge re-checked exceptions instead of "
                "narrowing to its ancestor set: " few " (5 rules) / " many " (20 rules)")))))
 
-(deftest a-released-exception-is-still-re-derived
+(deftest a-released-exception-revives-the-conclusion
   (testing "retracting what the exception rested on brings the conclusion back"
-    ;; Revival under `exceptWhen` is a re-derivation, not a relabel: the conclusion was
-    ;; swept.
+    ;; The retraction takes the guard defeat OUT inside retract!'s settle.
     (tu/with-cleared-kb [kb tu/isolated-fresh]
       (excepted-rule! kb)
       (v/assert kb '(probe_x PX0) ctx)
       (is (seq (v/sentexes-matching kb '(seen_x PX0) '?ctx)) "concluded while unexcepted")
       (let [h (v/assert kb '(skip_x PX0) ctx)]
-        (is (empty? (v/sentexes-matching kb '(seen_x PX0) '?ctx)) "blocked and swept")
+        (is (empty? (v/sentexes-matching kb '(seen_x PX0) '?ctx)) "blocked")
         (v/retract! kb h)
         (is (seq (v/sentexes-matching kb '(seen_x PX0) '?ctx))
-            "the released exception is re-derived by the time retract! returns")))))
+            "the released conclusion is believed by the time retract! returns")))))
 
 ;; ---- the choke points: every mutation path posts the re-check -----------
 ;;
 ;; Every path that stores or removes a sentex posts to the re-check queue through
 ;; `integrate/sentex-added` / `sentex-removed!` or `special`'s derivation-path twin.
 ;; One test per path: a derived arrival, a derived departure through `retract!`'s
-;; teardown, and a departure through the exception sweep inside `settle`.
+;; teardown, and a guard defeat a `settle` places on the exception fact.
 
 (deftest a-derived-fact-triggers-the-re-check
   (testing "an exception satisfied only by inference still blocks: the derived fact
@@ -188,11 +186,11 @@
       (v/assert kb '(mark_x PX0) ctx)          ; skip_x PX0 arrives by derivation only
       (is (seq (v/sentexes-matching kb '(skip_x PX0) '?ctx)) "the exception fact was derived")
       (is (empty? (v/sentexes-matching kb '(seen_x PX0) '?ctx))
-          "the derived exception blocked the rule and its conclusion was swept"))))
+          "the derived exception blocked the rule and its conclusion was defeated"))))
 
 (deftest a-retraction-triggers-the-re-check
   (testing "a fact leaving through retract!'s teardown is a re-check trigger: the
-            swept derived exception releases the rule"
+            removed derived exception releases the rule"
     ;; The exception fact is itself derived, so retracting its premise removes it
     ;; through retract!'s removal loop — the removal choke point.  Without the
     ;; posting there, nothing re-chains the released rule and seen_x never appears.
@@ -207,13 +205,13 @@
         (is (seq (v/sentexes-matching kb '(seen_x PX0) '?ctx))
             "the exception's departure re-chained the rule by the time retract! returned")))))
 
-(deftest a-sweep-triggers-the-re-check
-  (testing "a conclusion deleted by the exception sweep is itself a trigger: its
-            departure releases the rule it was blocking"
+(deftest a-defeated-exception-fact-triggers-the-re-check
+  (testing "a guard defeat placed on a derived exception fact is itself a trigger: it
+            releases the rule the fact was blocking"
     ;; Two excepted rules in a chain: probe_x ⇒ skip_x (except lift_x) and
-    ;; probe_x ⇒ seen_x (except skip_x).  Lifting the first sweeps skip_x *inside
-    ;; settle*, and that deletion — the sweep's own teardown, not an assert or a
-    ;; retract — must release the second rule within the same fixpoint.
+    ;; probe_x ⇒ seen_x (except skip_x).  Lifting the first places a defeat of skip_x
+    ;; *inside settle*, not an assert or a retract, and that must release the second
+    ;; rule within the same fixpoint.
     (tu/with-cleared-kb [kb tu/isolated-fresh]
       (excepted-rule! kb)
       (v/assert kb '(exceptWhen (lift_x ?x)
@@ -223,16 +221,16 @@
       (is (seq (v/sentexes-matching kb '(skip_x PX0) '?ctx)) "the exception fact is derived")
       (is (empty? (v/sentexes-matching kb '(seen_x PX0) '?ctx)) "and blocks the seen_x rule")
       (v/assert kb '(lift_x PX0) ctx)
-      (is (empty? (v/sentexes-matching kb '(skip_x PX0) '?ctx)) "the lift blocks skip_x, which is swept")
+      (is (empty? (v/sentexes-matching kb '(skip_x PX0) '?ctx)) "the lift blocks skip_x")
       (is (seq (v/sentexes-matching kb '(seen_x PX0) '?ctx))
-          "the swept exception released seen_x inside the same settle"))))
+          "the defeated exception fact released seen_x inside the same settle"))))
 
 ;; ---- the genl edge trigger is narrowed to the closures it moves ----------
 ;;
 ;; docs/exceptions.md, "Taxonomy changes are keyed on what the closure moved".
 
 (deftest a-genl-edge-re-checks-only-what-its-closure-touches
-  (testing "the touched rule's conclusion is swept; the untouched rule's firings are
+  (testing "the touched rule's conclusion is defeated; the untouched rule's firings are
             not even re-evaluated"
     (tu/with-cleared-kb [kb tu/isolated-fresh]
       ;; touched: excepts on tall_thing, one firing.  untouched: excepts on skip_x,
@@ -249,7 +247,7 @@
                #(v/assert kb '(genl giant_thing tall_thing) ctx))]
         (is (empty? (v/sentexes-matching kb '(big_a PA1) '?ctx))
             "the edge reaches the tall_thing exception, so the touched rule is queued
-             and its conclusion swept — narrowing must never skip an affected rule")
+             and its conclusion defeated — narrowing must never skip an affected rule")
         (is (= 20 (count (v/sentexes-matching kb '(seen_x ?x) '?ctx)))
             "the untouched rule's conclusions all stand")
         (is (< n 10)
@@ -265,10 +263,10 @@
 
 (defn- negated-exception-cost
   "Level-6 evaluations caused by asserting `(genl <sub> negsuper_t)` on a KB whose one
-  excepted rule has fired `firings` times, excepted when `(not (<pred> ?x))` holds."
-  [firings sub pred]
+  excepted rule has fired `firings` times, excepted when `(not <body>)` holds."
+  [firings sub body]
   (tu/with-cleared-kb [kb tu/isolated-fresh]
-    (v/assert kb (list 'exceptWhen (list 'not (list pred '?x))
+    (v/assert kb (list 'exceptWhen (list 'not body)
                        '(set/defaultRule (set/forwardRule (implies (and (neg_probe ?x)) (neg_seen ?x)))))
               ctx)
     (dotimes [i firings] (v/assert kb (list 'neg_probe (symbol (str "NG" i))) ctx))
@@ -280,8 +278,8 @@
             rule's firings, however many it made"
     ;; The edge's `sub` is a fresh type; the negated conjunct is about `negskip`, whose
     ;; up-closure the edge did not move.
-    (let [few  (negated-exception-cost 8  'negvictim_t 'negskip)
-          many (negated-exception-cost 32 'negvictim_t 'negskip)]
+    (let [few  (negated-exception-cost 8  'negvictim_t '(negskip ?x))
+          many (negated-exception-cost 32 'negvictim_t '(negskip ?x))]
       (is (= 0 few many)
           (str "an unrelated genl edge re-evaluated a negated exception's firings: "
                few " (8 firings) / " many " (32 firings)")))))
@@ -291,10 +289,17 @@
             edge whose subtype *is* the negated conjunct's predicate queues the rule"
     ;; `(genl negskip negsuper_t)` moves `genls(negskip)`, the closure a contravariant
     ;; match reads to answer `(not (negskip X))`, so every firing is re-decided.
-    (let [n (negated-exception-cost 8 'negskip 'negskip)]
+    (let [n (negated-exception-cost 8 'negskip '(negskip ?x))]
       (is (= 8 n)
           (str "an edge on the negated conjunct's own predicate re-checked " n
                " of 8 firings; the defensive wave-through must keep all of them")))))
+
+(deftest a-genl-edge-re-checks-a-negation-over-a-conjunction
+  (testing "the predicates under a negated `and` are the frame's, so any edge queues the
+            rule"
+    (let [n (negated-exception-cost 8 'negvictim_t
+                                    '(and (negchildOf ?x NGKid) (negasleep NGKid)))]
+      (is (= 8 n) (str "the edge re-checked " n " of 8 firings")))))
 
 (deftest a-negated-exception-still-blocks-and-releases
   (testing "narrowing the edge trigger changes nothing about what a negation excepts"
@@ -307,7 +312,7 @@
           "nothing denies negskip of NG0, so the exception does not hold")
       (let [h (v/assert kb '(not (negskip NG0)) ctx)]
         (is (empty? (v/sentexes-matching kb '(neg_seen NG0) '?ctx))
-            "the stored negation satisfies the exception and the conclusion is swept")
+            "the stored negation satisfies the exception and the conclusion is defeated")
         (v/retract! kb h)
         (is (seq (v/sentexes-matching kb '(neg_seen NG0) '?ctx))
             "and its departure releases the rule")))))
@@ -429,10 +434,23 @@
            ["(transitiveInArg P n R) opens the inheritance over stored facts"
             '(gbigger gpoodle gsiamese)
             '[(genl gpoodle gdog) (genl gsiamese gcat) (gbigger gdog gcat)]
-            '[(transitiveInArgInverse gbigger 1 genl) (transitiveInArgInverse gbigger 2 genl)]]]]
+            '[(transitiveInArgInverse gbigger 1 genl) (transitiveInArgInverse gbigger 2 genl)]]
+           ;; a negated exception is posted under `not`, and the declaration reaches it
+           ;; there; only a known-true declaration and edge contrapose
+           ["(inverse P Q) answers a denial on P from Q's denials"
+            '(not (jchildOf JBob JAnn)) '[(not (jparentOf JAnn JBob))]
+            '[(set/monotonic (inverse jchildOf jparentOf))]]
+           ["(inverse P Q) answers a denial on a spec of P"
+            '(not (ksonOf KBob KAnn))
+            '[(set/monotonic (genl ksonOf kchildOf)) (not (kparentOf KAnn KBob))]
+            '[(set/monotonic (inverse kchildOf kparentOf))]]
+           ["(transitiveInArg P n R) carries a denial over stored facts"
+            '(not (hbigger hpoodle hsiamese))
+            '[(genl hpoodle hdog) (genl hsiamese hcat) (not (hbigger hdog hcat))]
+            '[(transitiveInArgInverse hbigger 1 genl) (transitiveInArgInverse hbigger 2 genl)]]]]
     (testing label
       (tu/with-cleared-kb [kb tu/isolated-fresh]
-        (let [pfx  (subs (name (first goal)) 0 1)
+        (let [pfx  (subs (name (first (cond-> goal (= 'not (first goal)) second))) 0 1)
               mark (symbol (str pfx "mark"))
               seen (symbol (str pfx "seen"))
               ind  (symbol (str (str/upper-case pfx) "M1"))]
@@ -608,27 +626,30 @@
 
 (defn- belief-per-order
   "`{belief [order …]}` over every ordering of `ops` — a map of assertion thunks — with
-  `read` taking the belief once each order has been asserted into its own cleared KB."
-  [ops read]
+  `read` taking the belief once each order has been asserted into its own cleared KB, and
+  `after`, when given, run on the KB and the `{op handle}` map before the read."
+  [ops after read]
   (reduce (fn [acc order]
             (tu/with-cleared-kb [kb tu/isolated-fresh]
-              (doseq [k order] ((get ops k) kb))
-              (update acc (read kb) (fnil conj []) order)))
+              (let [hs (into {} (map (fn [k] [k ((get ops k) kb)])) order)]
+                (when after (after kb hs))
+                (update acc (read kb) (fnil conj []) order))))
           {}
           (orderings (keys ops))))
 
 (defn- one-belief!
   "Assert that every ordering of `ops` reaches `expected`, naming the orders that did
-  not when one does not."
-  [label ops read expected]
-  (let [outcome (belief-per-order ops read)]
-    ;; the key set, so a failure prints the beliefs that disagreed rather than 24
-    ;; orderings twice over; the message carries the tally and the divergent orders
-    (is (= #{expected} (set (keys outcome)))
-        (str label ": belief depends on arrival order — "
-             (pr-str (into {} (map (fn [[b os]] [b (count os)])) outcome))
-             ", the divergent orders being "
-             (pr-str (mapcat val (dissoc outcome expected)))))))
+  not when one does not.  `after` is `belief-per-order`'s."
+  ([label ops read expected] (one-belief! label ops nil read expected))
+  ([label ops after read expected]
+   (let [outcome (belief-per-order ops after read)]
+     ;; the key set, so a failure prints the beliefs that disagreed rather than 24
+     ;; orderings twice over; the message carries the tally and the divergent orders
+     (is (= #{expected} (set (keys outcome)))
+         (str label ": belief depends on arrival order — "
+              (pr-str (into {} (map (fn [[b os]] [b (count os)])) outcome))
+              ", the divergent orders being "
+              (pr-str (mapcat val (dissoc outcome expected))))))))
 
 (deftest every-arrival-order-of-a-merge-reaches-one-belief
   (testing "the firing's own binding is the retired spelling"
@@ -652,8 +673,7 @@
                  '[(mseen MTwo)]))
   (testing "the exception conjunct's own constant is the retired spelling"
     ;; Nothing the firing binds has merged at all: what moved is a term the *rule* was
-    ;; written with, and a rule is held back from an individual-only rewrite migration,
-    ;; so the stored condition keeps naming `BOne` for good.
+    ;; written with, and the stored condition names `BOne` as written.
     (one-belief! "a conjunct constant"
                  {:rule  #(v/assert % '(exceptWhen (bskip BOne)
                                                    (set/defaultRule
@@ -696,6 +716,39 @@
                   :merge #(v/assert % '(rewriteOf YTwo YOne) ctx)}
                  #(mapv :sentence (v/sentexes-matching % '(yseen ?x) '?c))
                  '[(yseen YTwo)])))
+
+(deftest an-exception-a-declaration-answers-reaches-one-belief-in-every-order
+  ;; The exception is on one predicate and the fact on its partner, so the fact's own
+  ;; `genls` reach neither the exception's predicate nor, for a negation, its key; the
+  ;; first row's negation is posted under `not` alone, which the declaration has to reach.
+  ;; Each row is swept with all four sentences, then with the fact retracted, then with
+  ;; the declaration retracted.
+  (tu/with-terms [bird flies childOf parentOf likes dislikes sibOf Opus Ann]
+    (doseq [[label decl exception fact]
+            [["(symmetric P) answers a denial's mirror"
+              (list 'symmetric sibOf) (list 'not (list sibOf '?b Ann)) (list 'not (list sibOf Ann Opus))]
+             ["(inverse P Q) answers a goal on Q from a P fact"
+              (list 'inverse childOf parentOf) (list parentOf Ann '?b) (list childOf Opus Ann)]
+             ["(genlInverse P Q) answers a goal on Q from a P fact"
+              (list 'genlInverse childOf parentOf) (list parentOf Ann '?b) (list childOf Opus Ann)]
+             ["(negates P Q) answers a denial on Q from a P fact"
+              (list 'negates likes dislikes) (list 'not (list dislikes '?b Ann)) (list likes Opus Ann)]]]
+      (let [ops     {:rule #(v/assert % (list 'exceptWhen exception
+                                              (list 'set/defaultRule
+                                                    (list 'set/forwardRule
+                                                          (list 'implies (list 'and (list bird '?b))
+                                                                (list flies '?b)))))
+                                      ctx)
+                     :bird #(v/assert % (list bird Opus) ctx)
+                     :fact #(v/assert % fact ctx)
+                     :decl #(v/assert % decl ctx)}
+            read    #(mapv :sentence (v/sentexes-matching % (list flies '?x) '?c))
+            retract (fn [k] (fn [kb hs] (v/retract! kb (hs k))))]
+        (one-belief! label ops read [])
+        (one-belief! (str label ", the fact retracted") ops (retract :fact) read
+                     [(list flies Opus)])
+        (one-belief! (str label ", the declaration retracted") ops (retract :decl) read
+                     [(list flies Opus)])))))
 
 (deftest a-merged-binding-does-not-re-check-every-firing-a-rule-ever-made
   (testing "a trigger that can block nothing costs no level-6 query, merges or not"

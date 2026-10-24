@@ -10,13 +10,14 @@
   entailment is drawn exactly there and nowhere else, and it is drawn as a **derived,
   justified** sentex: retract the fact or the declaration and the type goes with it.
 
-  On by default (`checks/*assertive-arg-types?*`), and every test here binds it anyway, so
+  On by default (`argument/*assertive-arg-types?*`), and every test here binds it anyway, so
   a run under `VAELII_ASSERTIVE_ARG_TYPES=0` still measures the entailment."
   (:require [clojure.java.io :as io]
             [clojure.test :refer [is testing use-fixtures]]
             [clojure.walk :as walk]
             [vaelii.core :as v]
             [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.resolution :as res]
             [vaelii.impl.special :as special]
             [vaelii.impl.taxonomy :as tax]
@@ -30,13 +31,13 @@
 (defmacro with-entailing
   "Run the body with assertive argument types on."
   [& body]
-  `(binding [checks/*assertive-arg-types?* true] ~@body))
+  `(binding [argument/*assertive-arg-types?* true] ~@body))
 
 (defmacro with-pruning
   "Run the body with the entailment on and subsumed mints pruned — the default reading,
   bound so a run under `VAELII_PRUNE_SUBSUMED_MINTS=0` still measures it."
   [& body]
-  `(binding [checks/*assertive-arg-types?* true
+  `(binding [argument/*assertive-arg-types?* true
              checks/*prune-subsumed-mints?* true]
      ~@body))
 
@@ -44,7 +45,7 @@
   "Run the body with the entailment on and pruning off — the reading
   `VAELII_PRUNE_SUBSUMED_MINTS=0` selects."
   [& body]
-  `(binding [checks/*assertive-arg-types?* true
+  `(binding [argument/*assertive-arg-types?* true
              checks/*prune-subsumed-mints?* false]
      ~@body))
 
@@ -52,11 +53,11 @@
   "Run the body with them off — bound rather than assumed, since the root value is
   what `VAELII_ASSERTIVE_ARG_TYPES` sets to run the whole suite under the feature."
   [& body]
-  `(binding [checks/*assertive-arg-types?* false] ~@body))
+  `(binding [argument/*assertive-arg-types?* false] ~@body))
 
 (defn- a-type
   "Place `t` under `thing`: an edge some tests read, and one a mint does not need
-  (`checks/mintable-type?` reads `t`'s arity alone)."
+  (`arity/mintable-type?` reads `t`'s arity alone)."
   [kb t ctx]
   (v/assert kb (list 'genl t 'thing) ctx))
 
@@ -186,7 +187,7 @@
   ;; `low_t` sits at the bottom of a chain not under `thing`, and the predicate already
   ;; declares it at position 1.  The declaration arriving at position 2 mints over every
   ;; fact whether or not `new_t` is under `thing`, and asks no type whether it reaches
-  ;; `thing` (`checks/mintable-type?` reads the type's arity).
+  ;; `thing` (`arity/mintable-type?` reads the type's arity).
   (doseq [under-thing? [false true]]
     (let [reading (fn [n]
                     (tu/with-neutral-kb [kb tu/fresh]
@@ -766,7 +767,6 @@
           (is uh "the declaration entails the type's unary_predicate membership")
           (is (= #{[dh]} (into #{} (map :antecedents) (v/supporting-justifications kb uh)))
               "justified by the declaration alone"))
-        (is (empty? (special/mint-refusals kb)) "and nothing waits")
         (v/retract! kb dh)
         (is (nil? (entailed kb (list 'unary_predicate orphan_t) CxWorld))
             "retracting the declaration takes the membership back")))))
@@ -806,6 +806,63 @@
                 :fact        (v/assert kb (list kindOf Rex dog) CxWorld)
                 :type        (v/retract! kb bh))))
           (is (believed? kb (list dog Rex) CxWorld) (str "entailed under " (vec order))))))))
+
+;; `(interArgEqual grants 2 3 1 t)` types argument 1 of the `grants` tuples holding 3 at
+;; argument 2 and no other tuple, in every order of the declaration and two tuples, one
+;; holding 3 and one holding 4.  The membership rests on the declaration.
+(tu/deftest-kb an-inter-arg-equal-types-the-tuples-its-value-triggers-in-every-order
+  (doseq [order (permutations [:declaration :three :four])]
+    (tu/with-neutral-kb [kb tu/fresh]
+      (tu/with-terms [grants t Rex Fido CxWorld]
+        (with-entailing
+          (a-context kb CxWorld)
+          (a-type kb t CxWorld)
+          (let [dh (volatile! nil)]
+            (doseq [step order]
+              (case step
+                :declaration (vreset! dh (v/assert kb (list 'interArgEqual grants 2 3 1 t) CxWorld))
+                :three       (v/assert kb (list grants Rex 3) CxWorld)
+                :four        (v/assert kb (list grants Fido 4) CxWorld)))
+            (is (= [true false] (mapv #(believed? kb (list t %) CxWorld) [Rex Fido])) (str (vec order)))
+            (is (= 'interArgEqual
+                   (:informant (first (:support (v/why kb (v/handle-of kb (list t Rex) CxWorld))))))
+                (str (vec order)))
+            (v/retract! kb @dh)
+            (is (not (believed? kb (list t Rex) CxWorld))
+                (str (vec order) " the declaration's retraction takes the membership back"))))))))
+
+;; Under the constraint-only reading a tuple the value triggers is held inert when its
+;; argument 1 is separated from the type, in either order, and one holding another value
+;; is not.  `try-assert` refuses the later write in either order, under both readings.
+(tu/deftest-kb an-inter-arg-equal-convicts-the-tuples-its-value-triggers-in-either-order
+  (doseq [entail?      [true false]
+          [v refused?] [[3 true] [4 false]]
+          decl-first?  [true false]]
+    (binding [argument/*assertive-arg-types?* entail?]
+      (tu/with-neutral-kb [kb tu/fresh]
+        (tu/with-terms [grants t u Rex]
+          (doseq [s [(list 'genl t 'thing) (list 'genl u 'thing) (list 'disjoint t u) (list u Rex)]]
+            (v/assert kb s 'CxUniverse))
+          (let [decl  (list 'interArgEqual grants 2 3 1 t)
+                tuple (list grants Rex v)
+                [w1 w2] (if decl-first? [decl tuple] [tuple decl])
+                tag   (pr-str [entail? v decl-first?])
+                _     (v/assert kb w1 'CxUniverse)
+                e     (try (v/try-assert kb w2 'CxUniverse) :stored
+                           (catch clojure.lang.ExceptionInfo e [(:type (ex-data e)) (:violation (ex-data e))]))]
+            (is (= (if refused? [:definitional-clash :arg-type] :stored) e) (str tag " try-assert"))
+            (when-not (v/handle-of kb w2 'CxUniverse) (v/assert kb w2 'CxUniverse))
+            (is (= (not (and refused? (not entail?)))
+                   (boolean (v/believed? kb (v/handle-of kb tuple 'CxUniverse) 'CxUniverse)))
+                (str tag " assert holds a convicted tuple inert under the constraint-only reading"))))))))
+
+(tu/deftest-kb an-inter-arg-equal-names-a-value-at-its-trigger
+  ;; the equality partition holds symbols only, so a value is the one trigger no merge moves
+  (tu/with-terms [grants t HostA]
+    (is (= [:not-well-formed :stored]
+           (mapv #(try (v/assert kb (list 'interArgEqual grants 2 % 1 t) 'CxUniverse) :stored
+                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))
+                 [HostA "host-a"])))))
 
 ;; `(resultArg MemberFn 1)` types the constant `(MemberFn x)` mints by the type `x` names,
 ;; derived off the `natFormula` fact as an `argArg` mint is off its fact.  A row is the
@@ -1253,22 +1310,23 @@
            (support (fn [r a z] (list r z a)))))
     (is (true? (second (support (fn [r a z] (list r z a))))))))
 
-(tu/deftest-kb a-type-bound-to-another-length-mints-nothing-and-its-declaration-waits
+(tu/deftest-kb a-type-bound-to-another-length-mints-nothing-and-records-nothing
   ;; `t` is declared binary, so `(t Rex)` would be a tuple of a length its binding denies:
-  ;; `checks/mintable-type?` reads `t`'s arity and the declaration mints nothing.  No
+  ;; `arity/mintable-type?` reads `t`'s arity and the declaration mints nothing.  No
   ;; refusal reads a binding (docs/taxonomy.md, "Arity"): the fact stands, and the
-  ;; declaration waits on `t` in the refusal record.
+  ;; refusal record holds nothing for the declaration.  The binding leaving mints.
   (tu/with-terms [t rel Rex Mary CxWorld]
     (with-entailing
       (a-context kb CxWorld)
       (a-type kb t CxWorld)
-      (v/assert kb (list 'binary_predicate t) CxWorld)
-      (let [dh (v/assert kb (list 'arg rel 1 t) CxWorld)]
+      (let [bh (v/assert kb (list 'binary_predicate t) CxWorld)
+            dh (v/assert kb (list 'arg rel 1 t) CxWorld)]
         (v/assert kb (list rel Rex Mary) CxWorld)
         (is (v/ask? kb (list rel Rex Mary) CxWorld) "the fact stands")
         (is (nil? (v/handle-of kb (list t Rex) CxWorld)) "no membership in t is stored")
-        (is (= [[dh [t]]] (mapv (fn [[h e]] [h (:waits e)]) (special/mint-refusals kb)))
-            "the declaration waits on t"))))
+        (is (nil? (get @(reasoning/refused kb) dh)) "nothing is recorded")
+        (v/retract! kb bh)
+        (is (some? (v/handle-of kb (list t Rex) CxWorld)) "the binding leaving mints"))))
   (testing "with the entailment off, the constraint reading admits it — Rex is untyped"
     (tu/with-terms [t rel Rex Mary CxWorld]
       (without-entailing
@@ -1512,7 +1570,7 @@
                                     (permutations [:fact :decl :edge :unedge])))]
             (tu/with-neutral-kb [kb tu/fresh]
               (tu/with-terms [rel tt dog A B CxTop CxL CxR CxJ CxK]
-                (binding [checks/*assertive-arg-types?*  true
+                (binding [argument/*assertive-arg-types?*  true
                           checks/*prune-subsumed-mints?* prune?]
                   (let [edge (list 'genlCx CxK CxJ)]
                     (doseq [[s g] [[CxTop 'CxUniverse] [CxL CxTop] [CxR CxTop]
@@ -1550,7 +1608,7 @@
           (for [order (permutations (into [:fact :decl] cxs))]
             (tu/with-neutral-kb [kb tu/fresh]
               (tu/with-terms [rel sup tt carnivore A B CxTop CxMid]
-                (binding [checks/*assertive-arg-types?*  true
+                (binding [argument/*assertive-arg-types?*  true
                           checks/*prune-subsumed-mints?* prune?]
                   (v/assert kb (list 'genlCx CxTop 'CxUniverse) 'CxUniverse)
                   (v/assert kb (list 'genlCx CxMid CxTop) 'CxUniverse)
@@ -1680,7 +1738,6 @@
       (is (nil? (v/handle-of kb (list 'genl 'thing 'thing) CxWorld)) "no reflexive edge")
       (is (nil? (v/handle-of kb (list 'unary_predicate 'thing) CxWorld))
           "and no arity statement of thing")
-      (is (empty? (special/mint-refusals kb)) "nothing waits")
       (is (empty? (v/violations kb)) "the ledger stays clean")
       (is (= #{[(list 'arg likes 1 'thing) 1] [(list 'genlArg partType 2 'thing) 2]}
              (into #{} (map (juxt :sentence :facts))
@@ -1944,7 +2001,7 @@
           (for [order (permutations [:edge :decl :fact :type])]
             (tu/with-neutral-kb [kb tu/fresh]
               (tu/with-terms [animal dog parentOf Fred Mary CxWorld]
-                (binding [checks/*assertive-arg-types?*  true
+                (binding [argument/*assertive-arg-types?*  true
                           checks/*prune-subsumed-mints?* prune?]
                   (a-context kb CxWorld)
                   (a-type kb animal CxWorld)
@@ -2004,7 +2061,7 @@
           (for [order (permutations [:edge :decl :fact :type])]
             (tu/with-neutral-kb [kb tu/fresh]
               (tu/with-terms [animal dog cat parentOf Fred Mary CxWorld]
-                (binding [checks/*assertive-arg-types?*  true
+                (binding [argument/*assertive-arg-types?*  true
                           checks/*prune-subsumed-mints?* prune?]
                   (a-context kb CxWorld)
                   (a-type kb animal CxWorld)
@@ -2038,7 +2095,7 @@
           (for [order (permutations [:cx :decl :fact :type])]
             (tu/with-neutral-kb [kb tu/fresh]
               (tu/with-terms [animal dog parentOf Fred Mary CxWorld CxDogs]
-                (binding [checks/*assertive-arg-types?*  true
+                (binding [argument/*assertive-arg-types?*  true
                           checks/*prune-subsumed-mints?* prune?]
                   (a-context kb CxWorld)
                   (a-context kb CxDogs)
@@ -2130,7 +2187,7 @@
 
 (tu/deftest-kb a-value-argument-under-a-declared-type-is-inert-in-either-order
   (doseq [entail? [true false]]
-    (binding [checks/*assertive-arg-types?* entail?]
+    (binding [argument/*assertive-arg-types?* entail?]
       (tu/with-terms [vdog vneeds]
         (let [ss    {:decl (list 'arg vneeds 1 vdog) :fact (list vneeds 5)}
               setup [(list 'genl vdog 'thing) (list 'unary_predicate vneeds)]]
@@ -2154,7 +2211,7 @@
 ;; places the declared type under `thing` is visible from the fact's context alone.
 (tu/deftest-kb a-value-argument-below-the-declaration-s-context-is-inert-in-every-order
   (doseq [entail? [true false]]
-    (binding [checks/*assertive-arg-types?* entail?]
+    (binding [argument/*assertive-arg-types?* entail?]
       (tu/with-terms [vdog vneeds CxLow]
         (let [ss {:decl [(list 'arg vneeds 1 vdog) 'CxUniverse]
                   :edge [(list 'genl vdog 'thing) CxLow]
@@ -2194,6 +2251,26 @@
                (into #{} (map #(held-reading kb setup ss %)) (permutations [:decl :fact])))
             (pr-str [decl t-of v sub]))))))
 
+;; The edge `(genl vmid vk)` places the declared type `vdog`, two steps below it, under a
+;; kind of the value, and neither end of the edge is at or above a value kind.  A limit of
+;; 1 gives both ends more specializations than the refresh walks, so it finds the
+;; declaration in its one pass over every declaration; 512 finds it off the index.
+(tu/deftest-kb an-edge-above-the-declared-type-moves-the-value-s-hold-at-either-spec-count
+  (doseq [entail? [true false]
+          limit   [1 512]]
+    (binding [argument/*assertive-arg-types?* entail?]
+      (with-redefs-fn {#'checks/spec-walk-limit limit}
+        #(tu/with-terms [vdog vmid vk vneeds]
+           (let [hs (mapv (fn [s] (v/assert kb s 'CxUniverse))
+                          [(list 'genl vk 'integer) (list 'genl vmid 'thing) (list 'genl vdog vmid)
+                           (list 'unary_predicate vneeds) (list 'arg vneeds 1 vdog) (list vneeds 5)])
+                 fh (peek hs)
+                 in (fn [] (boolean (v/believed? kb fh 'CxUniverse)))
+                 r  [(in) (let [e (v/assert kb (list 'genl vmid vk) 'CxUniverse)]
+                            [(in) (do (v/retract! kb e) (in))])]]
+             (is (= [false [true false]] r) (pr-str [entail? limit]))
+             (doseq [h (rseq hs)] (v/retract! kb h))))))))
+
 ;; A `:monotonic` definition states the kind of value a type's members are, so it decides a
 ;; value under a type no kind reaches (`vtext`) and under one refining a kind (`vpos`); a
 ;; `:default` one decides nothing, and the definition's retraction gives the value back to
@@ -2212,7 +2289,7 @@
            ['quotedArg 'defnNecessary :pos '(and (integer ?x) (greaterThan ?x 0)) :monotonic :pos -3 false true]]
           entail?     [true false]
           defn-first? [true false]]
-    (binding [checks/*assertive-arg-types?* entail?]
+    (binding [argument/*assertive-arg-types?* entail?]
       (tu/with-terms [vtext vpos vsub vneeds]
         (let [ty    {:text vtext :pos vpos :sub vsub}
               setup [(list 'genl vtext 'thing) '(genl string thing) '(genl number thing)

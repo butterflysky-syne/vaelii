@@ -348,9 +348,77 @@
         (is (= :not-well-formed ty))
         (is (re-find #"one exceptWhen per alternative" msg))))))
 
+(tu/deftest-kb a-disjunction-under-not-is-refused-as-a-fact
+  (tu/with-terms [dog cat Muffet CxPets]
+    (let [neither (list 'not (list 'or (list dog Muffet) (list cat Muffet)))]
+      (doseq [s [neither
+                 (list 'not neither)
+                 (list 'ist CxPets neither)
+                 (list 'set/defaultRule neither)]]
+        (testing (pr-str s)
+          (let [p        (problem-of kb s CxPets)
+                [ty msg] (if (vector? p) p [p])]
+            (is (= :not-well-formed ty))
+            (is (re-find #"assert each negation as its own fact" (str msg))))
+          (is (= [:not-well-formed] (mapv :type (v/check kb s CxPets)))))))))
+
+;; Each row gets its own temporaries, so no two rows share a predicate a stratification
+;; or range check could read across.
+(tu/deftest-kb an-or-in-an-argument-slot-is-a-term-in-every-rule-position
+  (doseq [[row rule]
+          [["a positive antecedent"
+            (fn [dog fed likes A B]
+              (list 'implies (list 'and (list dog '?p) (list likes '?p (list 'or A B)))
+                    (list fed '?p)))]
+           ["a negated antecedent"
+            (fn [dog fed likes A B]
+              (list 'implies (list 'and (list dog '?p)
+                                   (list 'not (list likes '?p (list 'or A B))))
+                    (list fed '?p)))]
+           ["an unknown body"
+            (fn [dog fed likes A B]
+              (list 'implies (list 'and (list dog '?p)
+                                   (list 'unknown (list likes '?p (list 'or A B))))
+                    (list fed '?p)))]
+           ["a thereExists body"
+            (fn [dog fed likes A B]
+              (list 'implies (list 'and (list dog '?p)
+                                   (list 'thereExists '?q (list likes '?q (list 'or A B))))
+                    (list fed '?p)))]
+           ["an aggregate body"
+            (fn [dog fed likes A B]
+              (list 'implies (list 'and (list dog '?p)
+                                   (list 'agg/count '?n '?q (list likes '?q (list 'or A B))))
+                    (list fed '?p)))]
+           ["a consequent"
+            (fn [dog _fed likes A B]
+              (list 'implies (list dog '?p) (list likes '?p (list 'or A B))))]
+           ["a negated consequent"
+            (fn [dog _fed likes A B]
+              (list 'implies (list dog '?p) (list 'not (list likes '?p (list 'or A B)))))]
+           ["an exceptWhen query"
+            (fn [dog fed likes A B]
+              (list 'exceptWhen (list likes '?p (list 'or A B))
+                    (list 'implies (list dog '?p) (list fed '?p))))]
+           ["a generated rule's negated antecedent"
+            (fn [dog fed likes A B]
+              (list 'implies (list dog '?p)
+                    (list 'implies (list 'and (list fed '?q)
+                                         (list 'not (list likes '?q (list 'or A B))))
+                          (list likes '?p '?q))))]
+           ["a generated rule's consequent"
+            (fn [dog fed likes A _B]
+              (list 'implies (list dog '?p)
+                    (list 'implies (list fed '?q) (list likes '?q (list 'or '?p A)))))]]]
+    (tu/with-terms [dog fed likes Rex Tom CxPets]
+      (let [s (rule dog fed likes Rex Tom)]
+        (testing row
+          (is (empty? (v/check kb s CxPets)))
+          (is (= :accepted (problem-of kb s CxPets))))))))
+
 ;; ---- 13. a goal is refused rather than expanded -------------------------
 ;; DECISION: a rule is expanded once, at the write entry point; a goal would have to be
-;; expanded at every read, and `goal-conjunction` normalizes to one conjunction that the
+;; expanded at every read, and `quasiquote/prepare-conjunction-for-read` normalizes to one conjunction that the
 ;; planner orders once and every engine walks as one.  Answering the union at `prove`
 ;; while `query-plan` and `abduce` refused it would make one spelling mean something
 ;; different at each entry point, so every read entry point refuses it alike and names the rewrite.

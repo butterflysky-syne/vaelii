@@ -200,7 +200,7 @@ missing. The last column names the test that asserts the departure, or `none`.
 | scoping | the browser's term graph ([web.md](web.md#a-terms-shape-drawn)) | One edge in two contexts is drawn once, and the graph labels no edge with a context. | `none` |
 | belief | levels 0 and 1 ([levels.md](levels.md#operators)) | The two levels answer about storage, so a defeated sentex keeps its handle there. The floor defaults to level 2. | `property_cells_test/levels-read-no-defeated-fact` |
 | belief | `CxEverything` ([contexts.md](contexts.md#cxeverything-syntactic-and-a-named-opt-out-of-belief-filtering)) | The named opt-out reads the store with no belief and no context filter. The as-stored reads (`reads/as-stored-…`, lint E16) and a profile's counts read storage the same way, under names that say so. | `query_context_test/cxeverything-sees-a-defeated-default` |
-| state | the refusal record ([exceptions.md](exceptions.md), [nmtms.md](nmtms.md#3-separated-state)) | Firings a closed extent or a separation refuses, and the `:constraint`, `:lift` and `:mint` entries, are sentences no store holds, so `recover` re-derives them, and a `:constraint` entry of a rule no trigger watches is not re-derived. | `lein lint`'s `derived` check, `HOLDS_CONTENT` |
+| state | the refusal record ([exceptions.md](exceptions.md), [nmtms.md](nmtms.md#3-separated-state)) | Firings a closed extent or a separation refuses, and the `:constraint` and `:lift` entries, are sentences no store holds, so `recover` re-derives them, and a `:constraint` entry of a rule no trigger watches is not re-derived. | `lein lint`'s `derived` check, `HOLDS_CONTENT` |
 | state | the rete matcher's alpha memories ([nmtms.md](nmtms.md#3-separated-state)) | Under `VAELII_RETE=1` or `rete/track!`, the matcher keeps stored facts by functor and argument in its own index beside the IndexStore. | `lein lint`'s `derived` check, `OUTSIDE_INDEX` |
 | belief | a reader thread beside the writer ([storage.md](storage.md#the-single-writer-contract)) | A read takes the postings and then belief per candidate, so a match stored or withdrawn between the two reads is missing. Beside a settle, belief is held but the taxonomy closures are read as the settle moves them. One state per read needs a realized answer and a retry, or a versioned store. | `none` |
 
@@ -419,6 +419,24 @@ depends on how the ontology was written rather than on what it says. There is a 
 defeat-class, and a default/default clash it cannot separate is reported as a dilemma rather
 than decided.
 
+### The transitivity a declaration names is checked by `wff`, not by `arg`
+
+`wff/arg-preserving-problems` refuses `(transitiveInArg P n R)` when no context holds
+`(transitive R)` and `R` is neither `genl` nor `genlCx` ([inherit.md](inherit.md#the-transitivity-has-to-have-been-declared)).
+Do not replace it with `(arg transitiveInArg 3 transitive)`. `arg` is open-world: an
+argument with no type violates nothing, so the declaration would convict a relation that
+carries some other type and admit one that carries none. Naming a relation before typing
+it is the common authoring order, so the admitted case is the common one.
+
+### `TransitiveInArgProver` answers no open goal
+
+The prover answers a ground goal and leaves an open argument to the fact and rule provers
+([inherit.md](inherit.md#reading-it-back)). Do not enumerate an open goal: the answer set
+is the inverse reach of every stored claim of the predicate, which reads the whole extent
+and each claim's reach to answer a question a closed goal answers from one product. The
+forward join does enumerate, since a conclusion is drawn per tuple whether or not a goal
+asks for it ([inherit.md](inherit.md#forward-chaining-on-a-claim-nobody-stored)).
+
 ### A clash reading is sorted at the read, not on the settle path
 
 `clashes/read-clashes` builds the conflicts and the dilemmas in the order the
@@ -444,6 +462,61 @@ solver's `:defeat` only as a subtraction from those assumptions.
 known-true handle would withdraw content the engine knows to be true if it were read as a
 defeat list. `asp_label_test` covers the surface: a plain rebuttal reaches no solver at
 all, and a monotonic handle is never given an atom.
+
+### The ASPIF emitter encodes only what a program uses
+
+`vaelii.impl.asp.aspif` writes the rule line (facts, choice atoms, normal rules,
+integrity constraints, weight bodies), minimize and output, and `vaelii.impl.asp.atoms`
+interns two kinds of value: a sentex id and a contradiction descriptor
+([asp.md](asp.md#the-encoding)). Do not add encoders for projection, externals,
+assumptions, heuristics, acyclicity edges or disjunctive heads. No program the engine
+builds emits one, so no test would execute it, and an encoder no run executes is
+unverified text generation. A third interning kind is refused for the same reason: every
+atom in a program is a contested assumption or a violation.
+
+### A solve's grounding is not stored
+
+`do/label` grounds its choice heads in memory, keys them by program-local ids, and returns
+the menu as `:choices` ([solving.md](solving.md#dolabel-base-into-mode)). Do not persist
+the grounding. It is recomputable from the `assumptionRule`s and the base's belief, and a
+stored copy carries no justification linking it to either, so nothing retracts it when
+the base changes.
+
+### A labeling's copies are `:monotonic` in an inheriting context
+
+`do/labeling` writes `(genlCx Ctx Base)` and a `:monotonic` copy in `Ctx` of each kept
+assumption ([labeling.md](labeling.md#ctx-inherits-and-the-labeling-is-recorded-by-strengthening)).
+Two alternatives fail:
+
+* **A copy at `:default`** ties with the side it is meant to defeat, so it reports a
+  second dilemma instead of deciding the first: `contradictions` goes from 1 to 2, and a
+  second labeling reports the dilemma three times. `label-context` writes copies at the
+  default strength because the side it records against is already defeated, so its copy
+  meets no believed rival.
+* **A detached `Ctx`** leaves `contradictions` at 1 and the base untouched, but holds only
+  the labeled literals and inherits no background, so a query in it answers from the
+  labeling alone.
+
+The `:monotonic` copy in an inheriting context leaves `contradictions` at 1, and `Ctx`
+answers from the background with the dilemma decided.
+
+### A labeling's solve ignores the installed solver when a backend is reachable
+
+`label/labeling-solver` returns `edge/edge-solver` whenever a backend is reachable, and
+the installed solver only otherwise ([labeling.md](labeling.md#the-labeling-and-its-classification-must-agree)).
+Do not solve with `(:solver kb)` while a backend classifies: `classify-program`
+enumerates optima, which only ASP does, and a labeling from the greedy stub answers from
+a different search. On two nogoods sharing a member the two diverge:
+
+```
+stub  defeats {1,3} -> labels {2}     classification: {:true {1,3} :false {2}}
+ASP   defeats {2}   -> labels {1,3}
+```
+
+The stub's labeling keeps an assumption that holds in no optimum and drops two that hold
+in every one, and committing it would defeat inside `Ctx` the atoms the classification
+calls forced. With no backend the two degrade together: `classify-program` reports every
+contested assumption `:supportable`, which any labeling satisfies.
 
 ## Namespaces and layering
 
@@ -525,6 +598,28 @@ arm and not removed by another leaks silently rather than throwing.
 Where a field seems to want a *function* it holds a keyword naming one, resolved by the
 layer that owns the function. That is the whole cost of the split, and it buys the
 direction of the requires.
+
+### The spelling convention is a biconditional on arity, not a one-way rule
+
+`assert` refuses a snake_case functor at any arity but 1 and a camelCase functor at arity 1
+([naming.md](naming.md#the-spelling-is-a-biconditional-on-arity)). A one-place predicate
+denotes a set, not a set of tuples, and `genl` orders sets; OWL's classes and properties
+and Cyc's collections and predicates mark the same split. A rule enforced in one direction
+only would leave `(warmBlooded Muffet)` legal, and an author could not read a role off a
+camelCase name.
+
+### A naming refusal skips `ex-info`
+
+`naming/check!` builds its `ExceptionInfo` with the constructor. `clojure.core/ex-info`
+(1.12) passes every exception to `elide-top-frames`, which materializes the stack trace
+into a `StackTraceElement[]` to drop its own two frames, so its cost grows with the depth
+of the throwing call. A loader that asserts a corpus sentence by sentence and counts the
+refusals throws once per refused sentence. Building one refusal took 6.3 µs through
+`ex-info` against 0.8 µs through the constructor at the top of a stack, and 23.7 µs against
+4.4 µs forty frames down. On a profile of a converted OpenCyc load, `check!` was all of
+`assert`'s time for a refused sentence, and `ex-info` was three quarters of `check!`. No
+`lein perf` case measures this. The elided frames are `ex-info`'s own, so the
+constructor's trace loses nothing.
 
 ## Storage and the single writer
 
@@ -855,8 +950,8 @@ tell them apart at read time. The fix is structural rather than a check: handles
 live under their own key, `[:trie :handles prefix]`, and tokens under
 `[:trie :children prefix]`, so `lookup` reading only the leaf key at its terminus
 never returns a token as a handle, and `p/children` reading only the child set is
-correct at such a node with no phantom branch reaching `plan/prefix-estimate`'s
-fan-out.
+correct at such a node with no phantom branch reaching the planner's distinct-value
+count (`plan/prefix-summary`).
 
 ### Child count is its own read
 
@@ -1067,6 +1162,102 @@ stated clash is stored. `res/separation-denials` therefore returns the denying m
 with each denial, and the refuted cover names them as members, so the write is stored and
 placed.
 
+### A NAT is reified before the index rather than indexed structurally
+
+Defends [nat.md](nat.md#the-strategy-reify-before-the-index). A function term could be
+supported by indexing nested compounds: the trie key and `sentex/index-terms` would change
+so that `(color (FruitFn AppleTree) Red)` is found by its nested `FruitFn` occurrence.
+That change reaches the trie key, the term index and every retrieval that reads them.
+Reification replaces a reifiable application with an atomic constant on the write path,
+so the index holds symbols only and none of those readers changes.
+
+### A reified constant is named by its content, in base62
+
+Defends [nat.md](nat.md#write-path). A process-local gensym gives one expression a second
+name in every process that mints it, and after every orphan sweep that collected it. Two
+dumps of one NAT would then hold two maps that `merge-colliding-nats!` has to reconcile,
+and a re-mint would not resolve to the constant a fact stated before the sweep named. A
+name hashed from the expression is the same in every process and after every rebuild.
+
+base64url spells the 96 bits in 16 digits against base62's 17, and its two extra
+characters, `-` and `_`, are the two the argument naming convention
+(`naming/argument-problem`) forbids. A `-` would also read as a `sense` separator. base62 keeps a `nat/` name inside
+the camelCase rule, so a reified constant needs no exemption in the argument check.
+
+### The mint's natFormula fact does not chain
+
+Defends [nat.md](nat.md#write-path). `mint-nat!` asserts `(natFormula K E)` with chaining
+off unless a `resultArg` of `E`'s function is declared, whatever the enclosing assert
+asked. The map is what the dedup probe reads, and no rule fires on it except the
+`resultArg` entailment. A mint is a step inside another assert, and a bulk load that turns
+chaining off turns it off for the whole load. On an OpenCyc load, chaining the map and the
+result types unconditionally ran 46,346 chain fixpoints, and most of their conclusions were
+dropped for having no placement context.
+
+### A placeholder is retired by rewriteOf, not equals
+
+Defends [nat.md](nat.md#the-corresponding-predicate). When a corresponding fact names the
+value `V` of an application already minted as `K`, the engine asserts `(rewriteOf V K)`.
+The two sides are not interchangeable: `V` is a name somebody wrote and `K` stands in for
+not knowing it. An `equals` would let the class elect whichever term sorts first, which
+can be `K`, and every use of `V` would then migrate onto the opaque constant.
+
+### The collision merge reads the merged class, not the whole map
+
+Defends [nat.md](nat.md#rename-and-remove--keeping-the-11-invariant). After an equality,
+`merge-colliding-nats!` reads the collisions naming the merged class
+(`formula-rows`), one term-index intersection per class member. Re-reading the whole
+`natFormula` map on every equality makes a load that asserts equalities quadratic in the
+NATs it has minted. The cost of the narrow read is a collision no merge caused, such as
+one an import restored: the next unrelated equality does not repair it, and
+`colliding-constant-groups` is the read that finds it.
+
+### A functional merge rests on every declaration of the convicting mark
+
+Defends [equality.md](equality.md#functional-infers-equality-instead-of-throwing). The
+equality a functional clash derives takes one justification per declaring sentex of the
+mark that convicted the pair, `via`, unfiltered by what the deriving context sees. A
+predicate declared functional in two contexts holds two declaring sentexes. A
+justification off one of them puts an assertion-ordered handle into the antecedents, so
+retracting that declaration withdraws the merge while the other still stands. A filter to
+the visible declarations makes the surviving merge depend on which declaration was
+retracted first. A justification naming every marked predicate above the functor lets a
+mark that never covered the pair hold the merge up: under `(functional guardianOf)`, with
+only one of the two spellings a `guardianOf`, the merge survives retracting the one
+declaration that reached both. Each justification also names the `genl` edges of both
+members' descents, since a merge naming one side's descent stands after the other
+filler's edge is retracted and that filler is no longer a tuple of the marked predicate.
+`equality_test/a-merge-rests-on-every-functional-declaration-not-on-one-of-them` retracts
+the first declaration of one predicate and the second of another, so no single choice
+passes both.
+
+### `different` is not chain-merged or clique-merged
+
+Defends [equality.md](equality.md#the-unique-name-assumption-survives). `lessThan` merges
+chains because it is transitive: `a<b` and `b<c` give `a<b<c`. `different` is not
+transitive, since `A≠B` and `B≠C` say nothing about `A` and `C`, so a chain merge states a
+claim nobody made. A clique merge, every pair present, is sound but needs a clique search
+at each canonicalization. `different` is never stored, so canonical form, which makes
+identical knowledge store once, has nothing to act on.
+
+### There is no assertible `differentFrom`
+
+Defends [equality.md](equality.md#the-unique-name-assumption-survives). OWL's
+`differentFrom` is a positive commitment that two names are distinct, which makes a later
+`sameAs` between them a contradiction. The unique-name assumption gives the same answer
+for every pair no equality names, and `different` reads it from the closure. An assert of
+`different` is refused (`wff/different-problems`).
+
+### A supersession is not a forced OUT
+
+Defends [equality.md](equality.md#what-a-merge-does). A superseded spelling is held in
+`jtms`'s `:superseded` map, which subtracts reported belief (`in?`, `in-datums`) and
+leaves the label alone. The twin is justified by `[the original, the equality]`, so a
+forced OUT of the original inside the fixpoint invalidates the twin, and the KB believes
+neither spelling. `exceptWhen` refuses the stored-but-not-believed state for its own
+conclusions because the engine can recompute them. A superseded spelling is a caller's
+premise, so the KB keeps it stored, and retracting the equality gives it back.
+
 ## Contexts and placement
 
 Defends [contexts.md](contexts.md).
@@ -1267,6 +1458,30 @@ budget is sized off the lattice rather than off the readers for the same reason 
 exists: enumerating the readers costs O(the goal's match set), which would put that scan on
 the one path that never needs it.
 
+The first literal of a join is not metered. Its rows are the answer set's floor and
+multiply nothing, so a budget on them abandons a single-literal read, the one shape on
+which post-hoc always does less work than the fan.
+
+### The visibility seeds are read off the rule index
+
+Defends [contexts.md](contexts.md#the-consumers-and-what-each-of-them-may-reach).
+
+A `genlCx` edge owes a re-join of the rules it shows facts to. Walking the ancestor set
+and keeping the facts a rule could match costs a record fetch per sentex in the ancestor
+set, so wiring N contexts under a CxUniverse holding K facts is O(N·K) against O(N+K), and
+a chain D deep is O(D²), because each edge's ancestor set is the whole chain above.
+Measured against the rule-index reads: 3.9× on the first shape, 5× and growing with depth
+on the second, and 1.8× on the starter load.
+
+The two conditions on where a rule is stated are the rest of the saving. Measured on the
+starter load against the same load with no visibility seeding, seeding without the
+conditions costs 4.7×, and with both conditions over `fresh` and `seen` 1.03–1.04×.
+Wiring an empty context under a full one is the commonest edge, and without the
+conditions it re-seeds the whole ontology above it and re-joins rules that have already
+fired on every fact of it. A condition over `up` in place of `fresh` measured 2.5×,
+because a context already under CxUniverse re-seeds its second parent's facts for the
+rules stated in CxUniverse.
+
 ## Argument types
 
 Defends [argtypes.md](argtypes.md).
@@ -1437,6 +1652,30 @@ reproduce it, which is [order independence](nmtms.md) spent on a shape nobody as
 cycle is refused where it is written instead, beside the five other shapes a generator
 cannot have. A refusal is a fact about the rule, and it reads the same on every load.
 
+### The subtype fan is made cheaper, not memoized
+
+`plan/est-matches` costs a unary type literal by summing an estimate over the type's
+subtype closure, and `plan/order` asks for that sum once per pick, per plan, per firing
+attempt. `plan/memoizing` caches the index reads inside one plan, but it wraps the reads
+and not `est-matches`, so the traversal and its per-subtype allocation stay. Reading
+`count-at [t']` per subtype directly (`plan/fan-of-roots`) took the fan from 13.2% to 6.8%
+of a forward chaining run at 364 subtypes (`lein bench-hotreads`), and the number it
+returns does not move.
+
+Memoizing the sum does not reach the remaining cost, by path:
+
+- A memo keyed by `observe/change-clock` is retired between one plan and the next by the
+  chaining run's own placements. Turning one on measured 0.98–0.99× there.
+- On a query nothing moves the clock, so every plan after the first would be served, but
+  the fan is under 3% of the run: 120 estimates, against 901 in chaining. The memo
+  measured 0.91–1.04×.
+- A finer key is unsound. The estimate bounds a literal from above, a reading of 1 is the
+  proof `rank-blocks` ranks a block on, and a fact placed under one subtype makes an entry
+  computed before it too small.
+
+The remaining cost is in computing the fan, so holding its answer longer does not
+reduce it.
+
 ## Exceptions
 
 Defends [exceptions.md](exceptions.md).
@@ -1543,6 +1782,74 @@ witness satisfying both alternatives would be counted twice; and a census variab
 conjunct of the body binds and no earlier antecedent names (`:naf-not-closed`), which is
 a census of nothing whatever the KB holds. Both are refused at assert time and in the
 same words as the `unknown` half ([naf.md](naf.md), [aggregate.md](aggregate.md)).
+
+### NAF is re-evaluated, never an out-list
+
+Doyle's JTMS gives a justification an **out-list**, a negation-as-failure antecedent set:
+a justification is invalid while any datum on its out-list is IN. It is the textbook home
+for `unknown`, and a Vaelii `Justification` has none ([naf.md](naf.md#nothing-is-stored)).
+The two reasons [the exception is not materialized](#the-exception-is-not-materialized-per-instance)
+apply unchanged: an out-list for the ground `(unknown (flies Tweety))` with
+`(flies Tweety)` not stored materializes an unbelieved node for it, which is the
+negative space, and a level-6 answer reached through transitivity, disjointness or
+arithmetic has no single node to mark OUT.
+
+A third reason is specific to NAF. `(unknown (thereExists ?x (parentOf ?x Tom)))` is
+negation over a *pattern*, not a proposition: no single node's OUT-ness stands for
+"nobody is a parent of Tom", so a set of handles cannot represent it. So a NAF condition
+is re-evaluated on the triggers an exception uses, and nothing about it is stored.
+
+### The exception re-check narrows to firings, not rules
+
+The re-check index selects rules ([exceptions.md](exceptions.md#the-re-check-index)),
+and re-running the exception for every justification a selected rule licensed is
+quadratic in the rule's firing count. `recheck/exception-candidates` filters the firings
+by the triggering sentence first. The table measures the workload of
+`except_recheck_test/a-blocked-rule-is-not-re-joined-over-the-whole-fact-extent` (n
+asserts of `(probe_x PXi)`, a second rule deriving the exception `(skip_x PXi)` for every
+probe), as `provers/exception-holds?` calls per assert, with "unnarrowed" replacing
+`exception-candidates` by every firing of the queued rule:
+
+| per assert | n=25 | n=50 | n=100 | n=200 |
+|---|---|---|---|---|
+| unnarrowed | 14.0 | 26.5 | 51.5 | 101.5 |
+| narrowed | 2.0 | 2.0 | 2.0 | 2.0 |
+
+On seven trigger scenarios (a fact on the exception's predicate, a late `symmetric`, a
+separation denial, an `arg` inference, a `genl` edge, a merge, a stated denial), every
+arrival order reaches the same belief with the filter on and off. `except_recheck_test` asserts the narrowed counts by ratio between two
+sizes.
+
+### A composed exception keeps every firing, not a network baseline
+
+A rule whose block literal a calculus answers keeps every firing on an arrival that moves
+the calculus ([exceptions.md](exceptions.md#two-withdrawals-a-firing-carries)). The answer
+to a ground `(P a b)` moves only with the closed constraint on `(a b)` or with the
+network's satisfiability, so a baseline of the closed network taken when the queue drains
+looks sufficient. It is not. A firing is decided at join time against the network of that
+moment: a retraction loosens `(a b)`, a firing joins and is not excepted, and a fact the
+same settle derives tightens `(a b)` back. The baseline and the network then agree on that
+pair, and the firing, decided against the loosened network, is never asked again.
+
+### The settle loop is bounded, not ordered by strata
+
+Stratification could order evaluation so one pass suffices; `settle` keeps a fixpoint
+loop bounded at 16 passes and uses stratification only to refuse a cycle through negation
+([exceptions.md](exceptions.md#stratification)). `core/settle-stats`' `:iterations`
+counts the passes in which the blocked set moved. The table reads it over three workloads.
+`introspection_test/settle-stats-counts-passes-and-productive-iterations` holds a single
+exception at one iteration or fewer, and no test or bench reproduces the table's rows:
+
+| case | `:iterations` per settle |
+|---|---|
+| starter plus `vaelii.world` load, 278 settles | 0 in 263, 1 in 15 |
+| a chain of N `exceptWhen` rules, each excepted on the previous conclusion, N = 1…8 | at most 1 |
+| a chain of N aggregate rules, each counting the previous conclusion, N = 1,2,3,4,5,6,8 | 1, 2, 2, 3, 3, 4, 5 |
+
+The aggregate chain is the control: the counter rises on a blocked-set dependency, so a
+flat reading on the exception chain measures the content. An exception that holds places
+a guard defeat, which the relabel within a pass reads, so an exception chain settles in
+one pass, and stratum order would not reduce that below one.
 
 ## Anytime inference
 
@@ -1677,6 +1984,80 @@ own that no longer depends on anything about the meeting. Reloading the identica
 from nothing would then not reproduce the KB, which breaks order independence
 ([nmtms.md](nmtms.md)): the belief a KB ends up holding would depend on which unrelated fact
 happened to pass through the meeting context first, not on what was asserted.
+
+### Path consistency runs in the engine, not as a Datalog or ASP program
+
+Datalog and ASP compute least fixpoints, and that is what defines "not derivable" in them.
+Path consistency is a greatest fixpoint, so a program in either simulates a removing
+fixpoint, and the complement does not help: a relation survives when **for every**
+intermediate node some composition supports it, and a universal is a negated existential,
+so the recursion runs through negation either way. The practical encoding is a bounded
+round iteration with each round in its own relation. Stratification in those engines is
+per relation, not per ground atom, so one relation carrying the round as an argument is a
+cycle through negation. Soufflé rejects such a program outright; gringo accepts it, does
+not evaluate it while grounding, and passes the whole cubic rule to the solver. On 64
+regions that grounding measured about 16 GB, against under a gigabyte for the unrolled
+form computing the identical answer.
+
+### Composition runs through `IRelationOps`; the triple walk is a closure
+
+`IRelationOps` declares `compose` and `converse` over primitive longs. A Clojure function
+taking and returning a long boxes both ways through `IFn.invoke`, and the primitive
+methods measured 1.42× on the dense shape, where constraint sets are large and nearly
+every triple composes. The triple walk stays an ordinary closure: boxing its three loop
+indices per visit measured no difference, because the JIT had already removed the boxing.
+
+### The point algebra's table is copied, not shared with `vaelii.impl.projection`
+
+`vaelii.impl.projection` holds the three point relations as `:lt` / `:eq` / `:gt`, a
+position on an axis inside the two nine-relation algebras built over it. `vaelii.impl.point`
+holds them as an order in time with its own vocabulary. Sharing the nine entries would
+couple a spatial implementation detail to the temporal vocabulary. `point_test` derives the
+temporal copy from numeric instants.
+
+### The point narrowing reads one closed network, not a goal per comparison
+
+`interval/points-narrowing-with-support` reads the four endpoint comparisons of every pair
+off one closed point network and one `qcn-kb/closure-with-support` pass. Asking each
+comparison of the network as a goal reads the same closure but first walks the network's
+node set, and a read over n things asks 4n² goals.
+
+### A symbol moment keeps its extent
+
+`timepoint/constraints-over` gives every symbol argument `S < E`, including a symbol a
+`time_point` membership calls a moment. A narrowing only narrows
+([qcn.md](qcn.md#a-network-can-have-a-second-reader)), and the delta join relies on a fact
+never loosening a pair. A reader that dropped `S < E` when the membership arrived would
+loosen the pair, and a conclusion drawn from `S < E` would outlive the membership that
+withdrew it. An `arg` declaration cannot refuse the case either: `time_point` is below
+`temporal`, so no type admits every thing with extent and excludes a moment.
+
+### A moment is six integers, not a full-precision `DatetimeFn`
+
+`(InstantFn Y M D h m s)` gives each moment one term, because a term is identified by its
+shape: `"2000-01-01T00:00:00"` and `"2000-1-1T0:0:0"` are two shapes for one moment. A
+full-precision `(DatetimeFn "2000-01-01T00:00:00")` denotes the one-second interval, as the
+whole `DatetimeFn` / `YearFn` / `MonthFn` / `DayFn` family names stretches, and a stretch is
+not the moment that opens it.
+
+### A calendar term ends where the next one starts
+
+`datetime/bounds` is half-open: the end of 1999 is the term the start of 2000 is. Ending a
+year at the last representable moment inside it would have to name a smallest tick first,
+so the end of a year would move when the clock is read more finely, and the two terms would
+be a second apart instead of identical.
+
+### A fluent is a term, not a quoted sentence
+
+`(AsleepFn Whiskers)` is a reified NAT, so `holdsAt` relates two terms. A quoted sentence
+would put a mention in argument position, and would have to be held opaque to identity
+congruence to mean anything.
+
+### `clipped` is a predicate, not a conjunction under `unknown`
+
+`unknown` takes one literal, and a conjunction under it would be read as independent ground
+checks sharing no witness. `CxChange` names the condition `clipped`, which keeps the
+inertia rule's negated antecedent one literal with its meaning intact.
 
 
 ## Operations and the daemon

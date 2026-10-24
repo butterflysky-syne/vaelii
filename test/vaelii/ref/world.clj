@@ -25,19 +25,13 @@
     forced-monotonic set.
   - **rule**: the shapes `parse-rule` accepts.
 
-  **The forced-monotonic set** (`forced?`, docs/reference.md D1, D7, D10–D13 and
-  D17): `genlCx`, the relation marks, the function classes, the definitional
-  declarations, `except`, the equality predicates, and a `genl` between two predicates
-  (`predicate-genl?`). A write of one keeps the strength it was written at and is never
-  the loser of a nogood (`vaelii.ref.believe/decide`), except a `genlCx` write, which is
-  read `:monotonic` whatever strength it was written at (`force-monotonic`, D1), as the
-  engine's labeller holds it. A denial of a forced-monotonic literal is an ordinary write, the
-  loser of its negation nogood at either strength (`vaelii.ref.believe/decide`). A write the
-  forced-monotonic set rules out is stored and inert, never refused (`inert-write?`): a rule
-  concluding a forced-monotonic literal or its denial, whose antecedents in v1 are never
-  forced-monotonic literals. `check-world` sets the inert writes aside
-  under `:inert`. v1 admits `genlCx`, the marks, `negates`, `disjoint`, `covering` and a
-  predicate `genl`; the rest of the forced-monotonic set is outside v1.
+  **The forced-monotonic set** (`forced?`, docs/reference.md, \"Invariants the reference
+  states\"): the functors of `forced-monotonic` and a `genl` between two predicates
+  (`predicate-genl?`). A `genlCx` write is read `:monotonic` (`force-monotonic`). A rule
+  concluding a forced-monotonic literal or its denial is stored and inert, never refused
+  (`inert-write?`), and `check-world` sets it aside under `:inert`. v1 admits `genlCx`,
+  the marks, `negates`, `disjoint`, `covering` and a predicate `genl`; the rest of the
+  forced-monotonic set is outside v1.
 
   Refused besides (`check-computed-reads`): a rule that reads a predicate some write
   declares `transitiveInArgInverse`, or a positive literal on a predicate the written `genl`
@@ -48,9 +42,7 @@
 
   **A forced-monotonic declaration** `(forced_monotonic_predicate T)` of an ordinary type `T`
   (`forced-declaration?`) makes `T` forced-monotonic at the contexts that see it and nowhere
-  else (docs/reference.md D17): there a membership of `T` is never a loser and a denial of
-  one loses its negation nogood at either strength, and a rule concluding one fires there only as a forced-monotonic rule
-  (`vaelii.ref.believe/derive-at`)."
+  else (docs/reference.md, decision 17; `vaelii.ref.believe/derive-at`)."
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [vaelii.impl.predicates :as predicates]
@@ -71,12 +63,10 @@
 
 (def forced-monotonic
   "The functors whose every write is never a loser, whose denial loses its negation nogood
-  at either strength, and which a v1
-  rule concludes only inertly: `genlCx` (docs/reference.md D1), the relation marks and the
-  function classes (D7, D17), the definitional declarations and the arity bindings (D11),
-  `except` (D12) and the equality predicates (D13).  `injection`, `surjection`,
-  `bijection`, `partition`, `sibling_disjoint`, the arity bindings, `except`, `rewriteOf`,
-  `sameAs` and `equals` are outside v1, and `write-kind` refuses a write of one."
+  at either strength, and which a v1 rule concludes only inertly (docs/reference.md,
+  invariants 1, 2 and 6 to 8).  `injection`, `surjection`, `bijection`, `partition`,
+  `sibling_disjoint`, the arity bindings, `except`, `rewriteOf`, `sameAs` and `equals`
+  are outside v1, and `write-kind` refuses a write of one."
   '#{genlCx irreflexive anti_symmetric asymmetric functional functionalInArg
      anti_transitive negates injection surjection bijection disjoint covering
      partition sibling_disjoint arity unary binary ternary unary_predicate
@@ -148,7 +138,8 @@
   (and (symbol? x) (boolean (re-matches #"[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*" (name x)))))
 
 (defn predicate-genl?
-  "Is `s` a `(genl P Q)` edge between two `camel-case-predicate?` terms. Such an edge is forced-monotonic (docs/reference.md D10); a `genl` between types is not."
+  "Is `s` a `(genl P Q)` edge between two `camel-case-predicate?` terms, the forced-monotonic
+  spelling (docs/reference.md, invariant 5)?"
   [s]
   (and (genl-edge? s) (every? camel-case-predicate? (rest s))))
 
@@ -242,9 +233,8 @@
     level-6 provers (disjointness among them) the reference does not model.
   - `C` is a literal or its denial over an ordinary predicate, or a member of the
     forced-monotonic set (`forced?`) or its denial. A rule concluding a forced-monotonic member
-    parses with `:inert? true` (docs/reference.md D17): its antecedents are v1 literals,
-    never forced-monotonic literals, so each firing of it is inert. A rule concluding a type-level
-    `genl` or a rule is refused as outside v1.
+    parses with `:inert? true` (docs/reference.md, decision 17). A rule concluding a
+    type-level `genl` or a rule is refused as outside v1.
   - at least one join antecedent; every variable of `C`, of each `unknown` and of the
     exception occurs in a join antecedent (range restriction and closure)."
   [form]
@@ -415,10 +405,9 @@
                      {:sentence s :predicate f})))))
 
 (defn inert-write?
-  "Is write `w` one the forced-monotonic set makes inert (docs/reference.md D17): a rule
-  concluding a `forced?` sentence or its denial, whose every firing the engine drops.  The
-  engine stores it rather than refusing it, so the stored set is a function of the offered
-  set in every order."
+  "Is write `w` one the forced-monotonic set makes inert (docs/reference.md, decision 17):
+  a rule concluding a `forced?` sentence or its denial, whose every firing the engine
+  holds void?"
   [{:keys [sentence]}]
   (and (rule-form? sentence) (:inert? (parse-rule sentence))))
 
@@ -436,8 +425,8 @@
 
 (defn force-monotonic
   "`write` with its strength set to `:monotonic` when its sentence is a `genlCx` edge, as
-  the engine's labeller reads one (docs/reference.md D1: the strength is coerced, never
-  refused, so an edge caps no class); any other write unchanged."
+  the engine's labeller reads one (docs/reference.md, invariant 1); any other write
+  unchanged."
   [{:keys [sentence] :as write}]
   (if (genlCx-edge? sentence)
     (assoc write :strength :monotonic)
@@ -446,7 +435,8 @@
 (defn check-world
   "Throw `:unsupported` unless every write of `world` is inside the v1 fragment (the
   namespace docstring), and return `world` with its `inert-write?` writes moved from
-  `:writes` to `:inert` and every `genlCx` write read `:monotonic` (`force-monotonic`).  The fragment's structural checks read the writes that stay."
+  `:writes` to `:inert` and every `genlCx` write read `:monotonic` (`force-monotonic`).
+  The fragment's structural checks read the writes that stay."
   [world]
   (let [ws (:writes world)]
     (doseq [{:keys [sentence context strength] :as w} ws]

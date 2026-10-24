@@ -8,10 +8,26 @@
   queue (`checks/refresh-argument-holds!`).  See docs/argtypes.md, \"An argument that
   fails its declared type is held inert\"."
   (:require [vaelii.impl.caches :as caches]
+            [vaelii.impl.config :as config]
             [vaelii.impl.predicates :as predicates]
             [vaelii.impl.sentex :as sx]
             [vaelii.impl.taxonomy :as tax]
             [vaelii.impl.types.reasoning :as reasoning]))
+
+;; ---- the reading an argument declaration is under ---------------------------
+
+(def ^:dynamic *assertive-arg-types?*
+  "Do the argument constraints *entail* as well as constrain?
+
+  **On by default.**  The entailment is additive — it mints the type a declaration
+  already constrains, as a justified, retractable sentex — and off leaves the constraint
+  reading alone (docs/argtypes.md).
+
+  `binding` it is the ordinary way in.  `VAELII_ASSERTIVE_ARG_TYPES=0` sets the root
+  value off instead, which is what lets the whole suite be run under the constraint-only
+  reading — the parity run that shows the entailment is additive rather than a different
+  engine."
+  (config/assertive-arg-types?))
 
 ;; ---- the held facts and the queue ---------------------------------------------
 ;;
@@ -145,6 +161,18 @@
                (and (not= read-under (::read-under c))
                     (or (seq (::held c)) (declares-any? tax))))))
 
+(defn- queue-of
+  "The queue the state `c` holds, as `take!` answers it under `read-under`."
+  [c read-under]
+  {:decls (::decls c #{}) :terms (::terms c #{}) :kinds (::kinds c #{}) :defns (::defns c #{})
+   :from  (if (::adopt c) read-under (::read-under c)) :owed? (boolean (::owed c))})
+
+(defn queued
+  "`take!`'s answer with the queue left in place, for a drain that can stop before it
+  takes the queue."
+  [kb read-under]
+  (queue-of @(reasoning/nogood-candidates kb) read-under))
+
 (defn take!
   "The queue since the last call, emptied, with the taxonomy generations `read-under` recorded:
   `{:decls #{[P context]} :terms #{x} :kinds #{P} :defns #{T} :from old-read-under :owed? bool}`.  An
@@ -152,8 +180,7 @@
   [kb read-under]
   (let [[old _] (swap-vals! (reasoning/nogood-candidates kb)
                             #(-> % (dissoc ::decls ::terms ::kinds ::defns ::owed ::adopt) (assoc ::read-under read-under)))]
-    {:decls (::decls old #{}) :terms (::terms old #{}) :kinds (::kinds old #{}) :defns (::defns old #{})
-     :from  (if (::adopt old) read-under (::read-under old)) :owed? (boolean (::owed old))}))
+    (queue-of old read-under)))
 
 (def family
   "The argument family's entry in `decide/registry`: the write hook that queues what a

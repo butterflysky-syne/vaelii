@@ -46,15 +46,11 @@ land once rather than once per name. `taxonomy/placement-rep` picks the componen
 listed in — and every one of `maximal-common-descendant-contexts`' exits runs through it,
 the single-context fast path included.
 
-That answer is only as good as `:scc`, which makes the component map the one piece of
-derived state here that is **more than a pruning**. A dissolved-but-unrepaired component
-does not merely cost `sees?` a walk; it leaves the group with no name, so
-`placement-rep` hands back whichever member the caller happened to ask about. Belief is
-what can dissolve one without a sentex moving — an edge defeated out of a cycle, or
-revived back into one — so `settle` repairs the potential **after** it reconciles belief
-as well as before, and no firing ever runs against a component the reconcile unmade.
-Deferred to the next settle instead, one conclusion would land in `CxAlpha` and the
-next in `CxBeta` for no reason but how many settles had run since the defeat.
+`placement-rep` reads the taxonomy's component map, so an unrepaired component leaves the
+group with no name and the placement lands on whichever member the caller asked about.
+`settle` repairs the map after it reconciles belief as well as before, because an edge
+defeated out of a cycle or revived into one moves a component with no sentex moving
+([taxonomy.md](taxonomy.md)).
 
 ## The context topology
 
@@ -250,83 +246,106 @@ somewhere to put the answer.
 | a real `Cx…` | followed | every literal in **this** context's view | — |
 | `CxNothing` | followed (vacuously) | the empty view — the provers alone | — |
 
-Two axes, not a ladder. `CxEverything` is the odd one out and not by a degree: it is a
-named opt-out of the fourth invariant, so its answers are not belief claims and say a
-derivation is *spelled* in the store rather than held. Everything else asks what the KB
-holds, and differs only in whose view has to hold it.
+`CxEverything` is the only row that ignores belief, so its answers say what the store
+spells rather than what the KB holds ([below](#cxeverything-syntactic-and-a-named-opt-out-of-belief-filtering)).
+The other rows differ only in whose view has to hold the answer.
 
-Rows two and three are the **same reading**. A variable names somewhere to put the witness,
-so it is unified in — and unified, not assoc'd: a variable the goal has already bound to a
-different context drops the answer rather than being overwritten. `CxInference` is a
-constant, names no variable, and so has nothing to bind; its witness goes beside the
-bindings under the keyword `:context`, which cannot collide with the `?`-symbols a goal
-spells.
+Rows two and three are the **same reading** and differ in where the witness goes. A
+variable is unified with the witness, so a goal that already binds it to a different
+context drops the answer. `CxInference` names no variable, so its witness goes beside the
+bindings under the keyword `:context` (`vantage/witness-key`), which cannot collide with a
+goal's `?`-symbols.
 
-**The exception, and `unknown` is why.** A goal every literal of which is *computed* rather
-than matched — `different`, `evaluate`, `unknown` — names no context anywhere, so there is
-no witness to pick, and it is read whole-KB with no witness at all
-(`vantage/nothing-to-witness?`). Fanning over readers is **existential** over them, and a
-fanned `(unknown X)` is answered by the most ignorant reader in the KB
-([why](defenses.md#a-goal-every-literal-of-which-is-computed-names-no-context)). A
-**mixed** goal needs no rule and gets none: the monotone literals decide which readers can
-answer at all, and the `unknown` is then evaluated at those readers and nowhere else, so
-`[(p ?x) (unknown (q ?x))]` reads "a reader that sees p and does not know q", which is what
-it should.
+A goal every literal of which is *computed* — `different`, `evaluate`, `unknown` — names no
+context, so it is read whole-KB with no witness (`vantage/nothing-to-witness?`,
+[why](defenses.md#a-goal-every-literal-of-which-is-computed-names-no-context)). A **mixed**
+goal is read jointly: `[(p ?x) (unknown (q ?x))]` reads "a reader that sees p and does not
+know q".
 
-**Why they must not leak past the entry point.** All three are `Cx…` CapitalCamelCase, so
-`nm/context?` calls them contexts and `sx/variable?` does not. Reaching the engine, one
-would be read by every unscoped-path test as an ordinary *concrete* context the taxonomy
-has never heard of — up-closure itself alone — and the read would answer **empty** rather
-than throw. `CxNothing` is that failure mode turned into the feature: it is a context
-nothing can wire, so it sees no fact, inherits no vocabulary, and leaves only what a
-prover can compute.
+**The query contexts are resolved at the entry point because the engine cannot tell them
+from a context.** All three are `Cx…` CapitalCamelCase, so `nm/context?` calls them
+contexts and `sx/variable?` does not. Reaching the engine, one would read as a context no
+edge names, whose ancestor set is itself, and the read would answer empty. `CxNothing` is
+that reading on purpose: it sees no fact and inherits no vocabulary, so only a prover
+answers. A read entry point that does not resolve a query context refuses one
+(`:unsupported-context`). The reads that resolve one are `query`, `query?`, `ask`, `ask?`,
+`prove`, `provable?` and `sentexes-matching`.
+
+**An unscoped read refuses a goal spelling `?ctx`** (`:shape`). Retrieval matches every
+sentex's context slot against the marker `?ctx`, whatever variable the caller named the
+context, so a goal variable spelled `?ctx` would be bound to the context instead of its
+argument. A goal read at a named context may spell it.
 
 ### CxInference: the joint reading
 
-A **variable** context reads "in some context", and it reads it *per literal*. The
-conjunctive join substitutes the accumulated bindings into each literal but hands every
-conjunct the same wildcard, then merges what comes back — so a fact in `CxA` joins a fact
-in `CxB` even when no context sees both, and the context binding is overwritten by
-whichever literal the plan ordered last. Projection hides that at `query`, which is why it
-has been invisible rather than wrong.
+The engine's unscoped join, at the marker `?ctx`, reads *per literal*: it hands every
+conjunct the same wildcard and merges what comes back, so a fact in `CxA` joins a fact in
+`CxB` even when no context sees both. The read entry point never answers with that join.
+`CxInference` and a variable context read it **jointly**: an answer survives only if some
+one reader's `genlCx` ancestor set covers the whole derivation, and that reader is the
+answer's witness.
 
-`CxInference` is that reading made joint: an answer survives only if some one reader's
-`genlCx` ancestor set covers the whole derivation, and the reader that covered it comes back
-**beside** the bindings, under the keyword `:context` (`vantage/witness-key`) — the same
-place rows two and three of the table above put it. `CxInference` is a constant and names
-no variable, so there is nothing for the witness to bind; write the context as a variable
-instead and it unifies into that variable, under whatever name you chose. The witness is
-the **most general** such reader (`tax/maximal-contexts`) — the
-readers below it see a superset of the same knowledge and add no claim, so reporting all
-of them would make the answer count a fact about how finely the KB is divided rather than
-about the question.
+The witness is the **most general** such reader (`tax/maximal-contexts`), computed per
+answer from every reader that gave it. The readers below it see a superset of the same
+knowledge and add no claim, so reporting all of them would make the answer count a fact
+about how finely the KB is divided. Under `:proof?` an answer is one derivation, so two
+proofs of one binding keep a witness each, and a variable witness is unified inside
+`:bindings`.
 
-Two implementations, in `vaelii.impl.vantage`, chosen by `vantage/*strategy*`:
+Two implementations, in `vaelii.impl.vantage`, chosen by `vantage/*strategy*`, call one
+witness function, so they maximize alike:
 
 - **`:fan`** (the reference) enumerates the readers and asks each the ordinary scoped
-  question. Sound by construction — every answer is one a real vantage really gives — and
-  it inherits `except`, retired-spelling and closure scoping for free, since each reader
-  runs the path a named context runs. It is the one place a read is **not lazy**: which
-  witness is maximal is a property of the whole answer set.
+  question. Every answer is one a reader gives, and each reader runs the path a named
+  context runs, so `except`, retired-spelling and closure scoping apply unchanged. The fan
+  is the one read that is **not lazy**: which witness is maximal is a property of the
+  whole answer set. With no reader at all (no context, no stored fact the goal matches,
+  and no stored ingredient of a computed answer to it) it reads unscoped and the answers
+  carry no witness: such an answer rests on no fact a reader holds, so it holds from every
+  reader. `sentexes-matching` takes the fan's record form
+  (`vantage/fan-distinct`), which attaches no witness, since a record carries its own
+  `:context`, and is lazy over the readers.
 - **`:post-hoc`** asks once, unscoped, carrying what each answer *rested on*, and places
-  the result with `maximal-common-descendant-contexts` — the backward twin of what a
-  forward firing does. One pass instead of |readers|.
+  the result with `maximal-common-descendant-contexts`, as a forward firing places its
+  conclusion. One pass instead of one per reader. The join keeps one row per derivation,
+  not one per binding: a binding two derivations give is placed by each, so a placement
+  that drops one keeps the other.
 
-Post-hoc is the one that can be wrong, because an unscoped pass sees the KB with three
-filters off and has to put them back by reasoning about the placement rather than the read:
-the **`genl` edges a match subsumed through** (a reader that sees the fact but not the edge
-does not have the answer), the **exceptions** (`'?ctx` runs where the hidden set is empty,
-so an answer can land in the context that `except`s one of its own facts), and the
-**retired spellings** (supersession is per reader, so a placement below an equality merge
-sees both a fact and its twin). Each was a real divergence from the fan before it was a
-line of code.
+An unscoped pass reads the KB with three filters off, so post-hoc restores each at the
+placement: the **`genl` and `genlInverse` edges a match subsumed through** (a reader that
+sees the fact but not the edge does not have the answer; one row per `genl` route no other
+route covers, `provers/subsumption-routes`, where a route resting on an edge a defeat or an
+`except` can hide covers only the routes resting on that edge too), the **exceptions**
+(`'?ctx` reads with an empty hidden set, so an answer could land in a context that
+`except`s one of its facts), and the **retired spellings** (supersession is per reader,
+so a placement below an equality merge sees both a fact and its twin).
+`vantage_differential_test` compares the two strategies over generated lattices holding
+all three.
 
-What post-hoc cannot do is declared rather than guessed. A *computed* answer — a closure
-walk, an evaluable, an inferred argument type — names no context to place by, so
-`placeable?` asks the registry whether the stored-fact prover is the only one applicable to
-each literal, and a rule-expanding read is out by construction (an antecedent fact is not
-one of the goals, so its context never reaches a placement). Anything else is handed back
-to the fan, which reports that it was.
+Post-hoc answers only a goal it can place, and hands every other goal to the fan, which
+reports `:strategy :fan`:
+
+- A *computed* answer is out unless its prover names the stored sentexes it rests on, one
+  answer per derivation, and rests on no absence (`provers/placeable-prover?`). The
+  stored-fact prover and `ArgTypeProver` qualify: an inferred type carries its usage, its
+  `arg` declaration and the `genl` routes from the usage's predicate to the declared one
+  and from the declared type to the asked one (`SupportingProver`). A walk over stored
+  hops names one chain where several may derive the pair, and an answer under NAF, a
+  closed extent or an `except` can be lost to the unscoped pass, which sees facts a reader
+  does not; those go to the fan. `placeable?` asks the prover registry of each literal.
+- A literal that reaches other provers once the join binds it is out: the join compares
+  the provers a substituted literal dispatches to with those of the literal as written,
+  and abandons the goal to the fan when the two sets differ. `ArgTypeProver` answers an
+  open `(t1 ?a)` where a declaration typing `t1` has no stored membership covering it
+  ([argtypes.md](argtypes.md#the-open-membership-goal)), so under the constraint-only
+  reading `(t1 ?a)` and `(t1 X)` reach the same two provers and the join places them.
+  Under the entailing reading the mint covers a type `arity/mintable-type?` admits, so
+  `(t1 ?a)` reaches the stored-fact prover alone, `(t1 X)` reaches `ArgTypeProver` too,
+  and the join abandons the goal.
+- A rule-expanding read is out: an antecedent fact is not one of the goals, so its context
+  never reaches a placement.
+- A goal a merge rewrote is out. A reader above the merge asks the goal as written, and
+  one unscoped pass asks one question.
 
 The strategy is a cost decision that must not change the answer set, exactly as
 `res/*hierarchical-retrieval*` is for retrieval, and `query_context_test` compares the two
@@ -336,32 +355,58 @@ vantage/*rows-per-reader*` (20) is abandoned mid-stage, and the fan answers what
 abandoned —
 [why](defenses.md#post-hoc-placement-is-the-default-because-it-is-bounded).
 
-The readers are the `genlCx` lattice plus any context holding a fact the goal could match.
-The second half is not redundant: a context wired by **no** edge is not a node of the
-closure, so `tax/contexts` does not list it — while a fact asserted into it is real and
-that context is its own (only) reader.
+The readers are the `genlCx` lattice, plus any context holding a fact the goal could
+match, plus any context holding an **ingredient** of a computed answer to one of its
+literals (`provers/ingredient-contexts`). A context wired by **no** edge is not a node of
+the closure, so `tax/contexts` does not list it, and a fact asserted into it has that
+context as its only reader. Such a context sees only itself, so it answers a computed
+literal from stored facts only when it holds every one of them, and the readers name it by
+one ingredient each such answer rests on:
+
+| prover | the ingredient | read |
+|---|---|---|
+| `ArgTypeProver` | the usage: a sentex naming the individual, or for an open argument a fact on a predicate a declaration no stored membership covers types | the term index, one record fetch per posting; the predicate extent's contexts for an open argument |
+| `SymmetricProver`, `TransitivePredicateProver`, `InverseProver` | a fact on the predicate, a spec of it, or an inverse partner; for a negated goal, a denial on a partner or a genl of one | the predicate extent's contexts |
+| `MetaConstraintProver` | a declaration of the goal's functor | the predicate extent's contexts |
+| `ReflexiveProver` | a `(reflexive P)` statement | the taxonomy's supporter contexts |
+| `TransitivityProver` on `genl`, `CommonGenlProver` | a `genl` edge out of a ground subtype or into a ground supertype | the taxonomy's edge contexts |
+| `DisjointnessProver`, `DisjointnessNegationProver` | a separating declaration | the predicate extent's contexts |
+| `NegatesProver` | a `negates` declaration on the negated predicate or a supertype of it | the taxonomy's supporter contexts |
+| `CoveringProver` | a `covering` or `partition` declaration naming the part | the taxonomy's supporter contexts |
+| `ClosedExtentProver` | a `closed_extent_predicate` or `closedExtentForArg` grant | the predicate extent's contexts |
+| `DefnSufficientProver`, `DefnNecessaryNegationProver` | a `defnSufficient` or `defnNecessary` declaration, or a `defnIff` | the predicate extent's contexts |
+| `TransitiveInArgProver` | a `transitiveInArg` or `transitiveInArgInverse` declaration on the predicate | the declarations' contexts (`inherit/positions`) |
+| `EqualityProver` | a stored `sameAs`, `equals` or `rewriteOf`, or a schematic equation | the predicate extent's contexts, one record fetch per schematic equation |
+| a `SupportingProver` | a fact on one of its `support-sources` | the predicate extent's contexts |
+| a calculus prover (`qcn-kb/CalculusProver`) | a fact on a predicate that puts a node into its network | the predicate extent's contexts |
+
+A computed prover outside the table rests on no stored fact of its own, so it adds no
+reader: the provers that answer a subgoal (`unknown`, `thereExists`, `forall`, the
+aggregates, `believes`, `bravely` and `cautiously`), `different`, which holds by the
+absence of a merge, and the provers that read only the goal's terms or a table every
+context reads alike (the evaluables, `evaluate`, the expression-kind and argument-position
+readers, `admitsArgnum`, the calendar). The reader set needs no `tax/meet-closure`: a
+context outside the lattice meets no other context, and the lattice is closed under meets.
+Finding the matched contexts costs one record fetch per match of the goal, paid before the
+first answer: the index enumerates no census of the contexts holding facts.
 
 ### CxEverything: syntactic, and a named opt-out of belief filtering
 
-`CxEverything` drops both filters: no context scoping and no JTMS read, so it answers what
-the store *spells*. It is the cheapest question the engine takes and the only one that can
-see a defeated default. It is therefore an explicit opt-out of the fourth invariant, and
-an answer taken under it is not a justification — it says a derivation is spelled in the
-store, not that the KB holds it.
+`CxEverything` drops two filters, context scoping and the JTMS read, so it answers what the
+store *spells* and is the only reading that sees a defeated default. It opts out of belief
+filtering by name: an answer taken under it says a derivation is spelled in the store, not
+that the KB holds it.
 
-It drops those two filters and **not** the derived relations: the `genl` / `genlCx`
-closures and the equality partition are computed from believed edges either way, so a
-subsumption over a *defeated* `genl` edge stays invisible under it. The reading is
-"what does the store spell", not "what would the store spell with the TMS switched off".
+It keeps the derived relations: the `genl` / `genlCx` closures and the equality partition
+are computed from believed edges either way, so a subsumption over a *defeated* `genl` edge
+stays invisible under it.
 
-Two implementation notes that are easy to get wrong and silent when you do. The flag is a
-dynamic var, so a plain `binding` around a read entry point would be popped before the lazy seq
-realized and the flag would simply not take (`res/blind-seq` re-establishes it per
-realization step). And it belongs in **every** cache key on the path, because a blind read
-asks the same question at the same wildcard context as an ordinary one and moves no clock
-doing it: `matches-visible`'s literal cache and the reach cache under `provers/closure-key`
-both hold it, or whichever ran first answers for both — an ordinary read reporting a
-defeated default.
+The flag is the dynamic var `res/*belief-blind*`, and `res/blind-seq` re-binds it at each
+realization step of the lazy answer, since a `binding` around the entry point is popped
+before the seq realizes. The flag is part of every cache key on the path
+(`matches-visible`'s literal cache and the reach cache under `provers/closure-key`),
+because a blind read asks the same question at the same wildcard context as an ordinary
+one and moves no clock.
 
 ## Context placement of justifications
 
@@ -614,12 +659,11 @@ bindings and so having no per-literal context. Ask the whole conjunction in `Ctx
 (`sentex/ist-rule-problem`), and the reason differs by position.
 
 As a read, the literal is indexed and matched under the functor `ist`, which no sentex
-carries, so it satisfies nothing — and the way that falls out depends on the frame it
-sits in. A positive antecedent is never satisfied and the rule cannot fire; an
-`exceptWhen` query never matches, so the conclusion it was written to block stands
-believed; an `(unknown (ist …))` is satisfied by that same emptiness, so the rule fires
-unconditionally. The middle two are why this is a refusal rather than an inert shape: a
-rule that does nothing announces itself, and an exception that blocks nothing does not.
+carries, so it satisfies nothing. A positive antecedent is never satisfied and the rule
+cannot fire. An `exceptWhen` query never matches, so the conclusion it was written to
+block stands believed. An `(unknown (ist …))` is satisfied by the same emptiness, so the
+rule fires unconditionally. The last two change belief without any sign, which is why the
+shape is refused rather than stored inert.
 
 As a consequent, the frame would place the conclusion in `Ctx` instead of the maximal
 contexts that see the rule and the facts, whether or not `Ctx` sees either. Three
@@ -635,35 +679,24 @@ properties fail with it:
   nothing where the forward rule stored an answer. A rule's direction would change what
   the KB believes.
 
-The reading a rule wants is that `S` be **visible** in some context, which is what the
-two mechanisms below this section say — `(decontextualized_predicate P)` takes every
-`(P ...)` into CxUniverse, which every context the topology wires in sees, and a `genlCx` edge puts `Ctx` in
-another context's ancestor set. Under either the literal is written plainly, and the
-`genlCx` topology rather than a per-rule annotation decides what is readable from where.
-An `ist` into a context that already sees the rule and the facts adds nothing, because
-that context inherits the conclusion from the maximal placement above it.
+The reading a rule wants is that `S` be **visible** in some context, and the two
+mechanisms below state it: `(decontextualized_predicate P)` takes every `(P ...)` into
+CxUniverse, and a `genlCx` edge puts `Ctx` in another context's ancestor set. Under
+either the literal is written plainly. An `ist` into a context that already sees the rule
+and the facts adds nothing, because that context inherits the conclusion from the maximal
+placement above it.
 
-**Why the query takes what the rule is refused**, since it is one form treated two ways:
-the query grants no visibility the context argument did not already grant.
-`(sentexes-matching kb S CxA)` has always answered `CxA`'s facts from anywhere, and
-`(ist CxA S)` is a spelling of it — the caller asking about `CxA` has said so. A rule is
-the other case: nobody asked, the rule's own context may not see `Ctx`, and what comes
-back decides *belief* rather than answering one caller. `context_scoping_test` asserts
-the query half and `check_test` asserts the refusal.
+**A query takes the form a rule is refused** because the query grants no visibility the
+context argument did not already grant: `(ist CxA S)` asked from anywhere is
+`(sentexes-matching kb S CxA)`, which the caller asked for. A rule's answer decides
+*belief*, and the rule's own context may not see `Ctx`. `context_scoping_test` asserts the
+query half and `check_test` asserts the refusal.
 
-**The predicate meta-ontology** is a worked example. Predicates are reified as
-individuals under `predicate` (itself a `thing`): `unary_predicate` (types and
-one-place properties), `binary_predicate`, `ternary_predicate`, and the algebraic
-subtypes of `binary_predicate` — `symmetric` / `asymmetric` / `transitive` /
-`reflexive` / `functional`. The algebraic marks **are** the classification: each is one
-predicate that maintains its property *and*, through `(genl symmetric binary_predicate)`,
-is a membership, so a `(symmetric siblingOf)` declaration makes `isa? siblingOf symmetric`
-and `isa? siblingOf binary_predicate` hold — exactly as `isa? dog unary_predicate` does for
-a type. Both families are `decontextualized_predicate`s, lifted into CxUniverse and seen
-by every data context. The **arity** memberships are derived by `core.txt` rules that name no
-context, so each places where the declaration was made, and its copy in CxUniverse
-publishes it KB-wide. A predicate's algebra and its length are claims about the predicate
-itself and belong to the whole KB.
+**The predicate meta-ontology** shows the lift in place of an `ist`. The algebraic marks
+(`symmetric`, `transitive`, `functional`, …) are types under `binary_predicate`, so
+`(symmetric siblingOf)` makes `isa? siblingOf binary_predicate` hold, and the marks and
+the arity classes are `decontextualized_predicate`s, so each is read from every context
+that sees CxUniverse ([the arity rules](#the-consumers-and-what-each-of-them-may-reach)).
 
 ## decontextualized_predicate: a fact that belongs to the KB, not to one theory
 
@@ -674,8 +707,10 @@ CxUniverse**, supported by the placement sentex *and* the
 the fact becomes visible everywhere, even from a *sibling* context that cannot see
 where it was stated. Retracting or defeating either the original or the declaration
 withdraws the copy through the JTMS, and declaring it retroactively lifts the `(P ...)`
-facts already present. A declaration that revives lifts the facts stored while it was
-OUT, which its arrival could not reach (`special/revived-declaration-sweeps`, run by the
+facts already present. The retroactive sweep copies what is stored, not what is believed,
+so a fact out of belief at the declaration's arrival has its copy, which rests on the fact
+and follows its label. A declaration that revives lifts the facts stored while it was OUT,
+which its arrival could not reach (`special/revived-declaration-sweeps`, run by the
 settle for every revived datum).
 
 The mechanism is documented in the KB by the `comment` on `decontextualized_predicate` in
@@ -686,13 +721,12 @@ which a rule is refused. The declaration is ordinary predicate metadata, read ba
 
 **The mark itself is read globally, not through the asserting fact's ancestor set.** A
 `(decontextualized_predicate P)` stated *anywhere* lifts every `(P ...)` in the KB,
-including facts stated in contexts that cannot see the declaration. That is
-deliberate (`special/deduce-lifts` says so at the read): the lift decides the
-*storage* context, and making it conditional on what could see the declaration would be circular
-— the whole point of the copy is to make the fact visible to readers the stating
-context knows nothing about. What it costs is stated here rather than hidden: a
-declaration in one theory publishes a sibling theory's `(P ...)` extent KB-wide, so
-the mark belongs in a schema context, not a contingent one.
+including facts stated in contexts that cannot see the declaration
+(`special/deduce-lifts`). The lift decides the *storage* context, and making it
+conditional on what sees the declaration would be circular: the copy exists to make the
+fact visible to readers the stating context does not see. A declaration in one theory
+therefore publishes a sibling theory's `(P ...)` extent KB-wide, so the mark belongs in a
+schema context, not a contingent one.
 
 ### Why CxUniverse, and not a target the declaration names
 
@@ -734,25 +768,21 @@ chaining's `place-conclusion`. A rule concluding `(P ...)` gets its conclusion l
 exactly as a caller asserting `(P ...)` does, because the declaration is a claim about
 the *predicate*, not about how a particular sentence arrived.
 
-That is not a convenience — lifting only asserted content makes belief depend on
-arrival order, which [nmtms.md](nmtms.md) forbids. Declare, then let a rule conclude
-`(P a)`: the conclusion stays where it was concluded. Let the rule conclude first and
-declare afterwards: the retroactive sweep lifts it. Same three sentences, two different
-answers. The engine's own invariant decides the question, and it decides it in favour
-of lifting.
+Lifting only asserted content would make belief depend on arrival order, which
+[nmtms.md](nmtms.md) forbids: with the declaration first, a rule's `(P a)` would stay where
+it was concluded, and with the declaration last the retroactive sweep would lift it.
 
 Each copy is a **new datum in a context that did not have it**, so it goes on the
-chaining agenda and reaches the derivation-path choke point like any rule conclusion:
-its arrival re-triggers any `exceptWhen` stated over that predicate, and rules keyed on
-the predicate fire on the copy as well as on the original.
+chaining agenda like any rule conclusion: its arrival re-triggers any `exceptWhen` stated
+over that predicate, and rules keyed on the predicate fire on the copy as well as on the
+original.
 
-That second firing is the point, and it is about **placement**, not about what a rule
-can see — forward chaining already matches antecedents across every context. Firing on
-the original places the conclusion in the source context; firing on the copy places
-it in CxUniverse. So a consequence of a decontextualized fact is decontextualized
-in turn, which is what you want (if `(edgeTo A B)` holds everywhere, so does what a
-universal rule concludes from it) and what it costs: **two stored sentexes for one
-conclusion**, and the rule fires twice.
+The second firing decides **placement**; forward chaining already matches antecedents
+across every context. Firing on the original places the conclusion in the source context,
+and firing on the copy places it in CxUniverse. A consequence of a decontextualized fact
+is therefore decontextualized in turn: if `(edgeTo A B)` holds everywhere, so does what a
+universal rule concludes from it. The cost is **two stored sentexes for one conclusion**,
+and the rule fires twice.
 
 The fixpoint still terminates for the ordinary reason — re-deriving a sentence already
 stored adds a justification, not a handle, so the agenda drains — and each copy carries
@@ -763,9 +793,9 @@ it bounds a chain of rules.
 `anti_symmetric` mark derives its equalities where the mark is visible, and the copy is
 what makes it visible from CxUniverse, so the copy runs the same four merges the assert
 entry point and `chain/place-fact-conclusion` run for what they store
-(`special/copy-merges`). Without them the merge followed arrival order: a mark stated in a
-theory before the facts merged them at CxUniverse, and the same mark stated after them
-merged below that theory alone. `relation_properties_test`'s
+(`special/copy-merges`). Without them the merge would follow arrival order: a mark stated
+in a theory before the facts would merge them at CxUniverse, and the same mark stated
+after them below that theory alone. `relation_properties_test`'s
 `a-merge-mark-in-a-sibling-merges-from-every-context-in-either-order` asserts both orders.
 
 Two boundaries, both deliberate:
@@ -774,9 +804,8 @@ Two boundaries, both deliberate:
   about `P` does not reach it. The positive extent becomes universal and the negative
   one stays in its context.
 - **Declaring is O(extent).** The retroactive sweep creates one copy per stored
-  `(P ...)` inside a single synchronous `assert` — measured at ~0.09 ms a fact, flat, so
-  a predicate with a large extent is a long assert. Declare before loading where you
-  can.
+  `(P ...)` inside the declaring `assert`, so a predicate with a large extent is a long
+  assert. Declare before loading where you can.
 
 ### What the shipped ontology declares it of
 
@@ -928,6 +957,11 @@ extent simply lives there. `genlCx` is declared this way (`core.txt` states
 topology has one canonical home rather than being scattered across the contexts each
 edge was asserted in.
 
+The reads that look a sentence up by the context it names go to the same home:
+`handle-of`, `sentexes-matching` and `why-not` given `(P …)` or `(ist CxA (P …))` at a named
+context read CxUniverse, through the `assert-entry/storage-context` call that `assert`
+stores with.
+
 **A declaration arriving after its facts moves them.** Each `(P …)` premise stored outside
 CxUniverse is asserted there at its own strength and the original retracted
 (`core/rehome-forced-extent!`), so the KB is the one the other order builds. A text load
@@ -956,44 +990,24 @@ the edges some believed supporter asserts from K's ancestor set.  The **`genlCx`
 closure itself stays global, as a stated exception** — visibility scoped by
 visibility would be circular, `forced_decontextualized_predicate` already forces
 every `genlCx` edge universal, and the scoped reads' interning is keyed on
-that closure being context-independent.  A clash no single writer could see —
-admissible where each half was stated, jointly visible from some descendant — is
-**weighed** at that descendant, never by refusing a writer on grounds it cannot see.
+that closure being context-independent.
 
-`settle` runs each candidate's definitional question from its own context *and* from the
-maximal common descendant of that context and each context holding a sentex it could
-pair with — and, where a separation or a mark is visible only below that maximum, from
-the context where it comes into view. That chooses the asker rather than widening what
-an asker sees — a vantage already sees both halves and what separates them — and it is
-what stops the same three sentences from landing on
-a defeat or on two coexisting claims according to which half was written last
-([nmtms.md](nmtms.md)). The defeat a vantage lands is scoped to that vantage and below, so a context
-reading one half alone keeps what it holds.
+A clash no single writer could see, admissible where each half was stated and jointly
+visible from some descendant, refuses no writer. `settle` weighs it at its **vantage**, the
+most general context that sees both halves and what separates them, and the defeat it
+places is scoped to that vantage and below, so a context reading one half alone keeps
+what it holds ([nmtms.md](nmtms.md#a-defeat-is-scoped-to-its-vantage)).
 
-A separation derivable only from a context below the maximal common descendant is
-decided at the most general context that reads it: CxW sees `(t1 Pip)` in CxA and `(t2
-Pip)` in CxB, CxV sees CxW and the `(disjoint t1 t2)` in CxDecl, so CxV and the contexts
-below it believe one membership while CxW keeps both
-([nmtms.md](nmtms.md#a-defeat-is-scoped-to-its-vantage)), and `exposed-clashes` names
-every such pair with the contexts that see it whole.
-
-**The pass asks its question of the scoped read, not of an enumeration.** For a
-candidate pair of held memberships it must answer "does any context see both of these
-*and* a complete derivation of their disjointness". Read forwards, that is a search
-over derivations — one witness per ancestor path per separated pair per supporter
-choice, which is exponential in a multiply-inheriting hierarchy, and a pair that turns
-out *not* to be jointly visible exhausts every one of them to find out. Read
-backwards it is a property of a context: `disjoint? t1 t2 K` scoped to K walks only
-edges visible from K, so it is true exactly when K sees some whole derivation. So the
-pass asks `∃K ∈ common-descendants(c1, c2)` off the cached closures, and enumerates a
-witness only for the *report* — where one is now known to exist, so the search stops
-at it rather than running out. The two directions decide the same question, and the
-existence check is what keeps the sweep bounded on a large ontology.
-
-Both answers are memoized per pass on the pair `[t1 c1 t2 c2]`, which is what they
-are functions of — the term appears in the reported message and nowhere else — so a
-corpus where thousands of individuals hold the same two types in the same two
-contexts asks once.
+**`exposed-clashes` asks the scoped read, not an enumeration.** For a pair of held
+memberships `[t1 c1]` and `[t2 c2]` it must answer whether some context sees both and a
+whole derivation of their disjointness. Enumerated forwards, that is one witness per
+ancestor path per separated pair per supporter choice, exponential in a multiply-inheriting
+hierarchy, and a pair that is not jointly visible exhausts every witness. The scoped
+`disjoint? t1 t2 K` walks only edges visible from K, so it holds exactly when K sees some
+whole derivation, and the pass asks it at each of `common-descendants(c1, c2)`. It
+enumerates witnesses only for the report, once one is known to exist. Both answers are
+memoized per pass on `[t1 c1 t2 c2]` (`clashes/exposure-probes`), so individuals holding
+the same two types in the same two contexts ask once.
 
 ## The consumers, and what each of them may reach
 
@@ -1154,27 +1168,17 @@ just as well when the feature is broken outright.
   and the rule-relevant postings of `up`, and `perf`'s `genlcx-edge-under-a-seen-taxonomy`
   holds it flat in the edges `seen` states.
 
-  **It is enumerated from the rules, and each half is conditional on where a rule is stated.**
-  Both are about cost, and the cost is asymptotic rather than constant. Walking the ancestor set
-  and keeping the facts a rule could match is a record fetch per sentex *in the ancestor set*, so
-  wiring N contexts under a `CxUniverse` holding K facts is O(N·K) against
-  O(N+K) without it, and a chain D deep is O(D²) because each edge's ancestor set is the
-  whole chain above. Measured: 3.9x on the first shape, 5x and climbing with depth on the
-  second, and 1.8x on the starter load. Two reads of the rule index turn it around: the
-  antecedent keys some stored rule takes (`reads/as-stored-rule-keys`), and the contexts
-  a rule is stated in (the rule extent, `reads/stores-rule-in?`): walk those predicates' extents and keep what
-  falls in the sets to seed, or walk those sets' own contents when they hold fewer
-  postings (`special/seeds-in`). `fresh` is seeded when a rule is stated in `seen`, and
-  `seen` when one is stated in `fresh`; when neither holds but a rule is stated in the
-  rest of `up`, a pairing it makes has a fact on each side and seeding either finds the
-  other, so the side holding fewer sentexes is seeded. Wiring an *empty* context under a
-  full one is the commonest edge there is and seeds nothing, since `seen` is the new
-  context alone and holds nothing, where seeding without the checks re-seeds the whole
-  ontology above it and re-joins rules that have already fired on every fact of it. Measured on the starter
-  load against the same load with no visibility seeding: 4.7x without the checks, 1.03–1.04x
-  with both checks over `fresh` and `seen`. A check over `up` in place of `fresh` measured 2.5x,
-  because a context already under CxUniverse re-seeds its second parent's facts for the
-  rules stated in CxUniverse.
+  **It is enumerated from the rules, and each half is conditional on where a rule is stated**
+  ([why](defenses.md#the-visibility-seeds-are-read-off-the-rule-index)). Two reads of the
+  rule index give the seeds: the antecedent keys some stored rule takes
+  (`reads/as-stored-rule-keys`), and the contexts a rule is stated in (the rule extent,
+  `reads/stores-rule-in?`). The seeding walks those predicates' extents and keeps what falls
+  in the sets to seed, or walks those sets' own contents when they hold fewer postings
+  (`special/seeds-in`). `fresh` is seeded when a rule is stated in `seen`, and `seen` when
+  one is stated in `fresh`. When neither holds but a rule is stated in the rest of `up`, a
+  pairing it makes has a fact on each side and seeding either finds the other, so the side
+  holding fewer sentexes is seeded. Wiring an *empty* context under a full one seeds
+  nothing, since `seen` is the new context alone and holds nothing.
 
   **A batch seeds what was stored before the edge arrived.** Under `with-deferred-settle`
   every assert chains as it arrives and the drain runs once, at the batch's close, so a
@@ -1277,8 +1281,3 @@ just as well when the feature is broken outright.
   **Do not name a context in them.** The KB-wide reading comes from the lift: the
   declaration and the conclusion are both `decontextualized_predicate`s, so each has a
   copy in CxUniverse, and the rule fires on the declaration's copy there.
-
-A rule cannot choose its own target: an `(ist Ctx S)` consequent is refused
-([ist](#ist-find-or-create-in-a-context)), so every forward conclusion is placed by the
-rule above. `forced_decontextualized_predicate` is the one way a sentence's storage
-context is fixed, and it fixes that context per predicate, for every writer.

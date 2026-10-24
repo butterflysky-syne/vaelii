@@ -1,7 +1,7 @@
 # Assertive argument types: `arg` as an entailment
 
 - **Covers:** how, by default, an argument constraint — `arg`, `argArg`, `genlArg`,
-  `interArg`, the covering and the homogeneity forms — derives the type it names as a derived, justified,
+  `interArg`, `interArgEqual`, the covering and the homogeneity forms — derives the type it names as a derived, justified,
   retractable sentex and refuses nothing on a membership; the pass that records those
   derivations over a store loaded without them.
 - **Not here:** `arg` / `genlArg` read as a constraint that rejects a wrongly-typed
@@ -172,7 +172,7 @@ entailment is a derived, justified, retractable sentex under truth maintenance.
 ```clojure
 (v/assert kb '(genl animal thing) 'CxUniverse)   ; the declared type has to be one
                                                       ; the hierarchy holds — see below
-(binding [checks/*assertive-arg-types?* true]
+(binding [argument/*assertive-arg-types?* true]
   (v/assert kb '(arg parentOf 1 animal) 'CxWorld)
   (v/assert kb '(parentOf Fred Mary) 'CxWorld))
 
@@ -184,7 +184,7 @@ entailment is a derived, justified, retractable sentex under truth maintenance.
 ;;                       {:sentence (arg parentOf 1 animal) :premise? true}]}]}
 ```
 
-**On by default** (`vaelii.impl.checks/*assertive-arg-types?*`; the root value reads
+**On by default** (`vaelii.impl.decide.argument/*assertive-arg-types?*`; the root value reads
 `VAELII_ASSERTIVE_ARG_TYPES`, and `=0` opts out — how the whole suite is run under the
 constraint-only reading). Entailing changes what a KB *contains*, not only what it
 answers, so the constraint-only reading stays one `binding` away.
@@ -193,7 +193,7 @@ answers, so the constraint-only reading stays one `binding` away.
 position `n` holds a term of any kind and that no narrower type is right for it. It
 rejects nothing under the constraint-only reading, and the entailing one derives nothing
 from it: a membership in `thing`, or a `genl` edge to it, says nothing about the term
-(`checks/mintable-type?`). `kb-quality` lists each such declaration under
+(`arity/mintable-type?`). `kb-quality` lists each such declaration under
 `:typed-thing` with its predicate's stored extent, the facts a narrower type would type
 ([quality.md](quality.md)). The second slots of the happening-participant predicates `actor`,
 `thingPerceived`, `doneBy`, `input`, `destroyedInput`, `preservedInput` and `output` are
@@ -210,6 +210,25 @@ where the constraint-only reading could not prove it otherwise, so a derivation 
 entailment stores is a copy of a sentence a context it sees already holds, or a
 membership `provers/ArgTypeProver` answers
 (`starter_test/the-constraint-only-reading-proves-every-sentence-the-entailment-derives`).
+
+### The open membership goal
+
+`provers/ArgTypeProver` answers an open `(t ?x)` as well as a ground `(t X)`, and answers
+the open goal exactly where the stored memberships do not cover the ground one. A
+declaration `(arg P n T')` with `T'` at or below `t` is uncovered under the
+constraint-only reading, which mints nothing, and under the entailing reading when
+`arity/mintable-type?` refuses `T'`: `thing`, and a type an arity statement binds to
+another length ([where it does not mint](#where-it-does-not-mint)). The check reads
+`argument/*assertive-arg-types?*` at the call and the same `mintable-type?` the mint path
+reads. For each uncovered declaration the prover reads the distinct individuals at
+argument `n` of a stored fact of `P` or a predicate below it, stated in a context the
+reader sees, and keeps those the ground test types `t`. An open answer therefore carries
+the support the ground goal on its binding carries, and a conjunction joining `(t ?a)`
+answers the same set in every conjunct order
+(`provers_test/an-argument-typed-conjunction-answers-alike-in-every-conjunct-order`). Under
+the entailing reading the stored-fact prover answers a mintable type's members, and the
+two provers together answer what the ground test accepts
+(`provers_test/stored-memberships-and-the-open-arm-answer-what-the-ground-arm-accepts`).
 
 ## What this is not
 
@@ -281,7 +300,13 @@ relabelled; under the constraint-only reading, the facts naming a term whose mem
 moved; under a declaration naming a type a definition stored, removed or relabelled
 reaches, the held facts and the convicted tuples; and, after a `genl`, separation or
 `genlCx` move, the facts its ends reach, held or not; a held fact the ends do not reach is
-not decided again (`lein perf --only genl-write-beside-held-facts`). A
+not decided again (`lein perf --only genl-write-beside-held-facts`). The declarations
+below the moved types with more specializations than the refresh walks (512) are found in
+one pass over every declaration, with the types above each declared type walked once for
+all of those ends, and a declaration below several ends is read once (`lein perf --only
+genl-ends-above-deep-declarations`). The refresh logs progress lines per moved type and per
+declaration, and a shutdown can stop an `assert` before each one, with the refresh's
+queue left in place (`recovery_test/a-shutdown-stops-a-write-between-the-moved-types-a-holds-refresh-reads`). A
 `genlCx` move reads only the tuples of the predicates a declaration constrains, stated at
 or below the edge's context, and no other fact stated there (`lein perf --only
 mints-under-context-edge`). Each
@@ -321,8 +346,8 @@ entails — is found by the settle from the stored records in the same way.
 
 A declaration whose type an arity statement binds to another length derives nothing. With
 `t` declared binary, `(arg rel 1 t)` and `(rel Rex Mary)` store the fact and no `(t Rex)`,
-and the declaration waits until the binding leaves
-(`argtype_entail_test/a-type-bound-to-another-length-mints-nothing-and-its-declaration-waits`,
+and the declaration mints once the binding leaves
+(`argtype_entail_test/a-type-bound-to-another-length-mints-nothing-and-records-nothing`,
 [taxonomy.md](taxonomy.md#arity)).
 
 **What the entry point still asks of the derivations.** `checks/entailment-check` walks the
@@ -520,23 +545,28 @@ declaration that mints also entails `(unary_predicate T)` of each type it names,
 by the declaration alone (`special/entail-existing`), so the type's arity is stored beside
 its first mints. A length `T` inherits through `genl` is not read.
 
-A declared type an arity statement binds to another length mints nothing, and the
-declaration waits in the refusal record under its own handle, naming the types it waits
-on. The settle re-asks the entry when the arity family's refresh moves the length of one
-of them (`special/owe-mints-on-lengths!`), and once each is mintable `entail-existing`
-runs for the declaration and mints over every fact stored meanwhile
-([exceptions.md](exceptions.md), "A refused firing is remembered as bindings"). A `genl`
-or `genlCx` edge re-asks no entry. Until then the declaration reads none of its facts:
-every arm asks `mintable-type?` of the declaration's own type before it draws, so the
-extent would yield nothing.
+A declared type an arity statement binds to another length mints nothing, and nothing
+records the declaration: the stored declaration is the record. When the arity family's
+refresh reports a type whose own bindings moved and whose length now admits one
+(`arity/drain!`'s `:bound`), the settle reads the stored declarations naming the type and
+runs `entail-existing` for each that has no `declaredType` justification of
+`(unary_predicate T)`, which mints over every fact stored meanwhile
+(`special/mints-on-lengths`). A `genl` or `genlCx` edge moves no type's own bindings, so it
+reads no declaration; `lein perf`'s `mint-release-after-genl-move` bounds the settle after
+a `genl` edge per waiting declaration. Until then the declaration reads none of its facts: every arm asks
+`mintable-type?` of the declaration's own type before it draws, so the extent would yield
+nothing.
 
 An arity statement binding `T` to another length after the declaration has minted
 withdraws the entailed `(unary_predicate T)` (`special/withdrawn-type-entailments`, in
 the arity family's refresh) and leaves the declaration waiting on `T`, as it waits when
-the statement arrived first. The memberships the declaration minted stay stored, and
-`T`'s length holds them inert ([taxonomy.md](taxonomy.md#arity)); arriving first, the
-statement leaves neither stored, and both orders reach the same belief
-(`clash_oracle_test/a-length-arriving-after-a-minting-declaration-reads-as-one-arriving-before-it`).
+the statement arrived first. The same refresh drops the mint justifications concluding a
+membership `(T x)` or an edge `(genl x T)` (`special/withdrawn-type-mints`), so a mint
+the argument entailment alone holds up leaves the store, and a record with other support
+stays under `T`'s length, inert ([taxonomy.md](taxonomy.md#arity)). Arriving first, the
+statement leaves nothing minted, so both orders store the same records
+(`absent_type_order_test/a-length-arriving-after-a-mint-removes-it-from-the-store`,
+`clash_oracle_test/a-length-arriving-after-a-minting-declaration-reads-as-one-arriving-before-it`).
 
 `entail-existing` puts each stored sentex back through `constraint-entailments` in its
 *own* context, narrowed to the arriving declaration (`checks/declaration-entailments`),
@@ -844,7 +874,7 @@ declarations; the target materialized those entailments when it first became bel
 |---|---|
 | an **individual** in an `genlArg` position | `genls-problem` convicts; an individual can never acquire `genl` edges |
 | the declared type is `thing` | nothing, in either reading, and no waiting entry: a membership in `thing` says nothing about a term. `kb-quality` lists the declaration under `:typed-thing` |
-| an arity statement binds the declared type to another length | nothing until the binding leaves; the declaration waits in the refusal record |
+| an arity statement binds the declared type to another length | nothing until the binding leaves; nothing records the declaration, and the settle reads it when the type's own bindings move |
 | a `genlArg` position filled by the declared type itself | nothing — `(genl t t)` is a reflexive edge `wff` refuses, so `arg-entailments` never draws it. A `(genlArg P n thing)` declaration over a sentence whose position `n` holds `thing` would otherwise store a violation |
 | a **function application** in the position | `args-problem` / `genls-problem` check it against the function's declared `result` / `genlResult` and refuse where the result misses ([nat.md](nat.md)) — but nothing is minted, a declared result being a claim about the *function* and not about this application, and a compound having no membership to mint |
 | a genuine negation, or a rule | not argument-checked, so not entailed from either |
@@ -969,13 +999,13 @@ the fact and the `argArg` declaration. The declaration itself is checked as `int
 is: both positions must be positions `P` has, and one position named twice is
 `:not-well-formed`.
 
-**A named type bound to another length waits on the fact.** `arg` names one type, so a
-declaration whose type is not mintable waits under its own handle and is swept again
-once the type is mintable (`special/note-unmintable!`). An `argArg` names no type of its
-own: each fact names one. A fact whose named type `mintable-type?` refuses waits under
-the fact's handle (`special/note-unmintable-fact!`), and `release-mint!` draws its mints
-through `deduce-placed` once the type is mintable, so the binding of `dog` leaving after
-`(kindOfPet Rex dog)` mints `(dog Rex)` as it would had it left first.
+**A named type bound to another length mints once it is mintable.** `arg` names one
+type, so a declaration whose type is not mintable is swept again once the type is
+mintable. An `argArg` names no type of its own: each fact names one. A fact whose named
+type `mintable-type?` refuses draws no mint in it, and once the type is mintable
+`special/mints-on-lengths` reads the stored facts naming the type at a position an
+`argArg` types and draws their mints through `deduce-placed`, so the binding of `dog`
+leaving after `(kindOfPet Rex dog)` mints `(dog Rex)` as it would had it left first.
 `argtype_entail_test/every-arrival-order-of-an-arg-arg-reaches-the-same-belief` runs the
 six orders of the declaration, the fact and the edge. A fact waits only on declarations
 visible from its context or placed below it, the two reads the assert path makes.
@@ -995,6 +1025,43 @@ reading (`VAELII_ASSERTIVE_ARG_TYPES=0`) draws none, and a minted constant there
 runs the six orders of the declaration, the write and the type edge, each with a recover,
 beside a name that is no type and a retracted declaration. An application that is never
 minted is typed at check time ([nat.md](nat.md#typing-an-application-that-is-never-minted)).
+
+## A type conditioned on an argument value: `interArgEqual`
+
+`(interArgEqual P n v m U)` says that argument `m` of every application of `P` whose
+argument `n` is `v` is a `U`. `interArg` conditions on argument `n`'s type and
+`interArgEqual` conditions on its value, compared by `=`: `(interArgEqual grants 2 3 1
+admin)` over `(grants Rex 3)` derives `(admin Rex)`, and over `(grants Fido 4)` derives
+nothing. A sentence holding another value at `n`, or a variable, is not constrained.
+
+`checks/inter-arg-equal-rows` reads each declaration as an `arg` row for the sentence in
+hand, as `argArg`'s rows are read, so the conviction, the entailment and the derivation's
+justification (the fact and the declaration) are `arg`'s own. Under the constraint-only
+reading a sentence whose argument `m` misses `U` is convicted and held inert. `try-assert`
+refuses a provable clash from both arrival orders: the fact after the declaration and a
+held separation (`:arg-type`), and the declaration after a stored triggered fact
+(`checks/declaration-demand`). A declaration arriving after the facts reads the stored
+sentences of `P` and its specs and keeps those holding `v` at `n`
+(`special/entail-existing`).
+
+**The value is a number, string, keyword, boolean or character.** `wff` refuses a symbol
+at argument 3 (`:not-well-formed`). The equality partition holds symbols only
+([equality.md](equality.md)), and a merge moves stored sentences to the representative
+without drawing their argument entailments again, so a symbol value would derive in one
+arrival order and not in the other. No merge changes a value of the five kinds, so `=` on
+one reads the same in every order.
+
+**CxUniverse types a `closedExtentForArg` grant's predicate by the grant's position.** The
+rows `(interArgEqual closedExtentForArg 2 2 1 at_least_binary)` through `(… 2 5 1
+at_least_quinary)` derive `(at_least_ternary accountOn)` from `(closedExtentForArg
+accountOn 3 HostA)`. On a `binary` `accountOn`, the shipped `(disjoint at_least_ternary
+binary)` separates the two. Under the entailing reading `try-assert` refuses the grant,
+or refuses the arity statement that arrives after it; under the constraint-only reading
+it refuses the grant, and a grant stored first is held inert once the arity arrives ([naf.md](naf.md#a-closed-extent-for-one-argument-value)).
+`argtype_entail_test/an-inter-arg-equal-types-the-tuples-its-value-triggers-in-every-order`
+runs every order of the declaration and two facts, and
+`naf_test/a-per-argument-grant-past-its-predicate-s-arity-clashes` both readings and both
+orders of the grant and the arity.
 
 ## Suffix homogeneity: `interArgs` and `interArgAndRest`
 

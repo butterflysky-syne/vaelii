@@ -4,7 +4,7 @@
   (`asp/minimize` / soft-constraint priority) declarations become `do/label`'s
   persistent, inert labeling contexts, without touching base belief.
 - **Not here:** the ASPIF encoding and solver backends the resulting program runs on →
-  [asp.md](asp.md); committing one labeling live into base belief →
+  [asp.md](asp.md); committing one labeling of a dilemma inside a context →
   [labeling.md](labeling.md).
 - **Assumes:** sentex, context, premise → [glossary.md](glossary.md).
 
@@ -314,10 +314,9 @@ integrity constraint is not minimized.
 (`rules/normalize-solve-surface`). `solve-context` reads the level and per-head weight back
 off the ground marker (`rules/soft-cost-of`) onto the nogood's `:priority` / `:weight`, and
 `edge/translate` — which already keyed a soft's objective level off `:priority` — emits its
-per-literal weight (`[[v w]]` in place of `[[v 1]]`). So `asp/minimize` is just a soft whose
-single-head body is penalized by a data weight, and nothing downstream needed a new arm. (It
-is the weighted objective the "weighted `asp/atMostSum`" note above anticipated; the
-cardinality *bounds* are still unit-weight.)
+per-literal weight (`[[v w]]` in place of `[[v 1]]`). `asp/minimize` is a soft whose
+single-head body is penalized by a data weight, and the cardinality bounds stay
+unit-weight.
 
 **Priority is lexicographic.** Distinct caller priorities become distinct ASPIF minimize
 levels (`2 + rank(p)`, above the fixed keep-belief=1 and content-tiebreak=0 floors —
@@ -325,17 +324,15 @@ levels (`2 + rank(p)`, above the fixed keep-belief=1 and content-tiebreak=0 floo
 optimum first, then the next only disambiguates among its optima. So a lower-priority
 minimize is a **tiebreak** — it collapses a plateau of equal-cost optima to a unique answer
 without the higher objective ever trading for a cheaper weight. Keep the weights **coarse
-and bounded**: a distinct level with a small range proves out cheaply, whereas folding a
-tiebreak into one level with big-M weights (to preserve the strict order) widens the range
-branch-and-bound must close and is the *slower* encoding, not the faster one.
+and bounded**: folding a tiebreak into one level with big-M weights (to preserve the
+strict order) widens the range branch-and-bound must close, so a distinct level with a
+small range closes sooner.
 
 **A tiebreak singles out the optimum only as far as its weights discriminate.** When many
 *distinct* solutions tie on the total weight — cost-degeneracy, not permutation symmetry — a
 residual plateau survives, and neither a finer bounded weight nor a permutation symmetry
 break removes it (a symmetry break needs interchangeable objects; distinct solutions are not
-that). Bounding the problem's size is the lever there. (Empire's target match learned this:
-the distance tiebreak turns a dense ~10×10 region from a time-limit stall into ~1 s, but a
-fully-dense ~12×12+ region stays degenerate, so its candidate graph is kept sparse.)
+that). Bounding the problem's size removes it.
 
 ## The inert-fact primitive
 
@@ -358,8 +355,7 @@ index one. A rule fires because `index-rule-sentex` posted its predicates, which
 where a rule sentex is *created* — the assert entry point's new branch, and the generator mint —
 so a rule stored inert would be unreachable by either chainer, and would stay unreachable
 after somebody asserted it, that assert resolving to the stored sentex and taking the
-branch that does not index. What it left was a rule `in?` called believed and no fact
-ever fired. A labeling labels atoms and their negations, so nothing this primitive exists
+branch that does not index. Such a rule is one `in?` calls believed and no fact fires. A labeling labels atoms and their negations, so nothing this primitive exists
 for wants one.
 
 The **other** inertness is a rule's own: `set/inertRule` is believed, indexed and
@@ -398,10 +394,8 @@ therefore fetches one record per solve rule in that ancestor set and none of its
    filtered declaratively ("any cell may take any value, except one already ruled
    out"). The grounding stays **in memory**: the Program keys the heads by
    program-local ids — never KB handles — and the menu comes back as `:choices` in
-   the result. Nothing about it is stored. A grounding is derived solver working
-   state, recomputable from the assumptionRules and the base's believed facts; a
-   persisted copy would carry no justification linking it to what produced it, and
-   would rot silently the moment the base moved.
+   the result. Nothing about it is stored
+   ([defenses.md](defenses.md#a-solves-grounding-is-not-stored)).
 2. **Constrain** — clashes among the direct heads become nogoods: a `(not X)`/`X` pair, a
    `functional` predicate given two values, a `disjoint` type clash. Each constraint rule
    visible from `Base` is ground into nogoods over the heads its body names as well —
@@ -425,7 +419,7 @@ inferred from a name**. Rediscovery (`do/classify`, and the replace sweep below)
 the markers back through the term index, so a user context that happens to be named
 `<Into><i>` is neither aggregated nor swept — and materialization skips any
 numbered slot an unrelated context already occupies, so it is never written into
-either. Two belt-and-braces guards back this: the sweep refuses to touch a context
+either. Two guards back this: the sweep refuses to touch a context
 holding any *believed* sentex (everything a solve writes is inert by construction),
 and `retract!` tears an inert sentex down directly. And the sweep takes a context's
 own **extent**, plus — for a marked labeling context only — the one `(genlCx <ctx>
@@ -482,8 +476,8 @@ the way; retracting that context's extent, or naming a different `Into`, clears 
 (assert kb '(candidate Item) 'CxUniverse)
 
 (assert kb '(do/label CxUniverse CxPlan) 'CxUniverse)
-;; => CxPlan1: (color Item red)  (not (color Item blue))
-;;    CxPlan2: (color Item blue) (not (color Item red))
+;; => CxPlan1: (color Item blue) (not (color Item red))
+;;    CxPlan2: (color Item red)  (not (color Item blue))
 ;; base belief unchanged; contradictions 0; both worlds coexist
 ```
 
@@ -567,5 +561,5 @@ constraint that bites only downstream of one has nothing to bite on.
 A defeasible-default **dilemma** (`contradictions`) is *represented*, not solved — both
 sides stay believed and the engine arbitrates nothing. Classifying one is an opt-in
 solve: `(do/label CxDilemma Into)` then `(do/classify Into)`, which produces persistent
-inert contexts. `(do/labeling Ctx)` commits one labeling *live* into base belief (global,
-one at a time — docs/labeling.md); `do/label` is the inert, coexisting, persistent path.
+inert contexts. `(do/labeling Ctx)` commits one labeling inside `Ctx`, its defeats scoped to `Ctx`
+([labeling.md](labeling.md)); `do/label` is the inert, coexisting, persistent path.

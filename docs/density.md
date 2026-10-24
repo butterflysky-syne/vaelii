@@ -473,7 +473,7 @@ batches of 250,000, and measuring the copying implementation against the in-plac
 The invariant is held not by copying: `relabel-region!` clears the region out of each
 live bitmap **in place** — the mutating `andNot` is a merge over the container lists and
 touches only the region's own — and each fixpoint accumulates straight back into it.
-That is worth ~56× over 3M premises (~388s against ~6.9s) and 6.5× even in the first
+That is worth ~56× over a converted corpus's premises and 6.5× even in the first
 batch, because a clone is never cheap; it is also what puts the dense network 5× ahead
 of the reference rather than behind it. **Do not reintroduce a whole-bitmap rebuild in
 that path**, however local the code looks. The general lesson is the one this whole

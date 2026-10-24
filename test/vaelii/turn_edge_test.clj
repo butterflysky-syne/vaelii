@@ -103,8 +103,8 @@
       (v/assert kb (list 'genlCx alpha beta)  'CxSocialWorld)  ; asserted in a plain context
       (v/assert kb (list 'genlCx beta  gamma) 'CxSocialWorld)
       (testing "the fact's extent is forced into CxUniverse, not the asserting context"
-        (is (seq    (v/sentexes-matching kb (list 'genlCx alpha beta) 'CxUniverse)))
-        (is (empty? (v/sentexes-matching kb (list 'genlCx alpha beta) 'CxSocialWorld))))
+        (is (= ['CxUniverse]
+               (mapv :context (v/sentexes-matching kb (list 'genlCx alpha beta) '?ctx)))))
       (testing "the genlCx closure is intact — direct and transitive edges answer"
         (is (v/ask? kb (list 'genlCx alpha beta)))
         (is (v/ask? kb (list 'genlCx alpha gamma)))            ; alpha -> beta -> gamma
@@ -155,8 +155,8 @@
         (is (v/ask? kb2 '(forced_decontextualized_predicate genlCx))))
       (testing "a genlCx asserted post-recovery is still forced into CxUniverse"
         (v/assert kb2 (list 'genlCx alpha beta) 'CxSocialWorld)
-        (is (seq    (v/sentexes-matching kb2 (list 'genlCx alpha beta) 'CxUniverse)))
-        (is (empty? (v/sentexes-matching kb2 (list 'genlCx alpha beta) 'CxSocialWorld)))
+        (is (= ['CxUniverse]
+               (mapv :context (v/sentexes-matching kb2 (list 'genlCx alpha beta) '?ctx))))
         (is (v/ask? kb2 (list 'genlCx alpha beta)))))))
 
 ;; ---- algebraic property marks -------------------------------------------

@@ -1,17 +1,11 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.minimize-solve-test
-  "The answer-set *objective* surface: `(asp/minimize priority ?weight body)` and a
-  priority-tagged `(set/softConstraint P (implies …))`.  Both normalize into an internal
-  soft constraint whose consequent marker carries the operands (`rules/normalize-minimize`
-  / `rules/normalize-soft-priority`), so `solve-context` reads the level and per-head
-  weight back (`rules/soft-cost-of`) and `edge/translate` emits them as ASPIF minimize
-  statements at distinct lexicographic levels.
-
-  The point is the plateau: a maximum matching has many equal-cost optima, and a
-  lower-priority weighted minimize breaks the tie to a unique answer without the higher
-  objective ever trading a match for a cheaper weight.  End-to-end tests need an ASP
-  backend, so they are guarded on `asp?`; the normalize/rewrap unit tests are not."
+  "`asp/minimize` and a priority-tagged `set/softConstraint`, which normalize into a soft
+  constraint carrying the level and weight (docs/solving.md, \"`minimize` /
+  soft-constraint priorities\"): a lower-priority weighted minimize breaks a matching's
+  plateau without trading a match.  The solving tests are guarded on `asp?`; the normalize
+  and rewrap tests run without a backend."
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]

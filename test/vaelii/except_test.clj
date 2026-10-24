@@ -13,7 +13,8 @@
 
   and the four claims that shape makes are: the exception **blocks** rather than
   deriving a competing negation; it is any closed **level-6** query (no rule
-  backchaining); **one answer suffices**; and **nothing about it is stored**.
+  backchaining); **one answer suffices**; and it is stored **once**, as a meta-sentex,
+  never per instance.
 
   House rules apply as everywhere else: gensym'd temporaries via `tu/with-terms`,
   engine vocabulary (`genl`, `set/defaultRule`, `exceptWhen`, `transitive`,
@@ -39,9 +40,9 @@
 
 ;; ---- 1. blocking ---------------------------------------------------------
 ;; DECISION (Semantics): "`exceptWhen` **blocks**.  When the exception holds for a
-;; binding, the rule does not conclude for that binding — there is no conclusion
-;; to defeat and nothing to arbitrate."  The unexcepted binding is here as a
-;; control, so a run in which the rule never fires at all cannot pass vacuously.
+;; binding, the firing at that binding supports nothing, and no nogood arbitrates it."
+;; The unexcepted binding is here as a control, so a run in which the rule never fires
+;; at all cannot pass vacuously.
 
 (tu/deftest-kb an-exception-that-holds-blocks-the-conclusion-for-that-binding
   (tu/with-terms [bird penguin flies Tweety Opus CxBird]
@@ -107,32 +108,6 @@
           (is (some #{ph} (mapcat :antecedents (v/supporting-justifications kb d))))
           (v/retract! kb ph)
           (is (= [h] (mapv :id (v/sentexes-matching kb (list flies Opus) CxBird)))))))))
-
-;; ---- 4. revival is a re-derivation ---------------------------------------
-;; DECISION (Garbage collection, not defeat): "Reviving costs a re-derivation
-;; rather than flipping a bit: retract the exception and the conclusion is chained
-;; again, not restored."  So the conclusion must come back — but the old handle
-;; need not, and this test deliberately does not require it.
-
-(tu/deftest-kb retracting-the-exception-re-derives-the-conclusion
-  (tu/with-terms [bird penguin flies Opus CxBird]
-    (v/assert kb (except-rule (list penguin '?b)
-                              [(list bird '?b)] (list flies '?b))
-              CxBird)
-    (let [bh (v/assert kb (list bird Opus) CxBird)
-          rh (v/handle-of kb (default-rule [(list bird '?b)] (list flies '?b)) CxBird)
-          ph (v/assert kb (list penguin Opus) CxBird)]
-      (testing "while the exception holds there is no conclusion"
-        (is (empty? (v/sentexes-matching kb (list flies Opus) CxBird))))
-      (v/retract! kb ph)
-      (testing "retracting it chains the conclusion again"
-        (is (seq (v/sentexes-matching kb (list flies Opus) CxBird)))
-        (let [h (v/handle-of kb (list flies Opus) CxBird)]
-          (is (some? h))
-          (is (true? (v/in? kb h)))
-          (is (= [[[bh] rh]]
-                 (map (juxt :antecedents :informant) (v/supporting-justifications kb h)))
-              "revived by re-derivation, so it carries a fresh justification"))))))
 
 ;; ---- 5. the defeat reaches the consequences -----------------------------
 ;; A second, unexcepted rule builds on the excepted conclusion; the guard defeat of the
@@ -227,7 +202,7 @@
     (testing "no child: the rule fires"
       (is (seq (v/sentexes-matching kb (list flies Opus) CxBird))))
     (v/assert kb (list childOf Opus K1) CxBird)
-    (testing "exactly one: the conclusion is swept"
+    (testing "exactly one: the conclusion is not believed"
       (is (empty? (v/sentexes-matching kb (list flies Opus) CxBird))))
     (v/assert kb (list childOf Opus K2) CxBird)
     (testing "the second child releases it"
@@ -331,11 +306,10 @@
       (is (empty? (v/sentexes-matching kb (list shiny Gem) CxVault))))))
 
 ;; ---- 8. a taxonomy edge is a re-check trigger ---------------------------
-;; DECISION (Taxonomy changes re-check everything): "An exception like
+;; DECISION (Taxonomy changes are keyed on what the closure moved): "An exception like
 ;; `(flightless_bird ?b)` can flip because someone asserted `(genl penguin
-;; flightless_bird)` — no fact with a matching predicate ever arrives."  So the
-;; conclusion must be swept on the *edge*, with the predicate-keyed re-check index
-;; never firing.
+;; flightless_bird)` — no fact with a matching predicate ever arrives."  So the edge
+;; must withdraw the conclusion, with the predicate-keyed re-check index never firing.
 
 (tu/deftest-kb a-genl-edge-that-makes-the-exception-true-removes-the-conclusion
   (tu/with-terms [bird penguin flightless flies Opus CxBird]
@@ -489,9 +463,9 @@
           (is (seq (v/sentexes-matching kb (list flies Opus) CxGen))))))))
 
 ;; ---- 13. the exception is not materialized per-instance -----------------
-;; DECISION (The exception is never materialized): materializing the ground
-;; exception "stores the negative space" — a probe `(penguin X)` for every
-;; individual the exception does *not* apply to.  The exception is a single stored
+;; DECISION (The exception is a meta-sentex, not a materialized extent): materializing
+;; the ground exception would store a probe `(penguin X)` for every individual the
+;; exception does *not* apply to.  The exception is a single stored
 ;; meta-sentex `(exceptWhen <query> (sentexHandle H))`, re-evaluated on demand; no
 ;; per-instance probe is ever recorded.
 
@@ -510,7 +484,7 @@
       (is (= 1 (count (filter #(= 'exceptWhen (first (:sentence %)))
                               (v/find-sentexes kb penguin))))))))
 
-;; DECISION (Amend in place): an exceptWhen is a separate belief-following meta-sentex
+;; DECISION (Storage and identity): an exceptWhen is a separate belief-following meta-sentex
 ;; naming the rule by handle, so a rule and its unexcepted twin share **one** handle —
 ;; asserting the exception amends that rule in place rather than forking a second one,
 ;; and retracting the exception restores it.

@@ -32,9 +32,9 @@
             [vaelii.test-util :as tu]))
 
 (def known-divergences
-  "The divergence kinds the engine shows at HEAD against the decisions of 2026-09-29 (D1–D17),
-  each naming the decision it departs from and the engine change it waits on.  A kind
-  leaves this map when the change lands."
+  "The divergence kinds the engine shows against the decisions of docs/reference.md, each
+  `{:decision … :waits-on …}`: the decision it departs from and the engine change that
+  removes it.  The map is empty: the engine shows no known divergence."
   {})
 
 (def ^:private judges
@@ -194,11 +194,10 @@
            [c s want]))))
 
 (deftest an-irreflexive-loser-leaves-no-disjoint-pair-at-its-reader-in-every-order
-  ;; Decisions D7 and D16 before prompt 54: the reader decides the irreflexive nogood and
-  ;; the settle decides the disjoint one.  The rule concludes (cat Kit) from the self
-  ;; tuple, so a reader that takes the tuple OUT withdraws (cat Kit) with it and reads no
-  ;; disjoint pair, and (dog Kit) stays believed there.  CxB sees CxA and holds the mark,
-  ;; so the tuple is believed at CxA and OUT at CxB.
+  ;; Decisions D7 and D16: the reader decides the irreflexive nogood.  The rule concludes
+  ;; (cat Kit) from the self tuple, so a reader that takes the tuple OUT withdraws (cat Kit)
+  ;; with it and reads no disjoint pair, and (dog Kit) stays believed there.  CxB sees CxA
+  ;; and holds the mark, so the tuple is believed at CxA and OUT at CxB.
   ;;
   ;;   CxUniverse  (genl dog thing) (genl cat thing) (disjoint dog cat) monotonic
   ;;   CxA         (tangiblePartOf Kit Kit) default   (dog Kit) default
@@ -503,9 +502,57 @@
         (print-known label known)
         (is (empty? fails) (failure-text label fails 120))))))
 
+;; An `unknown` guard asked below a functional merge:
+;;
+;;   CxA  (tyc IndC) default
+;;        (tyc ?x) & (unknown (tya ?x)) => (tyb ?x)          monotonic
+;;   CxB sees CxA, all monotonic:
+;;        (tya IndC)   (route IndB IndC)   (route ?x ?y) => (relb ?x ?y)
+;;        (relb IndC IndC)   (functionalInArg relb 1)
+;;
+;; CxB merges IndB and IndC, and IndB sorts first.  CxA reads (tyb IndC); at CxB the guard's
+;; query (tya IndC) normalizes to the believed (tya IndB), so the guard holds there and
+;; (tyb IndB) is false.
+(defn- guard-below-merge-failures
+  "`[failures n]` of the world above over `pick`, a fn from the vector of its eight writes
+  to the orders to run."
+  [pick]
+  (tu/with-terms [tya tyb tyc relb route IndB IndC CxA CxB]
+    (let [ws       [(w (list 'genlCx CxB CxA) U :monotonic)
+                    (w (list tyc IndC) CxA)
+                    (w (list tya IndC) CxB :monotonic)
+                    (w (list 'implies (list 'and (list tyc '?x) (list 'unknown (list tya '?x)))
+                             (list tyb '?x))
+                       CxA :monotonic)
+                    (w (list route IndB IndC) CxB :monotonic)
+                    (w (list 'implies (list route '?x '?y) (list relb '?x '?y)) CxB :monotonic)
+                    (w (list relb IndC IndC) CxB :monotonic)
+                    (w (list 'functionalInArg relb 1) CxB :monotonic)]
+          orders   (pick ws)
+          expected {CxA {(list tyb IndC) true (list tyb IndB) false}
+                    CxB {(list tyb IndB) false (list tya IndB) true}}
+          asks     {CxA #{(list tyb IndC) (list tyb IndB)} CxB #{(list tyb IndB) (list tya IndB)}}
+          {fails :failures} (expected-failures {:contexts #{U CxA CxB} :writes ws}
+                                               orders expected asks)]
+      [fails (count orders)])))
+
+(deftest an-unknown-guard-below-a-functional-merge-gives-one-reading-in-every-order
+  ;; the writes as listed and the rule last, then a seeded sample
+  (let [[fails n] (guard-below-merge-failures
+                   (fn [ws]
+                     (into [] (distinct)
+                           (concat [ws (conj (into (subvec ws 0 3) (subvec ws 4)) (nth ws 3))]
+                                   (gen/orders-for {:writes ws}
+                                                   {:exhaustive-up-to 0 :sample 8 :seed 112})))))]
+    (is (empty? fails) (failure-text "unknown guard below a merge" fails n))))
+
+(deftest ^:slow an-unknown-guard-below-a-functional-merge-gives-one-reading-in-all-40320-orders
+  (let [[fails n] (guard-below-merge-failures gen/permutations)]
+    (is (empty? fails) (failure-text "unknown guard below a merge" fails n))))
+
 (deftest a-report-names-the-declarations-the-reference-grounds-it-on
-  ;; Invariant 3 and the ruling on prompt 42: a report's `:grounds` are the declarations
-  ;; of the reference's `:ground`, with the `genl` edge it is read over left out.
+  ;; Invariant 3: a report's `:grounds` are the declarations of the reference's `:ground`,
+  ;; with the `genl` edge it is read over left out.
   ;;   CxWell  (disjoint aa bb) (disjoint aa cc) (genl cc bb)   (aa Zed) (cc Zed)
   (tu/with-terms [aa bb cc Zed CxWell]
     (let [ws     [(w (list 'genl aa 'thing) CxWell :monotonic)
@@ -746,8 +793,8 @@
       (is (empty? fails) (failure-text "membership beside a separated inherited one" fails
                                        (count orders))))))
 
-;; Random reference world 283: the reader withdraws a ground and re-reads each `covering`
-;; nogood, once per denial of the whole.
+;; The reader withdraws a ground and re-reads each `covering` nogood, once per denial of
+;; the whole.
 (deftest a-cover-denial-stated-in-two-contexts-convicts-at-a-reader-that-withdraws-a-ground-in-every-order
   ;;   CxA  (covering whole p1 p2)   (genl p2 other)   (p2 Kit)   (not (whole Kit))
   ;;   CxB sees CxA: (not (whole Kit)) monotonic   (not (genl p2 other)) monotonic
@@ -773,9 +820,8 @@
       (print-known "cover denial in two contexts" known)
       (is (empty? fails) (failure-text "cover denial in two contexts" fails (count orders))))))
 
-;; Random reference world 286: a firing whose ingredients meet only once a `genlCx` edge
-;; joins the two contexts, with the `genl` edge the match reads on the other side of it
-;; from the rule and the fact.
+;; A firing whose ingredients meet only once a `genlCx` edge joins the two contexts, with
+;; the `genl` edge the match reads on the other side of it from the rule and the fact.
 (deftest a-genl-edge-across-a-late-genlcx-edge-licenses-the-firing-in-every-order
   ;;   CxLow sees CxHigh
   ;;   edge below:  CxHigh  (dog Rex) monotonic, (animal ?x) => (pet ?x)   CxLow  (genl dog animal)
@@ -797,9 +843,9 @@
         (print-known label known)
         (is (empty? fails) (failure-text label fails (count orders)))))))
 
-;; Random reference world 392: a fact stated above a merge stays believed where it lives,
-;; and the reader below the merge retires its spelling through the read filter
-;; (docs/equality.md, "The reader is not the fact's own context").
+;; A fact stated above a merge stays believed where it lives, and the reader below the merge
+;; retires its spelling through the read filter (docs/equality.md, "The reader is not the
+;; fact's own context").
 (deftest a-fact-stored-above-a-merge-is-no-displaced-spelling-below-in-every-order
   ;;   CxA  (dog Cc) monotonic
   ;;   CxB sees CxA: (anti_symmetric aboveOf) (aboveOf Cc Aa) (aboveOf Aa Cc), all monotonic
@@ -935,9 +981,9 @@
 ;;             (ta X) default   (tb X) default or monotonic
 ;;          └─ CxE  (siblingDisjointException ta tb)
 ;;
-;; With (tb X) :default, CxU reads a dilemma (decision 7): both stay believed and one
-;; report names the pair with vantage CxU.  With (tb X) :monotonic, (ta X) is OUT at CxU
-;; and believed at CxE.  The reference models no `sibling_disjoint`, so the expected
+;; With (tb X) :default, CxU reads a dilemma (item 7 of "The function"): both stay believed
+;; and one report names the pair with vantage CxU.  With (tb X) :monotonic, (ta X) is OUT at
+;; CxU and believed at CxE.  The reference models no `sibling_disjoint`, so the expected
 ;; belief is written out.
 (defn- sibling-exception-failures
   "`[label failures n]` of the world above with `(tb X)` at `strength`: the `genlCx` edges
@@ -982,8 +1028,8 @@
       (is (empty? fails) (failure-text label fails n)))))
 
 ;; A `disjoint` over `genl`-related types, and a cover naming a part the `disjoint`
-;; separates from its whole (the ruling on settle prompt 54, item 3): each is a hard clash
-;; of its declarations, listed by `conflicts` in every order, and no belief moves.
+;; separates from its whole (invariant 6): each is a hard clash of its declarations,
+;; listed by `conflicts` in every order, and no belief moves.
 ;;
 ;;   CxUniverse  (genl animalw thing)   (genl dogw animalw)   (disjoint dogw animalw)
 ;;               (dogw Fido) default
@@ -1071,9 +1117,9 @@
                    :when (not (contains? known-divergences (:kind d)))]
                (gen/report! (:seed d) d)))))
 
-;; A run (open, load, read, close) costs about 3.7 ms.  Twenty worlds walked whole up to
-;; six writes are about 3,000 runs and 11 s, so the sampled test walks every order only
-;; up to four writes; the slow twin walks two hundred worlds whole up to six.
+;; Twenty worlds walked whole up to six writes are about 3,000 runs (open, load, read,
+;; close), so the sampled test walks every order only up to four writes; the slow twin
+;; walks two hundred worlds whole up to six.
 
 (deftest a-random-world-settles-as-the-reference-says
   (let [unknown (random-worlds "reference sampled" (range 1 21)

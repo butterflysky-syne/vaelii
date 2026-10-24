@@ -92,7 +92,7 @@
                {"reported" [#(v/assert % note 'CxUniverse) #(v/assert % other 'CxUniverse)]}
                (fn [kb]
                  (let [seen (atom [])]
-                   (is (= {:added 0 :removed 2 :refused []}
+                   (is (= {:added 0 :removed 2 :forwarded 0 :refused []}
                           (sync/sync-each! kb @ships #(swap! seen conj %))))
                    (is (= [0 1 2] (map :done @seen)) "each change, then the end")
                    (is (every? #(= 2 (:total %)) @seen) "the plan's size, known from the start")
@@ -107,15 +107,80 @@
                                                #(when (= 1 (:done %)) (throw (ex-info "stop" {}))))))
                  (is (= 1 (count (:remove (sync/plan kb @ships))))
                      "the first change settled; the rerun's plan is what is left")
-                 (is (= {:added 0 :removed 1 :refused []} (sync/sync-each! kb @ships (fn [_]))))
+                 (is (= {:added 0 :removed 1 :forwarded 0 :refused []} (sync/sync-each! kb @ships (fn [_]))))
                  (is (= in-sync (sync/plan kb @ships)))))))
+
+(defn- forward-rule? [form] (and (seq? form) (= 'set/forwardRule (first form))))
+
+(defn- retract-held!
+  "Retract the premise `kb` holds as `form` in `context`, found by its file form."
+  [kb context form]
+  (v/edit! kb {:remove (vec (:handles (get (sync/held kb) [context form])))}))
+
+(deftest a-forward-rule-lands-backward-and-is-turned-forward-after-the-content
+  (let [{:keys [context form]} (shipped-form 'CxUniverse forward-rule?)
+        backward (list 'set/backwardRule (second form))
+        ;; backward is the default direction, so a file renders the held rule bare
+        held-backward (second form)]
+    (in-orders :forwarded
+               {"missing" [#(retract-held! % context form)]}
+               (fn [kb]
+                 (let [seen (atom [])]
+                   (is (= {:added 1 :removed 0 :forwarded 1 :refused []}
+                          (sync/sync-each! kb @ships #(swap! seen conj %))))
+                   (is (= [{:op :add :context context :form backward}
+                           {:op :forward :context context :form form}]
+                          (keep :op @seen))
+                       "the rule lands backward with the content, and turns forward last")
+                   (is (= [0 1 2] (map :done @seen)))
+                   (is (= in-sync (sync/plan kb @ships)))
+                   (is (some? (get (sync/held kb) [context form])))
+                   (is (nil? (get (sync/held kb) [context held-backward]))
+                       "one record, raised to forward in place"))))
+    (in-orders :forwarded-stopped
+               {"missing" [#(retract-held! % context form)]}
+               (fn [kb]
+                 (is (thrown? clojure.lang.ExceptionInfo
+                              (sync/sync-each! kb @ships
+                                               #(when (= :forward (:op (:op %)))
+                                                  (throw (ex-info "stop" {}))))))
+                 (is (some? (get (sync/held kb) [context held-backward]))
+                     "stopped between the stages, the KB holds the rule backward")
+                 (is (= {:added 1 :removed 0 :forwarded 1 :refused []}
+                        (sync/sync-each! kb @ships (fn [_])))
+                     "the rerun turns the held backward rule forward rather than retracting it")
+                 (is (= in-sync (sync/plan kb @ships)))))))
+
+(deftest a-rule-whose-direction-changed-is-one-record-raised-or-restated
+  (let [{:keys [context form]} (shipped-form 'CxUniverse forward-rule?)
+        rule (second form)]
+    (in-orders :raised
+               {"held backward" [#(retract-held! % context form) #(v/assert % rule context)]}
+               (fn [kb]
+                 (is (= {:add [{:context context :form form}] :remove []} (sync/plan kb @ships))
+                     "the forward assert raises the held rule; nothing is retracted")
+                 (is (= {:added 1 :removed 0 :refused []} (sync/sync! kb @ships)))
+                 (is (some? (get (sync/held kb) [context form])))
+                 (is (= in-sync (sync/plan kb @ships)))))
+    (let [lowered (mapv #(if (and (= context (:context %)) (= form (:form %)))
+                           (assoc % :form (list 'set/backwardRule rule))
+                           %)
+                        @ships)]
+      (in-orders :lowered
+                 {"held forward" []}
+                 (fn [kb]
+                   (is (= {:added 1 :removed 1 :refused []} (sync/sync! kb lowered))
+                       "nothing lowers a direction in place: retracted, then stated backward")
+                   (is (some? (get (sync/held kb) [context rule])))
+                   (is (nil? (get (sync/held kb) [context form])))
+                   (is (= in-sync (sync/plan kb lowered))))))))
 
 (deftest a-premise-naming-a-term-the-engine-does-not-ship-survives-the-sync
   (let [fact '(unary_predicate shipped_authored_kind)
         rule '(implies (bird ?x) (shipped_flagged ?x))]
     (in-both-orders :foreign
                     [#(v/assert % fact 'CxUniverse)
-                     #(v/assert % '(arity shipped_authored_relation 2) 'CxUniverse)
+                     #(v/assert % '(arity shippedAuthoredRelation 2) 'CxUniverse)
                      #(v/assert % rule 'CxBiology)]
                     (fn [kb]
                       (is (= in-sync (sync/plan kb @ships)))

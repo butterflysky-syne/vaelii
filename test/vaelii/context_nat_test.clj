@@ -15,6 +15,7 @@
             [vaelii.core :as v]
             [vaelii.impl.context-nat :as cn]
             [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.test-util :as tu]))
 
 (use-fixtures :once (tu/loaded tu/load-core!))
@@ -43,7 +44,7 @@
         h    (v/assert kb '(likes Tom Ann) expr)
         k    (:context (v/sentex kb h))]
     (testing "the context slot is a reified cx/ constant that classifies as a context"
-      (is (nat/reified-context-symbol? k))
+      (is (nat-read/reified-context-symbol? k))
       (is (= :context (v/term-role k))))
     (testing "the unreifiable datetime argument stays structural in the natFormula map"
       (is (= [(list 'natFormula k expr)]
@@ -87,7 +88,7 @@
   [kb fact slot]
   (let [cs (vec (v/contexts-of kb fact))]
     {:stored (count cs)
-     :cx?    (every? nat/reified-context-symbol? cs)
+     :cx?    (every? nat-read/reified-context-symbol? cs)
      :at-cx  (boolean (some #(v/ask? kb fact %) cs))
      :slot   (try (v/ask? kb fact slot) (catch clojure.lang.ExceptionInfo _ :refused))}))
 
@@ -153,7 +154,7 @@
                     (catch clojure.lang.ExceptionInfo e
                       {:type (:type (ex-data e)) :message (ex-message e)}))]
       (testing "the write stores the fact in a cx/ context with no declaration read"
-        (is (nat/reified-context-symbol? k))
+        (is (nat-read/reified-context-symbol? k))
         (is (v/ask? kb fact k) "a read naming the constant answers it"))
       (testing "a read naming the application is refused, naming the missing declaration"
         (is (= :shape (:type err)))
@@ -183,8 +184,8 @@
     (v/assert kb (list 'reifiable_function FruitFn) 'CxUniverse)
     (let [h (v/assert kb (list 'color (list FruitFn AppleTree) 'Red) 'CxUniverse)
           k (second (:sentence (v/sentex kb h)))]
-      (is (nat/reified-nat-symbol? k) "it is a reified constant")
-      (is (not (nat/reified-context-symbol? k)) "but an object one, not a context")
+      (is (nat-read/reified-nat-symbol? k) "it is a reified constant")
+      (is (not (nat-read/reified-context-symbol? k)) "but an object one, not a context")
       (is (not= :context (v/term-role k)))
       (testing "storing a fact in an object nat/ context is refused by naming"
         (is (= :naming
@@ -317,10 +318,10 @@
         ha   (v/assert kb (list 'happenedDuring 'Event1 expr) 'CxUniverse)  ; argument-position use
         arg2 (nth (:sentence (v/sentex kb ha)) 2)]
     (testing "the context slot reified to a cx/ constant"
-      (is (nat/reified-context-symbol? kctx)))
+      (is (nat-read/reified-context-symbol? kctx)))
     (testing "the same expression in argument position is NOT that cx/ constant"
       (is (not= kctx arg2) "the argument must not alias the context slot")
-      (is (not (nat/reified-context-symbol? arg2)) "and is no cx/ context constant at all")
+      (is (not (nat-read/reified-context-symbol? arg2)) "and is no cx/ context constant at all")
       (is (and (sequential? arg2) (= cxfn (first arg2)))
           "it stays a structural compound, exactly as an unreifiable NAT does"))))
 
@@ -343,12 +344,12 @@
             maps (set (map #(second (:sentence %))
                            (v/sentexes-matching kb (list 'natFormula '?k E) 'CxUniverse)))]
         (testing (str order " the slot and the argument name two constants")
-          (is (nat/reified-context-symbol? kcx))
-          (is (nat/reified-object-symbol? knat))
+          (is (nat-read/reified-context-symbol? kcx))
+          (is (nat-read/reified-object-symbol? knat))
           (is (= #{kcx knat} maps)))
         (testing (str order " each namespace maps the expression once")
-          (is (= kcx (nat/dedup-constant kb E nat/context-namespace)))
-          (is (= knat (nat/dedup-constant kb E)))
+          (is (= kcx (nat-read/dedup-constant kb E nat-read/context-namespace nil)))
+          (is (= knat (nat-read/dedup-constant kb E)))
           (is (empty? (nat/colliding-constant-groups kb))))
         (testing (str order " the argument constant is a context by the result declaration")
           (is (v/ask? kb (list 'context knat) 'CxUniverse))
@@ -368,7 +369,7 @@
         kb-off (assoc kb :naming :off)]
     (testing "an UNDECLARED ground application reifies to a symbol and stores"
       (let [h (v/assert kb-off '(likes Tom Ann) (list 'CxBogusFn 'CxMonad (list 'DatetimeFn "2000")))]
-        (is (nat/reified-context-symbol? (:context (v/sentex kb-off h))))))
+        (is (nat-read/reified-context-symbol? (:context (v/sentex kb-off h))))))
     (testing "a DECLARED but NON-GROUND context is a shape error even with naming off"
       (is (= :shape (refusal #(v/assert kb-off '(likes Tom Ann)
                                         (list cxfn 'CxMonad '?x))))))

@@ -343,6 +343,59 @@
     (testing "the table arriving last derives what the table arriving first would have"
       (is (= #{(list heavy Whale)} (believed kb heavy))))))
 
+;; ---- a client's own prover, built from the public API ---------------------
+
+(defn- ranking-prover
+  "A prover a client outside the engine builds with `v/prover` alone: `(outranks A B)`
+  holds when A's stored `rankOf` number exceeds B's, and the answer names both rows."
+  [rankOf outranks]
+  (let [lvar? #(and (symbol? %) (= \? (first (name %))))
+        ranks (fn [kb x context]
+                (for [{:keys [id sentence]} (v/sentexes-matching kb (list rankOf x '?n) context)]
+                  [(second sentence) (nth sentence 2) id]))]
+    (v/prover
+     {:applicable?        (fn [_ goal _] (and (seq? goal) (= outranks (first goal)) (= 3 (count goal))))
+      :solve-with-support (fn [kb [_ a b] context]
+                            (for [[ta na ha] (ranks kb a context)
+                                  [tb nb hb] (ranks kb b context)
+                                  :when (> na nb)]
+                              [(cond-> {} (lvar? a) (assoc a ta) (lvar? b) (assoc b tb))
+                               #{ha hb}]))
+      :support-functors   #{outranks}
+      :support-sources    #{rankOf}})))
+
+(tu/deftest-kb a-client-prover-s-conclusion-goes-when-a-fact-it-read-is-retracted
+  (tu/with-terms [rankOf outranks rivalOf beats Ann Bob]
+    (v/add-prover kb (ranking-prover rankOf outranks))
+    (let [ha (v/assert kb (list rankOf Ann 3) C)]
+      (v/assert kb (list rankOf Bob 2) C)
+      (v/assert kb (list rivalOf Ann Bob) C)
+      (v/assert kb (fwd [(list rivalOf '?x '?y) (list outranks '?x '?y)] (list beats '?x '?y)) C)
+      (testing "the rule fires on the prover's answer, and the firing names the rows it read"
+        (is (= #{(list beats Ann Bob)} (believed kb beats)))
+        (is (= #{(list rivalOf Ann Bob) (list rankOf Ann 3) (list rankOf Bob 2)}
+               (reasons kb beats (list beats Ann Bob)))))
+      (v/retract! kb ha)
+      (is (empty? (believed kb beats))))))
+
+(tu/deftest-kb a-client-prover-s-source-may-arrive-after-the-rule
+  (tu/with-terms [rankOf outranks rivalOf beats Ann Bob]
+    (v/add-prover kb (ranking-prover rankOf outranks))
+    (v/assert kb (fwd [(list rivalOf '?x '?y) (list outranks '?x '?y)] (list beats '?x '?y)) C)
+    (v/assert kb (list rivalOf Ann Bob) C)
+    (v/assert kb (list rankOf Bob 2) C)
+    (is (empty? (believed kb beats)))
+    (v/assert kb (list rankOf Ann 3) C)
+    (is (= #{(list beats Ann Bob)} (believed kb beats)))))
+
+(tu/deftest-kb a-client-prover-s-solve-answers-the-bindings-it-supports
+  (tu/with-terms [rankOf outranks Ann Bob Cy]
+    (v/add-prover kb (ranking-prover rankOf outranks))
+    (doseq [[x n] [[Ann 3] [Bob 2] [Cy 1]]] (v/assert kb (list rankOf x n) C))
+    (is (= #{{'?y Bob} {'?y Cy}} (set (v/ask kb (list outranks Ann '?y) C))))
+    (is (v/ask? kb (list outranks Bob Cy) C))
+    (is (not (v/ask? kb (list outranks Cy Ann) C)))))
+
 ;; ---- and what a purely arithmetic comparison still rests on ---------------
 
 (tu/deftest-kb an-arithmetic-comparison-adds-no-supporter-of-its-own

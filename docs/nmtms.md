@@ -391,7 +391,9 @@ believed content, so whether a write lands depends on what arrived before it
 
 **What a refusal may rest on.** A refusal reads the sentence and nothing the KB holds
 beyond the vocabulary that spells it: naming (which reads the sentence's own argument
-count), groundness and a malformed special predicate.
+count), groundness, a malformed special predicate, and a length binding against an engine
+term's shape or the bound term's spelling
+([taxonomy.md](taxonomy.md#arity)).
 `checks/refuses-assert?` answers false for a clash that names the other stored members
 of its nogood (`checks/arbitrable?`), so the entry point stores it, and what is stored is
 a function of what was offered. A declaration over two `genl`-related types, and a cover naming a part
@@ -499,8 +501,8 @@ can admit.
 Every row declares `:holds-content?`, and the `derived` check fails a row that declares
 true unless the check's `HOLDS_CONTENT` list names it. The list names one row, S5, the
 refusal record ([exceptions.md](exceptions.md), "A refused firing is remembered as
-bindings"): its closed-extent and separation refusals, `:constraint`, `:lift` and `:mint`
-entries are sentences no store holds, so `recover` re-derives them (`chain/rerecord-refusals!`,
+bindings"): its closed-extent and separation refusals, `:constraint` and `:lift` entries
+are sentences no store holds, so `recover` re-derives them (`chain/rerecord-refusals!`,
 `special/rebuild-pending!`) and a `:constraint` entry of a rule no trigger watches is not
 re-derived.
 
@@ -704,7 +706,7 @@ walk a fact's retraction takes.
 
 **The other eight build the vector positionally instead, or copy a stored one, and the
 position is a role.** `special/deduce-lift` writes `[fact, declaration]`, `special/justify-twin!` writes
-`[original, equality edge]`, and `special/entail-arg-type` writes `[fact, declaration,
+`[original, one path's equality edges…, genlCx edges…]`, and `special/entail-arg-type` writes `[fact, declaration,
 genl edges…]` — each slot filled by what that supporter *is* to the derivation, so there is
 no arrival to sort out; the tail of the third is `checks/edge-support`, a shortest
 **visible** path expanding in name order. `special/materialize-defn-rule` writes the one
@@ -1101,7 +1103,12 @@ revived something is **productive** even when the blocked set stands still, as a
 aggregate's is, or the loop would converge having derived nothing. So is a pass whose
 placed defeats moved a datum a watched rule's `unknown` or exception reads
 (`settle/post-defeat-moves!`, [naf.md](naf.md)): the pass re-chains the released rules
-whether or not anything was queued. A **rebuild** stands
+whether or not anything was queued. So is a pass that leaves the arity family a
+refresh owed (`arity/moved?`): removing a `(unary_predicate T)` the refresh withdrew moves
+`T`'s length after the refresh read it, and the next pass holds the tuples that length
+breaks inert
+(`absent_type_order_test/a-length-arriving-after-a-mint-holds-it-out-at-that-write`).
+A **rebuild** stands
 aside (`settle/*rebuilding?*`): `recover` relabels the whole graph, so most of what it
 believes reads as newly believed, and the stored justifications it replays already carry
 every derivation.
@@ -2168,6 +2175,24 @@ streams of `order_independence_test`, `scoped_defeat_test`, `inherited_clash_ora
 and `genlcx_move_oracle_test` check the reading against belief at every step
 (`test-util/verdict-violations`).
 
+**A pass's reader states.** A pass that reads many handles between its own writes binds
+`exc/*reader-states*` (`exc/with-reader-states`): the settle, the withheld-mint release
+and the argument-hold refresh. It keeps each context's reader state while the change clock
+stands, and the state's frame (`exc/reader-frame`) across writes that move nothing the
+frame reads. A frame reads the stored facts of the defeat, except, conflict, sibling
+exception, equality and forced-monotonic declaration functors and the stored rules, which
+`exc/note-stored!` counts at each index write; the `genlCx` closure and the taxonomy's
+forced-monotonic sets, which `frame-inputs` compares; and the labels of the stored excepts
+and declarations, which it reads again for the watched handles the touched sets record
+(`jtms/touched-since`). A defeat naming a declaration makes the frame read belief beyond
+these, so while one is stored a frame lasts one clock value. `yielding-reads?` is kept
+apart: a forced-monotonic fact leaving makes it read whole, and one stored makes it ask
+that fact's functor alone (`exc/held-yield`). A release of n withheld mints that each read
+belief through the walk builds one frame where it built one per check (`perf`'s
+`release-beside-forced-declarations`), and every state a pass reads equals the one a fresh
+build answers
+(`placed_nogood_test/every-reader-state-a-pass-reads-is-the-one-a-fresh-read-builds`).
+
 A defeat stored, removed or relabelled posts the re-check of its target's sentence
 (`special/recheck-defeat-target`), as a store of that sentence does, and so does an `except`
 arriving or leaving that can take a defeat in or out of force: an except of the defeat, of
@@ -2776,7 +2801,7 @@ another. These checks hold invariant 2 end to end:
 | a membership or a `genl` edge into a `sibling_disjoint` clique, in the clique's size | `disjoint-clique-membership`, `sibling-disjoint-new-spec` |
 | a `genl` or `genlCx` edge, in the graph, the excepted rules, the firings and the readers it does not reach, the `genl` edges its `sub` already sees, the stored `genlCx` edges beside an `except` no edge rests on, the functors under an arity conflict it is not above, the rules reading above it when no rule concludes below it, and in the spec closures of the rules its stratification walk reaches | `genl-edge-negation-recheck`, `genl-edge-beside-arity-conflicts`, `edge-stratification-unreached`, `edge-stratification-unconcluded`, `edge-stratification-walk`, `genl-defeat-rejoin` (4.0×), `genl-crossing-many` (3.0×), `genlcx-edge-reader-fan` (3.0×), `genlcx-edge-under-a-seen-taxonomy`, `genlcx-edge-beside-declared-facts`, `genlcx-edge-beside-excepted-declarations`, `genlcx-edge-beside-seen-excepts`, `genlcx-edge-revealing-one-except`, `genlcx-edge-beside-stored-context-edges`, `retract-context-cycle-scaling`, `retract-context-cycle-beside-cycle`, `assert-context-edge-beside-cycle` |
 | an un-merge of one class beside standing merges it does not touch, a merging assert in a deferred batch, a merge withdrawing its spelling's firing beside standing merges whose firings were withdrawn, a write beside the subsumed mints the KB withholds, the settle after a `genl` edge beside declarations waiting on a type bound to another length, and an `arg` declaration over stored facts beside a deeper declared type | `unmerge-over-standing-merges` (3.0×), `deferred-merge-batch` (3.0×), `merge-withdrawing-a-firing` (3.0×), `mint-withdrawal-under-busy-term`, `settle-beside-withheld-mints`, `mint-release-after-genl-move`, `arg-declaration-over-facts` |
-| a recover's rebuilds, per claim, declaration, fact or negation pair each re-reads: the inherited discovery's questions and the placements they give, the waiting declarations, the lifts, the closing settle's placements, the membership index's first sync over a kept term's types under a deep ancestor set, the discovery's denial probes over a type with many supertypes and its probes that match nothing beside forced-monotonic declarations; and the first write after a recover | `recover-inherited-discovery`, `recover-discovery-own-out`, `recover-discovery-separated-term`, `recover-membership-cover-sync`, `recover-preserved-negated-fan`, `recover-preserved-empty-probes`, `declaration-rebuild`, `lift-rebuild`, `recover-negation-pairs`, `first-write-after-recover` |
+| a recover's rebuilds, per claim, declaration, fact or negation pair each re-reads: the inherited discovery's questions and the placements they give, the lifts, the closing settle's placements, the membership index's first sync over a kept term's types under a deep ancestor set, the discovery's denial probes over a type with many supertypes and its probes that match nothing beside forced-monotonic declarations; and the first write after a recover | `recover-inherited-discovery`, `recover-discovery-own-out`, `recover-discovery-separated-term`, `recover-membership-cover-sync`, `recover-preserved-negated-fan`, `recover-preserved-empty-probes`, `lift-rebuild`, `recover-negation-pairs`, `first-write-after-recover` |
 | an `exceptWhen` rule-membership check, a write beside believed `except`s it does not reach ([contexts.md](contexts.md#except-removing-visibility-down-a-context-subtree)), an `except` beside the firings that do not rest on its target, a write beside refused firings ([the refused-firing record](exceptions.md#a-refused-firing-is-remembered-as-bindings)), a retraction releasing a firing beside a guarded rule's firings ([what is re-chained](exceptions.md#re-chaining-what-was-released-not-what-was-touched)), a first read below an `exceptWhen` rule's context ([asked at every reader](naf.md#evaluated-in-the-placement-context-not-the-join)), a scoped read beside what the `except`s hide, and an `except` of a guard's blocker beside the guarded rule's other firings | `watched-rule-membership`, `assert-over-standing-excepts` (3.0×), `assert-beside-naf-refusals`, `released-refusal-beside-guarded-firings` (4.0×), `guarded-firings-read-below`, `visibility-reading`, `except-beside-unrelated-firings`, `except-of-a-guard-blocker` |
 | the placed nogoods ([The nogood families](#the-nogood-families)): a mark, a binding or a declaration arriving over its candidates and the first read after it, a metatype edge arriving over its members, a write beside the placed pairs it does not reach, a write beside contexts each holding a placed nogood, a membership joining one of n standing dilemmas or joining a nogood as its loser, a write adding a candidate beside the candidates standing elsewhere, a write beside the candidates of four families stated where its context does not see them, a warm read of a placed loser, a read beside the candidate tuples a binding holds, a vantage below the members' maximum, the join naming a chain's contexts, a brave or cautious ask between writes, an ask of the candidate index after an image install, and the first write after one | `irreflexive-mark-arrival` (3.0×), `arity-binding-arrival` (3.0×), `metatype-edge-arrival`, `membership-declaration-arrival`, `tuple-mark-determinant-write`, `functional-in-arg-empty-determinant-sweep`, `negation-reader-write`, `verdict-published-set-write`, `reader-scoped-write`, `standing-nogood-write`, `standing-loser-write`, `candidate-write`, `reached-reader-family-read`, `decided-warm-read`, `held-shape-first-withdrawal`, `per-reading-vantages`, `chain-join`, `brave-ask-between-writes` (3.0×), `installed-image-reads`, `first-write-after-install` |
 | placement and the read walk ([A nogood placed as a conclusion](#a-nogood-placed-as-a-conclusion)): a write naming no placed nogood, a write making a nogood whole or dissolving one beside its loser's consequences, a `genlCx` edge reaching none of the placed nogoods or changing none of their contexts' views, a membership beside the types its term holds, a separation beside the kept terms, a read below a vantage beside the defeats outside its support, a `belief-status` beside the excepts and defeats on other targets, a read of a tuple whose supers bind two lengths, a `genl` edge's defeat beside the defeats of other edges, a hidden route beside the unclaimed types under its end, a reading of a context's dilemmas beside those it does not see, a `genl` edge beside the contradicted `orthogonal`s (3.0×), a fact naming no nogood member asserted under a listener, a read beside the defeats in contexts its reader does not see, a read in the depth of the derivation it asks beside defeats, placements or arity candidates its reader does not see, a read of a `:monotonic` fact beside the permuting marks, a backward query beside the candidates no context places, a `genlCx` edge giving a nogood one more placement beside the placements it holds, a closure read at the readers a `genl` edge's defeat does not reach, a hidden firing's read beside the memberships under their own hidden edges, an `except` beside the carried inherited-clash entries whose questions do not read its target, and a `genl` edge into a type separated from a preserved predicate beside that type's memberships, with its closure under or past the crossing cap | `vantage-unrelated-write`, `whole-beside-loser-consequences`, `dissolving-beside-loser-consequences`, `whole-beside-unary-loser-consequences`, `dissolving-beside-unary-loser-consequences`, `vantage-dissolving-write`, `vantage-context-edge-unreached`, `context-edge-beside-membership-nogoods`, `membership-beside-held-types`, `separation-beside-kept-terms`, `read-below-vantage`, `hidden-check-beside-excepts`, `arity-exempt-read`, `genl-defeat-beside-defeats`, `hidden-route-beside-unclaimed-types`, `hidden-route-beside-untyped-types`, `reader-dilemmas-beside-unseen-ones`, `edge-beside-contradicted-orthogonals` (3.0×), `listener-write-beside-defeats`, `read-beside-unseen-defeats`, `default-chain-beside-many-unseen-defeats`, `default-chain-beside-unseen-contradicts`, `default-chain-beside-unseen-arity-candidates`, `monotonic-read-beside-marks`, `monotonic-chain-beside-seen-defeats`, `backward-query-beside-candidates`, `context-edge-beside-placements`, `defeat-beside-unreached-readers`, `hidden-route-beside-hidden-claims`, `inherited-entry-except`, `genl-edge-under-separated-type`, `genl-edge-past-the-crossing-cap` |

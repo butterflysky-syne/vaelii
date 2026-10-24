@@ -165,17 +165,8 @@ least](defenses.md#path-consistency-computes-the-greatest-fixpoint-not-the-least
 Both are unique, which is what makes both order-independent. That is the property the
 engine actually needs, and it is available at either end — but only at an end.
 
-**Why this makes the calculus awkward to express elsewhere.** Datalog and ASP compute
-least fixpoints; that *is* their semantics, and it is why "not derivable" is well defined
-in them. A removing fixpoint has to be simulated, and the complement does not help: saying
-a relation survives means "**for every** intermediate node, some composition supports it",
-and a universal is a negated existential, so the recursion runs through negation either
-way. The practical encoding is a bounded round iteration with each round in its own
-relation — because stratification in those engines is per *relation*, not per ground atom,
-one relation carrying the round as an argument is a cycle through negation. Soufflé
-rejects such a program outright; gringo accepts it, fails to evaluate it while grounding,
-and ships the whole cubic rule to the solver. Measured on 64 regions, that is ~16 GB of
-grounding against under a gigabyte for the unrolled form computing the identical answer.
+[why path consistency is not a Datalog or ASP
+program](defenses.md#path-consistency-runs-in-the-engine-not-as-a-datalog-or-asp-program)
 
 ### The arc queue
 
@@ -205,7 +196,9 @@ constraint at a handful of pairs and leaves the rest unknown, and a triple readi
 unknowns narrows nothing where the algebra composes the universe to itself — so on a first
 pass the recorded pairs are the only ones a triple can learn from. There are `m` of those
 against the `n(n-1)` a sweep visits, and where `m` is small, seeding the queue with them is
-the same saving the queue makes *after* a sweep, made before one.
+the same saving the queue makes *after* a sweep, made before one. Where most pairs are
+recorded, the first look is a sweep: a queue seeded with all n(n-1) pairs visits each
+triple twice.
 
 What the estimate cannot see is how much the network will turn out to narrow: a sparse
 input can still close to a dense output, and then draining costs more than sweeping. So the
@@ -317,8 +310,8 @@ compared against its argument, and composition and converse are array reads.
 
 So `path-consistent` encodes the network into a flat `long[n·n]` for the duration of the
 run, tightens it in place, and decodes the pairs it touched back into sets on the way out.
-The array is local to the run and never escapes; a caller sees the same immutable network
-value it always did. Two kinds of entry cannot live in the array and are carried through
+The array is local to the run and never escapes; a caller sees an immutable network
+value. Two kinds of entry cannot live in the array and are carried through
 untouched: a **diagonal** pair, which no triple visits and which `constraint` answers the
 identity for anyway, and one naming a node outside the `nodes` argument, which tightening
 was never going to reach.
@@ -374,13 +367,9 @@ same size reads differently in each, and only the ratio within a table means any
 because what it removes is allocation. Every `determined` count is identical, which is the
 check that matters: the representation changed, the answers did not.
 
-Two things the measurements settled rather than assumed. Composition and converse are a
-**primitive protocol** (`IRelationOps`) rather than a pair of closures, because a Clojure
-function taking and returning a long boxes both ways through `IFn.invoke` — worth 1.42× on
-the dense shape, where constraint sets are large and nearly every triple composes. And the
-triple *walk* was tried the same way and **left as an ordinary closure**: boxing three loop
-indices per visit measured as nothing at all, the JIT having already dealt with it, so the
-protocol would have been machinery bought for no return.
+Composition and converse run through `IRelationOps`'s primitive methods, and the triple
+walk is an ordinary closure. [why each, as
+measured](defenses.md#composition-runs-through-irelationops-the-triple-walk-is-a-closure)
 
 **Soundness.** Path consistency is sound, and decides each of these algebras over its
 maximal tractable subclass. On the full language it can leave a network path-consistent
@@ -422,6 +411,28 @@ Four goal shapes, on which arguments are bound:
 - **one variable twice** (`(P ?x ?x)`) — the diagonal itself, so a denotation containing
   the identity answers every node and an irreflexive one answers none.
 
+A calculus names the predicates whose `arg` declarations are narrower than its nodes
+(`:typed`), and a positive goal on one is answered only over arguments those declared
+types admit. A type admits a node unless the node holds a type the context sees as
+disjoint from it. The interval calculus names `subintervalOf` and
+`properSubintervalOf` ([time.md](time.md)). Refutation reads the network alone.
+
+The admission reads the absence of a disjoint membership, and no support handle names an
+absence. So a membership of a type a separation holds apart from a declared type, arriving
+or leaving, queues every rule with an antecedent on the predicate for a re-check and a
+fresh join, and every rule whose exception mentions the predicate for a re-check
+(`special/recheck-typed-admission`); a `genl` edge into such a type queues the same rules.
+The re-check withdraws a firing whose arguments the declared types no longer admit at its
+placement context (`chain/entailment-withdrawn?`).
+
+A positive goal on a **super-predicate** of a calculus predicate is answered by lifting:
+`(genl subintervalOf partOf)` makes every entailed `subintervalOf` tuple a `partOf` tuple,
+so a `partOf` goal is solved as one goal per calculus predicate below it that the context
+sees. A lifted goal is answered at completeness 50, beside the super-predicate's stored
+tuples and its other specs. Lifting is the prover's alone: forward chaining claims an
+antecedent by a calculus predicate (`qcn-kb/calculus-for`), so a forward rule on `partOf`
+does not join on an entailed `subintervalOf` tuple.
+
 ### A network can have a second reader
 
 Stored facts of the calculus are one source of constraint on a pair, and they need not be
@@ -430,12 +441,16 @@ the only one. A calculus may carry a **narrowing**: a function of the KB and the
 :support …}` a read produces, which `build-network` folds in by intersecting each pair's
 constraint and unioning each pair's support. A node-set narrowing is also run over the
 nodes a goal names and no fact does, so what it says about a node reaches a question about
-that node. A calculus whose nodes are not all symbols names its node test (`:node?`).
+that node. A calculus whose nodes are not all symbols names its node test (`:node?`). A
+narrowing names the dynamic vars it reads (`:bindings`), and their values are part of the
+resident network's key, so a read under a rebound var reads that binding's network.
 
 Two calculi carry one. The interval algebra reads the metric temporal layer
 ([stp.md](stp.md)) — an interval is bounded by two instants, so a numeric bound on the gap
 between two intervals' endpoints rules out Allen relations no stored fact mentions — and
 the point network, where instant facts over two things' start and end points do the same.
+The metric reading snaps magnitudes to `provers/*quantity-tolerance*`, which is its one
+binding.
 The point algebra reads its own node terms: a thing's start before its end, and calendar
 moments in calendar order ([time.md](time.md), "The points of a temporal thing"). Nothing
 about the pass, the entailment reading or the support changes for either — what all three
@@ -456,8 +471,9 @@ Three things make the fold sound rather than merely convenient:
   so the network reading it is unsatisfiable too and answers nothing. Answering nothing
   from the source instead would widen the network when a fact arrives, and a firing
   resting on an entailment the widening lost would stay believed, since
-  `chain/entailment-withdrawn?` withdraws on an unsatisfiable network only. The emptied
-  pair is a **stand-in** for the source's clash, and no fact of the calculus contradicts
+  `chain/entailment-withdrawn?` withdraws on an unsatisfiable network and on a typed
+  argument no longer admitted, not on a widened network. The emptied pair is a
+  **stand-in** for the source's clash, and no fact of the calculus contradicts
   it, so `qualitative-network`'s `:unsatisfiable` and the ledger entry's `:pairs` leave it
   out. The narrowing describes the source instead (`qcn-kb/unsatisfiable-sources`), and
   `qualitative-network` answers the description as `:unsatisfiable-sources`: the source
@@ -647,8 +663,9 @@ Three caches, answering different questions:
   a node the goal names but no fact mentions is isolated, every constraint it takes part
   in is the universe, and the universe composes to itself, so it can tighten nothing.
 * the **network read is resident**, on the KB's own `:qcn` atom, keyed `[calculus context]`
-  and keyed by `observe/change-clock` — the KB is read once and the network reused
-  until the engine mutates something. See the next section.
+  plus the values of the narrowing's `:bindings`, and keyed by `observe/change-clock` —
+  the KB is read once and the network reused until the engine mutates something. See the
+  next section.
 * the **support-carrying pass** has its own atom, so an ordinary query never pays to
   propagate support nobody asked for. Its key is the network *and* the asserted support,
   for the reason given above.
@@ -679,7 +696,8 @@ either choke point: `core/clear!` and `reindex/reindex`.
 
 Between them those cover what a network is a function of: which sentexes exist, which of
 them are believed, and the `genlCx` ancestor set and `genl` spec fan the read looks through.
-So an unmoved clock says rebuilding would produce the identical map.
+The narrowing's `:bindings` are the one other input, and the key holds their values. So an
+unmoved clock under the same bindings says rebuilding would produce the identical map.
 
 The clock is deliberately **coarse** — it says only that something moved, never what, and
 not even in which KB. A network is therefore re-derived more often than it strictly must
@@ -725,12 +743,12 @@ Residency is **not** conditional on a prover being registered. `qualitative-netw
 not anybody opted in to reasoning with it.
 
 `vaelii.impl.stp`'s metric network is resident on the same atom under a key of its own,
-for the same reasons. So is the **join baseline** — but that one deliberately *outlives* a
-clock tick, since its whole job is to say what has changed since a moment the clock has
-long since moved past ([below](#the-re-join-is-semi-naive-over-the-pairs-that-moved)). It
-is safe to lose and not safe to trust blindly: losing it costs a full re-join, so the
-atom's own wholesale clearing and `core/clear!` need no special handling beyond dropping
-it.
+for the same reasons. The **join baseline** is kept apart, in the KB's `:qcn-joined` map,
+because it outlives a clock tick: it says what has changed since a moment the clock has
+moved past ([below](#the-re-join-is-semi-naive-over-the-pairs-that-moved)). The resident
+atom's wholesale clearing at its bound leaves it in place, and `core/clear!` empties it.
+Losing one costs one full re-join. The map holds one entry per calculus and reader
+context and is never trimmed.
 
 Each prover is **opt-in**, on top of a vocabulary that is itself a separate upper
 context, and they are independent: register any, all, or none. A KB that loads the
@@ -774,7 +792,10 @@ does not store the entailment; it contributes the **handles the entailment rests
 `chain/solve-qualitative` answers a qualitative antecedent by entailment and hands back
 `support` as the firing's antecedent handles, so the conclusion is withdrawn when any
 fact behind the entailment goes — the same contract an ordinarily matched antecedent has.
-Nothing is materialized, so the O(n²) relations a network entails added no work until a
+A **negated** qualitative antecedent is matched only: what a refutation rests on is the
+whole network rather than a support list, so `chain/qualitative-antecedent` claims a
+positive binary literal alone.
+Nothing is materialized, so the O(n²) relations a network entails add no work until a
 rule asks for one.
 
 Three things follow, and each needed its own wiring:
@@ -821,9 +842,19 @@ There is one network per **reader**, not one per context that holds a fact, and 
 difference is the whole of `qcn-kb/reader-contexts`. A reader sees the entire
 `genlCx` ancestor set above it, so a context inheriting two contexts holds both their
 facts in one network and composes what neither composes alone — `(ntpp A B)` in one and
-`(ntpp B D)` in the other entail `A ⊏ D` for that reader and for nobody else. `ask` has
-always answered there, because a query is asked *from* a context; a re-join has to be told
+`(ntpp B D)` in the other entail `A ⊏ D` for that reader and for nobody else. `ask`
+answers there, because a query is asked *from* a context; a re-join has to be told
 which contexts to stand in.
+
+A fact-holding context stores a fact that puts a node into a network: a fact on a calculus
+predicate, on a sub-predicate of one, or on a predicate the narrowing names (`:contexts`).
+A context storing a `genl` edge into such a sub-predicate counts too, because the edge
+decides whose facts a reader's spec fan reads. `unsatisfiable-somewhere?` reads the same
+set over every predicate that moves a network (`qcn-kb/held-contexts` answers both). The
+fact-holding contexts are read from the store rather than from belief, so a context
+whose only fact of the calculus is defeated is enumerated and reads an empty network. The
+set is resident on the `:qcn` atom under the change clock, and chaining memoizes it per
+agenda datum besides (`chain/*qcn-contexts*`; `chain/process-datum` binds it).
 
 So the set is the fact-holding contexts **closed under where they meet** —
 `taxonomy/meet-closure`, which is `maximal-common-descendant-contexts` over pairs to a
@@ -964,7 +995,7 @@ pays for is the *tightening*, which it must redo from the raw network because su
 propagate only where a constraint moves. So it is not a pass that answers too many pairs,
 it is a **cold** pass beside a warm one. Answering fewer pairs would buy the 10–20%;
 answering them without a cold pass needs a support that is a function of the closed network
-rather than of the propagation history, which is a different algorithm and an open one.
+rather than of the propagation history, which is a different algorithm.
 
 **Which shape a KB has decides all of this**, and the chain above is the worst one. The
 same load over the branching-3 containment tree — the form a mereology KB really produces,

@@ -272,20 +272,29 @@ whole KB. On a large store the settle can run past what a load allows, and the r
 has written when it is stopped stay in the store: they leave the index and reasoning
 images stale, so every open after it rebuilds the index and recovers belief. A load
 without `:sync?` leaves the KB as it was written, and `sync-entry!` syncs one entry as a
-`:sync` job when you choose to.
+`:sync` job when you choose to. From the shell, `lein cli upgrade --dir <path> --sync`
+syncs a store after bringing its images up to this build ([operations.md](operations.md)).
 
 **A sync job goes one change at a time.** Every sync the browser runs as a job (a load's
-`:sync?`, `sync-entry!`, the sync after a belief rebuild) computes the plan first and then
+`:sync?`, `sync-entry!`, the sync after a belief rebuild), and `upgrade --sync`, computes the plan first and then
 makes each change as its own `edit!` (`vaelii.host.sync/sync-each!`). The jobs page shows
 the plan's size, the change being made and how far along it is, and a cancel stops between
 two changes, each of which has settled; a rerun's plan is what is left. A refused addition
-is set aside and retried at the end rather than rolling everything back. `sync-loaded!`, the
-development browser's sync of its small shipped KBs, keeps the one batch.
+is set aside and retried at the end rather than rolling everything back. A rule the engine
+ships forward is added backward with the rest, so no new forward rule fires over the
+content as it lands, and turned forward in a second stage, one `forward` change per rule:
+on a corpus, the rule whose forward chaining is expensive is then the change the job
+stops on. `sync-loaded!`, the development browser's sync of its small shipped KBs, keeps
+the one batch.
 
 - **What is shipped** is what `starter/load-into` stores in a scratch in-memory KB, each
   premise attributed to the load that stored it, compared as the form a KB file writes
   (`text/premise-entries`). A strength that differs is one form retracted and another
-  asserted, since `assert` only raises a premise's strength.
+  asserted, since `assert` only raises a premise's strength. A rule's direction is read
+  the same way: shipped forward over a rule held backward is one assertion, which raises
+  the record in place, and shipped backward over one held forward is a retraction and an
+  assertion. A shipped `set/backwardRule` compares equal to the unwrapped rule it stores
+  as, where backward is the default.
 - **CxUniverse is locked to the shipped files where it speaks the engine's vocabulary.**
   A premise there that the engine does not ship is retracted, whoever wrote it, when every
   term it names is one a shipped premise names (`sync/vocabulary`). Three kinds of sentex

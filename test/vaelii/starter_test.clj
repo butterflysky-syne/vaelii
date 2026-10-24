@@ -8,9 +8,10 @@
             [vaelii.host.core-context :as core-context]
             [vaelii.host.seed :as seed]
             [vaelii.host.starter :as starter]
-            [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.naming :as nm]
             [vaelii.impl.protocols :as p]
+            [vaelii.impl.sentex :as sx]
             [vaelii.impl.special :as special]
             [vaelii.test-util :as tu]
             [vaelii.world :as world]))
@@ -57,7 +58,7 @@
                               [context sentence]))
         off        (doto (v/open-kb (tu/isolated-space)) (tu/clear-kb!))]
     (try
-      (binding [checks/*assertive-arg-types?* false]
+      (binding [argument/*assertive-arg-types?* false]
         (-> off starter/load-into world/load-into)
         (is (empty? (remove (fn [[c s]] (v/ask? off s c)) derived))))
       (finally (tu/clear-kb! off)))))
@@ -92,11 +93,15 @@
   ;; which catches what a rule *derives* — six of those seven facts — and the two together
   ;; cover what either alone would miss.
   (let [authored (authored-sentences)
-        guilty   (for [[c s] authored
-                       :let  [ps (try (v/check kb s c)
-                                      (catch clojure.lang.ExceptionInfo e
-                                        [{:type (:type (ex-data e) :threw)
-                                          :message (ex-message e)}]))]
+        guilty   (for [[c form] authored
+                       :let  [[s opts problem] (sx/form-peel form)]
+                       ;; `check` is `assert`'s; `assert-inert` stores an inert sentence
+                       :when (not (:inert opts))
+                       :let  [ps (or (some-> problem vector)
+                                     (try (v/check kb s c opts)
+                                          (catch clojure.lang.ExceptionInfo e
+                                            [{:type (:type (ex-data e) :threw)
+                                              :message (ex-message e)}])))]
                        :when (seq ps)]
                    [s c (mapv :type ps) (:message (first ps))])]
     (is (< 1000 (count authored))

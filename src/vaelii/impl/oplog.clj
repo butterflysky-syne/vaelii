@@ -33,7 +33,11 @@
   outlives the process.  A `:seal` or `:config` operation marks it, and so do arguments
   nippy cannot freeze, a write a change-feed listener makes (a listener runs part-way
   through another operation's settle, where `vaelii.core/dispatch-feed!` binds
-  `*listener?*`), and a record write outside every operation (`LoggedRecords`).
+  `*listener?*`), a record write outside every operation (`LoggedRecords`), and a
+  `VirtualMachineError` thrown by a write after its frame was appended (`[:vm-error op
+  cls]`), since the public entry point rolls that write back.  A `VirtualMachineError`
+  freezing a frame marks nothing: it propagates before the frame is written, and the write
+  does not run.
 
   ## The logged record store
 
@@ -78,6 +82,7 @@
             [vaelii.impl.disk.durability :as dur]
             [vaelii.impl.disk.files :as f]
             [vaelii.impl.feed :as feed]
+            [vaelii.impl.io.thaw :as safe]
             [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.types.store :as store-types]
@@ -273,8 +278,9 @@
 (defn- append-op!
   "Append the frame for one operation, and under `:each` fsync it.  A frame nippy cannot
   freeze marks the log unusable instead, and the write it describes still runs.  A failed
-  append or fsync latches the log's fault and throws `:store-unusable`, so the write does
-  not run."
+  append or fsync latches the log's fault and throws `:store-unusable`, and a
+  `VirtualMachineError` freezing the frame (`safe/vm-error`) propagates as itself; in
+  both cases no frame is written and the write does not run."
   [{:keys [raf lock state fault path] :as log} op args inputs]
   (when (try
           (locking lock
@@ -282,9 +288,11 @@
           true
           (catch clojure.lang.ExceptionInfo e
             (when (= :store-unusable (:type (ex-data e))) (throw e))
+            (when-let [vm (safe/vm-error e)] (throw vm))
             (mark-unusable! log [:unfreezable op (.getName (class e))])
             false)
           (catch Throwable t
+            (when-let [vm (safe/vm-error t)] (throw vm))
             (mark-unusable! log [:unfreezable op (.getName (class t))])
             false))
     (locking lock
@@ -311,7 +319,8 @@
   On a KB with no log, and nested inside a recorded operation, `f` runs on nil and
   nothing is appended; a nested write made while `*listener?*` is true marks the log
   unusable.  Under `replay!`, `f` runs on the frame's inputs.  When a top-level
-  operation returns, a requested seal runs."
+  operation returns, a requested seal runs; when `f` throws a `VirtualMachineError`, the
+  log is marked `[:vm-error op cls]` and the throw propagates."
   [kb op class args inputs-fn f]
   (let [log (:oplog kb)]
     (cond
@@ -331,7 +340,12 @@
         (case class
           :replay         (append-op! log op args inputs)
           (:seal :config) (mark-unusable! log [class op]))
-        (let [r (binding [*in-op?* true, *listener?* false] (f inputs))]
+        (let [r (try (binding [*in-op?* true, *listener?* false] (f inputs))
+                     (catch Throwable t
+                       (when-let [vm (safe/vm-error t)]
+                         (try (mark-unusable! log [:vm-error op (.getName (.getClass vm))])
+                              (catch Throwable m (.addSuppressed t m))))
+                       (throw t)))]
           (when (= :seal class) (request-seal! log))
           (seal-if-due! kb)
           r)))))

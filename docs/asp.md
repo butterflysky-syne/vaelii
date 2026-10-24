@@ -3,8 +3,8 @@
 - **Covers:** how the edge solver renders a contested `Program` to ASPIF and solves it
   with clingo or clasp, deterministically.
 - **Not here:** the assumption-rule and constraint vocabulary that builds a `Program` in
-  the first place → [solving.md](solving.md); committing one labeling of a dilemma into
-  base belief → [labeling.md](labeling.md); writing for this engine when answer set
+  the first place → [solving.md](solving.md); committing one labeling of a dilemma inside
+  a context → [labeling.md](labeling.md); writing for this engine when answer set
   programming is the language you already think in, which is the paradigm rather than
   this machinery → [from-asp.md](from-asp.md).
 - **Assumes:** edge solver, nogood, brave/cautious → [glossary.md](glossary.md).
@@ -24,24 +24,25 @@ vaelii.impl.types.solve/Solver          the protocol   (docs/nmtms.md)
         └── vaelii.impl.asp.atoms           atom ids and labels
 
 vaelii.impl.asp.label             brave/cautious classification; labeling contexts
+vaelii.impl.asp.solve-context     do/label and do/classify   (docs/solving.md)
+vaelii.impl.asp.prover            (bravely S) / (cautiously S)   (docs/labeling.md)
 ```
 
 ## Installing it
-
-Nothing uses it until you say so — `local-solver` remains the default, so a build
-without clingo behaves exactly as before.
 
 ```clojure
 (v/set-solver kb :asp)
 ```
 
-The name is the whole of it — `set-solver` resolves the backend at runtime, so a caller
+`set-solver` installs `edge-solver` as the KB's solver, and `local-solver` is the default.
+The installed solver is read on one path: `do/labeling` with no backend reachable, on a
+cluster past the solve-free bracket's caps (`label/labeling-solver`), where `edge-solver`
+delegates to `solve/local-solver` in turn. `do/label`, `classify` and the brave/cautious
+prover call the backend directly. The name resolves the backend at runtime, so a caller
 needs nothing from `vaelii.impl.asp.*` and nothing here reaches the load path of a KB
-that never asks. `edge-solver` degrades rather than fails. With no backend reachable it delegates to
-`solve/local-solver`, so installing it is always safe, and `(solver/available?)` tells
-you whether the selected backend can solve in this environment. Which of the two runs is
-not exposed: it is a routing decision the solver makes per program, from the config, from
-whether libclingo loaded, and from the program's size.
+that never asks. `(solver/available?)` tells you whether the selected backend can solve in
+this environment. Which of the two runs is not exposed: the solver routes per program,
+from the config, from whether libclingo loaded, and from the program's size.
 
 ## Getting a solver
 
@@ -66,11 +67,12 @@ decided once per process, and a load that throws is logged at `:warn` and routes
 solve to clasp. A `VirtualMachineError` during the load is the one exception: it answers
 clasp for that call only, and the next call loads again.
 
-The in-process solve writes no ASPIF text. `backend-load!` interns each program atom as
+An in-process `solve` writes no ASPIF text. `backend-load!` interns each program atom as
 the symbol `a(<id>)` carrying its label and emits every rule into a live control through
 the `clingo_backend_*` accessors; a model's true atoms come back through
-`clingo_model_symbols` and map to labels through that symbol association. `clasp` still
-reads the rendered ASPIF text.
+`clingo_model_symbols` and map to labels through that symbol association. clingo's
+`classify-both` loads the rendered ASPIF text from a temp file, and `clasp` reads it on
+stdin.
 
 ### Why size picks the backend
 
@@ -176,8 +178,8 @@ costs. `asp_edge_test` and `solve_context_test` assert the counts, because a doc
 them and code that changes them is worse than either alone.
 
 An interrupted solve that found no model reports `:interrupted`, and **that is not an
-answer**. A backend's result is an answer set at `:optimum` or `:sat`, and — since 0.18.0,
-in `:label` mode — a best model reached before the interrupt is `:best-effort`, an answer
+answer**. A backend's result is an answer set at `:optimum` or `:sat`, and in `:label`
+mode a best model reached before the interrupt is `:best-effort`, an answer
 whose optimality is unproven. `:interrupted` and `:unknown` carry no witness, and every
 reader maps an atom's absence to *defeated* or *not kept* — read as an answer, an empty
 result would defeat every contested assumption and label every choice head false.
@@ -189,13 +191,8 @@ backend's definite `:unsat` (below). With no backend the two degrade together an
 without a backend reports every contested assumption `:supportable` and claims nothing.
 
 With a backend present the fallback would be a different solver's answer, and the two
-solvers disagree. On two nogoods sharing a member the stub spends two defeats where the
-optimum spends one:
-
-```
-stub  defeats {1,3} -> labels {2}      ASP classification  {:true {1,3} :false {2}}
-ASP   defeats {2}   -> labels {1,3}
-```
+solvers disagree on two nogoods sharing a member
+([defenses.md](defenses.md#a-labelings-solve-ignores-the-installed-solver-when-a-backend-is-reachable)).
 
 Pairing that stub labeling with an ASP classification is what `check-agrees` reports as
 `:labeling-inconsistent`, blaming the encoding for a disagreement the fallback
@@ -225,7 +222,7 @@ Same policy, same reason. The backends fail in several currencies — clingo's
 `:solver-failed` naming the native call that returned zero, clasp's
 `:solver-unavailable` when the binary is gone, a JNA `Error` against a missing or
 wrong-ABI libclingo — and `edge-solver` catches all of them at the boundary, because the
-the boundary is where a native failure crosses into the engine.
+boundary is where a native failure crosses into the engine.
 
 Deciding nothing hands the failure back as `:error` for a caller to rank, and
 `label-dilemmas` raises it before the labeling asserts anything.
@@ -333,7 +330,7 @@ Asking for all optimal answer sets instead of one separates them:
 Where two nogoods share a member, that member is `:false` and its partners `:true` —
 dropping the shared one costs a single defeat, so every optimum does it.
 
-**`classify` reads the last `Program` the engine built, and a plain rebuttal builds
+**`classify` reads the last `Program` `do/labeling` recorded, and a settle records
 none.** The engine does not arbitrate a coexisting `P`/`¬P` pair at `:default`: that is a
 represented dilemma, both sides stay IN, and `settle` never reaches the solver. So
 `last-program` is nil and `classify` answers `{:true #{} :supportable #{} :false #{}}` —
@@ -386,9 +383,8 @@ genuinely *is* one of several options, so this understates rather than overclaim
 an explicit, queryable record of one arbitration. Two labelings of the same tie can
 be built as sibling contexts and compared.
 
-The labeling is read from the **TMS**, not from a fresh solve — it records what the
-engine committed to, rather than what a second solve might independently choose. A
-re-solve would usually agree, and "usually" is not a property to build on.
+The labeling is read from the **TMS**, not from a fresh solve: it records what the
+engine committed to, rather than what a second solve might choose.
 
 The context is minted whether or not there was a tie. With no recorded `Program` — a
 KB the engine never arbitrated in, or a dilemma it declined — the `genlCx` edge is
@@ -399,8 +395,8 @@ context when there is nothing contested.
 
 ### It entrenches what it records
 
-Worth knowing before using it: what `label-context` writes are ordinary assertions,
-and an assertion is evidence. The recorded side gains a second nogood against its
+`label-context` writes ordinary assertions, and an
+assertion is evidence. The recorded side gains a second nogood against its
 rival, which makes defeating the rival strictly cheaper than defeating the record. So
 a tie that classified `:supportable` on both sides classifies `:true`/`:false`
 afterwards.

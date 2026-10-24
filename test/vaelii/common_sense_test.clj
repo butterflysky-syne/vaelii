@@ -373,7 +373,8 @@
   ;; (MotherFn Pup) is a way of naming somebody without knowing their name.  Because
   ;; the function corresponds to motherOf, it resolves to the mother already stored
   ;; rather than minting a second name for her — and the sentence that used it is
-  ;; stored about her, so a later question finds it.
+  ;; stored about her, so a later question finds it.  The value resolves the application
+  ;; only where its motherOf fact is visible: CxSocialWorld does not see CxNaturalWorld.
   (tu/with-terms [Pup Dam]
     (v/assert kb (list 'dog Pup) N)
     (v/assert kb (list 'dog Dam) N)
@@ -383,8 +384,11 @@
       (is (v/ask? kb (list 'childOf Pup Dam)))
       (is (v/ask? kb (list 'ancestorOf Dam Pup))))
     (testing "and a sentence about `the mother of Pup` is a sentence about her"
-      (v/assert kb (list 'likes 'Ann (list 'MotherFn Pup)) S)
-      (is (v/ask? kb (list 'likes 'Ann Dam) S)))))
+      (v/assert kb (list 'likes 'Ann (list 'MotherFn Pup)) N)
+      (is (v/ask? kb (list 'likes 'Ann Dam) N)))
+    (testing "where the motherOf fact is not visible"
+      (v/assert kb (list 'likes 'Bob (list 'MotherFn Pup)) S)
+      (is (not (v/ask? kb (list 'likes 'Bob Dam) S))))))
 
 (tu/deftest-kb a-role-nobody-has-filled-still-answers-questions-about-itself
   ;; Nobody has said who this dog's father is, so the application mints a placeholder
@@ -589,17 +593,24 @@
   ;; read on demand and reports the per-instant clash the bare mark cannot; two symbol
   ;; values are reported as a merge, mirroring functional's split.  This is the turned
   ;; known-gap test: the audit finds the per-instant clash that no bare mark reports.
-  (tu/with-terms [HostStateFn Svc BoxA BoxB SwapA SwapB]
-    (swap-fixture kb HostStateFn Svc BoxA BoxB SwapA SwapB 'ThreeOClock 'FourOClock)
-    (let [vs (v/functional-at-instant-violations kb HostStateFn N)]
-      (is (seq vs) "the per-instant clash is reported")
-      (is (some (fn [x] (and (= Svc (:subject x))
-                             (= #{BoxA BoxB} (:values x))
-                             (= :merge (:kind x))))
-                vs)
-          "one subject, both fluent values at one moment, classified as a merge")
-      (is (contains? (v/all-functional-at-instant-violations kb N) HostStateFn)
-          "and the whole-KB sweep reaches the same declaration"))))
+  ;; The second row's moments are `InstantFn` terms, which no `time_point` membership
+  ;; names; the audit reads them off the `instantBefore` links.
+  (doseq [[first-at second-at links]
+          [['ThreeOClock 'FourOClock []]
+           (let [[t3 t4 t5] (for [h [3 4 5]] (list 'InstantFn 2000 1 1 h 0 0))]
+             [t3 t4 [[t3 t4] [t4 t5]]])]]
+    (tu/with-terms [HostStateFn Svc BoxA BoxB SwapA SwapB]
+      (swap-fixture kb HostStateFn Svc BoxA BoxB SwapA SwapB first-at second-at)
+      (doseq [[a b] links] (v/assert kb (list 'instantBefore a b) N))
+      (let [vs (v/functional-at-instant-violations kb HostStateFn N)]
+        (is (some (fn [x] (and (= Svc (:subject x))
+                               (= #{BoxA BoxB} (:values x))
+                               (= :merge (:kind x))))
+                  vs)
+            (str "one subject, both fluent values at one moment, classified as a merge, at "
+                 first-at))
+        (is (contains? (v/all-functional-at-instant-violations kb N) HostStateFn)
+            "and the whole-KB sweep reaches the same declaration")))))
 
 (tu/deftest-kb per-instant-functionality-does-not-fault-values-at-different-instants
   ;; the negative control the B ruling exists for: the first value is clipped before the
@@ -669,7 +680,7 @@
   ;; when something happened, while `(InstantFn …)` is a moment and can.  The clock is
   ;; what turns the first into the second (docs/time.md, "The calendar clock").
   (is (= :arg-type (refusal kb '(happens CatStretches (DayFn 2000 1 15)) N))
-      "a day is a temporal where happens wants a time_point")
+      "a day is a time_interval where happens wants a time_point")
   (let [h (v/assert kb '(happens CatStretches (InstantFn 2000 1 15 9 30 0)) N)]
     (is (some? h) "the moment that morning is an ordinary argument")
     (v/retract! kb h)))

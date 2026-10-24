@@ -1,47 +1,15 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.asp.atoms
-  "Bidirectional atom id table for ASPIF translation.
+  "The atom id table `asp.edge/translate` builds.  Two kinds of value are interned under
+  one counter, so ids are unique across kinds and start at 1 (0 is the ASPIF terminator):
 
-   ASPIF atoms are positive integers; every entity referenced in the
-   emitted program — sentex or contradiction marker — needs a unique id.
-   Atom 0 is reserved as the ASPIF terminator and is never allocated.
+    * a sentex id, an atom the solver decides, labelled `s<sentex-id>`;
+    * a contradiction descriptor `(contradiction <head> :involved [[:sentex h] …])`, a
+      violation atom the minimize statement weighs, labelled `c<atom-id>`.
 
-   The table maps two kinds of source value to atom ids, sharing a
-   single counter so ids are unique across kinds:
-
-     (1) sentex ids — the :id field of a vaelii sentex record. These
-         become the atoms the ASP solver reasons about.
-
-     (2) contradiction descriptors — nested sentence-shaped Clojure
-         values of the form
-           (contradiction <head> :involved [[:sentex H1] [:sentex H2] …])
-         where `<head>` is a sentence-shaped tag (e.g. `(negation S)`,
-         `(disjointTypes ent t-a t-b)`, or a user-named head emitted by
-         a grounding rule like `(wrongBulbCount 3 4)`) and `:involved`
-         lists the sentex handles that participated. Atoms backed by
-         contradiction descriptors get weight in the minimize statement;
-         the solver avoids models in which they are true.
-
-   Two kinds because two are what the translator emits: every atom in a
-   program stands for a contested assumption or for a violation. A third
-   namespace for translator scratch would be an interning path nothing
-   calls, which is the same unverified machinery `aspif` keeps out of the
-   emitter.
-
-   Labels are short string identifiers that appear in clasp's witness
-   output; we read them back during result parsing to recover the
-   originating sentex or contradiction. Format:
-
-     s<sentex-id>   — sentex-backed atoms
-     c<atom-id>     — contradiction-backed atoms
-
-   Using `s`/`c` prefixes keeps the two namespaces distinct even if a
-   sentex id happens to numerically match a contradiction atom id.
-
-   The table is a clojure.core/atom wrapping a plain map. Intern
-   operations use swap! for atomicity; lookups are pure derefs. All
-   intern operations are idempotent.")
+  A witness reports labels, and each label maps back to its value.  The table is an atom
+  over a map, and interning is idempotent.")
 
 (defn new-table
   "Return a fresh empty atom table."

@@ -169,9 +169,9 @@ request log either, which [operations.md](operations.md) states as the trade it 
 | Route | Shows |
 |-------|-------|
 | `/` | the **upper ontology**: the reader's browsing history (the terms, literals and rules whose pages they opened, each list in visit order and capped at 50, held in the browser's localStorage by vaelii.js, a literal drawn by `/history/literals` with its badge, its colours and its belief now, and an entry the active KB does not hold forgotten through `/history/known`), what the KB is in four numbers, then the genlCx context lattice, the genl type tree (from `thing`), the documented terms (the `comment` sentexes), and its disjointness. Every one of them is **bounded**, and where the whole is too long to read the page shows the top of a ranking rather than the first fifty of an order nobody chose — this is the first page opened against a KB whose size the reader did not choose (below) |
-| `/stats` (`?nogoods=1`, `?clashes=1`) | **statistics**: headline counts (contexts, types, stored sentexes, the placed `contradicts` count and the violation tally), a contexts-by-size table ranked largest-first, and the dropped-derivation violations when non-empty — each ledger violation naming the run that dropped it, and each `:forced-conclusion` entry, which `violations` reads off the stored firings, naming none. Every count is a stored count, so a page load reads no belief. `?nogoods=1` reads what the placed nogoods come to, the dilemmas and conflicts, each placement read at its own context: a belief read per placement, which is minutes on a corpus holding tens of thousands. The contexts table and the ledgers are one screen each and continue on scroll. `?clashes=1` additionally asks the **standing disjointness question** (below), which is computed on demand rather than filed; its clash list stops at 50 with a `showing 50 of N` line and does not continue |
-| `/lists` | the **lists**: whole-KB lists, each read only when its button is pressed — every believed **defeat** (the sentex it takes out of belief and its context), every **contradiction** the last settle left standing (the dilemmas, then the conflicts), and every **unary predicate without a genl** but `thing`. A list runs as a read job (below) |
-| `/lists/run` (POST) | run one list (`list=defeats`, `contradictions` or `orphan-types`) as a job, and answer with its rows when it finishes inside 5 s, else with `/jobs`. Origin-checked: it starts work |
+| `/stats` (`?nogoods=1`, `?clashes=1`) | **statistics**: headline counts (contexts, types, stored sentexes, the placed `contradicts` count and the filed violation tally), a contexts-by-size table ranked largest-first, and the filed ledger of dropped derivations when non-empty (`filed-violations`), each entry naming the run that dropped it. Every count is a stored count and the ledger a deref, so a page load reads no belief and fetches no record. The held facts and rules and the convicted firings, the `:inert-argument`, `:inert-rule` and `:forced-conclusion` entries `violations` reads off the stored state, are behind **Scan for held facts and rules**, which runs the `held` list (`/lists/run`) as a job. `?nogoods=1` reads what the placed nogoods come to, the dilemmas and conflicts, each placement read at its own context: a belief read per placement, which is minutes on a corpus holding tens of thousands. The contexts table and the ledgers are one screen each and continue on scroll. `?clashes=1` additionally asks the **standing disjointness question** (below), which is computed on demand rather than filed; its clash list stops at 50 with a `showing 50 of N` line and does not continue |
+| `/lists` | the **lists**: whole-KB lists, each read only when its button is pressed — every believed **defeat** (the sentex it takes out of belief and its context), every **contradiction** the last settle left standing (the dilemmas, then the conflicts), every **unary predicate without a genl** but `thing`, and every **held fact and rule** with every convicted firing. A list runs as a read job (below) |
+| `/lists/run` (POST) | run one list (`list=defeats`, `contradictions`, `orphan-types` or `held`) as a job, and answer with its rows when it finishes inside 5 s, else with `/jobs`. Origin-checked: it starts work |
 | `/lists/result?job=`, `/lists/rows?job=&offset=` | a finished list's rows, 200 at a time, continuing on scroll; a job the registry has dropped (after an hour) says so |
 | `/closure?dir=genls\|specs&q=<term>` | **every supertype or every subtype** of a type, drawn as a layered picture of the reduced order, the term on the bottom row for genls and the top row for specs (below). The term page links both under its graph |
 | `/find?q=<pattern>` | **term search** over the KB's vocabulary: every term whose name matches (a query with no regex metacharacter is a case-insensitive substring match, so `DOG` finds `dog`; a query carrying one is a regular expression under `re-find`, so `^parent` anchors), each linked to its term page — the header search box points here. A pattern resolving to a single term (the only match, or an exact-name match) **jumps straight to that term's page** (`HX-Push-Url`) |
@@ -818,7 +818,7 @@ the answer the reader keeps.
 ## Page loads that read long
 
 A page is a read, and over a KB of millions of sentexes some reads run for minutes or for
-hours: `/stats` computing `violations`, or a sentence layout colouring every term it shows.
+hours: `/funnel` folding in `violations`, or a sentence layout colouring every term it shows.
 A read cannot be stopped from outside, since interrupting a thread inside a disk store's
 read closes the store's file channel. Before this, each reload of a slow page started
 another read of it beside the first, and nothing showed what was running.
@@ -859,6 +859,12 @@ pressed, and the list then runs as a job:
   subtype), and keeps those whose direct genls (`direct-genls`, KB-wide) are `thing`
   alone or nothing and whose membership is believed (`isa?`). `thing` itself is left
   out.
+- **Held facts and rules** is the `:inert-argument`, `:inert-rule` and
+  `:forced-conclusion` entries of `violations`: every stored fact and rule held out of
+  belief for a failed argument constraint, and every firing held void at a
+  forced-monotonic conclusion, each fetched from the record store. It is one read and
+  reports no progress inside it, so a cancel lands when it returns. `/stats` offers it as
+  a button.
 
 A list job writes nothing, so it claims no writer and runs beside a write. It reports
 progress every 1,000 sentexes and stops at a report when cancelled; it is never
@@ -1569,33 +1575,23 @@ it is `guarded by`. Ask it `(genl dog thing)` against the starter and
 `TransitivityProver` is the sole complete method, guarded by `rules`, so `FactProver`
 runs beside it.
 
-For a **vector** — the conjunctive goal `prove` takes — it is the join order `plan/order`
-chose, each literal with the variables already bound when it starts and the three numbers
-the decision turned on. **est. matches** is the sound upper bound on that literal's own
-fan-out under those bindings, the one whose reading of 1 is a proof; **rows** is the
-expected size of the relation it denotes on its own; **plan rows** is the expected size of
-the whole plan up to and including it, which is what a join was actually costed in. Read
-them together and a surprising order is diagnosable: a literal placed early on a small
-*est. matches* whose *plan rows* then jumps is the cost model wrong about a join rather
-than about a literal. None of the three columns is in sorted order, and the first two
-differ for a reason — an upper bound and an expectation answer different questions
-([inference.md](inference.md)) — while *est. matches* is made *under the bindings the rows
-above it produce*, which is sideways information passing and is the thing worth seeing.
-**block** is the group of literals it moved with: literals sharing a variable are one
-block and run together, and a whole block is held back the way a single literal is.
-A literal whose position is operational rather than costed is
-marked **fixed** — an evaluable may not outrun what binds it, and a recursive rule's
-recursive literal stays last so right-recursion survives. A literal is marked
-**cartesian** when it shares no variable with the rest *and* was ranked behind a block
-that does: it multiplies the row count of everything after it wherever it runs, so the
-estimate beside it is not what placed it — worth noting, since a selective one otherwise
-is indistinguishable from a small number sitting last for no reason. The mark is the answer to "why is
-this last", not a property of the literal, and it is why the two cases that are *not*
-held back go unmarked: one matching at most once multiplies by at most one and leads like
-any cheap literal, and one whose block the ranking put first was never held back at all —
-a inexpensive enough disconnected block leads, which is the transposition law rather than an
-exception to it ([inference.md](inference.md)). The eight levels answer about one literal, so a
-conjunction gets the plan and stops there, and says so.
+For a **vector**, the conjunctive goal `prove` takes, it is the join order `plan/order`
+chose: each literal with the variables already bound when it starts, and three numbers.
+**est. matches** is the sound upper bound on the literal's own fan-out under the bindings
+the rows above it produce. **rows** is the expected size of the relation the literal
+denotes on its own. **plan rows** is the expected size of the plan up to and including the
+literal, the number a join was costed in
+([inference.md](inference.md#two-estimators-two-contracts)). A literal placed early on a
+small *est. matches* whose *plan rows* then jumps shows the cost model wrong about a join
+rather than about a literal. **block** is the group of literals it moved with
+([inference.md](inference.md#blocks-and-the-law-that-orders-them)). A literal whose
+position is operational rather than costed is marked **fixed**: an evaluable may not
+outrun what binds it, and a recursive rule's recursive literal stays last. A literal is
+marked **cartesian** when it shares no variable with the rest and was ranked behind a
+block that does, so the estimate beside it is not what placed it. A disconnected literal
+that matches at most once, or whose block the ranking put first, was not held back and
+goes unmarked. The eight levels answer about one literal, so a conjunction gets the plan
+and stops there, and says so.
 
 ### The standing disjointness question
 

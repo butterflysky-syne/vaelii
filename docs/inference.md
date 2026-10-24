@@ -590,7 +590,12 @@ about the rule.
   length, the trade `(transitive P)` antecedents make ([taxonomy.md](taxonomy.md), "The
   other direction"). So `(genl ?x ?x)` in a join reads no reflexive pair, and a rule that
   wants the closure binds an end with another antecedent. The join runs that antecedent
-  first whatever the planner ranks, since `plan/order` places it by `:end-vars`.
+  first whatever the planner ranks, since `plan/order` places it by `:end-vars`. When
+  only the rule's recursive literal binds an end, as in `(implies (and (genl ?a ?b)
+  (reaches ?b ?c)) (reaches ?a ?c))`, the closure literal runs after the recursive one: a
+  full join reads the recursive literal's stored extent and one closure per end value it
+  binds, where reading the closure literal first would read every stored edge and miss
+  the pairs no edge states (`closure_join_test`).
 - **A stored edge the closure answers is matched as the closure's pair.** The join drops
   the matcher's match of a stored edge whose pair the bounded arm answers, so the firing
   names what the two bullets below name for the pair, and not the edge as a fact. A
@@ -1386,7 +1391,13 @@ literal at the same context and must never be served each other's answers.
 
 Answers are stored in canonical space and renamed on the way out — **values as well as
 keys**, since a literal whose two variables unify carries a canonical name in the value
-slot. Nothing downstream ever sees a `?0`.
+slot. Nothing downstream ever sees a `?0`. Each renamed binding is added through `unify`
+from empty bindings, so a renamed answer is the one `unify` gives the caller's literal and
+the stored sentence directly. A stored formula (a `defnNecessary` condition, for one) can
+carry the caller's own variable names: `(P ?x)` against the stored `(P ?x)` binds `?0` to
+`?x`, the rename gives `{?x ?x}`, and `unify` reads that binding as none. Swapped names
+rename to `{?x ?y, ?y ?x}`, which `unify`'s occurs check refuses, so that match answers
+nothing on either path (`literal_cache_engine_test`).
 
 **Invalidation is the change clock**, coarse and wholesale — the argument is
 `observe/note-change`'s own docstring, not restated here. An entry is keyed by the
@@ -1521,14 +1532,11 @@ because a literal is re-asked hundreds of times inside one query; a subgoal is n
 A conjunction is commutative — `[(parentOf Tom ?y) (dog ?y)]` and its reverse have
 the same solutions — but it is not equicost. Solved left to right, the first
 literal's matches are each re-driven through the second, so its **fan-out multiplies
-everything after it**. On a three-literal join the good order runs several times faster
-than the bad one, and the ratio is the fan-out's rather than a constant: it is a
-property of the relation sizes the join happens to be over.
+everything after it**, and the cost ratio between two orders grows with that fan-out.
 
-`plan/order` chooses that order, under **sideways information passing**: a literal is
-never costed once and for all, but under the variables bound at the point it would
-run. `(parentOf ?x ?y)` is the whole extent of `parentOf`; after `?x` is bound it is
-one person's children, and only re-estimating sees that.
+`plan/order` chooses the order under **sideways information passing**: a literal is
+costed under the variables bound at the point it would run. `(parentOf ?x ?y)` is the
+whole extent of `parentOf`; after `?x` is bound it is one person's children.
 
 ### Two estimators, two contracts
 
@@ -1542,9 +1550,7 @@ interchangeable:
 | reading of 1 | a *proof* of at most one match | a guess that there is about one row |
 | composes across a join | no — maxima of products do not factor | yes — expectations do, under independence |
 
-The one-sidedness of `est-matches` is required and the placement rules rest on it.
-`est-rows` is what a *join* is costed in, and being allowed to be wrong is precisely
-what lets it be composed.
+The placement rules read `est-matches`, and a join is costed in `est-rows`.
 
 `est-rows` returns a **summary** — the structure of the relation a literal denotes, not one
 number:
@@ -1560,12 +1566,10 @@ cannot extend past — `(parentOf Tom ?y)` counts `?y`, `(parentOf ?x ?y)` count
 leaves `?y` out. A variable in `:vars` and absent from `:distinct` is *uncounted*, which
 is a different statement from zero.
 
-There is deliberately no `bound` argument, and the asymmetry with `est-matches` is the
-point: a literal's own shape does not depend on what the plan has bound, and the
-narrowing that binding buys is what the join formula computes. The planner seeds its
-prefix with the bound variables as a one-row relation, and gets back exactly the
-average branch the per-literal model charges for them — by the general rule rather
-than by one of its own.
+`est-rows` takes no `bound` argument: a literal's own shape does not depend on what the
+plan has bound. The planner seeds its prefix with the bound variables as a one-row
+relation, and the join formula divides the literal's extent by its distinct count at the
+bound position, the narrowing a per-literal model would charge as an average.
 
 ### Composing them
 
@@ -1581,25 +1585,21 @@ then carry forward         d′(v) = min(d_A(v), d_B(v))          for a shared v
                                                                 its relation has rows
 ```
 
-The divisor and the count carried forward are different quantities and take the
-extremes in opposite directions: a join cannot group more finely than the coarser side
-allows, so `d` is the **larger**; and it cannot leave a column with more values than the
-finer side ever had, so `d′` is the **smaller**.
+The divisor and the count carried forward take the extremes in opposite directions: a
+join cannot group more finely than the coarser side allows, so `d` is the **larger**; and
+it cannot leave a column with more values than the finer side ever had, so `d′` is the
+**smaller**. Carrying `rows` forward without `d′` leaves the second join nothing to
+divide by, and the model degenerates to a product.
 
-Carrying `rows` forward and not `d′` is the failure mode to avoid: the second join then
-has nothing to divide by and the model silently degenerates to a product.
-
-**A count the trie read beats one inferred**, and that two-tier rule is what carries the
-model along a chain. `d(v)` is the larger of the counts the two sides actually read —
-larger, because a join cannot group more finely than the coarser side allows — and in
-`(p ?a ?b) ⋈ (q ?b ?c)` only `q` can read `?b`, since on `p` it trails a free position
-the walk stops at. Taking the maximum over *read* counts alone is what lets the side
-that knows decide. Where **neither** side read the variable the model would otherwise
-divide by nothing and call a join a cartesian product, which is the error that compounds
-fastest with depth, so it falls back on a proxy: the smaller of the two relations' own
-most-duplicated readings, and 1 where neither has one. The smaller, because an
-over-large divisor understates a join, which is the direction that puts an exploding
-literal early.
+**A count the trie read beats one inferred.** `d(v)` is the maximum over the counts the
+two sides read, and in `(p ?a ?b) ⋈ (q ?b ?c)` only `q` can read `?b`, since on `p` it
+trails a free position the walk stops at. Where **neither** side read the variable,
+dividing by 1 would call the join a cartesian product, the error that compounds fastest
+with depth. The model divides instead by a proxy: the smaller of the two relations' own
+most-duplicated readings, and 1 where neither has one. The proxy is the smaller because
+an over-large divisor understates a join, which puts an exploding literal early. A
+variable neither side read stays out of `:distinct`, since an invented count would rank
+as a reading in the next join.
 
 A variable repeated **inside** one literal is the same join, and priced the same way:
 `(marriedTo ?x ?x)` is not the extent of `marriedTo` but that extent divided by `?x`'s
@@ -1630,14 +1630,12 @@ make the ratio change sign, so `n ≤ 1` is ranked first structurally rather tha
 formula.
 
 **A cartesian factor running last is a consequence of that law, not a rule of its
-own** — and the two part company. A literal sharing no variable with anything else
-narrows nothing and is narrowed by nothing, so wherever it runs it multiplies
-everything after it, and its own extent ranks it exactly wrong under a cheapest-first
-pick. But *how* wrong depends on the block it would be running in front of, and the
-ratio says where the crossover is: against a chain of 20 rows fanning to 80
+own.** A literal sharing no variable with anything else multiplies everything after it
+wherever it runs, and its own extent ranks it exactly wrong under a cheapest-first pick.
+The ratio says where the crossover is: against a chain of 20 rows fanning to 80
 (`s/(n−1)` = 100/79 ≈ 1.27), a disconnected relation of four rows reads 4/3 and leads,
-and one of five rows reads 5/4 and is held back. Both sides of that crossover are the
-cheapest permutation by the rows the engine actually runs.
+and one of five rows reads 5/4 and is held back. Both orders are the cheapest
+permutation by the rows the engine runs (`plan_test`).
 
 Because the law is stated over blocks rather than literals, it reaches the form a
 one-literal-at-a-time rule cannot see: two literals disconnected from the rest but
@@ -1660,11 +1658,12 @@ Two placements sit outside the law, and both are claims the estimate cannot make
   a literal with no variables shares none vacuously. Held back, `(dog Bob)` runs the
   whole join before the single lookup that refutes it.
 - **The anchored block runs before the rest.** Every component reached by the caller's
-  already-bound variables, a deferred literal or the recursive literal is fused into one
-  and leads. Both are selectivity the summary algebra does not model — an evaluable
-  prunes on values rather than on counts, and a bound variable narrows a literal in a
-  way a rival block's own `n` cannot account for — so ranking those blocks by the law
-  would be ranking them on numbers with the narrowing left out.
+  already-bound variables, a deferred literal, a waiting literal or the recursive literal
+  is fused into one and leads. These narrowings are selectivity the summary algebra
+  does not model — an evaluable prunes on values rather than on counts, and a
+  bound variable narrows a literal in a way a rival block's own `n` cannot account for —
+  so ranking those blocks by the law would rank them on numbers with the narrowing left
+  out.
 
 ### Why a sort and not a search
 
@@ -1682,27 +1681,26 @@ means they do not, and no better ordering over them would rescue that. Judging a
 model by the cost of the plans it produces is two inferences downstream of the defect:
 it reports "the plan is bad" without reporting that the estimator is why.
 
-- On a uniform chain the estimate is **exact at every depth** (q = 1.00 through six
-  literals), which is the statement that the composition is right rather than that depth
-  1 was.
+- On a uniform chain the estimate is **exact at every depth**: q = 1.00 through six
+  literals in `lein bench-plan`, and through three in `plan_test`.
 - On a corpus built to break the assumption — one hub value taking three quarters of the
-  first relation, fan-outs varying sharply with the join key — q reads 1.00, 2.75, 2.87
-  at depths 1, 2, 3. Wrong, and **flat**: the error does not compound per join, which is
-  the whole claim. A model whose error multiplied would read ≈ 7.5 at depth 3.
-- Against an oracle over all 24 permutations of randomized four-way joins, the planned
-  order runs a mean **1.13×** the best possible (worst 2.25×), and 3.4% above optimal on
-  the totals. The per-literal model reads 2.18× and 47% on the same trials.
+  first relation, fan-outs varying sharply with the join key — q reads 1.00, 2.75, 3.28
+  at depths 1, 2, 3 (`plan_test`, `the-join-estimate-stays-bounded-when-the-assumption-is-false`).
+  The third join multiplies the error by 1.19, where an error compounding per join would
+  square it to ≈ 7.5.
+- Against an oracle over all 24 permutations of twelve randomized four-way joins
+  (`plan_test`, `the-planned-order-runs-close-to-the-best-permutation`, seed 20260809),
+  the planned orders run 4.8% above the best on the totals, a mean 1.18× the best per
+  trial and 2.25× at worst.
 - On a chain beside one disconnected literal (`lein bench-plan`), intermediate rows at
   six literals fall from 80,040 to 18,000 for ~0.13 ms of planning — a 10.3× wall-clock
   ratio against ranking every generator alike.
-- The same conjunction as a **rule's** antecedents, where it matters most and where
-  nothing else measures it, runs **7.1× / 8.4×** faster planned at four and five
-  antecedents. Canonical order is structural, so whether it happens to be a good order
-  is an accident of spelling — the bench's rule spells its cartesian antecedent so the
-  accident goes the wrong way, which is the case the planner exists for.
+- The same conjunction as a **rule's** antecedents runs **7.1× / 8.4×** faster planned
+  at four and five antecedents (`lein bench-plan`). Canonical order is structural, and the
+  bench spells the rule so that canonical order leads with the cartesian antecedent.
 
-A plan is still **not** claimed to be optimal, and two assumptions are why. Both are
-stated rather than designed around, and both are things the trie cannot answer.
+A plan is still **not** claimed to be optimal, for two assumptions the trie cannot
+answer.
 
 **Independence is assumed and is false.** Correlated arguments make the join formula
 under-estimate, and no amount of trie reading fixes it — the trie stores per-position
@@ -1727,27 +1725,27 @@ planner reads. Three things follow.
 
 The practical size of it is a KB's own: where a sentence sits in one context the
 multiplicity is 1 and the model is unaffected, and it grows with how much content is
-asserted into several contexts at once. `plan_test` asserts all three consequences.
-
-The q-error curve is where both limits show — and it is measured on a single-context
-corpus, so what it reports is the independence assumption, not this one.
+asserted into several contexts at once. `plan_test` asserts all three consequences. The
+q-error corpora are single-context, so the curve reports the independence assumption
+alone.
 
 There is deliberately **no statistics table**. Every number here is already in the
 count-aware trie, and a second source of truth about cardinality would need maintaining
 on every write.
 
-**Planning one fixed conjunction is flat in the size of the KB**, and that is a claim
-with a perf check on it (`lein perf`'s `plan-scaling`) because it is easy to lose. The cost
-model divides by the trie's distinct-value count at a position, and it asks for that
-once per literal per plan; answering it with `(count (children …))` materializes the
-whole child set, which is O(how many distinct values sit there) — so a planner reading
-it that way costs 25× more against 32× the facts, on a conjunction that never changed.
-`reads/stored-count-children` answers the same number off a cardinality (`docs/indexing.md`). A
-plan is computed per rule expansion, per node in the node engine and per `prove` call,
-so a planner that scales with the KB scales with it on every one of those.
+**Planning one fixed conjunction is flat in the size of the KB**, and `lein perf`'s
+`plan-scaling` check holds the claim. The cost model asks for the trie's distinct-value
+count at a position once per literal per plan, and `reads/stored-count-children` answers
+it off a cardinality rather than by materializing the child set
+([why](defenses.md#child-count-is-its-own-read)). A plan is computed per rule expansion,
+per node in the node engine and per `prove` call, so a planner that scaled with the KB
+would scale on each of them.
 
-**The per-literal model is the trie.** Walk the literal left to right extending a known
-path prefix:
+**The per-literal model is the trie.** Walk the literal's token stream left to right
+(`sx/key-stream`, the index key's own linearization), extending a known path prefix. A
+compound argument contributes its arity marker, functor and elements, so
+`(mass Obj1 (QuantityFn ?n Kilogram))` is costed under `[mass Obj1 <M> QuantityFn]`
+rather than under `[mass Obj1]`.
 
 | token | estimate |
 |-------|----------|
@@ -1768,33 +1766,17 @@ there and a type high in the hierarchy usually has no instances of its own (cost
 an upper bound on the true match count, so the minimum of them is the tightest bound
 available without fetching a record.
 
-**What the subtype fan costs, and what it does not.** It is the only branch of
-`est-matches` that is not a handful of O(1) index reads: one estimate per subtype, summed,
-and `order` asks for it once per pick, per plan, per firing attempt. For the structure that
-actually costs — `(animal ?x)`, the argument a bare open variable — the general walk is a
-long way round to one number, because the literal's token stream is the functor (known, so
-it extends the prefix) and then the variable (neither known nor bound, so the walk stops).
-The estimate is therefore exactly `count-at [t']` per subtype, and it is read that way.
-Any other argument shape — a compound, which puts its own tokens on the prefix, or a
-partly-bound one, which turns on what is bound — takes the general walk, because for those
-the prefix genuinely is deeper.
+**What the subtype fan costs.** The fan is the only branch of `est-matches` that is not a
+handful of O(1) index reads: one estimate per subtype, summed, and `order` asks for it
+once per pick, per plan, per firing attempt. For `(animal ?x)`, the argument a bare open
+variable, the walk extends the prefix with the functor and stops at the variable, so the
+estimate is exactly `count-at [t']` per subtype, and `plan/fan-of-roots` reads it that
+way. A compound argument puts its own tokens on the prefix and takes the general walk,
+as a bound one does. The direct read changes a constant factor and not the number, which
+`plan_test` asserts against the walk itself. The fan is made cheaper rather than memoized
+([why](defenses.md#the-subtype-fan-is-made-cheaper-not-memoized)).
 
-Reading the roots directly rather than building a literal per subtype halves the fan
-(`lein bench-hotreads`: 6.8% of a forward chaining run at 364 subtypes, from 13.2%), and it
-is a **constant-factor** change by construction — the two computations are the same number,
-which is what `plan_test` asserts against the walk itself rather than against a number written
-down in a test.
-
-Remembering the answer instead does **not** work, and the harness reports both halves of
-why. A memo keyed by the change clock is retired by a placement, so on the path that pays
-for the fan it is never served; on a query, where nothing moves the clock and every plan
-after the first would be, the fan is under 3% of the run. A finer cache key is unsound
-rather than merely fiddly: the estimate bounds from above, a reading of 1 is a proof the
-block ranking rests on, and a fact placed under one subtype makes an entry computed before
-it too small. Reaching this cost further means making the fan cheaper again — a count
-maintained per closure — not holding its answer longer.
-
-**Every input must be an upper bound**, which is what decides how the two
+**Every input must be an upper bound**, which is what decides how the three
 functor-blind shapes are costed. Both of the functor-keyed models — the subtype fan
 and the predicate extent — read the functor as a concrete symbol, and both answer *low*
 when it is not one, which is the one direction a cost model may not err in: a lower
@@ -1803,7 +1785,10 @@ fan-out multiplies everything after it. So an **open functor** (`(?type Muffet)`
 costed by the argument roots alone — the same posting `res/candidate-handles`
 actually reads for it — and a **dotted rest** (`(rel A . ?args)`), which binds no
 argument position at all since its tail splices a whole list, falls back to the
-predicate extent, or to unbounded when the functor is open too.
+predicate extent, or to unbounded when the functor is open too. A **negative** literal
+keys under `[:false <body>]`, where no prefix of its own tokens reaches, so it is costed
+by the predicate extent, which counts both polarities, or by the argument roots when its
+functor is open.
 
 Where a **complete** prover owns a goal, its own estimate is authoritative instead
 (`provers/est-goal`), mirroring `solve-goal-with`: a `genl` conjunct is answered from
@@ -1819,9 +1804,7 @@ conjunction pass it, and `prove` — whose leaf is the stored facts — passes n
 keeps the index model, which for that leaf is the correct one. Getting this backwards is
 not a slow plan but a wrong one: the index would rank the literal fanning out over a
 whole type hierarchy as the *cheapest* in the conjunction. The override is memoized on
-the goal, since `est-goal` reads only the goal and a query mutates nothing — without
-that, `plan/order` re-estimating every remaining literal on every pick makes a
-k-antecedent rule pay a full registry `applicable?` sweep O(k²) times.
+the goal, since `plan/order` re-estimates every remaining literal on every pick.
 
 The forward join (`chain/planned-join`) keeps the index model for the same reason `prove`
 does, except for the antecedents it answers by computation. A registered evaluatable is
@@ -1831,27 +1814,39 @@ enumerate an open argument completely reports `provers/deferred-est` for it, so 
 literal runs after its binders whatever order the rule's facts arrived in, and with the
 ranking off as well (below).
 
-**Ordering is a cost decision, never a semantic one.** Two literals are fixed in
-position, exactly as `sentex/canonicalize-rule` places them when canonicalizing a rule
-for storage:
+**Ordering is a cost decision, never a semantic one.** Four classes of literal are
+placed by readiness rather than by cost, the first two exactly as
+`sentex/canonicalize-rule` places them when canonicalizing a rule for storage:
 
-- **evaluables** (`evaluate`, `lessThan`, `greaterThan`) never outrun what binds
-  them. This one fails quietly if got wrong: a hoisted `evaluate` yields *no*
-  solutions rather than an error. (The forward join is the exception — it throws;
-  see "Deferred antecedents in a forward join" below.) They are, though, pulled
-  *forward* to the first
-  point where their variables are all bound — a test that can run early prunes early,
-  which the storage canonicalization (which parks them uniformly last) does not do.
-- **a rule's recursive literal** stays last, so the cost model cannot reorder a
-  recursion into the shape `prove` prunes after one expansion.
+- **deferred literals** (`sentex/deferred-predicates`: `evaluate`, the comparisons,
+  `different`, `unknown`, the aggregates and the rest) never outrun what binds their
+  inputs (`sentex/deferred-input-vars`). A hoisted `evaluate` fails quietly: it yields
+  *no* solutions rather than an error. (The forward join is the exception — it throws;
+  see "Deferred antecedents in a forward join" below.) Each is pulled *forward* to the
+  first point where its inputs are bound, so a test that can run early prunes early,
+  where the storage canonicalization parks them uniformly last.
+- **a rule's recursive literal** runs after the other generators, so the cost model
+  cannot reorder a recursion into the shape `prove` prunes after one expansion. No
+  generator follows it except a literal waiting on it for an end (below).
+- **a literal the caller names by `:end-vars`** answers in full only once one end is
+  bound: the forward join's `genl` / `genlCx` and `disjoint` antecedent with both ends
+  open ([above](#a-genl--genlcx-antecedent-reads-the-closure)). It runs right after the
+  first generator that binds one of its ends, or after the recursive literal when only
+  that binds one; one that no other literal can bind keeps its place among the
+  generators.
+- **a closed-extent negative literal** (`rules/closed-extent-antecedents`: a `(not (P
+  …))` every variable of which a generator binds, over a predicate a closed extent is
+  declared on) is placed as a deferred literal. Under the grant `ClosedExtentProver`
+  answers it only ground, so run ahead of its binder it would find the stored negatives
+  alone ([naf.md](naf.md#under-the-grant-a-negative-antecedent-is-naf)).
 
 Ties break on written order, so a plan is a function of the conjunction and the KB's
 counts, never of iteration order. Planning applies wherever a conjunction enters:
-`prove`'s goal vector, each rule expansion in `prove`, and each node's inline join in
-the node engine — antecedents are substituted *before* planning, so the planner costs
-them against real values. Stored antecedent order is *canonical* order, chosen so two
-spellings of one rule dedup to one sentex; it is structural and bears no relation to
-what is cheap, which is why planning matters as much for a rule as for a query.
+`prove`'s goal vector, each rule expansion in `prove`, the forward join, and each node's
+inline join in the node engine. Antecedents are substituted *before* planning, so the
+planner costs them against real values. Stored antecedent order is *canonical* order,
+chosen so two spellings of one rule dedup to one sentex; it bears no relation to the
+estimated cost, so planning matters as much for a rule as for a query.
 
 `(query-plan kb [g1 g2 …] ctx)` returns the chosen order with the numbers each literal
 was placed on and the variables bound when it runs — `:est-matches` (the sound bound on
@@ -1860,8 +1855,9 @@ the plan up to and including it, which is the number the ordering turned on),
 `:block`, and the `:deferred?` / `:recursive?` / `:isolated?` flags. A literal placed
 early on a small `:est-matches` whose `:est-prefix` then jumps is the cost model being
 wrong about a *join* rather than about a literal, which is the distinction the three
-columns exist to make. All of it is read off the plan that ran rather than recomputed
-beside it, so a flag cannot claim a literal was placed by a rule that did not fire.
+columns exist to make. The flags and `:block` are read off the plan that ran, so a flag
+cannot claim a literal was placed by a rule that did not fire. The three numbers are
+recomputed through the same estimator calls, the override and the plan's memoized reads.
 The browser renders the same table under "How it would be answered".
 
 `vaelii.impl.tactics` is the other consumer: it sums `explain`'s `:est-matches` as a
@@ -1871,9 +1867,9 @@ expected one on purpose — a clamped sum wants the quantity that is never too s
 Binding `plan/*enabled*` false runs the generators unranked, which is how `plan_test`
 checks that every permutation of a conjunction returns the one answer set.
 
-**What the switch turns off is the ranking, and only the ranking.** `plan-pairs` makes
-two decisions and only one of them is cost: the **readiness discipline** — a deferred
-literal placed behind what binds its arguments, the recursive literal placed last — runs
+**What the switch turns off is the ranking, and only the ranking.** The **readiness
+discipline** — a deferred literal behind what binds its inputs, an `:end-vars` literal
+behind what binds an end, the recursive literal behind the other generators — runs
 whether or not the ranking does, because an order that violates it is not slower but
 illegal. A literal the `:est-override` costs at `plan/unbounded` (`provers/deferred-est`:
 a registered evaluatable, or a prover that cannot enumerate an open argument) is computed
@@ -1891,12 +1887,9 @@ randomized trials are what `plan_test` affords; every conjunction the suite runs
 the sweep affords. A ranking bug is the structure that wants the larger sample: nothing
 throws and an answer set is quietly smaller.
 
-Put to the suite, the claim did not hold unqualified — which is the next section.
-
 ### Where the ranking is required
 
-The claim above is the ranking's own, and running the suite under it found one place
-where the ranking carries more than cost. The test forces the shipped reader back
+The ranking carries more than cost in one place. The test forces the shipped reader back
 (`tu/shipped-fixture`, `tu/with-shipped`) rather than standing aside, so every
 configuration runs the same assertions.
 
@@ -1913,15 +1906,11 @@ the plain reason: they measure the ranking, which the switch removes.
 narrower one: unranked answers identically everywhere the ranking is not the thing
 supplying an answer, and the exceptions are the forcing tests above rather than a silence.
 
-**Two other cases are fixed rather than forced**, which is the outcome a sweep wants. A
-literal computed from its bindings waits for its binders unranked, under the readiness
-discipline above (`evaluatable_test`, `quote_test`). Incremental forward chaining over a
-*growing* transitive extent is complete on its own account: the chainer re-drives the join
-when the closure grows (the section below), so order independence — the first of the five
-properties — does not rest on the ranking picking the lead that happens to re-drive it.
-The sweep surfaced that as a live defect in the shipped configuration rather than as a
-difference the switch makes, and neither of the two tests that assert the ranking needs to force
-it.
+**Two other cases hold unranked without forcing.** A literal computed from its bindings
+waits for its binders unranked, under the readiness discipline above (`evaluatable_test`,
+`quote_test`). Incremental forward chaining over a *growing* transitive extent re-drives
+the join when the closure grows (the section below), so order independence — the first
+of the five properties — does not rest on the ranking picking the lead that re-drives it.
 
 ## Seeding a transitive closure (`special/transitive-seeds`)
 
@@ -2045,11 +2034,13 @@ registry rather than growing a second evaluator that could drift from it:
   `conversionFactor` at the wildcard, so a forward join sees every context's unit table
   rather than one ancestor set's — but the rows it read are then in the firing's antecedents, so
   placement refuses a conclusion no context can see them all from, and the reading
-  cannot outrun the placement. `DifferentProver` reads the equality partition and
-  reports no support, so a forward join sees every merge rather than the ones the
-  conclusion's placement context sees, and there is no context-scoped forward path for
-  it. A KB that needs the two to agree states its equality declarations in a context
-  every reader sees ([equality.md](equality.md), [quantity.md](quantity.md)).
+  cannot outrun the placement ([quantity.md](quantity.md)). `DifferentProver` reads the
+  equality partition and reports no support, so the forward join withholds a `different`
+  antecedent (`chain/join-order`) and `chain/refusal-reason` asks it in the placement
+  context. A reader below the placement that sees a merge joining the arguments, or a
+  membership making one indeterminate, reads a guard defeat of the conclusion resting on
+  those handles (`chain/different-guard-placements`), so the forward firing reads the
+  partition each reader sees, as a backward proof does ([equality.md](equality.md)).
 - **Its inputs must be bound when the join reaches it.** `sentex/canonicalize-rule`
   holds deferred literals to the end of the canonical antecedent order, which
   guarantees it for any rule whose deferred variables some generator binds. A rule where
@@ -2096,9 +2087,12 @@ it was retracted — belief resting on a reason nothing can take away, which is 
 `Prover` and gains three methods: `support-functors` (what it answers with support),
 `support-sources` (what it reads), and `solve-with-support`, which answers exactly what
 `solve` answers with each solution paired with the handles it was read from. An
-out-of-tree prover registered through `add-prover` is welcome to implement it and gets the
-same treatment; one that does not is taken at its word — its answer reads nothing stored,
-so no retraction can invalidate it.
+out-of-tree prover gets the same treatment: `core/prover` builds one from plain fns, and a
+spec giving `:solve-with-support`, `:support-functors` and `:support-sources` implements
+this protocol, with `solve` answering the bindings of `:solve-with-support` in its order
+and each support element checked to be a handle as the answer is read. A prover that does
+not implement it is taken at its word — its answer reads nothing stored, so no retraction
+can invalidate it.
 
 Four things follow. The first three are the ones the qualitative and the inherited
 antecedents already get ([qcn.md](qcn.md), [inherit.md](inherit.md)):
@@ -2360,6 +2354,17 @@ Built-in provers (`default-provers`, held per-KB in an atom):
   `function` and R's length, cited to the `natFormula` statement, those statements and the
   `genl` path it read ([argtypes.md](argtypes.md#what-a-quoted-form-is)). Not complete
   (50): a stored membership answers beside it.
+- **ArgPositionProver** — `(argN term n formula)`, read off how `formula` is written:
+  each position binds `term` to the element there and `n` to the position, 0 being the
+  operator. A quoted `formula` answers the positions of the form it names: `(Quote
+  (parentOf Tom Bob))` and the constant it reifies to both answer those of `(parentOf Tom
+  Bob)`. A
+  variable at a position names no term and answers nothing, so an open formula answers
+  the positions of the pattern as written. The answer rests on the reified constant's
+  `natFormula` statement, or on no statement, and a forward firing over it also rests on
+  the antecedent that bound the formula. A backward rule or a conjunction runs an `argN`
+  literal after the literal binding its formula, since `est-goal` reports `deferred-est`
+  for an open formula. Not complete (50): a stored `argN` fact answers beside it.
 - **AggregateProver** — the five reductions over a query's solutions:
   `(agg/count ?n ?v Body)` binds `?n` to how many **distinct** `?v` satisfy
   `Body`, `Sum` / `Min` / `Max` / `Avg` to the arithmetic ones. `?v` is projected out,
@@ -2444,7 +2449,8 @@ Built-in provers (`default-provers`, held per-KB in an atom):
   `x` is a `T'` (and, by genl, every supertype). So `arg` reads two ways — a
   **constraint** when asserting, and an **inference** when querying (Muffet eats
   Bone1 and eat's 2nd argument is food ⇒ Bone1 is food). On-demand, never
-  materialized. Partial (50).
+  materialized. Partial (50). An open `(T ?x)` is answered only from a declaration no
+  stored membership covers ([argtypes.md](argtypes.md#the-open-membership-goal)).
 - **BeliefProjectionProver** — a registered `(modal_predicate P)` of arity 2 with a ground
   agent: `(believes A P)` is answered by running `P` through the registry in the agent's
   own context rather than the asker's. `:compute`, partial (50) — `believes` stays an
@@ -2479,7 +2485,8 @@ candidate rules is `provers/candidate-rules`, which lives here beside the regist
 because both chainers read it: `specs ∩ rules-by-consequent`, so a rule concluding a
 subtype answers a supertype goal, unified against the consequent by subsumption.
 
-`add-prover kb prover` registers a custom prover; `query-plan kb goal context`
+`add-prover kb prover` registers a custom prover, a record or a value `core/prover` builds
+from plain fns; `query-plan kb goal context`
 returns the applicable provers with their `est-bindings`, `cost` tier, and
 `completeness`. This is where a specialized solver (arithmetic, a temporal
 reasoner, an external service) plugs in.

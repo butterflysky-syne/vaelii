@@ -19,7 +19,13 @@ check fails on two kinds of unregistered state:
   - a row of kind `:index` or `:cache`, computed at the write or the settle, whose
     `:reads` do not reach M1 and whose namespace does not implement `IndexStore`, that
     `OUTSIDE_INDEX` does not name: such a row keeps a belief-free index outside the
-    IndexStore (the same section).
+    IndexStore (the same section);
+  - a row registered in a file of `COVERED_FILES` with no `:covered-by`, unless
+    `COVERAGE_OWED` names it, or a `:covered-by` naming a `lein perf` check
+    (`bench/vaelii/bench/perf.clj`) or a perf-ab probe (`bench/vaelii/bench/ab.clj`)
+    that does not exist: the check names the measurement that fails when the structure
+    is replaced by a recompute at its read (docs/caches.md, "The derived-state
+    register").
 
 The keys inside a field that holds several rows' entries (`:taxonomy`,
 `:nogood-candidates`) are written from many namespaces under keys that
@@ -43,6 +49,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 IMPL = ROOT / "src" / "vaelii" / "impl"
 REASONING = IMPL / "types" / "reasoning.clj"
 FEATURES = ROOT / "scripts" / "derived-state-features.edn"
+PERF = ROOT / "bench" / "vaelii" / "bench" / "perf.clj"
+AB = ROOT / "bench" / "vaelii" / "bench" / "ab.clj"
 
 # `(file relative to src/vaelii/impl, var or Reasoning field) -> reason`.
 NOT_DERIVED: dict[tuple[str, str], str] = {
@@ -73,6 +81,9 @@ NOT_DERIVED: dict[tuple[str, str], str] = {
     ("disk/durability.clj", "quiescence"): "a lock",
     ("disk/durability.clj", "writes-in-flight"): "storage lifecycle: the public writes running",
     ("disk/durability.clj", "abort-requested"): "storage lifecycle: a shutdown's stop request",
+    ("except.clj", "frame-writes"): "a count of the index writes a reader frame reads by storage, which a pass's kept frames compare",
+    ("except.clj", "yield-writes"): "a count of the forced-monotonic facts leaving the index, which a pass's kept `yielding-reads?` compares",
+    ("except.clj", "yield-stores"): "a bounded log of the functors of the forced-monotonic facts stored, which a pass's kept `yielding-reads?` reads",
     ("progress.clj", "timer"): "the executor that logs the progress lines no tick does",
     ("disk/files.clj", "dir-fsync-warned"): "a one-time warning flag",
     ("disk/index_snapshot.clj", "image-state"): "the write cadence of the index image",
@@ -108,7 +119,7 @@ NOT_DERIVED: dict[tuple[str, str], str] = {
 # An entry leaves when its row's content becomes stored sentexes; an entry naming a row
 # that does not declare `:holds-content? true` fails, so the list only shrinks.
 HOLDS_CONTENT: dict[str, str] = {
-    "S5": "closed-extent and separation refusals and the `:constraint`, `:lift` and `:mint` entries",
+    "S5": "closed-extent and separation refusals and the `:constraint` and `:lift` entries",
 }
 
 # `row id -> what it indexes`: the rows still holding a belief-free index outside the
@@ -116,6 +127,16 @@ HOLDS_CONTENT: dict[str, str] = {
 OUTSIDE_INDEX: dict[str, str] = {
     "R9": "the rete matcher's facts by functor and argument, held only under "
           "`VAELII_RETE=1` or `rete/track!`",
+}
+
+# The files whose rows must name the perf check or perf-ab probe that fails without them.
+COVERED_FILES: set[str] = {"decide/arity.clj"}
+
+# `row id -> why it has no `:covered-by` yet`.  Same shrink-only rule as HOLDS_CONTENT: an
+# entry naming a row that declares `:covered-by`, or a row outside COVERED_FILES, fails.
+COVERAGE_OWED: dict[str, str] = {
+    "N3": "unmeasured: the recompute-at-read replacement waits on a box under load 15",
+    "N8": "unmeasured: the recompute-at-read replacement waits on a box under load 15",
 }
 
 # The row whose entries are the beliefs; a row reading it, directly or through other
@@ -133,6 +154,7 @@ READS = re.compile(r":reads\s+\[([^\]]*)\]")
 KIND = re.compile(r":kind\s+:([\w-]+)")
 COMPUTED = re.compile(r":computed\s+:([\w-]+)")
 INDEX_STORE_IMPL = re.compile(r"^\s*p/IndexStore\s*$", re.M)
+COVERED_BY = re.compile(r":covered-by\s+\{([^}]*)\}")
 
 
 def top_level_forms(text: str):
@@ -205,8 +227,68 @@ def def_name_and_body(form: str):
     return m.group(1), name, body
 
 
+def covered_by(form: str) -> dict[str, list[str]] | None:
+    """`{"perf": [check …], "perf-ab": [probe …]}` of a `register-derived` form's
+    `:covered-by` map, or None when the form has none."""
+    m = COVERED_BY.search(form)
+    if not m:
+        return None
+    out: dict[str, list[str]] = {}
+    for k, vec in re.findall(r":(perf-ab|perf)\s+\[([^\]]*)\]", m.group(1)):
+        out.setdefault(k, []).extend(re.findall(r":([\w-]+)", vec))
+    return out
+
+
+def coverage_findings(rel: str, line: int, rid: str, form: str, checks: set[str],
+                      probes: set[str], owed: dict[str, str]) -> list[str]:
+    """The findings on row `rid`'s `:covered-by`, registered at `rel:line`: none outside
+    COVERED_FILES; one for a row with no `:covered-by` that `owed` does not name,
+    for an empty one, and for each name no check or probe carries."""
+    if rel not in COVERED_FILES:
+        return []
+    cov = covered_by(form)
+    if cov is None:
+        return [] if rid in owed else [
+            f"{rel}:{line}: row {rid} names no `:covered-by` perf check or perf-ab probe, "
+            f"and is not in COVERAGE_OWED"]
+    out = []
+    if not any(cov.values()):
+        out.append(f"{rel}:{line}: row {rid}'s `:covered-by` names no check or probe")
+    out.extend(f"{rel}:{line}: row {rid}'s `:covered-by` names `:{c}`, no `lein perf` check"
+               for c in cov.get("perf", []) if c not in checks)
+    out.extend(f"{rel}:{line}: row {rid}'s `:covered-by` names `:{c}`, no perf-ab probe"
+               for c in cov.get("perf-ab", []) if c not in probes)
+    return out
+
+
+# The coverage rule's own fixture: a row in a covered file with no `:covered-by` is found,
+# as is one naming a check that does not exist; a covered row, an owed row and a row in
+# another file are not.
+COVERAGE_FIXTURE = [
+    ("decide/arity.clj", "Z1", "(caches/register-derived {:id :Z1 :kind :cache})"),
+    ("decide/arity.clj", "Z2", "(caches/register-derived {:id :Z2 "
+                               ":covered-by {:perf [:ok-check] :perf-ab [:no-probe]}})"),
+    ("decide/arity.clj", "Z3", "(caches/register-derived {:id :Z3 "
+                               ":covered-by {:perf [:ok-check] :perf-ab [:ok-probe]}})"),
+    ("decide/arity.clj", "Z5", "(caches/register-derived {:id :Z5 :kind :cache})"),
+    ("decide/tuple.clj", "Z4", "(caches/register-derived {:id :Z4 :kind :cache})"),
+]
+
+
 def main() -> int:
     findings: list[str] = []
+    checks = set(re.findall(r"\{:name\s+:([\w-]+)", PERF.read_text()))
+    ab = re.search(r"\(def probes\b(.*?)\]\)", AB.read_text(), re.S)
+    probes = set(re.findall(r"#'([\w-]+)", ab.group(1))) if ab else set()
+    fixture = [f.split(": ")[1] for rel, rid, form in COVERAGE_FIXTURE
+               for f in coverage_findings(rel, 1, rid, form, {"ok-check"}, {"ok-probe"},
+                                                 {"Z5": "owed"})]
+    if fixture != ["row Z1 names no `:covered-by` perf check or perf-ab probe, and is not "
+                   "in COVERAGE_OWED", "row Z2's `:covered-by` names `:no-probe`, no perf-ab "
+                   "probe"]:
+        findings.append(f"scripts/check-derived-state.py: the coverage rule's own fixture "
+                        f"no longer reads as it should: {fixture}")
+    covered_rows: set[str] = set()
     stateful: dict[tuple[str, str], str] = {}
     registered_vars: set[tuple[str, str]] = set()
     located_fields: set[str] = set()
@@ -234,6 +316,13 @@ def main() -> int:
                              re.findall(r":([\w-]+)", reads.group(1)) if reads else [],
                              kind.group(1) if kind else "", computed.group(1) if computed else "",
                              index_store)
+                findings.extend(coverage_findings(rel, line, rid, form, checks, probes,
+                                                  COVERAGE_OWED))
+                if rel in COVERED_FILES:
+                    covered_rows.add(rid)
+                    if covered_by(form) is not None and rid in COVERAGE_OWED:
+                        findings.append(f"{rel}:{line}: row {rid} declares `:covered-by` "
+                                        f"and COVERAGE_OWED still names it")
                 h = HOLDS.search(form)
                 if not h:
                     findings.append(f"{rel}:{line}: row {rid} declares no "
@@ -283,6 +372,9 @@ def main() -> int:
     findings.extend(f"HOLDS_CONTENT names {r}, which no row declaring "
                     f"`:holds-content? true` is" for r in sorted(HOLDS_CONTENT)
                     if r not in content_rows)
+
+    findings.extend(f"COVERAGE_OWED names {r}, which no row in {sorted(COVERED_FILES)} is"
+                    for r in sorted(COVERAGE_OWED) if r not in covered_rows)
 
     def reads_belief(rid: str, seen: frozenset = frozenset()) -> bool:
         return rid == BELIEF_ROW or (rid in rows and rid not in seen and any(

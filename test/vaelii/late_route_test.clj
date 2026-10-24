@@ -23,6 +23,7 @@
             [vaelii.host.core-context :as core-context]
             [vaelii.host.starter :as starter]
             [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.order-independence-test :as oi]
             [vaelii.test-util :as tu])
   (:import [java.nio.file Files]
@@ -86,7 +87,7 @@
   ([steps goal prune?] (build steps goal prune? []))
   ([steps goal prune? retracted]
    (tu/with-neutral-kb [kb tu/fresh]
-     (binding [checks/*assertive-arg-types?*  true
+     (binding [argument/*assertive-arg-types?*  true
                checks/*prune-subsumed-mints?* prune?]
        (doseq [s steps] (v/assert kb s U {:strength :monotonic}))
        (doseq [s retracted] (v/retract! kb (v/handle-of kb s U)))
@@ -232,7 +233,7 @@
   ;; `load-core!` and `load-starter!` restore dumps built once per JVM under the root
   ;; reading, so the kept reading asserts each through its `load-into`.  The upper layer
   ;; holds 6,140 justifications with every mint kept, and the starter 6,934.
-  (binding [checks/*assertive-arg-types?*  true
+  (binding [argument/*assertive-arg-types?*  true
             checks/*prune-subsumed-mints?* false]
     (doseq [[load! floor] [[core-context/load-into 5000] [starter/load-into 5500]]]
       (let [[authored reloaded] (round-trip load!)]

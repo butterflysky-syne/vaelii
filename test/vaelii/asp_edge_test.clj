@@ -1,36 +1,14 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.asp-edge-test
-  "The ASP edge solver (`vaelii.impl.asp.edge`) behind the `solve-types/Solver` protocol.
+  "`vaelii.impl.asp.edge`: the encoding over hand-built `Program`s (minimal defeat, caller
+  priority, content-keyed ties), the readers' handling of a result that is not an answer,
+  and, on a live KB, that installing `edge-solver` leaves a represented dilemma undecided
+  under every arrival order.  Each test runs only with an ASP backend reachable, since
+  without one `edge-solver` is `local-solver`.
 
-  Two halves.  The first drives `edge-solver` directly with hand-built `Program`s
-  — no KB, no store — because the translation is a pure function of the program
-  and that is the level the encoding is tested at: minimal defeat, caller
-  priority respected, and above all a tie broken the *same way* regardless of the
-  order the knowledge arrived.  This half is the backend's real coverage and is
-  unaffected by anything below it.
-
-  The second installs it on a live KB through `set-solver`.  The engine routes no
-  default/default rebuttal to any solver,
-  because a `P`/`¬P` pair at `:default` is a **represented dilemma** rather than a tie
-  to be broken (docs/exceptions.md, \"What surfaces where\").  So a Nixon diamond in a
-  KB does not settle to one side, and the KB-level property tested here is the
-  negative one: installing a real ASP backend does not change belief, is never
-  consulted, and cannot quietly re-introduce arbitration.  Arbitration remains the
-  right answer for nogoods that are *not* plain rebuttals, which is why the protocol and
-  its encoding are still tested at full strength above.
-
-  Everything here is skipped when no ASP backend is reachable: `edge-solver`
-  deliberately falls back to `local-solver` in that case, so running these without
-  clingo or clasp would silently assert the stub's behaviour instead of the
-  solver's and prove nothing.
-
-  No `:each` fixture.  The permutation tests below build a fresh KB
-  per ordering, and `tu/fresh` clears the scratch databases — which would pull the
-  ground out from under a namespace-wide fixture KB and fail teardown against a
-  baseline that no longer exists.  The KB tests therefore take the inline
-  `tu/with-neutral-kb` route `test_util` documents for a namespace whose tests need
-  different baselines."
+  No `:each` fixture: the permutation test rebuilds a KB per ordering on the isolated
+  space, so the KB tests take `tu/with-neutral-kb` inline."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
@@ -54,17 +32,11 @@
   (solve-types/solve edge/edge-solver (solve/program contested nogoods content)))
 
 (defn- sentences
-  "What each of `handles` asserts, per `content` — so an assertion can name the
-  *claim* that lost rather than the handle, which is the whole point of the
-  content keying."
+  "What each of `handles` asserts, per `content`."
   [content handles]
   (into #{} (map #(get-in content [% :sentence])) handles))
 
 (deftest the-program-text-does-not-depend-on-nogood-arrival-order
-  ;; translate sorts the nogoods by their members' content keys before anything is
-  ;; emitted: settle hands them in arrival order, and every emission — violation
-  ;; atoms, constraints, minimize, show — walks that seq, so an unsorted one
-  ;; rendered two logically identical programs as different ASPIF text
   (tu/with-requirement asp? "no ASP solver on this box"
     (let [content {1 {:sentence '(a X) :context 'C} 2 {:sentence '(not (a X)) :context 'C}
                    3 {:sentence '(b X) :context 'C} 4 {:sentence '(not (b X)) :context 'C}}
@@ -74,8 +46,6 @@
       (is (= (text [n1 n2]) (text [n2 n1]))))))
 
 (deftest a-cardinality-bound-renders-one-weight-constraint-and-prunes
-  ;; A `:cardinalities` entry is ONE weight-body statement, not the C(n, k+1) subset
-  ;; nogoods a hand-written encoding needs — and it prunes the models like a hard nogood.
   (when asp?
     (let [content {1 {:sentence '(p a) :context 'C} 2 {:sentence '(p b) :context 'C}
                    3 {:sentence '(p c) :context 'C} 4 {:sentence '(p d) :context 'C}}
@@ -106,10 +76,6 @@
         (is (empty? (:violated r)))))))
 
 (deftest the-tie-break-does-not-depend-on-assertion-order
-  ;; The engine-wide invariant (docs/nmtms.md): handles are allocated in assertion
-  ;; order, so if the outcome tracked handles the Nixon diamond would elect
-  ;; whichever side was typed first.  Same two claims, handles swapped — the same
-  ;; *claim* must lose both times.
   (tu/with-requirement asp? "no ASP solver on this box"
     (let [ng [{:nogood #{1 2} :priority 0 :sentence '(contradicts X)}]
           c1 {1 {:sentence '(a) :context 'C} 2 {:sentence '(b) :context 'C}}
@@ -124,9 +90,6 @@
                (sentences c2 (:defeat r2))))))))
 
 (deftest defeat-is-minimal-across-overlapping-nogoods
-  ;; 1-2 and 2-3 both contested.  Defeating the shared member satisfies both, so a
-  ;; solver that optimizes globally finds the one-atom cover; defeating 1 and 3
-  ;; would also satisfy both but costs twice as much belief.
   (when asp?
     (let [content {1 {:sentence '(a) :context 'C} 2 {:sentence '(b) :context 'C}
                    3 {:sentence '(c) :context 'C}}
@@ -147,9 +110,7 @@
         (is (empty? (:violated r)))))))
 
 (deftest a-higher-priority-nogood-is-satisfied-first
-  ;; Both nogoods can be satisfied here, so priority shows up as *which* member is
-  ;; sacrificed: giving up 2 settles both, and the high-priority pair keeps its
-  ;; other member.
+  ;; both nogoods can be satisfied, so priority shows as which member is given up
   (when asp?
     (let [content {1 {:sentence '(a) :context 'C} 2 {:sentence '(b) :context 'C}
                    3 {:sentence '(c) :context 'C}}
@@ -163,9 +124,7 @@
 ;; ---- 2. installed on a live KB -----------------------------------------
 
 (deftest a-neg-nogood-is-an-at-least-one
-  ;; `:neg` members are forbidden to be *absent* together.  Soft, its witness fires
-  ;; only on the whole signed body — never as an unconditional fact — so a satisfied
-  ;; at-least-one steers nothing and reports nothing.
+  ;; a soft nogood's violation atom fires only on the whole signed body
   (when asp?
     (let [content {1 {:sentence '(col N K1) :context 'C}
                    2 {:sentence '(col N K2) :context 'C}}]
@@ -181,9 +140,7 @@
           (is (empty? (:violated r)) "and the at-least-one is met, not violated"))))))
 
 (deftest a-fixed-neg-member-makes-the-nogood-vacuous
-  ;; A `:neg` member outside the contested set is assumed true — present — so the
-  ;; at-least-one holds no matter what is decided.  Hard, the constraint must not
-  ;; tighten into `:- a1.`; soft, it must not penalize anything.
+  ;; a fixed `:neg` member is present: hard, no `:- a1.`; soft, no penalty
   (when asp?
     (let [content {1 {:sentence '(col N K1) :context 'C}}]
       (testing "hard"
@@ -197,12 +154,8 @@
           (is (empty? (:violated r))))))))
 
 (deftest the-asp-solver-does-not-decide-a-nixon-diamond
-  ;; The backend above can decide this shape and would, given the program.  It is
-  ;; never given the program: the engine reports a default/default rebuttal as a
-  ;; dilemma instead.  Installing a real solver must therefore leave the KB reading
-  ;; exactly as it does with the built-in stub — otherwise the semantics of a KB would
-  ;; depend on which backend happened to be reachable, which is the one thing an
-  ;; opt-in backend must never do.
+  ;; the engine hands a default/default rebuttal to no solver, so belief reads as it does
+  ;; with the stub
   (when asp?
     (tu/with-neutral-kb [kb tu/fresh]
       (let [quaker (tu/tmp-pred) pacifist (tu/tmp-pred) republican (tu/tmp-pred)
@@ -235,14 +188,8 @@
       (cons (nth coll i) p))))
 
 (defn- isolated-kb
-  "A cleared KB on the suite's isolated database pair rather than the shared
-  scratch space.
-
-  Deliberate: this test rebuilds a KB once per ordering, and `tu/fresh` flushes the
-  scratch space every time.  Run inside the full suite that would repeatedly wipe the
-  KB a *different* namespace is holding open through a `:once` fixture — the tests
-  pass alone and fail together, which is the worst way to find out.  `test-util`
-  owns the isolated space for exactly this."
+  "A cleared KB on the suite's isolated space: this test rebuilds a KB per ordering, and
+  `tu/fresh` would clear the scratch space another namespace's `:once` fixture holds."
   []
   (tu/isolated-fresh))
 
@@ -259,16 +206,8 @@
         (permutations ops)))
 
 (deftest the-outcome-is-order-independent-with-the-asp-solver-installed
-  ;; The invariant `order_independence_test` asserts for the stub, re-run with the real
-  ;; backend installed.  The engine routes this shape to no solver, so what the
-  ;; permutation catches is not "does the ASP encoding pick a stable winner" but "does
-  ;; the presence of a backend perturb the outcome under *any* ordering" — a single
-  ;; ordering that reached the solver would show up here as a second distinct outcome,
-  ;; which is exactly the regression worth a 24-way sweep.
-  ;;
-  ;; The strength of the assertion matters as much as before.  Comparing whole
-  ;; readings rather than a per-ordering boolean is what makes a one-off flip visible;
-  ;; "some outcome is stable" would pass while the engine was order-dependent.
+  ;; `order_independence_test`'s claim with a backend installed: one ordering that reached
+  ;; the solver shows as a second distinct whole reading
   (tu/with-requirement asp? "no ASP solver on this box"
     (let [ops [#(v/assert % (default-rule '[(quaker ?x)]     '(pacifist ?x))       'CxUniverse)
                #(v/assert % (default-rule '[(republican ?x)] '(not (pacifist ?x))) 'CxUniverse)
@@ -294,9 +233,6 @@
       (tu/clear-kb! (tu/isolated-test-kb)))))
 
 (deftest translation-is-deterministic
-  ;; Same program twice must render byte-identical ASPIF: if atom allocation drifted
-  ;; the text would too, and a solver's arbitrary choice among optima could drift
-  ;; with it even when the encoding is otherwise correct.
   (when asp?
     (let [mk #(solve/program #{1 2}
                              [{:nogood #{1 2} :priority 0 :sentence 'X}]
@@ -304,14 +240,8 @@
       (is (= (:aspif (edge/translate (mk))) (:aspif (edge/translate (mk))))))))
 
 (deftest content-order-not-handle-order-drives-atom-allocation
-  ;; The same two claims under swapped handles.  The rendered text cannot be equal —
-  ;; labels embed the handle, so `s1`/`s2` necessarily swap — but the *claim to atom*
-  ;; mapping must not: whichever handle carries `(a)` has to receive the same atom id
-  ;; both times, or the program the solver optimizes depends on assertion order even
-  ;; when the encoding is otherwise sound.
-  ;;
-  ;; This is also what catches an unsorted rule body: `:nogood` is a set, so a body
-  ;; built by plain iteration renders in hash order rather than content order.
+  ;; labels embed the handle, so the text differs; the claim-to-atom map must not.  An
+  ;; unsorted rule body renders a `:nogood` set in hash order, which this also catches.
   (tu/with-requirement asp? "no ASP solver on this box"
     (let [mk (fn [content]
                (edge/translate
@@ -328,30 +258,21 @@
                (remove #(str/starts-with? % "4 ") (str/split-lines (:aspif t2)))))))))
 
 (deftest an-empty-program-needs-no-solver
-  ;; Nothing contested and nothing to satisfy: `translate` yields no ASPIF at all,
-  ;; and the solver is never invoked.
   (let [t (edge/translate (solve/program #{} [] {}))]
     (is (nil? (:aspif t)))
     (is (= {:defeat #{} :violated []}
            (solve-types/solve edge/edge-solver (solve/program #{} [] {}))))))
 
 ;; ---- a result that is not an answer ------------------------------------
-;;
-;; A backend that was interrupted (the time limit, a signal) hands back no witness.
-;; Every reader maps an atom's absence to *defeated* / *not kept*, so read as an
-;; answer an empty result defeats every contested assumption — the exact opposite
-;; of "decide nothing".  No backend is needed to test this: `solver/solve` is the
-;; protocol, and a stub answer in its shape is what arrives either way.
+;; A stub `solver/solve` answer in the backend's shape (docs/asp.md, "Refuse rather than
+;; degrade, whenever a backend is present").
 
 (def ^:private two-choices
   (solve/program #{1 2}
                  [{:nogood #{1 2} :priority 1 :sentence '(contradicts a b)}]
                  {1 {:sentence '(a) :context 'Cx} 2 {:sentence '(b) :context 'Cx}}))
 
-;; Two nogoods sharing a member, with the handles arranged so the stub's greedy
-;; per-nogood choice and the global optimum land on *different* sides: the stub
-;; defeats {1,3} and ASP defeats {2}.  This is the structure that makes degradation
-;; visible — on `two-choices` above the two solvers happen to agree.
+;; the stub defeats {1,3} and ASP defeats {2}; on `two-choices` the two agree
 (def ^:private shared-member
   (solve/program #{1 2 3}
                  [{:nogood #{1 2} :priority 0 :sentence '(contradicts c a)}
@@ -387,11 +308,6 @@
               (is (= status (:status (ex-data e)))))))))))
 
 (deftest belief-does-not-depend-on-whether-the-solve-finished
-  ;; The reason `edge-solver` refuses instead of degrading whenever a backend is
-  ;; present.  The stub and ASP disagree on this program, so falling back would make
-  ;; the *answer* — not merely the latency — a function of the wall clock: a settle
-  ;; whose round 1 timed out and whose round 2 did not would end at a belief set
-  ;; neither solver would produce, on knowledge that never changed.
   (when asp?
     (let [decided (solve-types/solve edge/edge-solver shared-member)
           stub    (solve-types/solve solve/local-solver shared-member)]
@@ -409,10 +325,6 @@
           (is (not= (:defeat stub) (:defeat r))))))))
 
 (deftest a-decided-nothing-result-is-distinguishable-from-keeping-everything
-  ;; An empty `:defeat` is otherwise a perfectly good answer — *nothing had to give
-  ;; way* — so a caller that materializes what a solve kept cannot tell the two apart
-  ;; from the defeat set alone.  `:error` is the bit that tells them apart, and
-  ;; `asp.label` raises it rather than committing a world nobody computed.
   (when asp?
     (testing "a program with nothing to satisfy really does defeat nothing, and errs not"
       (let [r (solve-types/solve edge/edge-solver
@@ -429,8 +341,7 @@
             (is (= :solver-failed (:type (ex-data (:error r)))))))))))
 
 (deftest a-backend-that-throws-does-not-unwind-the-arbitration
-  ;; An exception escaping the protocol would leave its caller half done.  The three
-  ;; currencies a backend fails in all read as one decided-nothing result.
+  ;; the three ways a backend fails all read as one decided-nothing result
   (doseq [[what thrown expected-type]
           [["clingo's chk!"      (ex-info "clingo solve failed: out of memory"
                                           {:type :solver-failed :op "solve"})   :solver-failed]
@@ -458,8 +369,6 @@
       (is flag? "the interrupt flag is set again on the solving thread"))))
 
 (deftest an-unsat-result-keeps-its-documented-reading
-  ;; `:unsat` is a definite answer — no model — and each reader has its own word for
-  ;; it: the edge solver degrades, a labeling keeps nothing, an enumeration is empty.
   (with-backend-answering {:status :unsat :atoms [] :cost nil :raw nil}
     (fn []
       (is (= (solve-types/solve solve/local-solver two-choices)
@@ -468,16 +377,8 @@
       (is (= [] (edge/enumerate-optima two-choices))))))
 
 (deftest the-violated-reading-does-not-depend-on-nogood-arrival-order
-  ;; Two constraints over the same members at the same priority — a shape two constraint
-  ;; rules grounding to the same choice heads produce — differ only in their `:sentence`,
-  ;; which `translate`'s nogood key omits.  A stable sort then leaves the tie to arrival
-  ;; order, and the reading permutes with it.  Belief never does; the report is what the
-  ;; caller sees, and it owes the same content order everything else here owes.
-  ;;
-  ;; A hard at-least-one forces the single choice true, so all three soft nogoods
-  ;; forbidding it are violated at once — `:violated` comes back empty for anything the
-  ;; engine itself builds (every contradiction it sends has a contested member, and
-  ;; defeating that member satisfies it), so a caller's own program is what reaches it.
+  ;; two nogoods differing only in `:sentence`, which `translate`'s key omits; the hard
+  ;; at-least-one forces the choice true, so all three soft nogoods are violated
   (let [force {:neg #{1} :hard true :sentence '(mustHold)}
         ng1   {:nogood #{1} :priority 0 :sentence '(contradicts aaa)}
         ng2   {:nogood #{1} :priority 0 :sentence '(contradicts bbb)}
@@ -495,9 +396,8 @@
 ;; ---- what the time limit bounds ----------------------------------------
 
 (defn- backend-solves
-  "The solve modes `f` runs through the backend, in order.  `classify-both` is two
-  enumerations over one control — one `control_new`, two searches — so it counts as the
-  two solves it is, which is what the budget is spent on."
+  "The solve modes `f` runs through the backend, in order, `classify-both` counted as its
+  two enumerations."
   [f]
   (let [seen  (atom [])
         solve solver/solve
@@ -510,15 +410,7 @@
     @seen))
 
 (deftest the-time-limit-bounds-one-solve-and-an-operation-makes-several
-  ;; `VAELII_ASP_TIME_LIMIT` is a per-solve budget, and a solve runs on the single
-  ;; writer — so what an operation actually holds the writer for is the budget times
-  ;; the number of solves it makes.  Measured at a 1-second budget on a program that
-  ;; finishes under neither: one solve returns after ~1015 ms and `classify-both` after
-  ;; 2049 ms, both of them correctly cancelled on time.
-  ;;
-  ;; docs/asp.md tabulates the multipliers.  This test checks the table: a
-  ;; second solve added to an operation is a doubling of the writer's exposure, and it
-  ;; should not be possible to add one without saying so.
+  ;; the counts docs/asp.md, "The time limit", tabulates
   (when asp?
     (testing "one program, one solve"
       (is (= [:label] (backend-solves #(solve-types/solve edge/edge-solver two-choices))))
@@ -544,9 +436,6 @@
           (is (= [:classify-true :classify-supportable :label] (labeling-solves))))))))
 
 (deftest an-irreducible-clash-still-bypasses-the-solver
-  ;; Two monotonic claims that contradict cannot be arbitrated by defeating one —
-  ;; `settle` classifies that as hard and reports it directly, so installing an ASP
-  ;; backend must not change the outcome.
   (when asp?
     (tu/with-neutral-kb [kb tu/fresh]
       (let [happy (tu/tmp-pred) tom (tu/tmp-ind)]

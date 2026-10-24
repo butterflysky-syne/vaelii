@@ -5,7 +5,7 @@
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.host.core-context :as core-context]
-            [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.test-util :as tu]))
 
 (use-fixtures :once (tu/loaded core-context/load-into))
@@ -119,7 +119,7 @@
         "the two values are one nogood, and not both believed")))
 
 (tu/deftest-kb exact-arity-derives-fixed-policy-without-argument-entailment
-  (binding [checks/*assertive-arg-types?* false]
+  (binding [argument/*assertive-arg-types?* false]
     (tu/with-terms [freshRelation]
       (let [h (v/assert kb (list 'arity freshRelation 4) 'CxUniverse)]
         (is (v/ask? kb (list 'fixed_arity freshRelation) 'CxUniverse))
@@ -142,9 +142,9 @@
   ;; `(forced_decontextualized_predicate genlCx)` in core.txt stores every edge in
   ;; CxUniverse, so an edge written to a data context is the sentex a second assert finds.
   (tu/with-terms [CxLow CxHigh]
-    (v/assert kb (list 'genlCx CxLow CxHigh) CxLow)
-    (is (some? (v/handle-of kb (list 'genlCx CxLow CxHigh) 'CxUniverse)))
-    (is (nil? (v/handle-of kb (list 'genlCx CxLow CxHigh) CxLow)))
+    (let [h (v/assert kb (list 'genlCx CxLow CxHigh) CxLow)]
+      (is (= 'CxUniverse (:context (v/sentex kb h))))
+      (is (= h (v/handle-of kb (list 'genlCx CxLow CxHigh) 'CxUniverse))))
     (let [n (v/sentex-count kb)]
       (v/assert kb (list 'genlCx CxLow CxHigh) CxHigh)
       (is (= n (v/sentex-count kb)) "re-asserting the edge finds the one stored"))))

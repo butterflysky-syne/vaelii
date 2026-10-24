@@ -219,3 +219,46 @@
             (is (= expected (retired? s)))
             (is (= (moved? s) (retired? s))
                 "the flat-read answer agrees with the walk")))))))
+
+;; ---- a reifiable application in the proposition ----------------------------
+
+(tu/deftest-kb an-askers-merge-does-not-reach-an-application-in-what-an-agent-believes
+  ;; both routes: Ann's belief is projected from her context, Bob's is a stored fact
+  (tu/with-terms [FruitFn TreeFn Apple Pomme Ann Bob Tom likes]
+    (let [fruit  (fn [x] (list FruitFn (list TreeFn x)))
+          belief (fn [agent x] (list 'believes agent (list likes Tom (fruit x))))]
+      (v/assert kb (list 'reifiable_function FruitFn) 'CxUniverse)
+      (v/assert kb (list 'reifiable_function TreeFn) 'CxUniverse)
+      (v/assert kb (list likes Tom (fruit Apple)) (modal/context-of-agent Ann))
+      (v/assert kb (belief Bob Apple) ask-ctx)
+      (v/assert kb (list 'sameAs Apple Pomme) ask-ctx)
+      (is (= [true false true false]
+             (mapv #(v/ask? kb % ask-ctx)
+                   [(belief Ann Apple) (belief Ann Pomme) (belief Bob Apple) (belief Bob Pomme)])))
+      (is (= [(belief Bob Apple)] (mapv :sentence (v/sentexes-matching kb (list 'believes Bob '?p) ask-ctx)))
+          "the stored belief keeps the application"))))
+
+(tu/deftest-kb an-identity-the-agent-holds-reaches-an-application-in-their-belief
+  (tu/with-terms [FruitFn Apple Pomme Ann Tom likes]
+    (let [actx (modal/context-of-agent Ann)]
+      (v/assert kb (list 'reifiable_function FruitFn) 'CxUniverse)
+      (v/assert kb (list likes Tom (list FruitFn Apple)) actx)
+      (v/assert kb (list 'sameAs Apple Pomme) actx)
+      (is (v/ask? kb (list 'believes Ann (list likes Tom (list FruitFn Pomme))) ask-ctx))
+      (is (not (v/ask? kb (list likes Tom (list FruitFn Pomme)) ask-ctx))))))
+
+(tu/deftest-kb a-merge-of-two-applications-stops-at-the-quotation
+  (tu/with-terms [WifeFn MotherFn Oedipus Ann Bob Tom likes]
+    (let [wife   (list WifeFn Oedipus)
+          mother (list MotherFn Oedipus)
+          actx   (modal/context-of-agent Ann)]
+      (v/assert kb (list 'reifiable_function WifeFn) 'CxUniverse)
+      (v/assert kb (list 'reifiable_function MotherFn) 'CxUniverse)
+      (v/assert kb (list likes Tom wife) actx)
+      (v/assert kb (list 'believes Bob (list likes Tom wife)) ask-ctx)
+      (v/assert kb (list 'sameAs wife mother) ask-ctx)
+      (is (= [false false false true]
+             [(v/ask? kb (list 'believes Ann (list likes Tom mother)) ask-ctx)
+              (v/ask? kb (list 'believes Bob (list likes Tom mother)) ask-ctx)
+              (v/ask? kb (list likes Tom mother) actx)
+              (v/ask? kb (list likes Tom wife) actx)])))))

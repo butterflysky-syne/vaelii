@@ -11,6 +11,7 @@
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.naming :as nm]
+            [vaelii.impl.nat :as nat]
             [vaelii.impl.predall :as predall]
             [vaelii.impl.predicates :as predicates]
             [vaelii.impl.progress :as progress]
@@ -1085,6 +1086,42 @@
               (recur (conj findings finding) (rest units))))
           {:status :complete :findings findings})))))
 
+(defn- uncorresponded-units
+  "`{:function f :rules [handle …]}` for each `reifiable_function` an open application in
+  a held rule `context` sees names while the KB believes no correspondence of it
+  (`nat/held-application?`, docs/nat.md, The corresponding predicate), in print order of
+  the function, the rules in handle order.  The mark is
+  read unscoped because the hold reads it so; `context` narrows the rules."
+  [kb context]
+  (let [tax    (reasoning/taxonomy kb)
+        r?     #(tax/has-prop? tax :reifiable %)
+        corrs  (memoize (fn [f] (count (res/believed-correspondences kb #(= f (first %))))))
+        by-f   (reduce (fn [m sx]
+                         (budget/spend!)
+                         (if (tax/sees? tax context (:context sx))
+                           (reduce #(update %1 %2 (fnil conj (sorted-set)) (:id sx))
+                                   m
+                                   (into #{} (comp (mapcat #(res/open-applications r? %))
+                                                   (map first)
+                                                   (filter #(zero? (corrs %))))
+                                         (conj (vec (:antecedent sx)) (:consequent sx))))
+                           m))
+                       {} (nat/held-application-rules kb))]
+    (for [f (sort-by nm/print-key (keys by-f))]
+      {:function f :rules (vec (by-f f))})))
+
+(defn- uncorresponded-function-findings
+  "Report each function `uncorresponded-units` names, stopping after the first finding
+  beyond `remaining` proves that the result bound truncated the sweep."
+  [kb context remaining]
+  (loop [findings [] units (uncorresponded-units kb context)]
+    (if-let [finding (first units)]
+      (if (and remaining (>= (count findings) remaining))
+        {:status :truncated :reason :max-results :findings findings}
+        (do (budget/record! :uncorresponded-function finding)
+            (recur (conj findings finding) (rest units))))
+      {:status :complete :findings findings})))
+
 (def ^:private passes
   "The passes in run order, `[category audit]`: `audit` takes `kb candidate-terms context
   remaining` and answers `{:status :complete|:truncated :findings …}`.  `:max-results`
@@ -1103,6 +1140,8 @@
                   (rule-macro-findings kb context remaining))]
    [:undeclared-arity (fn [kb _ context remaining]
                         (undeclared-arity-findings kb context remaining))]
+   [:uncorresponded-function (fn [kb _ context remaining]
+                               (uncorresponded-function-findings kb context remaining))]
    [:twin-genls (fn [kb _ context remaining]
                   (twin-genls-findings kb context remaining))]
    [:derivable-stated-edge (fn [kb _ context remaining]

@@ -6,6 +6,7 @@
   declares `SkolemFn` when it stores such a rule, and the forward chainer mints at each
   firing.  See docs/skolem.md."
   (:require [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.impl.resolution :as res]
             [vaelii.impl.rules :as rules]
             [vaelii.impl.sentex :as sx]
@@ -17,12 +18,12 @@
 
 (defn ensure-skolem-function
   "Declare `SkolemFn` a `reifiable_function` if it is not already, which also turns on
-  the NAT orphan-cleanup presence check (`nat/any-reifiable-functions?`).  Idempotent; asserted
+  the NAT orphan-cleanup presence check (`nat-read/any-reifiable-functions?`).  Idempotent; asserted
   without chaining."
   [kb]
-  (when-not (nat/reifiable-function? kb skolem-function)
+  (when-not (nat-read/reifiable-function? kb skolem-function)
     (wiring/assert-sentence kb (list 'reifiable_function skolem-function)
-                            nat/universal-context
+                            nat-read/universal-context
                             {:strength :monotonic :chain? false})))
 
 (defn has-existential-head?

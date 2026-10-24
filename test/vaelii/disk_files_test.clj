@@ -202,12 +202,13 @@
 
 (defn- failing-after
   "A stand-in for `write-fully-at!` that lands the first `k` bytes of the buffer and
-  then fails — a torn write."
-  [k]
-  (fn [^java.nio.channels.FileChannel ch ^java.nio.ByteBuffer bb ^long pos]
-    (let [head (java.nio.ByteBuffer/wrap (byte-array (take k (.array bb))))]
-      (.write ch head pos)
-      (throw (java.io.IOException. "no space left on device")))))
+  then throws `t`, an `IOException` by default — a torn write."
+  ([k] (failing-after k (java.io.IOException. "no space left on device")))
+  ([k ^Throwable t]
+   (fn [^java.nio.channels.FileChannel ch ^java.nio.ByteBuffer bb ^long pos]
+     (let [head (java.nio.ByteBuffer/wrap (byte-array (take k (.array bb))))]
+       (.write ch head pos)
+       (throw t)))))
 
 (deftest a-torn-append-leaves-the-log-as-it-was
   (with-tmp
@@ -223,6 +224,10 @@
           (with-redefs [f/write-fully-at! (failing-after 9)]
             (is (thrown? java.io.IOException (f/append-records! log [[:put :a 1] [:put :b 2]]))))
           (is (= before (f/log-length log)) "none of the batch is on disk"))
+        (testing "an OutOfMemoryError part-way through a record"
+          (with-redefs [f/write-fully-at! (failing-after 3 (OutOfMemoryError. "heap"))]
+            (is (thrown? OutOfMemoryError (f/append-record! log {:v :lost}))))
+          (is (= before (f/log-length log))))
         (testing "the log is appendable and walkable afterwards"
           (let [off (f/append-record! log {:v 2})]
             (is (= before off) "the next frame lands where the torn one was rolled back from")

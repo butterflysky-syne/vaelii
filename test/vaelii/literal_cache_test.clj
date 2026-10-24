@@ -58,16 +58,16 @@
     (is (= '(parentOf ?0 ?1) c))
     (testing "keys come back"
       (is (= '{?parent Tom ?child Bob}
-             (lc/rename-bindings r '{?0 Tom ?1 Bob}))))
+             (lc/rename-bindings res/unify r '{?0 Tom ?1 Bob}))))
     (testing "values come back too — a goal variable bound to another goal variable"
-      (is (= '{?parent ?child} (lc/rename-bindings r '{?0 ?1}))))
+      (is (= '{?parent ?child} (lc/rename-bindings res/unify r '{?0 ?1}))))
     (testing "a canonical name inside a compound value comes back"
-      (is (= '{?parent (f ?child)} (lc/rename-bindings r '{?0 (f ?1)})))))
+      (is (= '{?parent (f ?child)} (lc/rename-bindings res/unify r '{?0 (f ?1)})))))
   (testing "an empty rename is identity"
-    (is (= '{?x Tom} (lc/rename-bindings {} '{?x Tom}))))
+    (is (= '{?x Tom} (lc/rename-bindings res/unify {} '{?x Tom}))))
   (testing "a rule's own ?varN names are not canonical names and pass through"
     (let [[_ r] (lc/canonicalize '(P ?x))]
-      (is (= '{?x ?var0} (lc/rename-bindings r '{?0 ?var0}))))))
+      (is (= '{?x ?var0} (lc/rename-bindings res/unify r '{?0 ?var0}))))))
 
 (deftest a-caller-spelling-its-own-goal-?0-is-not-rewritten-twice
   ;; ?0 is a legal variable name for a caller to use; canonicalization renumbers it like
@@ -75,9 +75,9 @@
   (let [[c r] (lc/canonicalize '(P ?x ?0))]
     (is (= '(P ?0 ?1) c))
     (is (= '{?0 ?x, ?1 ?0} r))
-    (is (= '{?x Tom, ?0 Bob} (lc/rename-bindings r '{?0 Tom ?1 Bob})))
+    (is (= '{?x Tom, ?0 Bob} (lc/rename-bindings res/unify r '{?0 Tom ?1 Bob})))
     (testing "a value carrying both canonical names lands on the caller's two names"
-      (is (= '{?x (pair ?x ?0)} (lc/rename-bindings r '{?0 (pair ?0 ?1)}))))))
+      (is (= '{?var0 (pair ?x ?0)} (lc/rename-bindings res/unify r '{?var0 (pair ?0 ?1)}))))))
 
 (deftest round-trip-under-substitution
   ;; the property the cache rests on: solving the canonical literal and renaming back
@@ -86,6 +86,19 @@
         [c r] (lc/canonicalize goal)
         sols  (map #(res/unify c % {}) ['(parentOf Tom Bob) '(parentOf Ann Sue)])]
     (is (= '[{?p Tom ?c Bob} {?p Ann ?c Sue}]
-           (mapv #(lc/rename-bindings r %) sols)))
+           (mapv #(lc/rename-bindings res/unify r %) sols)))
     (is (= (mapv #(res/unify goal % {}) ['(parentOf Tom Bob) '(parentOf Ann Sue)])
-           (mapv #(lc/rename-bindings r %) sols)))))
+           (mapv #(lc/rename-bindings res/unify r %) sols)))))
+
+(deftest a-stored-formula-sharing-the-callers-variable-names-renames-as-unify-reads-it
+  ;; a stored formula's own variables reach the bindings, and the caller may spell its goal
+  ;; with the same names: the rename back must give what unifying the caller's goal with the
+  ;; stored formula gives, not the cyclic map a plain rename builds
+  (doseq [[goal stored] '[[(P ?x) (P ?x)]
+                          [(P ?x ?y) (P ?y ?x)]
+                          [(P ?x ?y) (P ?x A)]
+                          [(P ?y ?x) (P ?x A)]]]
+    (let [[c r] (lc/canonicalize goal)]
+      (is (= (res/unify goal stored {})
+             (lc/rename-bindings res/unify r (res/unify c stored {})))
+          (pr-str goal stored)))))

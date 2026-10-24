@@ -6,9 +6,10 @@
   An argument constraint convicts a sentence when the argument's types have no path to
   the declared one, and `mintable-type?` declines a mint whose type an arity statement
   binds to another length.  Both read the KB as it stands, so each needs a way back for the order
-  where the missing edge or membership arrives later: a dropped rule conclusion, a
-  declined decontextualized copy and an unminted declaration are remembered and re-asked
-  by `settle` (docs/exceptions.md, \"A refused firing is remembered as bindings\").  And a
+  where the missing edge or membership arrives later: a dropped rule conclusion and a
+  declined decontextualized copy are remembered and re-asked by `settle` (docs/exceptions.md,
+  \"A refused firing is remembered as bindings\"), and an unminted declaration is read again
+  when its type's own bindings move (`special/mints-on-lengths`).  And a
   `forced_decontextualized_predicate` declaration moves the extent stored before it.
 
   Each test runs the same sentences in both orders on a fresh KB and compares what the
@@ -68,12 +69,12 @@
                     {:decl #(v/assert % (list 'forced_decontextualized_predicate linkedTo) 'CxUniverse)
                      :fact #(v/assert % (list linkedTo Alpha Beta) CxWorld)}
                     [:decl :fact]
-                    (fn [kb] {:universe (some? (v/handle-of kb (list linkedTo Alpha Beta) 'CxUniverse))
-                              :world    (some? (v/handle-of kb (list linkedTo Alpha Beta) CxWorld))
+                    (fn [kb] {:contexts (mapv :context (v/sentexes-matching
+                                                        kb (list linkedTo Alpha Beta) '?ctx))
                               :held     (held kb)}))]
       (is (apply = readings) "both orders hold the same sentexes")
-      (is (:universe (first readings)) "the fact lives in CxUniverse")
-      (is (not (:world (first readings))) "and not where it was written"))))
+      (is (= '[CxUniverse] (:contexts (first readings)))
+          "the fact lives in CxUniverse and not where it was written"))))
 
 (tu/deftest-kb a-conclusion-convicted-by-a-missing-edge-is-placed-once-the-edge-arrives
   ;; `(arg ownsPet 2 animal)` is written in CxTheory, above the rule's context, so there
@@ -126,34 +127,41 @@
             (is (:minted (first readings)) "the binding gone first: the declaration mints")
             (is (apply = readings) "and the binding gone last reaches the same KB")))))))
 
-;; ---- the rebuild after recover ---------------------------------------------------
-
-(tu/deftest-kb a-rebuild-walks-no-declared-type-to-thing
-  ;; twelve declarations over four types, one bound to two arguments: the rebuild asks
-  ;; no type whether it reaches `thing`, and notes the bound type's three declarations
-  ;; again after their entries are dropped
+(tu/deftest-kb a-length-arriving-after-a-mint-holds-it-out-at-that-write
+  ;; The binding withdraws the `(unary_predicate t)` the declaration entailed, and that
+  ;; removal moves `t`'s length after the settle's arity refresh read it.  Read right after
+  ;; the binding's write, `(t Rex)` is believed in neither order.
   (tu/with-entailing
-    (tu/with-terms [toolKind partKind gadgetKind floatingKind CxWorld]
-      (tu/with-neutral-kb [kb tu/fresh]
-        (a-context kb CxWorld 'CxUniverse)
-        (a-binary kb floatingKind)
-        (let [types (vector toolKind partKind gadgetKind floatingKind)
-              _     (doseq [i (range 12)]
-                      (v/assert kb (list 'arg (tu/fresh-term :predicate 'usesKind) 1
-                                         (types (mod i 4)))
-                                CxWorld))
-              noted (set (map first (special/mint-refusals kb)))
-              walks (atom [])
-              global tax/genl?-global]
-          (doseq [h noted] (#'special/drop-pending! kb h :mint))
-          (with-redefs [tax/genl?-global (fn [tx sub super]
-                                           (when (= 'thing super) (swap! walks conj sub))
-                                           (global tx sub super))]
-            (special/rebuild-pending! kb))
-          (is (= 3 (count noted)) "the bound type's declarations wait")
-          (is (empty? @walks) (str "walks to thing: " (frequencies @walks)))
-          (is (= noted (set (map first (special/mint-refusals kb))))
-              "the rebuild notes them again"))))))
+    (tu/with-terms [t rel Rex Mary CxWorld]
+      (let [readings (in-both-orders
+                      #(do (a-context % CxWorld 'CxUniverse) (a-type % t CxWorld))
+                      {:bind #(a-binary % t)
+                       :rest #(do (v/assert % (list 'arg rel 1 t) CxWorld)
+                                  (v/assert % (list rel Rex Mary) CxWorld))}
+                      [:rest :bind]
+                      (fn [kb] (boolean (some->> (v/handle-of kb (list t Rex) CxWorld) (v/in? kb)))))]
+        (is (= [false false] readings))))))
+
+(tu/deftest-kb a-length-arriving-after-a-mint-removes-it-from-the-store
+  ;; A mint stored before its type's conflicting length arrived is removed, so the store
+  ;; holds what the order with the binding first holds.  Each row is the declaration, the
+  ;; fact, and the mint it draws.
+  (tu/with-entailing
+    (tu/with-terms [t rel Rex Mary widgetKind CxWorld]
+      (doseq [[decl fact minted] [[(list 'arg rel 1 t) (list rel Rex Mary) (list t Rex)]
+                                  [(list 'genlArg rel 2 t) (list rel Rex widgetKind) (list 'genl widgetKind t)]
+                                  [(list 'argArg rel 1 2) (list rel Rex t) (list t Rex)]]]
+        (let [readings (in-both-orders
+                        #(do (a-context % CxWorld 'CxUniverse) (a-type % t CxWorld)
+                             (a-type % widgetKind CxWorld))
+                        {:bind #(a-binary % t)
+                         :rest #(do (v/assert % decl CxWorld) (v/assert % fact CxWorld))}
+                        [:rest :bind]
+                        (fn [kb] {:minted (some? (v/handle-of kb minted CxWorld)) :held (held kb)}))]
+          (is (= [false false] (mapv :minted readings)) (str decl))
+          (is (apply = readings) (str decl " stores the same in both orders")))))))
+
+;; ---- the rebuild after recover ---------------------------------------------------
 
 (tu/deftest-kb a-rebuild-asks-each-stating-context-once-whether-it-sees-the-universe
   ;; six facts of a decontextualized predicate over two contexts: the lift walk asks
@@ -178,37 +186,40 @@
 
 ;; ---- the settle's re-ask ---------------------------------------------------------
 
-(defn- release-asks
-  "How many waiting declarations `special/release-mint!` re-asks while `f` runs."
-  [f]
-  (let [n (atom 0) real special/release-mint!]
-    (with-redefs [special/release-mint! (fn [& args] (swap! n inc) (apply real args))]
+(defn- sweeps
+  "How many times `special/entail-existing` sweeps a declaration of `dhs` while `f` runs."
+  [dhs f]
+  (let [n (atom 0) real special/entail-existing]
+    (with-redefs [special/entail-existing (fn [kb s dh]
+                                            (when (contains? dhs dh) (swap! n inc))
+                                            (real kb s dh))]
       (f))
     @n))
 
-(tu/deftest-kb a-write-that-moves-no-waiting-type-s-length-re-asks-no-entry
-  ;; four declarations wait on a type bound to two arguments.  A membership, a `genl`
-  ;; edge between two other types and a rolled-back preview re-ask none of them; the
-  ;; binding leaving re-asks each once and releases it, and the last entry to leave takes
-  ;; the settled generations with it.
+(tu/deftest-kb a-write-that-moves-no-waiting-type-s-length-reads-no-declaration
+  ;; four declarations name a type bound to two arguments, and the refusal record holds
+  ;; nothing for them.  A membership, a `genl` edge between two other types and a
+  ;; rolled-back preview sweep none of them; the binding leaving sweeps each once, and
+  ;; the declarations mint over the fact stored while the type was bound.
   (tu/with-entailing
-    (tu/with-terms [orphan toolKind partKind qKind Widget Gear CxWorld]
+    (tu/with-terms [orphan toolKind partKind qKind Widget Gear Bolt CxWorld]
       (tu/with-neutral-kb [kb tu/fresh]
         (a-context kb CxWorld 'CxUniverse)
         (a-type kb toolKind CxWorld)
         (a-binary kb orphan)
-        (doseq [_ (range 4)]
-          (v/assert kb (list 'arg (tu/fresh-term :predicate 'usesKind) 1 orphan) CxWorld))
-        (let [fact  (release-asks #(v/assert kb (list toolKind Widget) CxWorld))
-              edge  (release-asks #(v/assert kb (list 'genl partKind toolKind) CxWorld))
-              prev  (release-asks #(v/preview kb {:add [[(list 'genl qKind 'thing) CxWorld]]}))
-              after (release-asks #(v/assert kb (list toolKind Gear) CxWorld))]
+        (let [rels  (into [] (repeatedly 4 #(tu/fresh-term :predicate 'usesKind)))
+              dhs   (into #{} (map #(v/assert kb (list 'arg % 1 orphan) CxWorld)) rels)
+              _     (v/assert kb (list (first rels) Bolt Widget) CxWorld)
+              fact  (sweeps dhs #(v/assert kb (list toolKind Widget) CxWorld))
+              edge  (sweeps dhs #(v/assert kb (list 'genl partKind toolKind) CxWorld))
+              prev  (sweeps dhs #(v/preview kb {:add [[(list 'genl qKind 'thing) CxWorld]]}))
+              after (sweeps dhs #(v/assert kb (list toolKind Gear) CxWorld))]
           (is (= [0 0 0 0] [fact edge prev after]))
-          (is (= 4 (count (special/mint-refusals kb))) "the declarations still wait")
-          (is (= 4 (release-asks #(unbind kb orphan))) "the binding leaving re-asks each")
-          (is (= [[] false]
-                 [(special/mint-refusals kb)
-                  (contains? @(reasoning/refused kb) ::special/mints-settled)])))))))
+          (is (every? #(nil? (get @(reasoning/refused kb) %)) dhs) "the record holds nothing")
+          (is (nil? (v/handle-of kb (list orphan Bolt) CxWorld)) "and nothing is minted")
+          (is (= 4 (sweeps dhs #(unbind kb orphan))) "the binding leaving sweeps each")
+          (is (some? (v/handle-of kb (list orphan Bolt) CxWorld))
+              "and the declarations mint over the fact"))))))
 
 ;; ---- the kind index -------------------------------------------------------------
 
@@ -224,18 +235,17 @@
                            (update acc kind (fnil conj #{}) k)
                            acc))
                        acc
-                       [:constraint :lift :mint]))
+                       [:constraint :lift]))
              {}
              (dissoc m :kinds)))))
 
 (tu/deftest-kb the-kind-index-names-the-handles-a-walk-of-the-record-finds
-  ;; A settle pass reads the constraint and mint entries off the kind index alone, so an
+  ;; A settle pass reads the constraint and lift entries off the kind index alone, so an
   ;; entry of a kind under a handle the index does not name is never re-asked.  Each
-  ;; step records, releases or orphans one entry, and the index is compared with a walk
-  ;; of the whole record after it.
+  ;; step records or orphans one entry, and the index is compared with a walk of the
+  ;; whole record after it.
   (tu/with-entailing
-    (tu/with-terms [animal poodleKind petOf ownsPet Rex Ann gadgetKind usesTool Bob Widget
-                    CxTheory CxWorld]
+    (tu/with-terms [animal poodleKind petOf ownsPet Rex Ann CxTheory CxWorld]
       (tu/with-neutral-kb [kb tu/fresh]
         (let [seen (volatile! [])
               step (fn [label]
@@ -247,30 +257,21 @@
           (a-context kb CxWorld CxTheory)
           (a-type kb animal CxTheory)
           (a-type kb poodleKind CxTheory)
-          (a-binary kb gadgetKind)
           (v/assert kb (list 'disjoint poodleKind animal) CxTheory)
           (v/assert kb (list 'arg ownsPet 2 animal) CxTheory)
           ;; the conviction under the constraint-only reading, the one that convicts a
-          ;; symbol; the mint and the releases under the entailing one
+          ;; symbol
           (let [rh (tu/without-entailing
                     (let [rh (v/assert kb rule CxWorld)]
                       (v/assert kb (list poodleKind Rex) CxWorld)
                       (v/assert kb (list petOf Rex Ann) CxWorld)
                       (step :conviction-recorded)
                       rh))]
-            (v/assert kb (list usesTool Bob Widget) CxWorld)
-            (let [dh (v/assert kb (list 'arg usesTool 2 gadgetKind) CxWorld)]
-              (step :mint-recorded)
-              (v/retract! kb rh)
-              (step :rule-retracted)
-              (unbind kb gadgetKind)
-              (step :mint-released)
-              (v/retract! kb dh)
-              (step :declaration-retracted)))
-          (let [[[_ k1] [_ k2] [_ k3] [_ k4]] @seen]
+            (v/retract! kb rh)
+            (step :rule-retracted))
+          (let [[[_ k1] [_ k2]] @seen]
             (is (every? last @seen) (str "the kind index and the walk differ: " (pr-str @seen)))
-            (is (= [#{:constraint} #{:constraint :mint} #{:mint} nil]
-                   [(set (keys k1)) (set (keys k2)) (set (keys k3)) k4])
+            (is (= [#{:constraint} nil] [(set (keys k1)) k2])
                 "each step moved the kind it names")))))))
 
 ;; ---- the whole shipped ontology -----------------------------------------------

@@ -66,9 +66,11 @@
   equiv-class "[[conn term] [conn term context]]",
   escalate
   "[[conn goal] [conn goal context] [conn goal context floor] [conn goal context floor opts]]",
+  exists-violations "[[conn declaration context]]",
   explain-levels "[[conn goal] [conn goal context]]",
   export! "[[conn dir] [conn dir opts]]",
   exposed-clashes "[[conn]]",
+  filed-violations "[[conn]]",
   find-sentexes "[[conn term]]",
   find-sentexes-all "[[conn terms]]",
   find-terms "[[conn q] [conn q opts]]",
@@ -249,15 +251,18 @@
   disjointness-audit "[[kb] [kb context]]",
   edit! "[[kb batch]]",
   edit-batch-keys [:add :remove],
+  edit-records! "[[kb batch]]",
   edit-with-consequences! "[[kb batch] [kb batch opts]]",
   equiv-class "[[kb term] [kb term context]]",
   escalate
   "[[kb goal] [kb goal context] [kb goal context floor] [kb goal context floor opts]]",
   escalate-opt-keys [:max-ms],
+  exists-violations "[[kb declaration context]]",
   explain-levels "[[kb goal] [kb goal context]]",
   export! "[[kb dir] [kb dir opts]]",
   export-text! "[[kb dir] [kb dir opts]]",
   exposed-clashes "[[kb]]",
+  filed-violations "[[kb]]",
   find-sentexes "[[kb term]]",
   find-sentexes-all "[[kb terms]]",
   find-terms "[[kb q] [kb q opts]]",
@@ -310,6 +315,7 @@
   prove-opt-keys [:max-depth :max-ms],
   prove-within "[[kb goal budget] [kb goal context budget]]",
   provenance "[[kb handle]]",
+  prover "[[spec]]",
   qualitative-network "[[kb calculus context]]",
   qualitative-scenario "[[kb calculus context]]",
   qualitative-scenarios "[[kb calculus context limit]]",
@@ -359,6 +365,7 @@
   set-cache-scale "[[x]]",
   set-log-level "[[level]]",
   set-solver "[[kb solver]]",
+  settle-record-edits! "[[kb] [kb opts]]",
   settle-stats "[[kb]]",
   sort-by-content "[[keyfn coll] [keyfn cmp coll]]",
   specified-violations
@@ -445,9 +452,11 @@
    :edit-with-consequences
    :equiv-class
    :escalate
+   :exists-violations
    :explain-levels
    :export
    :exposed-clashes
+   :filed-violations
    :find-sentexes
    :find-sentexes-all
    :find-terms
@@ -581,9 +590,11 @@
    :edit-with-consequences
    :equiv-class
    :escalate
+   :exists-violations
    :explain-levels
    :export
    :exposed-clashes
+   :filed-violations
    :find-sentexes
    :find-sentexes-all
    :find-terms

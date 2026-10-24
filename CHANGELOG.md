@@ -5,1197 +5,670 @@ Notable changes to `vaelii`, newest first. Versions follow
 entry raises the minor. What each class means, and why a **Refusal** is patch-eligible,
 is [CONTRIBUTING.md §3](CONTRIBUTING.md).
 
-**Releases before 0.28.0 are summarized rather than reproduced.** Each one
+**Releases before 0.29.0 are summarized rather than reproduced.** Each one
 keeps its title, its class census and every `*Breaks:*` token, so an upgrade across
 several releases is still a grep for the name you call. The full entry prose for a
 released version is in this file's git history, at the tag of the release that shipped
 it — `git show v0.16.0:CHANGELOG.md`.
 
-## 0.28.0 — 2026-10-21 — "Ill-typed facts and rules stored inert, term kinds and arity policies forced-monotonic, a `:default` `genl` that does not contrapose, parthood and the example predicates restated, `:recover? :trust` by default"
+## 0.29.0 — 2026-10-23 — "Open applications read through `functionCorrespondingPredicate` and resolved under the reader's merges, `try-assert` refusing `:monotonic` complements and length clashes, query-only terms refused under `not`, closed-extent negatives re-checked in every arrival order"
 
 | Area | Change |
 |---|---|
-| argument types | a fact failing its argument type and a rule no term can fill stored inert in every order; `why-not`'s `:conviction`; `violations`' `:inert-argument` and `:inert-rule`; `try-assert` refuses as `:definitional-clash`; a constraint convicts only by a separated type; a value-kind antecedent fires; a type-level relation's arguments are predicates; a declared type mints by its arity, and a declaration typed `thing` mints nothing; owed withheld-mint releases and `owed-releases` |
-| arity | `(arity R n)` proved from an exact-arity membership; `predicateTypeByArity` and `functionTypeByArity` inert and `termsRelated`; `kb-integrity`'s `:implicit-arity-class`; quaternary and quinary classes; `arg4`, `arg5`; `relation-arity`; `admitsArgnum` by backward rule |
-| forced-monotonic set | a denial believed until its literal is stored; term kinds, arity policies, comparators, `arg` and `exceptWhen` forced; `genlInverse` forced between predicates |
-| inference | a `:default` `genl` does not contrapose; the intersection rule confers `:monotonic`; a guard defeat for every blocked firing and `why-not`'s `:excepted`; declarations at one position compose; `:incomplete` over an open transitive goal; `quoting_function` removed; `negates`; `minCommonGenl`, `maxCommonSpec`, `common-genls`; `escalate`'s `:max-ms`; `justification-verdicts` |
-| storage | `:recover? :trust` by default, with `:oplog?` too; image format 16; index layout 16; a load syncs only with `:sync?`, one reported change at a time; `:pg-snapshot` operation log; `unsupported`, `remove-unsupported!`, `mark-inert!`; the shutdown hook waits for a write; progress lines; `+with-postgres`, `+with-sqlite`, `+with-foreign` |
-| renamed identifiers | `:held-values`, `:koinii/compression-fixed`, `:recorded`, `ImageFingerprinting`, `:not-forced-monotonic`, `:derived-sets`, `:forced-monotonic`, the `:bad-table-entry` list mismatches, `:term-names` |
-| shipped ontology | `natFormula` for `termOfUnit`; `partOf` of any kind and `tangiblePartOf`; proper parthood and `subSituationOf`; `partitionedByType` binary; `logical`, `quantitative`, `typeOrthogonal`, `orthogonalMetatypes`, `implementationNote`; quoted-sentence and string examples; happening roles and `toolInvoked`; CxTra; `metal_stuff`; `genl` edges in place of one-antecedent rules; `mechanism`, `electronic_device`; 51 `thing` argument declarations |
-| browser | edits and term operations as jobs; `/removed`; whole-KB lists and `/closure`; a long read answered with a waiting page; `:pg-snapshot` backup; `POST /op` `:kbs` and `:jobs`; part-list frames in the taxonomy diagram; extension menus and term actions |
+| NATs | a rule's or goal's open application read through `functionCorrespondingPredicate`; an application resolved under the merges the reading or storing context sees; a corresponding fact reifies only where it is visible; a `modal_predicate`'s proposition keeps an application as written; `kb-integrity`'s `:uncorresponded-function`; a never-minted application answers by identity and congruence only; `natFormula` and `genlResult` teardown in any order |
+| clashes | `try-assert` refuses a believed `:monotonic` complement (`:complement`), a fact or declaration breaking a length binding (`:arity`), an `irreflexive` or `anti_symmetric` tuple |
+| well-formedness | `not` over a query-only term; `(not (or …))`; `set/monotonic` and `set/inert` inside a sentence (`:shape`); `:length-against-shape`, `:length-against-spelling`; misnamed literals inside `bravely`, `cautiously`, `forall`; an import skips a structurally ill-formed frame; `:not-stratified` over a closed-extent negative under `unknown`, `exceptWhen` or an aggregate body |
+| vocabulary and reasoning | `prover`; `interArgEqual`; `exists-violations`; `argN` |
+| order independence | closed-extent negatives re-checked under `unknown`, `exceptWhen` and an aggregate body; merges and restatements rest on their `genlCx` edges and equality paths; exceptions re-checked through `inverse`, `genlInverse` and `negates`; binder lists and nested NAF conjunctions canonical; argument-type mints and holds decided at the write that moves them |
+| storage | `edit-records!`, `settle-record-edits!`; `lein cli upgrade --sync`; a sync adds a forward rule backward and turns it forward last; a rule whose direction changed survives a sync; a `VirtualMachineError` in a write's freeze propagates and marks the operation log |
+| quality, koinii, browser | `kb-quality`'s rule-clash reading types applications and `genl` antecedents; `DisputeFn`; `/stats` reads `filed-violations` |
+| performance | the settle's `genl`-end declaration refresh, stratification graph and reader state each read once; `violations` fetches held records in chunks |
 
-Twenty-eight entries are **Breaking** and none is a **Refusal**. Each carries its own
-`*Migration:*` line, and the table indexes them by what a 0.27.0 caller changes.
+Six entries are **Breaking** and nine are **Refusal**. Each carries its own `*Migration:*`
+line, and the table indexes them by what a 0.28.0 caller changes.
 
 | If your code… | Then |
 |---|---|
-| catches `:arg-type`, `:arg-genl`, `:inter-arg-type` or `:quoted-arg-type` from `assert` | read `why-not`'s `:conviction` or `violations`' `:inert-argument`; call `try-assert` where the write must be refused |
-| catches `:arg-variable` from `assert` or reads it off a dropped mint | read `why-not`'s `:conviction` or `violations`' `:inert-rule`; call `try-assert` |
-| writes a rule whose value-kind antecedent no other antecedent binds | bind the value-kind argument with a stored literal in the same rule |
-| relies on a declared type with no path to `thing` minting nothing, or on a declaration typed `thing` minting `(thing X)` | state the type's other arity; narrow the declaration to the type `kb-quality`'s `:typed-thing` names |
-| relates non-predicates through a `type_relation_predicate`, or relied on `:arg-constraint-kind` for `arg` on one | drop the mark; check `type_relation_predicate` yourself |
-| reads `isa?`, matching or a preview after a bulk load, an open or a membership removal | call `release-withheld!`, or pass `{:release-withheld? true}` to `preview` |
-| classifies relations of an arity with `predicateTypeByArity` or `functionTypeByArity` | state `relationTypeByArity`; state the class `kb-integrity` reports |
-| writes a denial of a forced-monotonic literal to be ignored, or reads `:inert` with `:denies` | retract the denial; read `:defeated` and `:contradicted-by` |
-| relies on a defeat picking between two term kinds or two arity policies | retract one of the two |
-| denies a `genl` edge's upper end to deny its lower end | assert the edge `:monotonic` |
-| wants a combined intersection membership to stay defeasible | state a conjunct at `:default` |
-| takes a missing handle as "excepted", or reads `:excepts` off `chain-report` | read the guard defeat and `why-not`'s `:excepted`; run `lein cli upgrade` |
-| states two declarations at one argument position meaning their union | drop one |
-| dispatches on `:status` from `ask-within`, `prove-within`, `resume` or `compare-tacticians` | handle `:incomplete` |
-| asserts `quoting_function`, or passes `:quoting` to `has-prop?` | delete the assertion; quote through `Quote` |
-| needs an open to re-derive belief under the running build | pass `{:recover? :auto}`, or run `lein cli upgrade` |
-| opens a durable store | budget one index rebuild and one recover on the first open; read `[:term-names]` from `index-entries` |
-| loads a store or dump in the browser and expects a sync | pass `:sync? true` to `load-dir` or `load-source` |
-| names `:pinned-values`, `:koinii/compression-pinned`, `:stamped`, `ImageStamping`, `:off-roster`, `:rosters`, the event `:roster`, an `:unrostered-…` mismatch or `:term-roster` | use the new spelling the entry lists |
-| names `termOfUnit`, or opens a store a mint wrote under 0.27.0 | name `natFormula`; `export-text!`, rewrite `termOfUnit` to `natFormula`, and `load-text!` into an empty store |
-| writes `partOf` between two tangibles, or `subintervalOf` between situations | write `tangiblePartOf`; relate situations by `during`, `starts` or `finishes` |
-| writes `partitionedByType` with a cell list | write `(partitionedByType W C)` and state each `(C A)` |
-| writes an example as `(sentexHandle H)` | write `(Quote S)` |
-| names `invokesTool`, or expects `event` in a role's first position | write `toolInvoked`; state `event` where uninterrupted occurrence is needed |
-| names `CxComputing` or `CxPerception` | name `CxTra` |
-| reads the forward rules on `friendOf`, `marriedTo`, `worksFor`, `parentOf` or `livesIn` | read the `genl` edge `why` cites |
-| names `metal` | name `metal_stuff` |
+| writes a rule or goal over an open application of a `reifiable_function` | declare `(functionCorrespondingPredicate F P)` for the function; read `kb-integrity`'s `:uncorresponded-function` |
+| reads an application of a `reifiable_function` through a `sameAs` or `equals` its context does not see | state the merge where every reading context sees it |
+| states a corresponding value in one context and reads the application in another | state the value where every reading context sees it |
+| reads `believes` over an application through the asker's merges | state the identity in the agent's context |
 | reads `kb-quality`'s rule-clash pairs | nothing: the dropped pairs are unreachable |
-
-
-### Breaking: argument types
-
-- **A fact whose argument fails its declared argument type is stored and held inert, in
-  every arrival order.** `assert` stores a value argument under `arg` (`(needs 5)` under
-  `(arg needs 1 dog)`), an application whose declared result misses, an individual in a
-  `genlArg` position, a symbol the constraint-only reading convicts, and a kind outside a
-  `quotedArg` type. Each threw `:arg-type`, `:arg-genl`, `:inter-arg-type` or
-  `:quoted-arg-type` when the declaration arrived first, and was stored and believed when
-  the declaration arrived after it. The fact is never believed: `why-not` answers `:inert`
-  with the violation under `:conviction`, and `violations` lists it as `:inert-argument`.
-  A value is tested from its fact's context, so a `(needs 5)` stated below the
-  declaration's context is held in every order of the declaration, the fact and a `genl`
-  edge only that context sees. The settle decides the stored facts again when a
-  declaration, a membership, a `genl` edge or a separation moves, and a move decides
-  again only the holds at or below its ends. `check` reports none of them. Refs #145.
-
-  An argument constraint convicts a symbol only by a type the taxonomy separates from the
-  declared one: under `VAELII_ASSERTIVE_ARG_TYPES=0`, an `action` argument under `(arg
-  causes 1 causal)` is admitted when nothing separates `action` from `causal`, and the
-  same reading holds for `genlArg`, `interArg`, the covering and homogeneity forms, a
-  nested input and an application's declared result. A value under a type that refines
-  its kind, a string under `(arg P n ip_address)` or an integer under a subtype of
-  `integer`, is believed unless the taxonomy separates the declared type from one of the
-  value's kinds. A compound in a `quotedArg` position is judged by the expression kinds
-  `provers/shape-kinds` reads off its spelling: `(P (MsrFn 5))` under `(quotedArg P 1
-  string)` is held inert, and a kind that only fails to reach the type convicts nothing.
-
-  `try-assert` refuses each of these writes as `:definitional-clash` with `:violation`
-  `:arg-type`, `:arg-genl`, `:inter-arg-type` or `:quoted-arg-type`, including against a
-  declaration stated below the sentence's context, and refuses an `arg`, `genlArg`,
-  `interArg` or `quotedArg` declaration a stored tuple of its predicate or a
-  sub-predicate breaks, a tuple holding a value at the position included. A firing
-  dropped on a conviction is re-asked when the separation or the argument's membership is
-  retracted. Perf checks `genl-write-beside-held-facts` and
-  `holds-pass-over-declared-predicates` bound the growth of deciding the holds again.
-  [argtypes.md](docs/argtypes.md#an-argument-that-fails-its-declared-type-is-held-inert),
-  [argtypes.md](docs/argtypes.md#what-a-quoted-form-is),
-  [api.md](docs/api.md#refusing-a-clash).
-
-  *Migration:* read `why-not`'s `:conviction` or the `:inert-argument` entries of
-  `violations` where a caller caught one of the four types from `assert`; call
-  `try-assert` where the write must be refused; state the `disjoint`, `partition` or
-  `disjoint_metatype` that separates two types where a refusal under the constraint-only
-  reading depended on a missing `genl` path.
-  *Breaks:* `assert`, `check`, `try-assert`, `:arg-type`, `:arg-genl`, `:inter-arg-type`, `:quoted-arg-type`
-  *Breaks:* `:definitional-clash`
-
-- **A rule whose variable no term can fill is stored and held inert, in every arrival
-  order.** `assert` stores a rule one of whose variables two argument constraints hold to
-  separated types, `(implies (comment ?x ?string) (genl ?x ?string))` among them, and a
-  generator fill or a `defn*` companion rule convicted the same way. Each threw or was
-  dropped as `:arg-variable` when the declarations arrived first, and was stored and
-  believed when they arrived after it. The rule is never believed and fires nothing:
-  `why-not` answers `:inert` with the `:arg-variable` conviction, and `violations` lists
-  it as `:inert-rule`. A declaration arriving later takes a believed rule and its
-  conclusions OUT. A `quotedArg` demand at `string`, `number` or a type below one
-  convicts against a separated instance demand. `try-assert` refuses the rule, and a
-  declaration that would convict a stored rule, as `:definitional-clash` with
-  `:violation :arg-variable`. `check` reports none of them. 15,000 rules in 200 contexts
-  decide their holds in 0.2 to 0.4 s.
-  [argtypes.md](docs/argtypes.md#a-rule-whose-variable-no-term-can-fill-is-held-inert).
-
-  *Migration:* read `why-not`'s `:conviction` or the `:inert-rule` entries of
-  `violations` where a caller caught `:arg-variable` from `assert` or read it off a
-  dropped mint; call `try-assert` where the rule must be refused.
-  *Breaks:* `assert`, `check`, `try-assert`, `violations`, `:arg-variable`
-
-- **A forward rule with a value-kind or `sentence` antecedent fires on the value another
-  antecedent binds.** `(implies (and (valueOf ?a ?x) (string ?x)) (hasKinded ?a))`
-  concluded nothing from `(valueOf Ann "rex")`, and neither did the same rule over
-  `number`, `boolean`, `keyword`, `character` or `sentence`; `integer` and `formula`
-  fired. Each such rule now fires in either arrival order, and beliefs change where one is
-  stored; `(implies (sentence (Quote …)) …)` alone still concludes nothing. A forward rule
-  reading `(temporalDistance ?e ?e ?d)` beside a stored antecedent concludes zero seconds,
-  the answer `ask` gives. A rule whose value-kind argument no other antecedent binds is
-  refused `:naf-not-closed` by `assert`, `check` and import, a `defnSufficient` on a value
-  kind alone expands to no companion rule, a backward rule concluding a value
-  kind is not expanded, and `watch` refuses a value-kind goal
-  ([#191](https://github.com/vaelii/vaelii/issues/191)).
-  [argtypes.md](docs/argtypes.md#what-a-quoted-form-is).
-
-  *Migration:* bind a value-kind argument with a stored literal in the same rule. A disk
-  store written before this change holds a rule with a value-kind antecedent under its old
-  canonical sentence, so the stored rule and its re-assert are two handles until the store
-  is reloaded from text.
-  *Breaks:* `assert`, `check`, `handle-of`, `watch`
-
-- **A type-level relation's arguments are predicates, and the instance constraints are
-  admitted on it.** `core.txt` concludes `(args R predicate)` forward from
-  `(type_relation_predicate R)`: `predicate` and not `unary_predicate`, since `genl`
-  relates predicate specializations of any arity. `query (args disjoint ?t)` answers
-  `[{?t predicate}]`, a symbol argument of `genl`, `disjoint` or another type-level
-  relation is derived a `predicate` under assertive argument types, and one whose types
-  place it outside `predicate` is refused `:arg-type`. `arg`, `arg1`, `arg2`, `arg3`,
-  `interArg` and `argArg` on a `type_relation_predicate` are stored, where `assert` and
-  `check` refused each `:arg-constraint-kind`: `(arg disjoint 1 unary_predicate)` is a
-  true instance claim. `genlArg` on an `instance_relation_predicate` is still refused
-  `:arg-constraint-kind`. [taxonomy.md](docs/taxonomy.md), [api.md](docs/api.md).
-
-  *Migration:* a KB relating terms that are not predicates through a
-  `type_relation_predicate` drops the mark from that relation; a caller that relied on the
-  refusal to keep instance constraints off a type-level relation checks
-  `type_relation_predicate` itself.
-  *Breaks:* `assert`, `check`, `query`, `:arg-constraint-kind`
-
-- **A withheld argument-type mint that a departed membership releases stays owed after a
-  bulk load, an open, a recover, the first settle after a trusted image install, and a
-  preview.** Under pruning, retracting `(dog Fred)` in one of these settles stores no
-  `(animal Fred)` for `(parentOf Fred Mary)` until `release-withheld!` runs. `owed-releases`
-  counts the owed departures and arrivals, the image carries them across a close, and the
-  browser's store card shows the count. Until `release-withheld!` runs, `isa?` and
-  matching miss the owed membership. A preview of a batch that removes a withholding
-  membership answers without the mint and the contradiction it would enter, carries
-  `:owed-releases n` and `:release-path :deferred`, and its rollback leaves
-  `owed-releases` as it found it; `{:release-withheld? true}` runs the release sweep in
-  the preview (`:release-path :swept`). Refs #145.
-  [argtypes.md](docs/argtypes.md#pruning-what-the-kb-says-more-specifically--vaelii_prune_subsumed_mints-on),
-  [preview.md](docs/preview.md#what-a-preview-omits).
-
-  *Migration:* call `release-withheld!` after a bulk load or an open where `isa?`, matching
-  or `why` must find the minted memberships; pass `{:release-withheld? true}` where a
-  preview must report every mint and contradiction the apply draws.
-  *Breaks:* `bulk-assert-facts!`, `open-kb`, `recover`, `lein cli upgrade`, `preview`
-
-- **An argument declaration mints in a type that does not reach `thing`, and mints
-  nothing in `thing`.** Under the entailing reading, `(arg P n T)` and the rest of the
-  family mint memberships in `T` whenever no arity statement binds `T` to a length other
-  than one, whatever `T`'s `genl` path; the declaration also entails `(unary_predicate T)`.
-  A type bound to another length, or to one length and another, mints nothing, and its
-  declaration waits until the binding leaves; a binding arriving after the declaration
-  withdraws the entailed `(unary_predicate T)` and holds the minted memberships inert, so
-  both orders reach the same belief. A declaration typed `thing` mints no `(thing X)`, and
-  `kb-quality` names it under `:typed-thing` with the number of facts it would have
-  typed. The starter asserts `(unary_predicate T)` only of the subtypes of `thing` no
-  declaration names. [argtypes.md](docs/argtypes.md#where-it-does-not-mint).
-
-  *Migration:* a KB that relied on a declared type with no path to `thing` minting
-  nothing states the type's other arity, or reads the memberships the declaration now
-  mints; narrow a declaration typed `thing` to the type `kb-quality` reports it would
-  have typed.
-  *Breaks:* `assert`, `ask`, `query`, `recover`, `kb-quality`
-
-### Breaking: arity
-
-- **The exact-arity class memberships and `arity` prove each other one way each, and
-  `kb-integrity` reports a relation missing its class.** A `set/backwardRule` proves
-  `(arity R n)` from a membership of an exact-arity class: `query (arity R ?n)` of a
-  relation stated only `(binary R)`, `(binary_predicate R)` or `(binary_function R)`
-  answers `[{?n 2}]` at depth 3, where it answered nothing, and no arity is stored. The
-  `relationTypeByArity` rule the other way, `(arity ?r n) → (T ?r)`, is
-  `set/forwardOnlyRule`, so the two form no backward cycle. `core.txt` ships
-  `(predicateTypeByArity unary_predicate 1)` through `(predicateTypeByArity
-  quinary_predicate 5)` and the five `functionTypeByArity` peers; each generates
-  `(predicate ?r) ∧ (arity ?r n) → (T ?r)` (or the same over `(function ?r)`) as a
-  `set/inertRule`, believed and browsable, run on no write and no query.
-  `predicateTypeByArity` and `functionTypeByArity` are `termsRelated` to
-  `relationTypeByArity`, not its `genl` specializations, so a `(predicateTypeByArity T
-  n)` fact classifies no function of arity `n` under `T`, and `genl?` of either mapping
-  and `relationTypeByArity` answers false. `kb-integrity`'s default
-  `:implicit-arity-class` category applies the inert rules: it reports `{:term R :kind
-  predicate :arity 2 :class binary_predicate :mapping (predicateTypeByArity
-  binary_predicate 2)}` for a relation with an exact length outside the mapped class, and
-  a sweep over such a candidate answers `:status :gap` where it answered `:audited`. Every
-  predicate and function the starter ships states its class.
-  [taxonomy.md](docs/taxonomy.md#relations-and-arity-policy),
-  [integrity.md](docs/integrity.md#what-an-implicit-arity-class-finding-means).
-
-  *Migration:* a KB that maps an arity with `predicateTypeByArity` or
-  `functionTypeByArity` to classify every relation of that arity states
-  `relationTypeByArity` instead; state the class `kb-integrity` reports, or name the
-  categories to run in `:categories`.
-  *Breaks:* `ask`, `query`, `genl?`, `kb-integrity`
-
-### Breaking: the forced-monotonic set
-
-- **A denial of a forced-monotonic literal is believed until the literal is, and then
-  loses to it.** `(not (irreflexive likesP))` was stored and never believed; it is now
-  believed, and a rule reading it fires, while no `(irreflexive likesP)` is stored where
-  the denial's context sees it. Once the literal is stored, the denial is OUT at either
-  strength and in either arrival order, and so is what it supported; retracting the
-  literal restores both. A declaration `(forced_monotonic_predicate P)` makes a denial
-  lose only where a reader sees the declaration. `why-not` of such a denial answers
-  `:defeated` with the literal under `:contradicted-by`, in place of `:inert` with
-  `:denies`, and the browser's sentex page names the literal. A denial of a literal that
-  a closure or an equation answers without storing it stays believed
-  ([#208](https://github.com/vaelii/vaelii/issues/208)).
-  [nmtms.md](docs/nmtms.md#the-forced-monotonic-set).
-
-  *Migration:* retract a denial that was written to be ignored; read `why-not`'s
-  `:defeated` and `:contradicted-by` where a caller read `:inert` with `:denies`.
-  *Breaks:* `ask`, `query`, `why-not`, `recover`
-
-- **The term kinds, the arity policies, the numeric comparators and `exceptWhen` are
-  forced-monotonic.** Each of these goes OUT only by retraction: `relation`, `predicate`,
-  `function`, `truth_valued_relation`, `logical_constant`, `logical_connective`,
-  `quantifier`, `symbol`, `context`, `unrepresented_term` and its value kinds (`boolean`,
-  `character`, `keyword`, `number`, `integer` and its four sign classes, `string`, and
-  CxTra's `ip_address`, `ipv4_address` and `ipv6_address`); `fixed_arity`,
-  `fixed_arity_predicate`, `fixed_arity_function`, `bounded_arity`, `unbounded_arity`,
-  `at_least_binary`, `at_least_ternary`, `arityMax` and `admitsArgnum`; `greaterThan`,
-  `lessThan` and the quantity comparators (`quantityGreaterThan`,
-  `quantityGreaterThanOrEqual`, `quantityLessThan`, `quantityLessThanOrEqual`,
-  `sameQuantity`); the argument declarations `arg`, `arg1`, `arg2` and `arg3`; and
-  `exceptWhen`, whose `retract!` of the declaration is refused with `:type
-  :uncleared-forcing` and `:missing :unforced-exception`. `genlInverse` is
-  `forced_monotonic_between_predicates`, as `genl` is. Two term kinds or two arity
-  policies stated of one term are an irreducible conflict: a `:default` `(predicate X)`
-  beside a `:default` `(string X)`, or `(fixed_arity R)` beside `(variable_arity R)`,
-  leaves both believed and `conflicts` reports the pair, where one was the loser.
-  `(animal X)` beside `(fixed_arity_predicate X)` takes `animal` OUT, where `relation` was
-  the one held in the clash. A stored denial of a term kind or an `arg` declaration loses
-  to it once it is stored. [nmtms.md](docs/nmtms.md#the-forced-monotonic-set).
-
-  *Migration:* retract one of two clashing term kinds or arity policies, since a defeat
-  no longer picks one.
-  *Breaks:* `ask`, `query`, `conflicts`, `contradictions`
+| names `(dispute …)` or reads its marks | name `DisputeFn`; expect one more notify and stale sweep per stored dispute |
+| writes `(not (unknown S))`, `(not (thereExists …))`, `(not (forall …))` or `not` over another query-only term | write `S`, `(unknown (forall …))` or `(unknown (thereExists …))` |
+| writes `(not (or A B))` as a fact | assert `(not A)` and `(not B)` |
+| writes `set/monotonic` or `set/inert` inside a sentence | wrap the whole form or the `exceptWhen` query; call `assert-inert` for an inert sentence |
+| binds an engine term's length, or a length against a term's spelling | drop the binding; rename the relation, or set `:naming :warn` |
+| misnames a literal inside `bravely`, `cautiously` or a generated rule's `forall` | rename the functor the refusal names |
+| imports a dump holding a structurally ill-formed frame | read `:refused` |
+| calls `try-assert` to record a rebuttal of known-true content | call `assert` |
+| calls `try-assert` with a fact or declaration that breaks a length binding or an `irreflexive` or `anti_symmetric` mark | call `assert` |
+| concludes `P` from a rule reading a closed-extent `(not (P …))` | conclude off the cycle, or leave `P` open |
 
 ### Breaking: inference
 
-- **A `:default` `genl` edge no longer contraposes.** With `(genl pa pb)` at `:default` and
-  `(not (pb Zz))` stored or derived, `query (not (pa Zz))` answers nothing and `argue (pa
-  Zz)` answers `:unknown`, where they answered `[{}]` and `:false`. In a context that
-  holds the edge at `:default` only, a forward rule on `(not (pa ?x))` does not fire on
-  `(not (pb A))`, an `exceptWhen` query `(not (pa ?x))` blocks nothing for `A`, `(pa Rex)`
-  beside `(not (pb Rex))` is no `:supertype` nogood, and `(not (pb X))` does not deny the
-  part `pa` of a cover. An edge the reader holds at `:monotonic`, or one a cover
-  declaration installs, contraposes as before, the rule a separation's denial already
-  follows. The two time intersections in `core.txt` are `:monotonic`. Closes #188.
-  [inference.md](docs/inference.md#predicate-subsumption-in-matching).
+- **A rule or a goal that names an open application of a `reifiable_function` is read
+  through the function's `functionCorrespondingPredicate`.** `assert` stores `(implies
+  (tagged (FruitFn ?t)) (ripe ?t))` as `(implies (and (fruitOf ?t ?f) (tagged ?f)) (ripe
+  ?t))`, so both spellings are one handle and `why` shows the predicate form. `prove`
+  asks `(grownIn (FruitFn ?t) ?o)` as `[(fruitOf ?t ?fruit) (grownIn ?fruit ?o)]` and
+  binds the value variable in its answers, and `(equals ?x (FruitFn ?t))` reads as
+  `(fruitOf ?t ?x)`. A function with several believed correspondences is read through
+  each: the rule is stored once per correspondence, and the goal merges the answers.
+  `(favoriteFood Pace (?fn AppleTree))` reads every declaration and binds `?fn`; a
+  variable-functor compound in a `formula`-typed position stays a sentence pattern, and a
+  rule holding a variable-functor application is stored inert. A rule naming a function
+  with no believed correspondence is stored inert and goes live when one arrives; an
+  open-application goal over such a function answers nothing. `query-status`, `abduce`,
+  `search-tree`, `compare-tacticians` and `prove-within` refuse a goal whose declarations
+  put the value at more than one position as `:shape`. A forward firing no longer mints a
+  constant for an application its rule's head builds, and `kb-integrity` reports each
+  function with no correspondence as `:uncorresponded-function`.
+  [nat.md](docs/nat.md#a-rule-or-a-goal-that-names-an-open-application)
+  *Migration:* declare `(functionCorrespondingPredicate F P)` for each reifiable function
+  a rule or goal applies; `(kb-integrity kb)` lists the functions whose rules are held.
+  A goal that matched a stored compound through a variable functor names the function.
+  *Breaks:* `assert` of a rule naming an application, `prove`, `query`, `kb-integrity`
 
-  *Migration:* assert a `genl` or `genlInverse` edge with `{:strength :monotonic}` where a
-  denial of its upper end should deny its lower end.
-  *Breaks:* `query`, `argue`, `conflicts`, `contradictions`, `exceptWhen`
+- **An application of a `reifiable_function` resolves to its constant under the merges
+  the reading or storing context sees.** With `(sameAs Apple Pomme)` in `CxUniverse`,
+  `(likes Tom (FruitFn Pomme))` asked in a context that does not see `CxUniverse` is false
+  where it was true; with the merge in the asking context, it is true where it was false.
+  Two constants a merge joins are merged in each context that sees the merge, by an
+  `equals` stated there, where only a merge in `CxUniverse` merged them.
+  [nat.md](docs/nat.md#a-nat-resolves-under-the-readers-merges)
+  *Migration:* state a merge where every context that should read the application under
+  it sees it.
+  *Breaks:* `ask` and every read entry point over an application of a
+  `reifiable_function`, `assert` of one, `sameAs`, `equals`, `rewriteOf`
 
-- **The intersection membership rule confers `:monotonic`.** Each `(intersection C A B)`
-  fact generates a bare `(implies (and (A ?x) (B ?x)) (C ?x))` rather than a
-  `set/defaultRule`, so a thing stated of each type at `:monotonic` is a `:monotonic`
-  member of `C`, and wins a clash with a `:default` membership where the two were a
-  dilemma. A `:default` conjunct still makes a `:default` member. A forced-monotonic `C`
-  is concluded from forced-monotonic conjuncts, where every firing was void.
+- **A corresponding fact reifies an application, and retires a placeholder, only where it
+  is visible.** `(motherOf Muffet Mary)` stated in `CxStory` reifies `(MotherFn Muffet)`
+  written in `CxStory` or below to `Mary`; a constant minted for it in `CxUniverse` is
+  merged with `Mary` by a `(rewriteOf Mary K)` stated in `CxStory`, where it was stated in
+  `CxUniverse`. A merge's restatement of a corresponding fact is no second value for a
+  context that reads the two as one term, so the six sentences of a commutative
+  correspondence merged in a child context mint 3 constants for every spelling, where 4
+  of 8 spellings minted 4 and placed a repair equality in the parent.
+  [nat.md](docs/nat.md#the-corresponding-predicate)
+  *Migration:* state a value where every context that should read the application sees
+  it; a value stated in `CxUniverse` reaches every context that sees `CxUniverse`.
+  *Breaks:* `assert` of an application of a `reifiable_function`, `rewriteOf`
 
-  *Migration:* state a conjunct at `:default` where the combined membership should stay
-  defeasible.
-  *Breaks:* `ask`, `query`, `contradictions`, `violations`
-
-- **A firing an `exceptWhen` or an `unknown` blocks is stored with a guard defeat, for a
-  `:monotonic` blocker as for a `:default` one, and `why-not` names the exception.** With
-  `(exceptWhen (rskip ?x) …)` over `(rmark ?x) => (rseen ?x)` and `(rskip RM1)`
-  `:monotonic`, `(rseen RM1)` is stored with `(defeat (sentexHandle F))` resting on
-  `(rskip RM1)`, where no conclusion was stored. A blocker arriving after the firing
-  places the defeat and sweeps nothing. `ask`, `query` and `sentexes-matching` answer as
-  before; `handle-of`, levels 0 and 1, `CxEverything`, `why` and export see the stored
-  conclusion and its defeat. The refusal record keeps closed-extent and separation
-  refusals only, and `chain-report` drops `:excepts`. `why-not` of such a conclusion's
-  handle answers `:excepted` with `:rule`, `:exception` and `:via`, where it answered
-  `:unsupported`, and the browser's belief pill reads it so. A guard defeat whose
-  `exceptWhen` is OUT no longer covers its firing, so a `preview` of removing an
-  exception reports the conclusion the edit believes again.
-  [naf.md](docs/naf.md#evaluated-in-the-placement-context-not-the-join),
-  [exceptions.md](docs/exceptions.md#semantics).
-
-  *Migration:* run `lein cli upgrade` or open with `{:recover? :auto}`: a recover re-fires
-  every guarded rule (`rerecord-refusals!`) and stores the firings with their defeats. A
-  trusted image install keeps an earlier build's refused firings until a settle queues
-  their rule. Read the guard defeat where a caller took a missing handle as "excepted",
-  and `:excepted` where it read `:unsupported`.
-  *Breaks:* `handle-of`, `chain-report`, `recover`, `why-not`
-
-- **Declarations at one argument position compose, and a preserved transitive predicate
-  composes with its own transitivity.** A position's reach is the closure of the goal's
-  term under every relation its declarations name, where it was the union of each
-  relation's reach. `(transitiveInArgInverse needsCheck 1 partOf)` beside
-  `(transitiveInArgInverse needsCheck 1 heldIn)` carries `(needsCheck Crate Monday)` to a
-  part of a thing held in `Crate`, and a position declared along `genl` in both directions
-  reaches every kind connected to the claim's: `(flagged mammal)` answers `(flagged
-  reptile)`. Specificity compares claims along the same closure. With `(transitive
-  locatedIn)` and `(transitiveInArgInverse locatedIn 1 partOf)`, `ask`, `prove` and a
-  forward antecedent answer `(locatedIn Piston1 House1)` from `(partOf Piston1 Car1)`,
-  `(locatedIn Car1 Garage1)` and `(locatedIn Garage1 House1)`, where `ask` answered false;
-  a denial of `locatedIn` is not carried along `locatedIn`. Fixes #207.
-  [inherit.md](docs/inherit.md#declarations-at-one-position-compose-with-each-other-and-with-p).
-
-  *Migration:* drop one of two declarations at a position where the union was the meaning.
-  *Breaks:* `ask`, `ask?`, `prove`, forward chaining over a preserved antecedent
-
-- **`ask-within`, `prove-within`, `resume` and `compare-tacticians` read `:incomplete` over
-  an open transitive goal.** A goal `(P ?x ?y)` over a `transitive` `P`, solved with both
-  arguments open, answers `P`'s stored pairs and not its closure, and these reads reported
-  `:complete` over it. A run whose source ran dry after one now reads `:status
-  :incomplete` with no continuation, and every partial result and row carries
-  `:unenumerated [P …]`, cumulative across a `resume`. An `explain-levels` row and an
-  `escalate` result name `P` the same way. Each of these reads, `query-status` and
-  `search-tree` included, also reports `:unenumerated-in-guards`: the predicates recorded
-  inside an `unknown` or `exceptWhen` evaluation, where a missed pair can admit an answer
-  the closure would refuse. Follows
-  [#134](https://github.com/vaelii/vaelii/issues/134).
-  [anytime.md](docs/anytime.md#where-the-collector-lives).
-
-  *Migration:* a caller dispatching on `:status` from `ask-within`, `prove-within`,
-  `resume` or a `compare-tacticians` row handles `:incomplete`; to enumerate a closure,
-  bind one argument per source term.
-  *Breaks:* `ask-within`, `prove-within`, `resume`, `compare-tacticians`
-
-- **`quoting_function` is removed; `Quote` and `Quasiquote` are the quoting functions,
-  fixed by the engine.** Which functions quote is `sx/quoting-functors`, not a KB
-  declaration. A `Quote` or `Quasiquote` argument is a mention in every KB from the first
-  assert: held opaque to a `sameAs` or `equals` merge, followed by a `rewriteOf` rename,
-  not reified on its own, and not typed by what it denotes, so a merge processed before a
-  declaration can no longer fold a mention onto its referent. The `:quoting` prop kind
-  goes with the predicate. `ensure-quasiquote-functions` asserts `(reifiable_function
-  Quote)` and `(unreifiable_function Quasiquote)` only, and `(unreifiable_function
-  Quasiquote)` turns the quasiquote reducer on. `ExpressionKindProver`'s support cites no
-  quoting statement, so a forward firing reads a quoted form's kind only when a `genl`
-  edge or a `natFormula` statement supports it.
-
-  *Migration:* delete any `(quoting_function X)` assertions. A KB that declared another
-  function quoting must quote through `Quote` instead. `has-prop?` and `props` no longer
-  take `:quoting`.
-  *Breaks:* `quoting_function`, `:quoting`
-
-### Breaking: storage
-
-- **`open-kb` keeps a reasoning image an earlier engine build wrote, with or without
-  `:oplog?` (`:recover? :trust` is the default).** A `:disk-snapshot` store whose image was
-  written under other engine source installs it, is writable at once, and moves belief
-  under this build only where a settle reaches, where the open recovered from the
-  records: under `:auto`, every commit to belief-deriving code made the next open of
-  every store a full recover. `:oplog?` takes `:recover? :trust` too, and its
-  seals record the source belief was last derived under. The browser, the daemon and
-  `lein cli` take the default; the browser opens a `:disk-snapshot` or `:pg-snapshot`
-  store it recovers with `:oplog? true`. `lein cli upgrade` still opens with `:auto`, and
-  `lein cli upgrade --trust` (`scripts/upgrade-kb.sh --trust`) keeps an image and recovers
-  belief only when the records moved behind the images. An edit to the import code no
-  longer moves the source identity: `vaelii.core`'s `write-ops` names its entries by
-  keyword, and the `:replay` writes are digest roots by name.
-  [storage.md](docs/storage.md#the-reasoning-image),
-  [storage.md](docs/storage.md#the-operation-log),
-  [operations.md](docs/operations.md#cli--vaeliicli).
-
-  *Migration:* pass `{:recover? :auto}` where an open must hold belief this build derived
-  in full, or run `lein cli upgrade` on the store.
-  *Breaks:* `open-kb`
-
-- **A durable store rebuilds its index and recovers belief once on its first open: the
-  reasoning image is at `format-version` 16 and the index at layout 16.** The image's
-  state section holds the membership candidates' separation inputs under `::sep-inputs`
-  and the argument family's taxonomy generations under `::read-under`; under every
-  `:recover?` setting, `:trust` included, the first open of a `:disk-snapshot` or
-  `:pg-snapshot` store after the upgrade recovers from the records and writes a
-  format-16 image at close. The index keys the term-name set, the flat set of every
-  symbol the term index is keyed by, under `[:term-names]`, and adds `[:opposed-functor
-  f]` and `[:opposed-between f]`, the bodies stored in both polarities filed by functor;
-  a stored index, a
-  `:disk-snapshot` image or a dump of layout 14 is rebuilt from the records at its first
-  open or import, and answers are unchanged. A fork whose base holds layout 14 is refused
-  as `:stale-index-layout` until the base is opened writable once.
-  [storage.md](docs/storage.md#the-reasoning-image),
-  [indexing.md](docs/indexing.md#6-the-term-name-set).
-
-  *Migration:* budget one recover per store on the first open, or run `lein cli upgrade`
-  on each store beforehand. Read `[:term-names]` where a caller of `index-entries` read
-  `[:term-roster]`.
-  *Breaks:* `state.nippy`, `index-entries`, `:disk-log`, `:disk-snapshot`
-
-- **A loaded store or dump is synced to the shipped contexts only when its load asks
-  (`:sync?`), and a sync job reports each change.** A sync was one `edit!` and one settle
-  over the whole KB: on a large `:pg-snapshot` store loaded by the development browser,
-  a settle stopped part-way left the records it had written ahead of the index and
-  reasoning images, so every later open rebuilt both. A store or dump now loads as
-  it was written, the development browser's file-edit sync passes it by, and
-  `catalog/sync-entry!` syncs one entry as a `:sync` job on purpose.
-  `vaelii.host.sync/sync-each!` makes the plan one `edit!` per change, calling a report
-  with `{:done i :total n :op {:op :context :form}}` before each; the browser's sync jobs
-  run it, the jobs page shows each change, and a refused addition no longer rolls back the
-  rest. The plan renders only the premises naming the shipped vocabulary.
-  [catalog.md](docs/catalog.md#a-loaded-kb-states-this-engines-shipped-contexts).
-
-  *Migration:* pass `:sync? true` to `load-dir` or `load-source`, or tick the load's
-  "Sync the shipped contexts" option, for a load that syncs.
-  *Breaks:* `vaelii.browser.catalog/load-dir`, `vaelii.browser.catalog/load-source`
-
-### Breaking: renamed identifiers
-
-- **Nine identifiers that said `roster`, `pin` or `stamp` are renamed for what they
-  name.** Each old spelling is gone:
-  `caches` reports the held-values row as `:held-values` ("Held values"), and
-  `set-cache-limit` takes `:held-values`; `:pinned-values` names no cache, and
-  `set-cache-limit` warns on it ([caches.md](docs/caches.md)).
-  koinii's `publish!` refuses a compression other than `:none` as
-  `:koinii/compression-fixed`, "publish! requires :compression :none"
-  ([koinii.md](docs/koinii.md)).
-  The `:stale-index-records` refusal names the store an index was built against under
-  `:recorded`, beside `:records`
-  ([storage.md](docs/storage.md#pg-snapshot-the-two-images-over-records-on-a-server)).
-  The optional record-store protocol an image is checked against is
-  `vaelii.impl.protocols/ImageFingerprinting`, with methods `index-fingerprint` and
-  `belief-fingerprint`; a record store extending the old name no longer satisfies it, so
-  `open-kb` refuses the `:snapshot` index over it with `:missing-adapter`
-  ([storage.md](docs/storage.md#the-image-disk-snapshot)).
-  A `:forced-conclusion` violation's `:detail` and each `why-not` `:convicted` entry name
-  the rule's antecedent predicates that are not forced-monotonic under
-  `:not-forced-monotonic`, and the `:message` reads "is forced-monotonic"
-  ([nmtms.md](docs/nmtms.md#the-forced-monotonic-set)).
-  The recover step is `:derived-sets` ("rebuilding the derived sets") in
-  `:last-recover`'s `:steps`, the image's recorded recover and the progress line; an
-  older image still opens
-  ([storage.md](docs/storage.md#what-a-recover-spends-its-time-and-heap-on)).
-  The derived-state event `checks/force-reach!` raises is `:forced-monotonic`, and the
-  descriptor check refuses a `:retired-by` naming the old key
-  ([caches.md](docs/caches.md)).
-  A `:bad-table-entry` refusal carries `:mismatch` `:unlisted-reader`,
-  `:exempt-and-listed`, `:unlisted-arm` or `:family-list`, the last naming the list
-  under `:list` and its members under `:list-holds`, and `predicates/check-facets` takes
-  `:family-lists` ([predicates.md](docs/predicates.md)).
-  `profile`'s per-functor `:writes` and `:retracts` carry `:term-names n`, and the
-  vocabulary reads tally under the family `:term-names` ([profile.md](docs/profile.md)).
-
-  *Migration:* `:pinned-values` → `:held-values`; `:koinii/compression-pinned` →
-  `:koinii/compression-fixed`; `:stamped` → `:recorded`; `ImageStamping` →
-  `ImageFingerprinting`, `index-stamp` → `index-fingerprint`, `belief-stamp` →
-  `belief-fingerprint` (the values returned stay as they are); `:off-roster` →
-  `:not-forced-monotonic`; `:rosters` → `:derived-sets`; the event `:roster` →
-  `:forced-monotonic`; `:unrostered-reader` → `:unlisted-reader`, `:exempt-and-rostered`
-  → `:exempt-and-listed`, `:unrostered-arm` → `:unlisted-arm`, `:family-roster` →
-  `:family-list`; `:roster` and `:term-roster` in a `profile` report → `:term-names`.
-  *Breaks:* `caches`, `set-cache-limit`, `:pinned-values`, `publish!`, `:koinii/compression-pinned`, `:stale-index-records`
-  *Breaks:* `vaelii.impl.protocols/ImageStamping`, `index-stamp`, `belief-stamp`, `:forced-conclusion` `:off-roster`, recover step `:rosters`, derived-state event `:roster`
-  *Breaks:* `:unrostered-reader`, `:exempt-and-rostered`, `:unrostered-arm`, `:family-roster`, `profile`
-
-### Breaking: shipped ontology
-
-- **`termOfUnit` is renamed `natFormula`.** The reified-term map, `(natFormula K E)`
-  in CxUniverse, is what a mint writes and what the engine reads to take a reified
-  constant back to its expression. `core.txt` declares and comments `natFormula`, and
-  every engine read, the browser and the docs name it. Nothing reads `termOfUnit` any
-  more: no alias maps the old name onto the new one. The `natFormula` comment in
-  `core.txt` is rewritten. [nat.md](docs/nat.md).
-
-  *Migration:* a store written before this change must be migrated, and cannot be
-  re-derived. Its `(termOfUnit K E)` maps are stored records that the engine reads by
-  predicate name, so after the upgrade no constant reads back to its expression, and a
-  re-asserted application mints a second constant beside the first. `sync!` does not
-  repair this: it asserts the `natFormula` declarations but leaves every premise naming
-  `termOfUnit` in place, since `termOfUnit` is no longer a term the engine ships. A map
-  cannot be re-derived from the store's other facts either, because those facts name the
-  minted constant `K`, not the application. To migrate, `export-text!` the store, rewrite
-  every `termOfUnit` token in the export to `natFormula`, and `load-text!` the result
-  into an empty store. A frame dump (`export!`/`import!`) keeps the old spelling, so it
-  is no route around the text export. A text KB, rule or query that names `termOfUnit`
-  names `natFormula` instead.
-  *Breaks:* `termOfUnit`
-
-- **Parthood is reflexive or proper, `partOf` is parthood of any kind, and `partOf`
-  between two tangibles is `tangiblePartOf`.** `tangiblePartOf` keeps both arguments
-  `tangible`, its transitivity and partType's `typeToInstancePred`. The new `partOf` is
-  transitive and declares `thing` in both positions, and `tangiblePartOf`,
-  `partOfRegion`, `subSituationOf` and `subintervalOf` are below it by `genl`. A
-  `tangiblePartOf` fact answers `partOf`, and a `partOf` fact answers no
-  `tangiblePartOf`. CxMereology's two rules read `tangiblePartOf`. Each of the five
-  carries its own `reflexive` mark. `properPartOf` is irreflexive, transitive and below
-  `partOf`, defined as `(partOf x y)` with `(partOf y x)` denied; antisymmetry is declined
-  and stated so, `(not (anti_symmetric partOf))`. `properTangiblePartOf`,
-  `properSubSituationOf`, `properPartOfRegion` and `properSubintervalOf` are below
-  `properPartOf`, `(properCounterpart ?predicate ?properPredicate)` records each pair, a
-  core.txt generator generates its definition, and one rule at the root, `(properPartOf
-  x y)` to `(not (partOf y x))`, denies the reverse for every proper relation below it.
-  `subSituationOf` relates two situations and is transitive; no rule concludes the time
-  containment. `subintervalOf` and `properSubintervalOf` take two `time_interval`s, not
-  two `temporal`s. space.txt states the 15 converse pairs of the RCC-8, cardinal and
-  relative-direction calculi and four RCC-8 parthood edges under `set/inert`, so each
-  calculus prover still answers its goals alone, and a dump holding those inert records
-  still writes a reasoning image. [glossary.md](docs/glossary.md),
-  [time.md](docs/time.md).
-
-  *Migration:* write `tangiblePartOf` for a `partOf` fact, rule or declaration between
-  two tangibles; a query for any parthood keeps `partOf`. Relate two events by `during`,
-  `starts` or `finishes`, or relate their times: a `subintervalOf` between two situations
-  now types each as a `time_interval`, which `(disjoint time situation)` refuses.
-  *Breaks:* `partOf`, `subintervalOf`, `properSubintervalOf`
-
-- **`partitionedByType` is binary and draws inference, and the upper ontology states
-  `logical`, `quantitative`, `typeOrthogonal`, `orthogonalMetatypes` and
-  `implementationNote`.** `(partitionedByType ?whole ?classifier)`: the members of
-  `?classifier` partition `?whole`. A core.txt generator places each member under
-  `?whole`, and a rule concludes `(disjoint_metatype ?classifier)`. No rule draws the
-  coverage half (vaelii/vaelii#171), so the `partition` sentence stays beside each of the
-  4 shipped facts: `fixed_order_type` by `type_type_by_order`, `tangible` by
-  `origin_type`, and `thing` by `spatiality_type` and by `temporality_type`.
-  `(separating nowhere_never logical linguistic quantitative)` separates three kinds:
-  `relation`, `proposition` and `context` are `logical`, and `measure`,
-  `unit_of_measure`, `physical_dimension` and `sign_value` are `quantitative`.
-  `(typeOrthogonal ?classifier ?type)` makes every member of a classifier orthogonal to
-  `?type`, and `(orthogonalMetatypes ?m1 ?m2 …)` makes every member of each metatype
-  orthogonal to every member of the others (vaelii/vaelii#170). The classifiers
-  `arity_type`, `origin_type`, `spatiality_type` and `temporality_type` are new and
-  forced-monotonic. 10 `typeOrthogonal` facts and one `orthogonalMetatypes` fact derive
-  33 orthogonal pairs, 22 of them stated before; the upper ontology derives 43 `genl`,
-  `disjoint` and `orthogonal` sentences it stated and no longer states 40 of them. 9 more
-  orthogonal pairs are stated, among them `made` and `vertebrate`. `physical`, a location
-  in the physical space of our universe, is below `spatial`, and `spatiotemporal` is below
-  `physical` and `temporal`. `implementationNote` is a sibling of `comment` for how a term
-  is implemented, and 16 terms in `core.txt` and `abstract.txt` carry one. The read walk
-  of an `except` stays off where the declarations behind a rule are visible to every
-  reader of that rule, so the classifier rules leave an upper-ontology load at 7.4 s.
-  (#172)
-  [taxonomy.md](docs/taxonomy.md), [glossary.md](docs/glossary.md).
-
-  *Migration:* drop the cell list: write `(partitionedByType W C)` for
-  `(partitionedByType W C A B …)`, and state each cell's membership `(C A)`.
-  *Breaks:* `partitionedByType`
-
-- **The example predicates quote their example sentence, and string siblings carry an
-  example as text.** The second argument of `positiveExample`, `negativeExample` and
-  `borderlineExample` is a quoted sentence, `(positiveExample ip_address (Quote
-  (ip_address "192.0.2.1")))`, and no longer a `(sentexHandle H)`, and the three are no
-  longer `target_following_predicate`. `curation_test` asks the quoted sentence in the
-  example's context: a `positiveExample`'s sentence must be provable there, a
-  `negativeExample`'s must not be, and unknown is enough. `positiveExampleComment`,
-  `negativeExampleComment` and `borderlineExampleComment` are binary, the second argument
-  a `string`, and carry no provability obligation. The shipped files state 34
-  `positiveExample` and 7 `negativeExample` facts, each one the starter proves or does not
-  prove, and 204 `positiveExampleComment` and 21 `negativeExampleComment` facts in place
-  of the examples 101 comments named inline. Examples that could be misread are reworded,
-  and `machine`'s comment defines it by its moving parts and energy source and names no
-  use.
-
-  *Migration:* rewrite `(positiveExample T (sentexHandle H))` as `(positiveExample T
-  (Quote S))`, S being the sentence H holds, and the same for the other two. An example
-  is no longer torn down with the sentence it named. A `negativeExample` whose sentence
-  the KB proves now fails the check. A reader of a comment's examples reads the example
-  facts.
-  *Breaks:* `positiveExample`, `negativeExample`, `borderlineExample`
-
-- **General happening roles and capabilities admit interrupted occurrences, and
-  `invokesTool` is renamed `toolInvoked`.** `actor` relates a happening to a meaningful
-  participant, and `thingPerceived` relates it to what is perceptually taken in. `doneBy`,
-  `performedBy`, `input`, `destroyedInput`, `preservedInput`, `output`, `tangibleOutput`
-  and `intangibleOutput` declare `happening` rather than `event` in position 1.
-  Participation alone concludes neither intentional doing nor perception. The tool
-  relation keeps its invocation-first argument order and `tool_invocation` /
-  `software_tool` bounds. `capabilityType` and `hasCapability` take a happening kind as
-  argument 2, and `hasCapability` takes any `causal` doer as argument 1, so a `machine` or
-  an `organization` has capabilities and a `time` is still convicted.
-  [inherit.md](docs/inherit.md).
-
-  *Migration:* update stored tool facts, rules, queries and writers to `toolInvoked`;
-  this change does not migrate a live store. Callers inspecting the eight role domains
-  must expect `happening`; state `event` separately when uninterrupted occurrence is
-  required.
-  *Breaks:* `invokesTool`
-
-- **CxComputing and CxPerception merge into one opt-in context, CxTra.**
-  `kb/middle/CxTra.txt` states every form the two files stated, with `(genlCx CxTra
-  CxUniverse)`, so CxTra sees what each of the two saw and CxWell does not see CxTra.
-  `core.txt` states `(context CxTra)` in place of the two `context` memberships. No
-  relation, kind, rule or declaration changes.
-
-  *Migration:* rename `CxComputing` and `CxPerception` to `CxTra` in any `genlCx` edge,
-  `ist` or context argument that names them; a context placed under both needs one edge
-  to CxTra.
-  *Breaks:* `CxComputing`, `CxPerception`
-
-- **The middle theories state `genl` edges where they stated one-antecedent rules, and
-  the upper files state the `genl` edges their covers imply.** CxSocial states `(genl
-  friendOf knows)`, `(genl marriedTo knows)` and `(genl worksFor memberOf)`, CxKinship
-  `(genl parentOf ancestorOf)`, and CxBiology `(genl livesIn locatedIn)`, `(genl bird
-  warm_blooded)` and `(genl mammal warm_blooded)`, each in place of a forward rule. A
-  `genl` between predicates is forced-monotonic, so a `:monotonic` `livesIn` fact
-  concludes a `:monotonic` `locatedIn` where the rule concluded a default, and a denial of
-  the upper predicate denies the lower one. `core.txt`, `abstract.txt` and
-  `reflection.txt` state the edges their covers imply, among them `(genl acausal
-  intangible)` and `(genl closed_literal sentence)`, and place seven predicate-kind marks
-  and metatypes under `thing`; `except` is a `unary_predicate`. `life.txt` drops `(arg P 1
-  T)` for `alive`, `dead`, `mortal`, `asleep`, `awake`, `breathes_air` and `warm_blooded`,
-  since each property's `genl` entails it, so a membership under one of their specs is not
-  held inert by the property's argument type. `kb-integrity` over the starter in CxWell
-  reports no `implicit-genl` or `not-under-thing` finding
-  ([#209](https://github.com/vaelii/vaelii/issues/209)). [taxonomy.md](docs/taxonomy.md).
-
-  *Migration:* none for a query; `why` of such a conclusion cites the edge.
-  *Breaks:* `friendOf`, `marriedTo`, `worksFor`, `parentOf`, `livesIn`
-
-- **`metal` renames to `metal_stuff`.** A stuff type's name is a mass noun, as
-  `glass_stuff` is. `abstract.txt` declares `metal_stuff` with the same comment, `genl`
-  edges and `stuff_type_by_substance` membership, `mercury` sits below it, and
-  CxNormalPhysicalConditions' solid-by-default rule reads `(metal_stuff ?x)`. No pair's
-  disjointness changes.
-
-  *Migration:* rename `metal` to `metal_stuff` in any KB text that names it.
-  *Breaks:* `metal`
+- **A `modal_predicate`'s proposition keeps an application of a `reifiable_function` as
+  written.** `(believes Ann (likes Tom (FruitFn Apple)))` stores the application, where it
+  stored the constant, and `believes` reifies it in the agent's context: the asker's
+  `(sameAs Apple Pomme)` no longer answers `(believes Ann (likes Tom (FruitFn Pomme)))`, and
+  an `equals` the agent holds does.
+  [belief.md](docs/belief.md#where-the-barrier-sits-and-what-it-covers)
+  *Migration:* state the identity in the agent's context when the belief should read
+  through it.
+  *Breaks:* `assert` of a `modal_predicate` sentence naming an application of a
+  `reifiable_function`, `ask` of `believes` over one
 
 ### Breaking: quality
 
-- **`kb-quality`'s rule-clash reading drops three kinds of unreachable pair.** It reads
-  `args` and `argAndRest` as it reads `arg`, so a pair whose shared term a covering
-  declaration types disjoint from what the other rule places it in is not reported: over
-  the starter, `(function ?r) (arity ?r 1) → (unary_function ?r)` against `(unary ?type)
-  (disjoint ?type ?type) → (empty ?type)` is dropped. A pair whose antecedents put a
-  literal beside a denial of a predicate it is a spec of, `(properPartOf a b)` and `(not
-  (partOf a b))`, is dropped. A pair in which one term is bounded above the exact arity
-  it is claimed to have is dropped, so the shipped KB reads four excepted `:negation`
-  pairs where it would read 86. [quality.md](docs/quality.md).
-
+- **`kb-quality`'s rule-clash reading types an application by its function's `result` and
+  the application's arguments by its function's `arg` declarations, at any depth, and
+  types the first argument of a `(genl ?r P)` antecedent by `P`'s arity**, so it lists
+  fewer unreachable `:disjoint` pairs. Four `TimeOfFn` rules added to the starter paired
+  103 times, and pair 17 times with this reading; a rule over the specs of a binary
+  predicate no longer pairs with every rule concluding a type no relation has, such as
+  `person`. An application at a `quotedArg` position is read as a mention
+  ([#169](https://github.com/vaelii/vaelii/issues/169),
+  [#210](https://github.com/vaelii/vaelii/issues/210)).
+  [quality.md](docs/quality.md#contradictions-in-waiting)
   *Migration:* none.
   *Breaks:* `kb-quality`
 
+### Breaking: koinii
+
+- **koinii's dispute lifecycle term is `DisputeFn`**, the spelling every other shipped
+  function has. `dispute/dispute-term` returns `(DisputeFn (sentexHandle h) …)`, and the
+  `disputeNotified` and `disputeStale` marks carry it
+  ([#159](https://github.com/vaelii/vaelii/issues/159)).
+  [koinii.md](docs/koinii.md)
+  *Migration:* none for a new store. A store holding marks under `(dispute …)` reads
+  those disputes as un-notified and not stale, so the notify and stale sweeps fire once
+  more for each.
+  *Breaks:* `dispute/dispute-term`, `(dispute …)`
+
+### Refusal: naming and well-formedness
+
+- **`assert`, `assert-inert`, `check` and `try-assert` refuse a `not` over a query-only
+  term** (`unknown`, `thereExists`, `forall`, `bravely`, `cautiously`, the aggregates,
+  `different`, `minCommonGenl`, `maxCommonSpec`, `totalDuration`, `overlapDuration`), at
+  any depth of `not` and under `ist` or a rule wrapper, with the bare term's own
+  `:not-well-formed` refusal; a rule antecedent or `exceptWhen` query holding `(not
+  (unknown …))`, `(not (thereExists …))` or `(not (forall …))` at any depth is refused the
+  same way, and an import skips it. Each was stored as a fact no prover reads, or as a
+  condition that never held, so an exception written this way blocked nothing; an `or`
+  inside it went unchecked, and a `(not (forall …))` threw an untyped
+  `IndexOutOfBoundsException`. [naf.md](docs/naf.md)
+  *Migration:* a stored `(not (unknown S))` states that S is derivable: ask S, or assert S
+  if it is a fact. Write `(unknown (forall …))` or `(unknown (thereExists …))` for the
+  closed-world reading.
+  *Breaks:* `:not-well-formed`, `unknown`, `forall`
+
+- **`assert`, `assert-inert` and `check` refuse a `(not (or …))` fact**, at any depth of
+  `not` and under `ist` or a rule wrapper, as `:not-well-formed`. It was stored as one
+  literal, so no goal over its disjuncts matched it and the literals inside it went
+  unchecked. `import!` skips such a frame, and a bare `(or …)` frame, under `:refused`. A
+  bare `(or …)`'s refusal message begins `not well-formed: `.
+  [canonicalization.md](docs/canonicalization.md#where-or-cannot-go)
+  *Migration:* a stored `(not (or A B))` means "neither A nor B": assert `(not A)` and
+  `(not B)` instead. A dump holding one imports without it, counted in `:refused`.
+  *Breaks:* `:not-well-formed`, `not well-formed: `, `:refused`
+
+- **`assert`, `check` and `try-assert` refuse `(set/inert S)`, and refuse
+  `(set/monotonic …)` anywhere but around the whole sentence or an `exceptWhen` query**
+  (an antecedent, a consequent, a query, under `not`), as `:shape`. `assert-inert` refuses
+  both wrappers, and a whole-form `(set/monotonic S)` beside `{:strength :default}` is
+  refused. Each was stored at `:default` with the wrapper as its functor, which no query
+  matches. [kbs.md](docs/kbs.md)
+  *Migration:* write the wrapper around the whole form or the `exceptWhen` query, call
+  `assert-inert` for an inert sentence, and state a strength once.
+  *Breaks:* `set/inert`, `set/monotonic`, `:shape`
+
+- **`assert`, `check` and `try-assert` refuse a length binding the sentence alone shows
+  is wrong.** A binding of an engine term (`arity`, `arityMin`, an arity class,
+  `variable_arity`) that admits no length the term's `:shape` takes, or fewer lengths
+  than the shape takes, is refused as `:length-against-shape`: `(arity genl 3)`,
+  `(arityMin partition 4)`. A binding that gives a type-spelled term a length other than
+  1, or a camelCase term the length 1, is refused as `:length-against-spelling` under
+  `:naming :strict`, logged under `:warn` and stored under `:off`: `(binary_predicate
+  warm_blooded)`, `(arity parentOf 1)`. A bare lowercase word takes any length.
+  [naming.md](docs/naming.md#a-length-binding-is-held-to-the-spelling)
+  *Migration:* drop a binding of an engine term; rename a relation whose binding the
+  spelling check refuses, or set `:naming :warn`.
+  *Breaks:* `:length-against-shape`, `:length-against-spelling`, `arity`, `arityMin`
+
+- **`assert` refuses a misnamed literal inside `(bravely S)`, `(cautiously S)` and a
+  `forall` in a generated rule's antecedent**, as `:naming` under `:strict`. The naming
+  check read each wrapper as one literal and stored the misnamed functor inside it, where
+  no read written to the naming convention matches it.
+  [naming.md](docs/naming.md#literals-wrappers-and-arguments)
+  *Migration:* nothing for a caller whose content follows the naming convention; content
+  that throws on re-assert renames the functor the refusal names.
+  *Breaks:* `bravely`, `cautiously`, `:naming`
+
+- **An import skips a frame `assert` refuses as `:not-well-formed` for its shape alone**
+  (an individual or a self-loop in `genl`/`genlCx`/`disjoint`, a non-integer `arg`
+  position, `unknown` as a fact, an inline `exceptWhen` over a fact, a non-finite measure
+  magnitude) and counts it in `:refused`. Such a frame stored, and `(disjoint dog dog)`
+  threw an untyped "Duplicate key" out of the import. The checks that read stored content
+  still do not run on an import. [naming.md](docs/naming.md)
+  *Migration:* a dump holding such a frame imports without it.
+  *Breaks:* `import!`, `:not-well-formed`
+
+### Refusal: clashes
+
+- **`try-assert` refuses a sentence whose complement is believed `:monotonic`** from the
+  context, stored or entailed through `:monotonic` `genl` edges, as `:definitional-clash`
+  with `:violation :complement` and the complement in `:clashes-with`. It stored the
+  sentence, the settle defeated it, and neither `conflicts` nor `contradictions` listed
+  the pair, so the caller held a handle to a sentence the KB did not believe. A denial of
+  a believed forced-monotonic literal is refused at either written strength; a
+  forced-monotonic positive is not refused. A `:default` complement or edge refuses
+  nothing, and `assert` stores every rebuttal as before.
+  [api.md](docs/api.md#refusing-a-clash) ([#211](https://github.com/vaelii/vaelii/issues/211))
+  *Migration:* a caller that records a rebuttal of known-true content calls `assert`.
+  *Breaks:* `try-assert`, `:complement`
+
+- **`try-assert` refuses a fact or a declaration that breaks a length binding or an
+  `irreflexive` or `anti_symmetric` mark.** A fact whose length breaks its relation's
+  length binding is refused as `:definitional-clash` with `:violation :arity`, the binding
+  in `:detail` and its grounds in `:opposing-handles`; a self tuple of an `irreflexive`
+  relation, or the converse of a believed tuple of an `anti_symmetric` one, as `:violation
+  :irreflexive` / `:anti-symmetric`, where the relation is marked or below a marked one
+  through `genl`. A converse whose two symbols merge under a `:monotonic` write is stored.
+  A length binding, a `genl` edge, or a `:monotonic` metatype membership or edge whose
+  length breaks the length of stored tuples is refused as `:violation :arity` with each
+  length and its stored count in `:detail :shapes`; an `except` of a length binding as
+  `:violation :arity`; and an `irreflexive` mark over believed self tuples of its
+  predicate or one below it as `:violation :irreflexive`, with the tuples in
+  `:clashes-with`. `assert` stores each as before: the tuples held inert, the self tuples
+  placed, the length bound under the except. [api.md](docs/api.md#refusing-a-clash)
+  *Migration:* a caller that records such a fact or declaration on purpose calls `assert`.
+  *Breaks:* `try-assert`, `:arity`, `:irreflexive`, `:anti-symmetric`
+
+### Refusal: stratification
+
+- **A rule concluding `P` whose `unknown`, `exceptWhen` or aggregate census body reads a
+  closed-extent `(not (P …))`, directly or through a cycle, is refused** with `:type
+  :not-stratified`, in either arrival order: the grant can be the refused write. A
+  negative nested in `unknown`, in `thereExists` under `unknown` or in an `exceptWhen`
+  query was a negative edge on `not` only, so the rule stored while the same literal as an
+  antecedent was refused.
+  [naf.md](docs/naf.md#stratification-from-both-arrival-orders)
+  *Migration:* conclude off the cycle, or leave `P` open.
+  *Breaks:* a KB holding such a rule beside a `closed_extent_predicate` or
+  `closedExtentForArg` grant on `P`
+
 ### Additive: vocabulary and reasoning
 
-- **`(negates P Q)` states that two relations hold of no argument list together.** A
-  believed `(scorns Eve Fay)` beside a believed `(admires Eve Fay)` under `(negates scorns
-  admires)` is one placed nogood, read down `genl` on both sides, whichever arrives first.
-  `ask? (not (scorns Gus Hal))` is true while `(admires Gus Hal)` is believed, and no
-  denial is stored per fact. `(negates P P)` makes each `P` tuple a one-member nogood. A
-  declaration whose sides are bound to lengths no argument list fits, or to one argument,
-  is stored and reported in `conflicts` as `:negates-arity` or `:negates-unary`. The
-  declaration is forced-monotonic and context-scoped. The from-Cyc guide translates a
-  binary `negationPreds` as `negates`, where its two implication rules convicted nothing
-  when both tuples were stored ([#106](https://github.com/vaelii/vaelii/issues/106)).
-  [taxonomy.md](docs/taxonomy.md#predicate-metadata),
-  [from-cyc.md](docs/from-cyc.md#negation-and-mutual-exclusion).
+- **`prover` builds a prover from plain fns**, the value `add-prover` registers, so a
+  caller needs nothing under `vaelii.impl`. A spec giving `:solve-with-support` with
+  `:support-functors` and `:support-sources` names the handles each answer was read from:
+  a forward rule fired on the answer is withdrawn when one of them is retracted, and a
+  fact on a source re-joins the rule whichever arrived first. A malformed spec, or a
+  reading or an answer outside its domain, is refused with `:unknown-option`.
+  [inference.md](docs/inference.md#what-a-computed-answer-rests-on)
+  *Migration:* none.
 
-  *Migration:* none. A KB storing `negates` facts of its own reads them as declarations;
-  replace the from-Cyc guide's two rules with one `(negates P Q)`.
+- **`(interArgEqual P n v m U)` types argument `m` of the `P` sentences whose argument `n`
+  is the value `v`**, a number, string, keyword, boolean or character. It derives the type
+  as `arg` does, convicts under the constraint-only reading, and `try-assert` refuses a
+  separated argument from both arrival orders. CxUniverse types a `closedExtentForArg`
+  grant's predicate by the grant's position, so `try-assert` refuses a grant past a stated
+  arity, which closed nothing ([#175](https://github.com/vaelii/vaelii/issues/175)).
+  [argtypes.md](docs/argtypes.md#a-type-conditioned-on-an-argument-value-interargequal)
+  *Migration:* none; a stored grant past its predicate's arity is reported in `conflicts`.
 
-- **Relations of four and five arguments have exact arity classes, and a function's
-  result types the value position of its corresponding predicate.** `quaternary` and
-  `quinary` are relation-wide exact classes, and `quaternary_predicate`,
-  `quinary_predicate`, `quaternary_function` and `quinary_function` specialize them.
-  `(arity R 4)` concludes `(quaternary R)`, and `(arity R 5)` concludes `(quinary R)`.
-  One `(separating fixed_arity unary binary ternary quaternary quinary)` declaration
-  separates the five classes. `at_least_quaternary` and `at_least_quinary` extend the
-  arity floors, each disjoint from the exact class one below it. `arg4` and `arg5`
-  project `arg` at positions 4 and 5, and `closedExtentForArg4` and `closedExtentForArg5`
-  spell `closedExtentForArg` at those positions; the four are forced-monotonic.
-  `calendarDay`, `measureRangeInUnit`, `predExistsInstancePlaceholder` and
-  `predInstanceExistsPlaceholder` are `quaternary_predicate`, `interArg`,
-  `predAllExistsPlaceholder` and `predExistsAllPlaceholder` are `quinary_predicate`, and
-  `PredAllExistsFn` and `PredExistsAllFn` are `quaternary_function`. Forward rules
-  conclude `(arg P n T)` from `(result F T)` and `(functionCorrespondingPredicate F P)`:
-  `n` is the last position of a binary through quinary `P`, or the position the
-  correspondence states; `functionCorrespondingPredicate` and `result` are
-  forced-monotonic. A test holds every shipped predicate in an exact arity class or
-  `variable_arity`; a `fixed_arity` relation above five arguments, such as
-  `calendarInstant`, has no named class. [taxonomy.md](docs/taxonomy.md#arity).
+- **`exists-violations` audits a `predAllExists`, `predExistsAll`, `predExistsInstance`
+  or `predInstanceExists` declaration on demand**, returning the members of the universal
+  collection, or the fixed term, with no believed filler. `all-specified-violations` and
+  `kb-integrity` audit every visible one beside the *Specified* declarations. Served as
+  the `:exists-violations` op. [predall.md](docs/predall.md)
+  ([#149](https://github.com/vaelii/vaelii/issues/149))
+  *Migration:* a caller of `all-specified-violations` sees a key per *Exists* declaration
+  with a violation.
 
-- **`relation-arity` answers a relation's exact arity, `admitsArgnum` answers with a
-  proof, and `(args R T)` proves `(argAndRest R 1 T)`.** `(relation-arity kb 'arg)` is
-  `3`; a `variable_arity` relation, or a term no length binds, answers nil, and
-  `vaelii.client` and the daemon serve it. `admitsArgnum`'s eight definition rules are
-  `set/backwardRule`: `query (admitsArgnum calendarDay ?n)` answers `1` through `4`,
-  `(admitsArgnum ?r 7)` answers each `unbounded_arity` relation, and each answer's
-  `{:proof? true}` tree cites its rule; no `admitsArgnum` fact is stored. A
-  `set/backwardRule` states the entailment from `args` to `argAndRest`, so `query
-  (argAndRest R ?n ?t)` at depth 3 answers `[{?n 1 ?t T}]` of a relation declared only
-  through `args`. [api.md](docs/api.md), [inference.md](docs/inference.md),
-  [argtypes.md](docs/argtypes.md).
-
-- **`common-genls`, `common-specs`, `min-common-genls` and `max-common-specs` read the
-  types a collection of types shares, and `minCommonGenl` and `maxCommonSpec` answer them
-  in a query.** `(common-genls kb [a b])` is the intersection of `(genls kb a)` and
-  `(genls kb b)`, reflexive as `genls` is, and `common-specs` intersects `specs` the same
-  way. `min-common-genls` keeps the members strictly above every input with no other such
-  member below them: with `dog ⊂ mammal ⊂ animal`, `(min-common-genls kb [dog mammal])`
-  is `#{animal}`. `max-common-specs` is the same read downward. Each takes a context, and
-  `vaelii.client` and the daemon serve all four. `CommonGenlProver` answers
-  `(minCommonGenl ?x dog cat)` with each member of `(min-common-genls kb [dog cat])`, and a
-  ground first argument outside the set proves false, so `argue` answers `:false`.
-  `core.txt` declares both variable-arity with `arityMin` 2, and asserting one is refused
-  as `:not-well-formed`. [api.md](docs/api.md), [inference.md](docs/inference.md).
-
-- **`escalate` takes `{:max-ms n}`.** The deadline is checked between levels and inside
-  level 7's search. A climb it stops before any level answered returns `{:level nil
-  :status :timeout}`, and `escalate-opt-keys` lists the option. The browser's
-  `/reasoning` gallery renders at once and then asks each card's verdict, 10 s per card.
-  [levels.md](docs/levels.md#operators).
-
-- **A quoted application is classified by what the KB states of its head.** Under a
-  symbol head R, `(predication (Quote (R a)))` holds when R is a member of `predicate` or
-  a type below it, `(non_atomic_term (Quote (R a)))` when R is a function and the form is
-  closed, and `ill_formed_expression` (`ill_formed` for a predicate) when R's length rules
-  out the argument count. R's spelling is never read. The answer cites the membership,
-  the bindings and the `genl` edges it rests on, and a forward rule over one of these kinds
-  fires whether the head's kind arrives before or after the rule and the quoted fact. A
-  head membership stated outside CxUniverse classifies the form for the readers that see
-  it ([#145](https://github.com/vaelii/vaelii/issues/145)).
-  [argtypes.md](docs/argtypes.md#what-a-quoted-form-is).
-
-- **A `:monotonic` definition decides a value at the argument check.** Under `(arg P n
-  T)` or `(quotedArg P n T)`, a `:monotonic` `defnIff`, `defnSufficient` or
-  `defnNecessary` over the value-kind predicates or any evaluable condition decides a
-  literal value before its kind does. With `(defnIff character_string (string ?x))`,
-  `(nameString X "Foo")` is believed where `character_string` has no `genl` edge to
-  `string`, and `(nameString X 5)` is held inert. A sufficient condition of `T` or of a
-  subtype admits a value it is true on, and a necessary condition of `T` or of a
-  supertype convicts a value it is false on. A `:default` definition decides nothing.
-  [defns.md](docs/defns.md#a-definition-decides-a-literal-value-at-the-argument-check).
-
-- **`justification-verdicts` names why a justification does or does not carry its
-  conclusion at a context.** `(justification-verdicts kb handle context)` answers `{jid
-  reason}`, each reason one of `:supports`, `:antecedent-out`, `:blocked`, `:void`,
-  `:guard` and `:exempt`, read by the walk that decides belief there. `why` carries the
-  verdict at each node's context on its `:support` entries and `why-not` on its
-  `:support`, so a justification a guard defeat covers reads `:guard` where it read as
-  supporting. The browser's proof and justification pages draw the verdict, also over
-  `--attach`, and count a covered justification as not supporting.
-  [nmtms.md](docs/nmtms.md#a-nogood-placed-as-a-conclusion).
-
-- **The clash reports can leave their grounds off, and `stored-first-args` reads a type's
-  members off the index.** `(conflicts kb {:grounds? false})` and `(contradictions kb
-  context {:grounds? false})` answer every entry without `:grounds`, which costs a
-  taxonomy walk per definitional clash. A nil context is the KB-wide reading, and any other key is
-  refused as `:unknown-option`. `(stored-first-args kb pred)` is the set of terms stored
-  at argument 1 under `pred`, one read with no record fetched and belief unread. [api.md](docs/api.md).
-
-### Additive: shipped ontology
-
-- **A shipped argument position that holds a term of any kind declares `thing`.** `(arg P
-  n thing)` states that position `n` of `P` holds a term of any kind and that no narrower
-  type is right for it. `core.txt`, `abstract.txt`, `reflection.txt`, `society.txt`,
-  `CxTra.txt` and `CxSpeechActs.txt` state 51 such `arg` declarations, among them `(arg
-  equals 1 thing)`, `(arg doneBy 2 thing)` and `(arg believes 1 thing)`, and `(args
-  different thing)` types every position of `different`. `(genlArg toolArgType 3 thing)`
-  types the third position of `toolArgType` a type. `comment`, `seeAlso`, the example
-  predicates and their string siblings declare `(quotedArg P 1 denotational_term)`,
-  `seeAlso` declares its second position the same way, and `argN` declares `(quotedArg
-  argN 1 expression)`. A fixed-arity predicate's position of arity 2 and up is declared,
-  or `ontology_test`'s `undeclared-positions` names it with its reason.
-  [argtypes.md](docs/argtypes.md#constraint-and-entailment-readings).
-
-  *Migration:* none. Under the entailing reading, a symbol at one of these positions with
-  no narrower membership derives `(thing X)`.
-
-- **`mechanism` is the common `genl` of `machine` and the new `electronic_device`, and
-  `wing` and `fur` are disjoint.** `abstract.txt` declares `mechanism`, a physical object
-  whose parts, in their arrangement, set up a characteristic causal operation, below
-  `tangible` and not below `made`: a juvenile Issus planthopper's hind-leg gears are a
-  mechanism. `electronic_device`, a mechanism built around an electronic circuit, is
-  below `made` and `mechanism`, and `(orthogonal electronic_device machine)` is
-  `:monotonic`, with a `comment` naming a witness for each claim. `(disjoint mechanism
-  organism)` and `(disjoint mechanism substance)` are stated once on the parent, and
-  `(disjoint animal machine)` is derived through them, no longer stated. `(disjoint wing
-  fur)` is `:monotonic`. With this release's separations, the disjointness coverage
-  ratchet rises to 25,373 disjoint pairs (83.51%) and at most 6.82% unknown.
-
-  *Migration:* a KB that asserts one term as both an `organism` (or a `substance`) and a
-  `machine` or `electronic_device`, or as both a `wing` and `fur`, now records a clash. A
-  KB that reads the stated `(disjoint animal machine)` sentence finds the derived
-  disjointness instead.
-
-- **A new OE principle, "bank the decision".** A modelling question weighed and answered
-  no is stated in the KB as an explicit negation, and a `(not …)` is asserted only for a
-  decision actually made. [oe-principles.md](docs/oe-principles.md).
+- **`argN` is answered from how its formula is written.** `(argN ?t ?n (parentOf Tom
+  Bob))` binds `?t` and `?n` to each position, 0 being the operator, and a quoted formula
+  answers the positions of the form it names. A forward rule with an `argN` antecedent
+  fires, and a backward one proves, once another antecedent binds the formula.
+  [inference.md](docs/inference.md) ([#149](https://github.com/vaelii/vaelii/issues/149))
+  *Migration:* none.
 
 ### Additive: storage
 
-- **A `:pg-snapshot` KB takes an operation log, and a `:pg-disk-log` or `:pg-snapshot`
-  directory reopens with no `:pg`.** `(open-kb {:backend :pg-snapshot :dir dir :oplog?
-  true})` keeps the log, the seal and both images under `dir`. An open after the writer
-  was killed (SIGKILL, which no shutdown hook sees) restores the images and replays the
-  operations logged since the seal, in place of the full reindex and recover. A write to
-  a sealed directory by a KB opened without `:oplog?` retires the seal, under any disk
-  backend: `:disk-dense`, `:disk-columnar` and `:disk-log` over the same records as
-  well. `open-kb` over such a directory with no `:pg` connects to the server
-  `index/records.edn` names, as `PGUSER` (else the OS user) with `PGPASSWORD` when set,
-  so `{:backend (v/store-backend dir) :dir dir}` opens it as it opens a `:disk` store,
-  and `VAELII_KB_DIR` and `/kbs` load it. An explicit `:pg` is used as given.
-  [storage.md](docs/storage.md#the-operation-log),
-  [storage.md](docs/storage.md#pg-snapshot-the-two-images-over-records-on-a-server).
+- **A batch of premise removals and rule direction changes applies to the records of a
+  KB without belief, and one rebuild settles any number of them.** `edit-records!`
+  deletes the removed records with their postings and the justifications resting on
+  them, and writes each rule's new direction, with no check, no dependency sweep and no
+  settle; it refuses a KB with belief (`:belief-built`) and an `except`, `defeat` or
+  `exceptWhen` removal (`:record-edit-unsupported`), and takes no additions.
+  `settle-record-edits!` then runs `recover` (or `reindex`), sweeps what the batches left
+  unsupported, chains the rules turned forward and draws the argument-type mints the
+  removals released. `edit!` runs a dependency sweep and a settle per batch, so a large
+  batch of removals costs one settle per removal's dependents; the record edit costs one
+  rebuild for every batch. [storage.md](docs/storage.md#editing-the-records-of-a-kb-without-belief)
+  *Migration:* none.
+  Test `edit-records-then-settle-believes-what-edit-believes`.
 
-  *Migration:* none; a seal written before this release is not restored, and the next
-  logged open seals again.
-
-- **An open reports a record that no premise mark and no justification supports.** A
-  write cut short between a record and its justification leaves such a record. The open
-  logs its handles and changes nothing; `unsupported` answers `{:n n :handles [...]}`, the
-  browser's store card shows the count, and no write refuses over it.
-  `remove-unsupported!` removes the reported records among the handles the caller names
-  (`:force? true` removes every reported one), and `mark-inert!` marks an earlier
-  build's `assert-inert` records, which carry no `:inert` provenance mark and are
-  reported until marked. `assert-inert` marks each new record.
-  [storage.md](docs/storage.md#a-record-no-premise-and-no-justification-supports).
-
-- **The shutdown hook waits for a running write.** A JVM shutdown waits up to 10 s for
-  the public writes in flight, then stops an `assert` or an `edit!` batch's adds at the
-  next rule firing or settle pass with `:shutdown-abort`, rolled back as a unit. A write
-  past its rollback point runs to its end. The hook then waits up to
-  `vaelii.disk.shutdown-unwind-ms` (default 10000) before it closes the stores under the
-  writes still running.
-  [storage.md](docs/storage.md#a-shutdown-under-a-running-write).
-
-- **A long loop logs its progress, and the console backend prints one short line per
-  call.** The loops of a recover and a settle, a dump import and export, a reindex, a
-  disk store's open and compaction, an operation log replay, the token log read, the
-  index snapshot's token load and write, the reasoning image's read and write, a text
-  load and export, the quality census, the integrity sweep, the disjointness audit,
-  `bulk-assert-facts!`, the starter load, sync and the corpus generator log a line at
-  `:info` once a loop has run 15 s, again at 30 s, 1, 2 and 4 minutes and then every 5
-  minutes, each naming its count, total, share and time left, and a closing line. A line
-  also logs when the projected total time halves or doubles, and a timer logs the line
-  when the loop has not ticked. The dump import's `loaded N sentexes…` line is gone. A
-  recover records the settle that places the queued nogoods as its own `:placement` step,
-  logged as step 7 of 7, and `rebuild-progress` counts nine steps. An `:info` line is
-  `HH:mm:ss message`; a louder one adds its level and namespace, and `:debug` adds the id
-  and the `:data` map. The browser and `lein cli` install it at `:info` when no level is
-  set.
-  [operations.md](docs/operations.md#progress-lines),
-  [operations.md](docs/operations.md#logging--a-dial-and-what-is-behind-it),
-  [storage.md](docs/storage.md#what-a-recover-spends-its-time-and-heap-on).
-
-  *Migration:* a caller reading `rebuild-progress`'s `:of` as 8 reads 9.
-
-- **`+with-postgres`, `+with-sqlite` and `+with-foreign` add the published siblings to any
-  lein task, the uberjar included.** `lein with-profile +with-postgres browser` opens a
-  `:pg-*` KB from this checkout, `lein with-profile +with-postgres,+with-sqlite uberjar`
-  builds a standalone jar that opens both, and the `Dockerfile`'s `PROFILES` build
-  argument builds the image that way. The default uberjar and the published pom carry no
-  adapter. `scripts/link-checkouts.sh` links all three siblings' live source, and
-  `scripts/upgrade-kb.sh` and the start scripts run a KB over postgres records under
-  `+with-postgres`. An adapter that loads without its dependencies refuses with
-  `:missing-adapter`, naming the namespace that failed, instead of a `CompilerException`.
-  [storage.md](docs/storage.md#backend-selection-two-independent-axes),
-  [foreign.md](docs/foreign.md#exercising-one-from-here).
-
-  *Migration:* `scripts/with-foreign.sh <task>` is gone; run `lein with-profile
-  +with-foreign <task>`.
-
-### Additive: browser
-
-- **A browser edit runs as a job, a term page carries a term bar, and `/removed` lists
-  what the browser removed.** An assert, an editor save, a retraction and a put-back each
-  run as an `:edit` job on `/jobs`. A badge's right-click menu and the sentex page offer
-  Copy, Edit and Remove, and `/assert` seeds from `?copy=<handle>` or `?text=`, `?ctx=`
-  and `?strength=`. The term bar's Rename, Copy and Remove confirm with the count of
-  asserted sentexes naming the term and an estimated run time, and one estimated past a
-  minute must be acknowledged; a rename into an existing term merges the two, and
-  `/term-op/name` says whether they merge cleanly. A term job settles 500 sentexes at a
-  time and can be cancelled between settles. `/removed` lists the last 50 removals per
-  KB, with Put back, kept under `vaelii.removed.dir` (default `~/.vaelii/removed`).
-  [web.md](docs/web.md#editing-sentexes).
-
-- **The browser lists the whole KB's defeats, dilemmas, conflicts and types without a
-  `genl`, and draws a type's whole closure.** `/lists` runs each list as a read job from
-  its button. `/closure` draws every supertype or every subtype of a type in rows by
-  longest path, and the term page links both.
-  [web.md](docs/web.md#whole-kb-lists), [web.md](docs/web.md#a-types-whole-closure).
-
-- **A page load that reads past `vaelii.browser.detach-ms` (default 5 s) is answered with
-  a "Still reading" page.** The page reloads once the read is done. A second load of the
-  same address in one session joins the running read, and `/jobs` lists the reads still
-  running. [web.md](docs/web.md#page-loads-that-read-long).
-
-- **A `:pg-snapshot` store can be backed up from its `/kbs` card.** The **Back up** button
-  seals the KB, clones its directory and dumps its Postgres schema with `pg_dump`, beside
-  the store, as a `:backup` job that holds off writes until the dump is done; `backup.edn`
-  in the backup lists the restore commands. `vaelii.browser.backup`.
-  [web.md](docs/web.md#backing-up-a-store-kept-in-postgres).
-
-- **A browser store load shows what the open is doing, and `POST /op` answers `:kbs` and
-  `:jobs`.** Each `:info`-or-louder line the engine logs during the open (the recover
-  steps, the image install) becomes the load card's note, and still reaches the installed
-  log backend. A cancel asked during the open is honoured at the next progress report.
-  The reasoning-image install logs `::reasoning-image-installing` at its start as well as
-  its outcome. `:kbs` is the catalog as EDN: the active key, the heap, and each entry's
-  status, progress, error and live stored sentex count. `:jobs` is the job registry. Both
-  answer while a job writes the active KB and every other op is refused with
-  `:still-loading`. [web.md](docs/web.md).
-
-- **The term page's taxonomy diagram frames a type's subtypes by the part lists over it,
-  and `covers-of` answers them.** Below a type, the subtypes one `partition`, `covering`
-  or `separating` declaration names sit in a frame labelled with the kind and its claims
-  (`partition 1: covers, disjoint`); a subtype no part list names sits outside every
-  frame. A subsumption arrow is blue and a `disjoint` edge amber, a pair that separates
-  under protanopia and deuteranopia. A predicate of three or more places is red-orange
-  and a `logical_connective` green. `vaelii.core/covers-of` answers the believed cover
-  declarations over one whole as `[kind parts]`
-  ([#158](https://github.com/vaelii/vaelii/issues/158)).
-  [web.md](docs/web.md#a-terms-shape-drawn), [api.md](docs/api.md).
-
-- **An extension adds menubar items and term actions.** `register-extension` takes
-  `:menu`, `[[label href] …]` with each `href` under the extension's `/ext/<name>/`, drawn
-  after the browser's own menubar items, and `:term-actions`, `(fn [env term] hiccup)`,
-  drawn beside the heading of every term page. A menu item outside the prefix, or not a
-  `[label href]` pair, is refused at registration (`:unknown-option`).
-  [web.md](docs/web.md#extensions).
-
-- **The browser's history lists only what the active KB holds.** `/history/known`
-  answers which of a history's terms and handles the active KB holds, and vaelii.js
-  forgets the rest each time it draws the Browsed panel. A KB whose load is running or
-  stopped part-way is not judged. Switching back does not restore what was forgotten.
-  [web.md](docs/web.md).
+- **`lein cli upgrade --sync` brings a store's shipped contexts to what this engine
+  ships**, one change at a time with a progress line per change on stderr, and reports
+  `:sync {:added :removed :forwarded :refused}`. Under `--verify` the comparison runs
+  before the sync. Without the flag `upgrade` reads the records and writes none. A
+  step-by-step sync asserts each rule shipped forward as `set/backwardRule` beside the
+  rest of the content, then turns each forward as an `:op :forward` change of its own,
+  after every other change has settled, so an addition that sets off forward rules over
+  the whole taxonomy no longer runs as one change, and each forward rule's chaining is
+  its own reported step. `sync-each!`'s result counts them as `:forwarded`.
+  [operations.md](docs/operations.md)
+  *Migration:* a caller reading `sync-each!`'s result sees the new key.
+  Test `a-forward-rule-lands-backward-and-is-turned-forward-after-the-content`.
 
 ### Fix: answers
 
-- **A containment or region part a calculus entails answers `partOf` and
-  `properPartOf`, and the interval prover answers `subintervalOf` only within its
-  domain.** A calculus prover lifts a positive goal on a super-predicate of one of its
-  predicates to that predicate, and answers it beside the stored tuples: time intervals A
-  and B with `(during A B)` answered `subintervalOf` and not `partOf`, since the `genl`
-  edge reached only stored tuples, and `partOfRegion` and `properPartOfRegion` lift the
-  same way. `subintervalOf` and `properSubintervalOf` answer only where each argument
-  holds no type disjoint from `time_interval`, so two situations `(during S1 S2)` relates
-  answer `during` and the reverse `hasSubinterval` and neither containment. An argument
-  with no type is admitted. [glossary.md](docs/glossary.md), [time.md](docs/time.md).
-
-- **A commutative binary function is not concluded `symmetric`.** `core.txt`'s rule
-  `(commutative ?p) ∧ (arity ?p 2) → (symmetric ?p)` reads `(predicate ?p)` beside the
-  arity. A `(function F)` stated `commutative` with `(arity F 2)` concluded `(symmetric
-  F)`, which clashed with `(function F)` and was stored defeated.
-  [canonicalization.md](docs/canonicalization.md#a-bridge-between-two-marks-is-a-cycle-backward)
-
+- **A goal over an application of a `reifiable_function` that was never minted answers
+  nothing, except by identity and congruence.** `(equals (FooFn Xa Xb) (FooFn Xc Xd))`
+  answered `{}` through `ask`, `prove` and `query`, and so did `(different (FooFn Xa Xb)
+  Zed)`; `(equals ?x (FooFn Xa Xb))` and `(genl (FooFn Xa Xb) ?y)` bound the variable to
+  `nat/no-match`. `(equals (FooFn Xa Xb) (FooFn Xa Xb))` still holds.
+  [nat.md](docs/nat.md#read-path)
   *Migration:* none.
 
-- **A recovered store written before 0.24.0 withdraws its firings over superseded
-  spellings.** Such a store kept a firing made over a spelling a later merge supersedes,
-  and `recover` restored it, so the recovered KB believed a conclusion that a fresh KB
-  given the same sentences does not hold. The rebuild now withdraws those firings, and
-  the recovered store equals the fresh one.
-  *Migration:* none. [nmtms.md](docs/nmtms.md#the-other-half-a-spelling-an-un-merge-gives-back)
+- **A rule naming an individual a merge retires is restated under the representative** and
+  fires on the facts restated under it. It fired on neither spelling. `sentexes-matching`
+  for such a rule below the merge returns the restated rule.
+  [equality.md](docs/equality.md#interactions)
+  *Migration:* a rule stored beside such a merge before this release stays unrestated until
+  the merge is retracted and asserted again.
+
+- **`ask` answers a denial from a reached or inverse denial.** `(not (P a b))` answers
+  from a surviving denial reached along a `transitiveInArg` or `transitiveInArgInverse`
+  position, as `(P a b)` answers from a reached claim, and an `exceptWhen` over such a
+  denial holds whichever sentence arrives last; a membership separated across a
+  `:default` `genl` edge answers no denial. `(not (P x y))` answers from `(not (Q y x))`
+  under a `:monotonic` `(inverse P Q)`, and so does the denial of each spec of `P` over
+  known-true `genl` edges. [inherit.md](docs/inherit.md#reading-it-back),
+  [taxonomy.md](docs/taxonomy.md)
+  *Migration:* none.
+
+- **`ask` of a stored sentence whose formula argument carries a variable answers instead of
+  throwing `StackOverflowError`.** `(ask? kb '(defnNecessary negative_integer (and
+  (integer ?x) (lessThan ?x 0))) 'CxAbstract)` threw at every context for each of the
+  starter's eight `defnNecessary` and `defnSufficient` sentences, and so did any goal
+  spelt with a variable name the stored formula also uses. A literal-cache read now
+  answers what the uncached read answers.
+  [inference.md](docs/inference.md#the-literal-cache-vaeliiimplliteral-cache)
+  *Migration:* none.
+
+- **The joint reading answers what each route gives.** `:post-hoc` answers a joint read
+  through a `genl` edge stated in two contexts as `:fan` does, both when no reader sees
+  the two together and when a reader excepts the more general one; it placed the answer
+  by one route and dropped the others, or answered `[]`. A `CxInference` or
+  variable-context read of a computed answer whose ingredients sit in a context no
+  `genlCx` edge touches answers, witnessed by that context, for the provers the ingredient
+  table names. It answered `[]`, or unscoped with no witness when no edge existed at all,
+  so an unrelated edge changed the answer. A subgoal prover or `different` rests on no
+  stored fact of its own and adds no reader.
+  [contexts.md](docs/contexts.md#cxinference-the-joint-reading)
+  *Migration:* none.
+
+- **`handle-of`, `sentexes-matching` and `why-not` find a `forced_decontextualized_predicate`
+  fact where `assert` stores it.** Given a `genlCx` edge, bare or as `(ist CxA S)`, at a
+  named context other than CxUniverse, they read that context and answered nil or `[]`
+  while the edge was stored in CxUniverse.
+  [contexts.md](docs/contexts.md#forced_decontextualized_predicate-a-canonical-home-in-cxuniverse)
+  *Migration:* a caller that read an empty `sentexes-matching` at the asserting context as
+  "not stored here" reads the record's `:context`, or reads at `?ctx`.
+
+- **A closed-extent negative answers in its conjunct order and under a hidden grant.** A
+  `(not (P ?y))` conjunct under a closed-extent grant on `P` runs after the conjuncts that
+  bind `?y`, in a `thereExists`, `unknown` or `forall` query, a `prove` or `query`
+  conjunction and a backward rule's antecedents. Run first, it was asked open and
+  declined: `(thereExists ?y (and (not (asleep ?y)) (childOf Bob ?y)))` answered false
+  while Bob had a child not asleep. Under a defeated or excepted grant, an `unknown` or
+  `exceptWhen` guard over a `(not (P …))` the grant answers follows `ask?` of its
+  condition at each reader: the guard defeat rests on the grant, or on the stored
+  negative, that answers the literal, and `why` lists that grant or negative in
+  `:because`. [naf.md](docs/naf.md#under-the-grant-a-negative-antecedent-is-naf)
+  *Migration:* a forward rule stored before this release keeps its firings until it is
+  retracted and asserted again.
+
+- **`assert`, `check` and `try-assert` read a whole-form `(set/monotonic S)` as `S` at
+  `{:strength :monotonic}`**, as the text KB loader does, inside an `ist` too, and
+  `handle-of` answers `S`'s handle for it. `assert` stored the wrapper as the sentence's
+  functor at `:default`. [kbs.md](docs/kbs.md)
+  *Migration:* a KB holding such a record keeps it;
+  `(sentexes-matching kb '(set/monotonic ?s) '?c)` finds one to retract and assert again.
+
+- **A rule whose literal carries an `or` in an argument slot is not refused.** `(implies
+  (and (p ?x) (not (likes ?x (or A B)))) (r ?x))` was refused as "or cannot stand under
+  not", as was the same argument under `unknown`, `thereExists` or an aggregate body, in a
+  conclusion or in an `exceptWhen` query, while the same literal stored as a fact.
+  [canonicalization.md](docs/canonicalization.md#where-or-cannot-go)
+  *Migration:* none.
+
+- **The naming check reads the wrappers it names.** `nm/problems` reads an `exceptWhen`
+  query's literals inside its `(set/monotonic …)` wrapper and reports a misnamed one
+  there, where `assert` refused it already. A generator whose generated rule is wrapped in
+  `set/solveRule` is not refused as `:naming` for the wrapper's spelling. A quoted
+  `(forAll …)` form is classified by its operands like any atomic sentence; `forall` is
+  the quantifier. [naming.md](docs/naming.md#literals-wrappers-and-arguments)
+  *Migration:* none.
+
+- **The interval network answers for its reader.** A read under a rebound
+  `provers/*quantity-tolerance*` answers that tolerance's network, where it answered the
+  network last built under another tolerance until the next write. A forward rule on a
+  calculus predicate fires in a context that holds only facts on a sub-predicate of one,
+  or that meets the `genl` edge making it one; it fired nowhere while `ask` there held.
+  [qcn.md](docs/qcn.md#a-network-can-have-a-second-reader)
+  *Migration:* none.
+
+- **`functional-at-instant-violations` reports a clash at an `(InstantFn …)` moment an
+  `instantBefore` link names.** It read only `time_point` members, which a structural term
+  never is. [time.md](docs/time.md#functionality-at-an-instant)
+  *Migration:* none.
 
 ### Fix: order independence
 
-- **An argument-type mint reaches one belief in every arrival order beside a rule it
-  supports and beside an equality merge.** A mint that a more specific membership
-  subsumes is withdrawn when some subsumer does not rest on it, where a subsumer derived
-  from the mint (`(awake Muffet)` from `(animal Muffet)`) could keep it. A mint drawn over
-  a fact an equality merge already retired is restated at the elected name, where
-  `(person Kipper)` stayed believed beside `(person Kip)` in the orders that merged first.
-  [argtypes.md](docs/argtypes.md), [equality.md](docs/equality.md)
+- **A closed-extent negative is re-checked whenever what answers it moves.** A negative
+  inside an `unknown` antecedent, an `exceptWhen` query or an aggregate's census body is
+  re-checked when a member of its predicate, a `closed_extent_predicate` /
+  `closedExtentForArg` grant on it, or a `negates` or separation declaration that denies
+  it, or the denying fact, arrives or leaves after the rule; the rule kept the answer
+  computed at its firing. A firing over a closed-extent negative antecedent is re-decided
+  when the grant is defeated, excepted or suspended, not only when it is stored or
+  retracted. Retracting a grant withdraws the firings that read its negative as negation
+  as failure, unless a stored negative answers the literal, and no longer releases the
+  firings it refused. [naf.md](docs/naf.md#under-the-grant-a-negative-antecedent-is-naf),
+  [aggregate.md](docs/aggregate.md#maintenance-when-the-aggregate-is-a-rule-antecedent)
+  *Migration:* a rule stored before this release is re-checked once the grant is
+  retracted and asserted again.
 
+- **A merge and a restatement rest on the edges and equalities they were drawn over.** A
+  `functional` or `anti_symmetric` merge drawn through `genlCx` edges is withdrawn when
+  one of those edges is retracted, and drawn again where another path survives; it stood
+  in the orders where the merge arrived before the edge. A sentex a merge restates is
+  withdrawn when an equality on the chain of merges it was restated over, or a `genlCx`
+  edge its reader sees the original through, is retracted, and restated over a path that
+  survives; it stood on any one merge touching the same term.
+  [equality.md](docs/equality.md#a-late-genlcx-edge-is-a-third-arrival-order)
+  *Migration:* a merge or restatement stored before this release keeps its justification
+  until one of its facts, merges or declarations is retracted and asserted again.
+
+- **A `different` antecedent reads the merges and indeterminacy declarations the
+  conclusion's context sees.** A merge only an unrelated context sees no longer withdraws
+  the firing, and a context below the placement that sees one reads a guard defeat of the
+  conclusion. `chain-report` lists a firing refused at its placement as a `:naf` refusal.
+  [predall.md](docs/predall.md#a-different-guard-is-re-checked-not-supported)
+  *Migration:* none; `recover` re-fires every watched rule.
+
+- **An exception is re-decided through every channel that answers it.** An exception
+  answered through an `inverse` or `genlInverse` partner of its predicate is re-decided
+  when a fact on the partner arrives or leaves, and a late `genlInverse`, `symmetric` or
+  other declaration on the predicate re-decides a `(not (P …))` exception; the fan read
+  `genl` edges only. A `(not (P …))` condition is re-decided when a tuple of a predicate a
+  `negates` declaration says negates `P` arrives or leaves, and when the `negates`
+  declaration or a `genl` edge under such a predicate arrives after the rule. A condition
+  holding a `(not (forall …))` is re-decided when a `genl` edge moves a predicate inside
+  the frame; the negated-frame set spelled the quantifier `forAll`.
+  [exceptions.md](docs/exceptions.md#five-channels-a-declaration-or-a-fact-reaches-an-exception-through-sideways)
   *Migration:* none.
 
-- **A membership that reaches `:monotonic` after it is stored stores its exact-arity
-  class membership.** With a `:monotonic` route to `binary_predicate`, a `(rel_kind P)`
-  derived first from a `:default` premise and then from a `:monotonic` one stored no
-  `(binary_predicate P)` until a recover, so a ternary `(P a b c)` stayed believed. Both
-  arrival orders now store the class membership and hold the tuple inert.
-  [reference.md](docs/reference.md)
-
-  *Migration:* none; a recover stores the missing class memberships.
-
-- **A forward rule over a `genl` or `genlCx` literal stores one justification set in
-  every arrival order.** With `(genl part_a whole)` and `(partition whole part_a part_b)`
-  both stated, a rule over `(genl ?type whole)` stored one or two justifications of
-  `(noted part_a)` by arrival order, and named the stated edge in some orders and the
-  `partition` in others. Every order stores the one justification over
-  `(genl part_a whole)`. Belief does not change.
-  ([#192](https://github.com/vaelii/vaelii/issues/192),
-  [#205](https://github.com/vaelii/vaelii/issues/205))
-  [inference.md](docs/inference.md#a-genl--genlcx-antecedent-reads-the-closure),
-  [taxonomy.md](docs/taxonomy.md)
-
-  *Migration:* a store written before this release keeps its second justification over a
-  stated edge; export and reload it as text to store one.
-
-- **A `covering`, `separating` or `partition` on a route draws the argument-type mints a
-  `genl` edge there draws, and an edge such a declaration installs subsumes a minted
-  `genl` edge.** A cover arriving after a fact and a declaration it routes between mints
-  the type, where it minted nothing; a mint over a cover's route is replaced by one over
-  a shorter route arriving later; and retracting a cover or a trigger membership on a
-  mint's route draws the mint again over a route or trigger that survives. A type whose
-  only parent edge came from such a declaration kept every edge `genlArg` minted to an
-  ancestor, such as `(genl context thing)`; the mint is now withheld when the declaration
-  is there first, withdrawn when it arrives second, and drawn again when it leaves. With
-  `VAELII_PRUNE_SUBSUMED_MINTS=0`, the upper layer and the starter hold the same
-  justifications (`why`) in authored and content order.
-  [argtypes.md](docs/argtypes.md#four-directions-or-belief-depends-on-arrival-order).
-
+- **An argument-type mint or hold is decided at the write that moves it.** A length
+  binding that arrives after a declaration minted in its type removes the mint at that
+  write: `(binary_predicate t)` after `(arg rel 1 t)` and `(rel Rex Mary)` left `(t Rex)`
+  stored, and believed until the next write's settle. The same holds for a `genlArg` edge
+  mint and an `argArg` mint. A fact held inert under a declaration is released when a
+  `genl` edge above its declared type releases it: `(vneeds 5)` under `(arg vneeds 1
+  vdog)` stayed held after `(genl vmid vk)` placed `vdog` under `integer`, where the edge
+  stored first left it believed.
+  [argtypes.md](docs/argtypes.md#four-directions-or-belief-depends-on-arrival-order)
   *Migration:* none.
 
-- **An inert fact draws no argument type on any sweep.** An inert fact asserted after
-  an `arg` declaration got no type, and a declaration arriving after it, a forward chain,
-  or a `genlCx` edge minted one anyway. `deduce-placed` and `retroactive-mints` skip an
-  inert sentex, so every arrival order draws the same types.
-  [argtypes.md](docs/argtypes.md).
+- **A rule over an open application, or holding a variable-functor application, keeps the
+  firings the last arrival allows.** A rule held by an open application of a
+  `reifiable_function` keeps no firing under `VAELII_ASSERTIVE_ARG_TYPES=0` when the
+  declaration arrives after the rule fired. A `formula`-typed declaration arriving after a
+  rule that holds a variable-functor application releases the rule, and the rule is held
+  again, keeping no firing, when the declaration leaves: `(arg holdsIn 2 sentence)` stored
+  after `(set/forwardRule (implies (holdsIn ?c (?p Rex)) (heardOf ?c ?p)))` left the rule
+  firing nothing over the facts stored before it. A `genl` edge putting a declared type
+  under `formula` moves the rule the same way.
+  [nat.md](docs/nat.md#a-rule-or-a-goal-that-names-an-open-application)
+  *Migration:* none.
 
-- **A `genl` edge that places a preserved type under a separated one reports the clash
-  it makes.** With `ic_dn` preserved and below `ic_dsup`, `(genl ic_dsup ic_hard)`
-  written after `(disjoint ic_hard ic_plain)`, `(ic_dn ic_top)` and `(ic_plain ic_mid)`
-  reported no inherited clash, where the same sentences with the edge written first
-  reported one. The discovery re-opens each preserved predicate at or below the types an
-  edge moves separations below.
-  *Migration:* none. [nmtms.md](docs/nmtms.md#the-inherited-clash-memo).
+- **A reified NAT constant leaves the store in any retraction order.** A constant whose
+  function declares `genlResult` is collected when its last use is retracted, whether the
+  declaration arrives before or after the mint: the `(predicate K)` the argument-type
+  entailment draws off the materialized `(genl K T)` edge counted as a use and kept it
+  ([#225](https://github.com/vaelii/vaelii/issues/225)). Retracting a `natFormula` map
+  before its `reifiable_function` mark no longer leaves the constant's uses spelled
+  `nat/K`: under a believed mark the constant is minted again, and with the mark gone each
+  use names the application ([#216](https://github.com/vaelii/vaelii/issues/216)).
+  [nat.md](docs/nat.md#rename-and-remove--keeping-the-11-invariant)
+  *Migration:* none.
+
+- **A `thereExists` or `forall` binder list and the conjunctions inside a NAF query store
+  in canonical order.** A binder list stores in canonical order, a one-variable list as
+  the bare variable. Two spellings of a rule that differ only in the order of the
+  conjuncts inside an `unknown` or `thereExists` query, at any depth, a `forall`'s head
+  and body included, or only in those conjuncts' variables, store as one handle, and the
+  conjunctions inside an `exceptWhen` exception's conjuncts are ordered the same way.
+  Deferred literals keep their written order, which decides evaluation.
+  [canonicalization.md](docs/canonicalization.md#a-naf-conjunctions-conjuncts-sorted)
+  *Migration:* a stored rule keeps the form it was stored in, and asserting another
+  spelling stores a second handle; `export-text!` then `load-text!` re-canonicalizes a
+  store. No shipped rule changes form.
+
+- **A conjunction joining `(t ?a)` on a type an argument declaration infers answers the
+  same set in every conjunct order.** An open `(t ?x)` returns every individual a
+  declaration types where no stored membership covers it: every declaration under
+  `VAELII_ASSERTIVE_ARG_TYPES=0`, and `thing` and arity-bound types under the default
+  reading. A usage spelled at a term the reader's merges retire types nothing, so `:fan`
+  and `:post-hoc` return the same rows.
+  [argtypes.md](docs/argtypes.md#the-open-membership-goal)
+  *Migration:* none.
+
+- **An `unknown` or `exceptWhen` guard is asked in the normal form of each reader below
+  its placement.** With the rule `(tyc ?x) & (unknown (tya ?x)) => (tyb ?x)` and
+  `(tyc IndC)` in CxA, and in CxB below it `(tya IndC)` and a functional pair that merges
+  IndB with IndC, `(tyb IndB)` read true at CxB when the merge arrived after the rule and
+  false when the rule came last. It now reads false at CxB and `(tyb IndC)` reads true at
+  CxA in every order. The justifications still depend on the order: `(tyb IndB)` at CxB
+  carries a `rewriteOf` justification from `(tyb IndC)` only when the merge arrives last.
+  [naf.md](docs/naf.md#order-independence-and-the-re-check)
+  *Migration:* none.
+
+- **A forward rule whose `genl` or `genlCx` literal only its recursive literal binds stores
+  one justification set in every arrival order.** In `(implies (and (genl ?a ?b) (reaches
+  ?b ?c)) (reaches ?a ?c))`, the rule arriving after its facts, or an edge arriving last,
+  joined the closure literal with both ends open over the stored edges alone, so the
+  firing over a pair two edges apart was missing. The closure literal now runs after the
+  recursive literal.
+  [inference.md](docs/inference.md#a-genl--genlcx-antecedent-reads-the-closure)
+  *Migration:* none.
+
+- **A firing over a typed calculus predicate (`subintervalOf`) is re-decided when a
+  membership or a `genl` edge moves what the predicate's declared argument types admit.**
+  A firing whose typed antecedent the declared types no longer admit, and no believed fact
+  states, is withdrawn. [qcn.md](docs/qcn.md#what-every-algebra-does-with-it)
+  *Migration:* none.
+
+### Fix: storage
+
+- **A sync no longer loses a rule whose direction changed.** The plan compared rules by
+  the form a file writes, direction wrapper included, so a rule held backward and shipped
+  forward was an addition, which raised the one record to forward in place, and a
+  retraction of that record after it: the rule was gone. One shipped backward over one
+  held forward went the same way. A rule's direction is now read as a strength is: raised
+  in place, or lowered by a retraction before the addition. A shipped `set/backwardRule`
+  also compares equal to the unwrapped rule it stores as, so it no longer reappears in
+  every plan.
+  *Migration:* none. Test `a-rule-whose-direction-changed-is-one-record-raised-or-restated`.
+
+- **An `OutOfMemoryError` or `StackOverflowError` while a write's frame is frozen
+  propagates out of the write**, which does not run. The operation log takes no
+  `[:unfreezable …]` mark, so the next open replays instead of rebuilding from the
+  records. One thrown by a write after its frame was appended marks the log `[:vm-error op
+  cls]`, so no replay re-runs the write the entry point rolled back.
+  [storage.md](docs/storage.md#the-operation-log),
+  [operations.md](docs/operations.md#after-a-crash).
+
+### Fix: browser
+
+- **A `/stats` load reads no held sentex and no convicted firing.** It counted and listed
+  `violations`, which fetches every held fact and rule and every convicted firing from the
+  record store, one round trip apiece on postgres. The card and the list are the filed
+  ledger, read by the new `filed-violations`, and **Scan for held facts and rules** runs
+  the `:inert-argument`, `:inert-rule` and `:forced-conclusion` entries as the `held`
+  list's job. [web.md](docs/web.md#whole-kb-lists)
+  *Migration:* none.
 
 ### Fix: performance
 
-Each entry gives the same answers sooner. *Migration:* none for every entry here. A
-perf check named in an entry bounds the growth `lein perf` measures.
+- **A settle builds each context's reader state once while nothing it reads moves.** A
+  withheld-mint release rebuilt the state, scanning every forced-monotonic declaration's
+  supporter contexts, for each belief read after each mint it wrote. The settle now keeps
+  each frame across writes that move no defeat, except, conflict, declaration, stored
+  rule, `genlCx` edge or except's or declaration's label: 40 mints beside 8,000
+  declarations release in 71 ms against 5,815 ms. A frame's declaration check probes each
+  declaration instead of building the set of every handle a stored defeat names, so a
+  write beside n defeats on `memory-columnar` no longer costs O(n).
+  [nmtms.md](docs/nmtms.md#a-nogood-placed-as-a-conclusion)
+  *Migration:* none.
 
-- **A `genl` or `genlCx` edge's settle reads what the edge can move.** The nogood
-  placement walks a moved edge's ancestor set only when the membership, negation,
-  related-types or tuple family has work, so a chain of 4,096 `genlCx` edges asserted in
-  one pass takes 3.1 s and its `recover` 0.2 s, where they took 15.3 s and 18.3 s
-  (`recover-over-a-context-chain`). A `genlCx` edge's placement pass reads the `genl`
-  edges and declarations stated below it off the postings of their functors, not every
-  fact there: 3.4 to 9.0 ms beside 65,536 facts, where it took 80 to 103 ms. A `genlCx`
-  edge to a context that stores nothing draws no argument types: a koinii agent joining a
-  channel whose agents speak `CxSpeechActs` takes under 20 ms, where it took 1.8 s
-  (`genlcx-edge-showing-an-empty-context`), and an edge from a context holding fewer postings
-  than there are rule keys tests each fact's functor instead of building the rule-key fan
-  (`genlcx-edge-to-an-empty-context-under-a-rule-fan`). A `genl` hierarchy loaded child first in one
-  `with-deferred-settle` batch settles in time linear in its edges: 4,096 edges take 1.5
-  s, where they took 46 s and grew 4x per doubling (`genl-chain-child-first-in-one-batch`).
-  A `genl` edge whose lower end no rule concludes skips the stratification walk
-  (`edge-stratification-unconcluded`), and re-asks the inherited clashes only of the
-  facts below its lower end or at the terms of its closure, where it re-asked every
-  membership below a separated end (`genl-edge-under-separated-type`,
-  `genl-edge-past-the-crossing-cap`). A `forced_decontextualized_predicate` declaration
-  arriving after its facts moves them into CxUniverse in one `edit!` batch, so a shuffled
-  starter load takes 13.1 s of CPU, where it took 25.8 s.
-  [nmtms.md](docs/nmtms.md#the-nogood-families),
-  [nmtms.md](docs/nmtms.md#the-inherited-clash-memo),
-  [exceptions.md](docs/exceptions.md#a-taxonomy-edge-closes-a-cycle-too),
-  [contexts.md](docs/contexts.md#forced_decontextualized_predicate-a-canonical-home-in-cxuniverse).
+- **A settle reads the declarations below a moved `genl` end with many specializations in
+  one pass.** For a moved type with more than 512 specializations, the argument-hold
+  refresh tested every stored declaration by one reachability walk per declared type,
+  again for each such type, and logged nothing. The refresh now reads every declaration
+  once for all such types and walks the types above the declared types once, logs
+  progress lines per moved type and per declaration, and a shutdown can stop an `assert`
+  before each of them. A `genl` write's declaration presence checks read the per-kind
+  declaration sets instead of building the union of every declaring predicate, which grew
+  with the stored declarations. [argtypes.md](docs/argtypes.md)
+  *Migration:* none.
 
-- **The placement passes walk each type once.** A placement pass's witness walks to one
-  target over one router test the depth potential alone and share the route lengths of
-  the types above their sources, where each walk tested each type it entered by its whole
-  upward closure. Walks up a braid of 128 levels cost 0.042 ms per level, where they cost
-  2.47 ms (`routed-walks-up-a-braid`); over 3,200 leaves under a nine-level graph, a
-  nogood costs 0.38 ms at 160 types per level, where it cost 6.9 ms. A settle beside
-  standing inherited clashes hands the candidate index only the member sets it read
-  again. A relabel evaluates a node's class once per rise that reaches it, where a node
-  concluded by n justifications cost n² reads: a region of 28,642 nodes relabels in 12.9
-  s, where it took 210 s. The witnesses, and so the placements, are unchanged.
-  [taxonomy.md](docs/taxonomy.md#strength-of-a-subsumption-path),
-  [nmtms.md](docs/nmtms.md).
+- **The stratification checks of one write or one settle read each stored rule once.**
+  Every `genl` mint's check read and sorted every rule its walk reached, one record read
+  per rule, so on postgres a settle re-asking the mints of waiting declarations made one
+  round trip per rule per mint. The rules' graph is now read once per write or settle and
+  shared until a rule, a re-check posting, a closed-extent mark or an exception's belief
+  moves. [exceptions.md](docs/exceptions.md#the-search)
+  *Migration:* none.
 
-- **An argument-type mint reads the term's own types and each type's watched rules
-  once.** A mint the term already holds more specifically runs no admission check, so a
-  fact beside 256 covers of its minted type takes 1.1 ms, where it took 12.1 ms, and a
-  warm load of the upper ontology takes 3.4 s against 4.8 s
-  (`withheld-mint-beside-covers`). The subsumption check reads the term's unary predicate
-  set, where it ran one `genl` test per predicate holding the term at argument 1: a
-  release of one term named by 5,000 facts over 300 declared predicates takes 468 ms,
-  where it took 3,525 ms (`mint-beside-binary-predicates`). A release asks the
-  watched-rule set's count and reads the rules for one type once: 0.30 ms per mint beside
-  12,800 `exceptWhen` rules on a mapped index, where it cost 1.30 ms
-  (`release-beside-watched-rules`). A departed membership reads its type's closure once
-  per released term, where it walked from the type once per mint drawn. [argtypes.md](docs/argtypes.md), [indexing.md](docs/indexing.md).
+- **A settle reads the separation and cover routes of a membership nogood without
+  building a held type's supertype closure.** The routes read the second type's
+  supertypes cut to the separable ones, where each placement of a queued membership built
+  the whole closure. [taxonomy.md](docs/taxonomy.md#what-the-question-is-asked-of)
+  *Migration:* none.
 
-- **A write and a preview read what the write moved, not every standing nogood.** A
-  forward-rule trigger, a literal of an interpreted functor, a write beside a stored
-  equality edge and a `with-deferred-settle` batch read the KB before the write off the
-  values the write replaced, where their reports read every standing defeat's target and
-  every placed `contradicts`' members. A `comment` and an inert term (`seeAlso`,
-  `termsRelated`, the example annotations) read as a domain predicate's literal. An empty
-  preview reads no stored `contradicts`, and a preview reads each nogood's placements
-  once, where a member shared by k nogoods cost k² record reads. A write after a rolled-back preview re-asks no
-  refused mint, constraint or lift the preview found settled, and a write beside
-  declarations waiting on an unmintable type reads none of them while no generation
-  moves: 0.2 to 0.4 ms beside 4,096 waiting declarations, where it took 2 to 3 ms
-  (`write-after-rolled-back-preview`). The operation log replays a preview's writes and
-  rollback alone. A retraction reads the handle term's own index key for the
-  target-following metas naming each removed handle: retracting two root `genl` edges
-  on the same store takes 7.2 s, where it took 208.3 s.
-  [nmtms.md](docs/nmtms.md#the-published-set), [preview.md](docs/preview.md#cost),
-  [preview.md](docs/preview.md#what-the-rollback-restores-and-what-it-does-not),
-  [exceptions.md](docs/exceptions.md#a-refused-firing-is-remembered-as-bindings),
-  [koinii.md](docs/koinii.md#speech-acts-reply-is-an-assertion).
-
-- **A recover reads the store a chunk at a time and asks each question once.** A
-  recover's settle fetches only the records of the forced-monotonic declarations, where
-  it fetched every handle's record, one round trip a handle over Postgres. A recover hands the forced
-  predicates' sentexes, the membership candidates' entries, the argument holds decided
-  again, the argument declarations above a rule's predicates and the lower ends of `genl`
-  edges to `Prefetching` a chunk ahead, and a reindex does the same for the
-  declarations `post-taxonomy-supporters!` reads, logging its progress. A recover over a store holding an unsupported or inert record asks the whole store's
-  inherited-clash questions off the index, where its settle read every region handle for
-  what it re-opens. A denial probe of a preserved claim reads the stored denials once a pass,
-  where it probed each tuple of a claim's product, and the first membership sync reads
-  the cover wholes above a type through one memo, where it walked each type's ancestor
-  set. An import of one of our dumps marks each premise once, at its own frame's
-  strength, where the premise pass rewrote every premise row it had just copied. The taxonomy's closure cache
-  holds one term per 256 bytes of maximum heap, and at least 50,000,000;
-  `caches/set-limit :taxonomy-closures` still overrides it.
-  [storage.md](docs/storage.md), [nmtms.md](docs/nmtms.md#the-inherited-clash-memo),
-  [inherit.md](docs/inherit.md#what-one-question-costs),
-  [nmtms.md](docs/nmtms.md#how-a-settle-finds-the-clashes),
-  [taxonomy.md](docs/taxonomy.md).
-
-- **A goal on a predicate with many sub-predicates reads only the members that can answer
-  it.** The fan is cut to the members whose argument-slot key sets hold every ground
-  argument of the goal, so a ground `(different A B)` under thousands of sub-predicates and
-  `genlInverse` ones reads a few of them, and a forward join over a wide fan tests only
-  those members per row (`ground-goal-under-a-wide-fan`). `tax/signed-closure` holds its walk of a fan with
-  a `genlInverse` edge for the change clock's stretch, `provers/shadowing-channels` stops
-  at the first concluding rule bucket, and a read that matches nothing builds no
-  visibility state. [contexts.md](docs/contexts.md#except-removing-visibility-down-a-context-subtree).
-
-- **An assert beside placed defeats checks disjointness at a cost that stays flat as
-  facts accumulate.** The check walked every stored defeat's target once per supporter
-  per assert; its answer is now held per ancestor set while the change clock stands. One
-  fact per predicate over a braided hierarchy of 1,000 predicates loads in 43.1 s, where
-  it took 224.7 s. A recover's tuple placement reads the `irreflexive` marks over its
-  predicates once per call, where each predicate's marks were read through its own `genl`
-  closure. [nmtms.md](docs/nmtms.md#the-nogood-families).
-
-- **A `/stats` load reads no belief.** The Contradictions and Conflicts cards are the
-  stored `contradicts` count, one index read, and the dilemma and conflict lists wait
-  behind `/stats?nogoods=1`, as the standing disjointness question waits behind
-  `?clashes=1`, where a load read each placed `contradicts` at its context.
-  [web.md](docs/web.md).
+- **`violations` fetches the held sentexes' records in chunks and shares the conviction
+  reads across one call.** Each call fetched every held fact and rule by one record read,
+  one round trip apiece on postgres, and decided each conviction with reads of its own. The
+  records are now hinted 1,000 at a time, and the reads no value or rule enters are made
+  once per call: on the starter, 3,000 held value facts read in 92 ms against 533 ms, and
+  3,000 held rules in 117 ms against 319 ms.
+  [argtypes.md](docs/argtypes.md#an-argument-that-fails-its-declared-type-is-held-inert)
+  *Migration:* none.
 
 ### Internal
 
-- **`prof/*handle-sink*` receives each handle a record fetch or a posting read answers,
-  and `padding_blindness_test` lists every step that reads standing content a write does
-  not name.** A read of the padding no row of `known-padding-reads` names fails the test.
-  [profile.md](docs/profile.md), [nmtms.md](docs/nmtms.md#where-the-scaling-arguments-hold).
+- **The shipped ontology states no exact-arity membership that a `:monotonic` metatype
+  route entails.** The upper files drop 168 `(binary_predicate P)` and 5 `(unary_predicate
+  T)` premises, and `CxTra.txt` drops 7 `(binary_predicate P)`. The engine stores each of
+  the 180 in CxUniverse under an `arityClass` justification, so every relation's length,
+  `describe`'s `:arity` and each exact-class answer in CxUniverse reads the same. `why`
+  names the membership and the edges instead of a premise, and `sync!` over a store loaded
+  from 0.28.0's files retracts the 180 premises.
+  [taxonomy.md](docs/taxonomy.md#arity) ([#116](https://github.com/vaelii/vaelii/issues/116))
 
-- **The nippy release check reads `thaw/expected-nippy-version`.** A nippy upgrade moves
-  `vaelii.impl.io.thaw/expected-nippy-version`, and the `:nippy-version-moved` and
-  `:nippy-version-unreadable` refusals carry the expected release under `:expected`.
-  [defenses.md](docs/defenses.md), [troubleshooting.md](docs/troubleshooting.md).
+- **A declaration whose type an arity statement binds to another length records
+  nothing.** The refusal record keeps no entry for it, and `recover` reads no
+  declaration to rebuild one. When the type's own bindings move and its length admits
+  one, the settle reads the stored declarations and facts naming the type and mints
+  then. [argtypes.md](docs/argtypes.md)
 
-- **A fork writes its base digests under `::base-digested`.** A mount reads the
-  digested-handle set under `::base-digested` and the old key both, so a durable fork
-  whose bookkeeping holds the set under either key reopens and is checked against its
-  base. [overlay.md](docs/overlay.md).
+- **`lein lint`'s `derived` check fails a `decide.arity` register row with no
+  `:covered-by` perf check or probe**, and a `:covered-by` name no `lein perf` check or
+  `perf-ab` probe carries. [caches.md](docs/caches.md)
 
-- **`lein lint` fails the five words that each name several mechanisms (P5), the word
-  for a context's visible set used in another sense (P6), and a top-level install into another namespace's slot
-  (E20).** [prose rules in CONTRIBUTING.md §3.10](CONTRIBUTING.md).
-  `lein lint-links` passes `--public-docs`. `handles` prints its result as
-  `#vaelii/handle-set{n handles}`.
+## 0.28.0 — 2026-10-21 — "Ill-typed facts and rules stored inert, term kinds and arity policies forced-monotonic, a `:default` `genl` that does not contrapose, parthood and the example predicates restated, `:recover? :trust` by default"
 
-- **`lein perf` re-runs every check still over its bound once after the rest, and marks
-  it.** Three checks are renamed: `verdict-published-set-write`,
-  `negation-opposed-check-denials` and `constraint-genl-edge-unmarked`, and the
-  `exceptWhen` rule-membership check is `watched-rule-membership`.
+**77 entries** — 28 Breaking, 0 Refusal, 25 Additive, 17 Fix, 7 Internal. A fact that
+fails its argument type and a rule no term can fill are stored inert in every arrival
+order, read back through `why-not`'s `:conviction` and `violations`' `:inert-argument`
+and `:inert-rule`, and `try-assert` refuses them as `:definitional-clash`. Term kinds,
+arity policies, comparators, `arg` and `exceptWhen` are forced-monotonic, a denial of a
+forced-monotonic literal is believed until the literal is stored, and a `:default` `genl`
+edge does not contrapose. `open-kb` defaults to `:recover? :trust`, the image format and
+the index layout are 16, and a load syncs only with `:sync?`. The shipped ontology
+restates parthood with `tangiblePartOf`, proper parthood and `subSituationOf`, renames
+`termOfUnit` to `natFormula` and `metal` to `metal_stuff`, merges `CxComputing` and
+`CxPerception` into `CxTra`, and writes examples as `(Quote S)`.
 
-- **`project.clj` loads its helper definitions from `project-env.clj`, and RoaringBitmap
-  is at 1.6.24.** A Docker build context or a copied checkout carries the file.
-
-- **The development browser reloads no source while a job runs.** Edits made during a
-  load, export or chain reload at the first request after the last job settles.
-  [web.md](docs/web.md).
+*Breaks:* `assert`, `check`, `try-assert`, `:arg-type`, `:arg-genl`, `:inter-arg-type`,
+`:quoted-arg-type`, `:definitional-clash`, `violations`, `:arg-variable`, `handle-of`,
+`watch`, `query`, `:arg-constraint-kind`, `bulk-assert-facts!`, `open-kb`, `recover`,
+`lein cli upgrade`, `preview`, `ask`, `kb-quality`, `genl?`, `kb-integrity`, `why-not`,
+`conflicts`, `contradictions`, `argue`, `exceptWhen`, `chain-report`, `ask?`, `prove`,
+forward chaining over a preserved antecedent, `ask-within`, `prove-within`, `resume`,
+`compare-tacticians`, `quoting_function`, `:quoting`, `state.nippy`, `index-entries`,
+`:disk-log`, `:disk-snapshot`, `vaelii.browser.catalog/load-dir`,
+`vaelii.browser.catalog/load-source`, `caches`, `set-cache-limit`, `:pinned-values`,
+`publish!`, `:koinii/compression-pinned`, `:stale-index-records`,
+`vaelii.impl.protocols/ImageStamping`, `index-stamp`, `belief-stamp`,
+`:forced-conclusion`, `:off-roster`, recover step `:rosters`, derived-state event
+`:roster`, `:unrostered-reader`, `:exempt-and-rostered`, `:unrostered-arm`,
+`:family-roster`, `profile`, `termOfUnit`, `partOf`, `subintervalOf`,
+`properSubintervalOf`, `partitionedByType`, `positiveExample`, `negativeExample`,
+`borderlineExample`, `invokesTool`, `CxComputing`, `CxPerception`, `friendOf`,
+`marriedTo`, `worksFor`, `parentOf`, `livesIn`, `metal`
 
 ## 0.27.0 — 2026-10-15 — "Arity clashes held inert and `:monotonic` class memberships stored, `predExistsAll` scoped universal-first, `:pg-snapshot` and `:recover? :trust`, `genlInverse` and `closedExtentForArg`"
 

@@ -1,21 +1,11 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.solve-context-test
-  "assumptionRules and persistent, inert solve/labeling contexts
-  (`vaelii.impl.asp.solve-context`, the `do/label` and `do/classify` imperatives).
-
-  The feature's whole claim is that a solve becomes a **persisted, inert artifact** that
-  leaves the always-true base KB untouched, so the tests assert exactly that:
-
-    * an `assumptionRule` never forward-chains — its head is a choice, not a truth;
-    * an inert fact is stored and inspectable but never IN, so it forms no nogood and
-      moves no belief — which is what lets many labelings coexist;
-    * `do/label` materializes one labeling context per optimal answer set, base belief
-      unchanged; `do/classify` gathers brave/cautious over them.
-
-  Enumeration needs an ASP backend, so the `do/label`/`do/classify` end-to-end tests are
-  guarded on `asp?`; the assumptionRule and inert-fact unit tests are not — those are the
-  representation, independent of any solver."
+  "`vaelii.impl.asp.solve-context`, `do/label` and `do/classify`: an `assumptionRule`
+  never chains, an inert fact is stored and never believed, `do/label` writes one inert
+  labeling context per optimal answer set and replaces its previous run, and `do/classify`
+  aggregates them.  The solving tests are guarded on `asp?`; the representation tests run
+  without a backend."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
             [vaelii.impl.asp.solve-context :as sc]
@@ -56,8 +46,6 @@
                                'CxUniverse))))))))
 
 (deftest an-assumption-rule-does-not-forward-chain
-  ;; The defining behaviour: a choice head is not a derived truth. The bare rule fires
-  ;; on the same fact; the assumptionRule stays dormant until a solve grounds it.
   (tu/with-neutral-kb [kb tu/fresh]
     (tu/with-terms [candidate color Item]
       (v/assert kb (list 'implies (list candidate '?c) (list color '?c 'red)) 'CxUniverse {:direction :forward})
@@ -70,8 +58,7 @@
 ;; ---- 2. inert facts: stored, inspectable, never believed ----------------
 
 (deftest an-inert-fact-is-stored-but-never-believed
-  ;; inert facts are not premises, so the retract-based neutral teardown cannot clean
-  ;; them — a store-mutating test clears instead (like the persistence tests)
+  ;; an inert fact is no premise, so the neutral teardown cannot retract it; this clears
   (tu/with-cleared-kb [kb tu/fresh]
     (tu/with-terms [p Tom CxBox]
       (let [h (v/assert-inert kb (list p Tom) CxBox)]
@@ -88,8 +75,6 @@
           (is (empty? (v/find-sentexes kb Tom))))))))
 
 (deftest an-inert-negation-forms-no-nogood
-  ;; The property that makes labelings coexist: an inert `(not X)` in a context that
-  ;; sees a believed `X` is invisible to the belief-filtered nogood scan.
   (tu/with-cleared-kb [kb tu/fresh]
     (tu/with-terms [p Tom CxBox]
       (v/assert kb (list p Tom) 'CxUniverse)                              ; believed
@@ -102,7 +87,7 @@
 ;; ---- 3. do/label: one inert labeling per optimal answer set -------------
 
 (defn- color-choices
-  "The user's worked example: pick at most one color for an individual."
+  "docs/solving.md's example: at most one color for an individual."
   [kb]
   (let [candidate (tu/tmp-pred) color (tu/tmp-pred) item (tu/tmp-ind)]
     (v/assert kb (list 'set/assumptionRule (list 'implies (list candidate '?c) (list color '?c 'red)))
@@ -136,7 +121,6 @@
             (is (= 3 (count (v/sentexes-in-context kb (:context l)))))))))))
 
 (deftest label-with-no-constraint-keeps-every-choice
-  ;; Nothing forbids the choices, so the single optimum keeps them all.
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [candidate wants Item]
@@ -156,11 +140,7 @@
         (is (= :no-choices (:reason r)))))))
 
 (deftest a-negated-choice-head-is-refused
-  ;; A choice head must be a POSITIVE literal.  A labeling persists `(head)`/`(not head)`
-  ;; and `classify`'s polarity-table reads it back by unwrapping one `not`, so a negated
-  ;; head `(not X)` would round-trip as its positive core `X` with the polarity flipped —
-  ;; classify emitting a statement about a non-head.  It is refused at grounding, before
-  ;; any world is written, and no backend is needed to reach the refusal.
+  ;; Grounding refuses the head, so the test needs no solver backend.
   (tu/with-neutral-kb [kb tu/fresh]
     (tu/with-terms [candidate paints Cand]
       (v/assert kb (list candidate Cand) 'CxUniverse)
@@ -175,9 +155,6 @@
             "and the offending ground head is named")))))
 
 (deftest grounding-honors-the-assumption-rules-exception
-  ;; ground-heads is a fourth consumer of a rule's firing beside the three chainers:
-  ;; a binding the exceptWhen holds of is not offered as a choice, the same decision
-  ;; the chainers make by refusing to fire (docs/exceptions.md).
   (tu/with-cleared-kb [kb tu/fresh]
     (tu/with-terms [candidate banned wants Item Other]
       (v/assert kb (list 'exceptWhen (list banned '?c)
@@ -198,11 +175,8 @@
             (is (= [(list wants Other 'tea)] (:true (first (:labelings r)))))))))))
 
 (deftest a-forward-rule-derives-the-fact-a-choice-grounds-on
-  ;; Grounding proves an assumptionRule's antecedent over the facts *believed* in Base.
-  ;; A forward rule's conclusion is a believed fact like any other.  So a choice whose
-  ;; body names a derived predicate stays dormant until a forward rule concludes that
-  ;; predicate: the precondition is asserted, the forward rule materializes the fact,
-  ;; and the same do/label call that grounded nothing before now grounds a labeling.
+  ;; the same do/label call grounds nothing before the forward rule concludes the
+  ;; precondition and a labeling after
   (tu/with-cleared-kb [kb tu/fresh]
     (tu/with-terms [registered candidate color Item]
       (let [plan (tu/tmp-ctx "Plan")]
@@ -232,12 +206,7 @@
                 (is (= #{#{'red} #{'blue}} worlds))))))))))
 
 (deftest grounding-proves-an-antecedent-through-a-registered-prover
-  ;; ground-heads proves an assumptionRule's antecedents over a REGISTRY leaf
-  ;; (`registry-bounds` → `provers/solve-goal`), the division `vaelii.core/query` runs — so
-  ;; a candidate that rests on a registered prover is a legal antecedent, not something the
-  ;; caller must pre-project into a stored candidate fact.  Here the antecedent `(reach ?c)`
-  ;; has no stored fact and no rule concludes it; only the registered prover answers it, and
-  ;; the choice still grounds.  (A stored-fact leaf alone left it dormant.)
+  ;; `(reach ?c)` has no stored fact and no rule; only the registered prover answers it
   (tu/with-cleared-kb [kb tu/fresh]
     (tu/with-terms [reach color Item]
       (v/add-prover kb (reify prover-types/Prover
@@ -267,9 +236,7 @@
               (is (= #{#{'red} #{'blue}} worlds)))))))))
 
 (deftest a-constraint-body-reaches-a-prover
-  ;; ground-constraint-body proves a constraint's BACKGROUND literals over the registry
-  ;; leaf too, so a hardConstraint can forbid a choice on a condition only a registered
-  ;; prover answers — here `(forbidden ?x)`, which has no stored fact and no rule.
+  ;; `(forbidden ?x)` has no stored fact and no rule; only the registered prover answers it
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [cand pick forbidden Ay Bee]
@@ -308,8 +275,6 @@
 ;; ---- 6. groundings are never stored; a re-run replaces -------------------
 
 (deftest groundings-are-never-stored
-  ;; The menu is solver working state: it comes back in the result, and nothing
-  ;; lands in the records beyond the labeling truth values themselves.
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (let [{:keys [color item]} (color-choices kb)
@@ -325,10 +290,8 @@
           (is (= 4 (v/count-with-functor kb color))))))))
 
 (deftest label-replaces-a-previous-run
-  ;; assert-inert is find-or-create and numbering restarts at 1, so without the
-  ;; replace sweep a re-run after the base moved would union two groundings' truth
-  ;; values into one context and leave surplus stale contexts for classify to sweep
-  ;; back in.
+  ;; inert writes are find-or-create and numbering restarts at 1, so without the sweep a
+  ;; re-run unions two groundings in one context
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [candidate color Item]
@@ -361,8 +324,6 @@
               (is (not (contains? (set (v/contexts kb)) 'CxReplacePlan1))))))))))
 
 (deftest classify-replaces-its-previous-classification
-  ;; A stale classification describes labelings that no longer exist; after the base
-  ;; moves and the run is re-labeled, only the fresh classification may remain.
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [candidate color Item]
@@ -389,8 +350,6 @@
                      (set (map :sentence (v/sentexes-in-context kb 'CxReclassPlanClass))))))))))))
 
 (deftest a-backendless-rerun-leaves-the-previous-run-standing
-  ;; :no-backend computed nothing, so it must not destroy the artifact it failed to
-  ;; replace — unlike :no-choices, which is a real (empty) result.
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (color-choices kb)
@@ -406,10 +365,6 @@
           (is (= 3 (count (v/sentexes-in-context kb 'CxKeepPlan1)))))))))
 
 (deftest a-user-context-matching-the-name-pattern-is-not-swept
-  ;; Ownership is recorded (the labelingOf marker), never inferred from a name: a
-  ;; user context that happens to be named like a labeling is neither read by
-  ;; classify nor cleared by a re-run — with a destructive sweep, a name pattern
-  ;; would be data loss.
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [p Tom]
@@ -429,11 +384,8 @@
                           (concat (:forced c) (:supportable c) (:excluded c))))))))))
 
 (deftest a-users-sentex-about-a-solve-context-survives-the-sweep
-  ;; The sweep takes a context's own extent (and a marked labeling's placement edge),
-  ;; never everything that *mentions* it.  A classification context has no edge of
-  ;; the solve's at all, so an edge hanging `<Into>Class` somewhere is always a
-  ;; user's; and an empty `<Into>Class` passes the believed-extent guard, which reads
-  ;; the extent and cannot see the edge.
+  ;; a classification context has no solve edge, and an empty one passes the
+  ;; believed-extent check
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [about Tom]
@@ -458,11 +410,6 @@
                 "two truth values plus the marker, freshly written")))))))
 
 (deftest a-users-genlcx-edge-off-a-labeling-context-survives-the-sweep
-  ;; The narrower half of the claim above, and the one where getting it wrong is data
-  ;; loss: the sweep takes the *one* edge that placed the labeling under this run's
-  ;; base, not every `(genlCx <labeling> _)` in the KB.  Hanging a solve's world under
-  ;; contexts of one's own is the ordinary way to read it beside other knowledge, and
-  ;; those edges are monotonic — asserted, believed, and nobody else's to retract.
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (color-choices kb)
@@ -485,12 +432,6 @@
             (is (not-any? #(= 'CxHangPlan1 (:context %)) (:labelings r)))))))))
 
 (deftest a-labeling-with-believed-content-blocks-the-rerun-rather-than-being-skipped
-  ;; The sweep declines to touch a context holding a believed sentex, which is right —
-  ;; it must never destroy knowledge.  Carrying on afterwards is not: the untouched
-  ;; context keeps the marker naming it labeling 1 of this `Into`, the new run mints
-  ;; another labeling 1 beside it, and `classify` then aggregates two groundings into
-  ;; one classification — the accretion replace-on-rerun exists to prevent.  Refusing
-  ;; is what makes "replaced, never accreted" true rather than usually true.
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [note Hello]
@@ -515,11 +456,6 @@
           (is (= 2 (:count (v/assert kb '(do/label CxUniverse CxBlockPlan) 'CxUniverse)))))))))
 
 (deftest a-labeling-that-lost-its-marker-blocks-the-rerun
-  ;; The marker is an ordinary retractable sentex and rediscovery is the only path to a
-  ;; labeling context, so a retracted marker hides that context from the sweep forever
-  ;; — while its `genlCx` edge goes on holding it under the base.  Since the placement
-  ;; edge is taken off the marked context, a lost marker leaks a believed monotonic
-  ;; edge, and one more slot on every re-run.  Blocked, the leak cannot start.
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (color-choices kb)
@@ -540,9 +476,6 @@
           (is (= 2 (:count (v/assert kb '(do/label CxUniverse CxLostPlan) 'CxUniverse)))))))))
 
 (deftest a-classification-with-believed-content-blocks-its-own-rerun
-  ;; Same rule, the other artifact: a `<Into>Class` the sweep cannot clear would take a
-  ;; second classification beside the first, and two of those in one context describe
-  ;; no set of labelings.
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [note Hello]
@@ -563,9 +496,6 @@
                 "the user's own sentex, and nothing else")))))))
 
 (deftest an-unmarked-context-named-like-the-classification-refuses-the-run
-  ;; `<Into>Class` has one fixed name, so ownership rests on its `classificationOf`
-  ;; marker.  A non-empty context of that name with no marker, believed or not, is a
-  ;; user's or predates the marker, and a run refuses rather than sweep it.
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [p Tom]
@@ -589,11 +519,7 @@
             (is (empty? (v/sentexes-in-context kb 'CxFooClass)))))))))
 
 (deftest a-do-label-run-makes-exactly-one-solve-in-every-mode
-  ;; `VAELII_ASP_TIME_LIMIT` is a per-solve budget and a solve runs on the single
-  ;; writer, so what an operation holds the writer for is the budget times the solves
-  ;; it makes (docs/asp.md tabulates the multipliers).  `do/label` is the one at 1× in
-  ;; all three modes — `:all` enumerates once, `:one` and `:sat` solve once — and this
-  ;; test checks that row of the table.
+  ;; docs/asp.md, "The time limit": `do/label`'s row, one solve in every mode
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (color-choices kb)
@@ -670,8 +596,6 @@
       (is (= 1 (count @orders)) "one content order in every arrival order"))))
 
 (deftest finding-a-solves-rules-reads-its-rules-not-the-corpus
-  ;; The count witness: finding the assumption rules visible from the base fetches one
-  ;; record per solve rule posted in the base's ancestor set, whatever else those contexts hold.
   (tu/with-cleared-kb [kb tu/fresh]
     (tu/with-terms [candidate color noise]
       (v/assert kb (list 'set/assumptionRule (list 'implies (list candidate '?c) (list color '?c 'red)))
@@ -711,7 +635,6 @@
                    (set (map :sentence (v/sentexes-in-context kb (:class-context c))))))))))))
 
 (deftest classify-marks-an-unconstrained-choice-forced
-  ;; A choice no constraint touches is kept in every labeling — a cautious consequence.
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [candidate wants Item]
@@ -739,3 +662,140 @@
     (testing "and a do/ imperative is refused inside a rule"
       (is (thrown? clojure.lang.ExceptionInfo
                    (v/assert kb (list 'implies (list 'p '?x) (list 'do/label 'A 'B)) 'CxUniverse {:direction :forward}))))))
+
+;; ---- progressive solve contexts: a 4x4 sudoku ---------------------------
+;; Each round `do/label` enumerates the worlds over the candidates the excepted
+;; assumptionRule offers, `do/classify` names the forced values, and `promote` writes
+;; them as `filled` clues into a `genlCx` child of the round, which rules more
+;; candidates out.  The loop ends when nothing is left to choose.
+
+;; the unique solution, and the five cells the puzzle leaves open
+(def ^:private solution
+  {[1 1] 1 [1 2] 2 [1 3] 3 [1 4] 4
+   [2 1] 3 [2 2] 4 [2 3] 1 [2 4] 2
+   [3 1] 2 [3 2] 1 [3 3] 4 [3 4] 3
+   [4 1] 4 [4 2] 3 [4 3] 2 [4 4] 1})
+
+(def ^:private open-cells #{[1 1] [1 2] [1 3] [2 1] [3 1]})
+
+(def ^:private all-cells (sort (keys solution)))
+
+(defn- cell-sym [[r c]] (symbol (str "C" r c)))
+(defn- val-sym  [n]     (symbol (str "V" n)))
+
+(defn- box-of [[r c]] [(quot (dec r) 2) (quot (dec c) 2)])
+
+(defn- peers?
+  "Same row, same column, or same 2×2 box."
+  [a b]
+  (and (not= a b)
+       (or (= (a 0) (b 0)) (= (a 1) (b 1)) (= (box-of a) (box-of b)))))
+
+(defn- load-sudoku
+  "The timeless structure and rules into CxSudoku; the given clues into
+  CxRound1, which sees it."
+  [kb]
+  (let [S 'CxSudoku]
+    ;; metadata first — it governs the facts and choices below
+    (v/assert kb '(symmetric peerOf) S {:strength :monotonic})
+    (v/assert kb '(functional cellValue) S {:strength :monotonic})
+    ;; the board: cells and values as typed individuals
+    (doseq [rc all-cells]
+      (v/assert kb (list 'sudoku_cell (cell-sym rc)) S {:strength :monotonic}))
+    (doseq [n (range 1 5)]
+      (v/assert kb (list 'sudoku_value (val-sym n)) S {:strength :monotonic}))
+    ;; peer geometry, one direction per unordered pair — peerOf is symmetric
+    (doseq [[i a] (map-indexed vector all-cells)
+            b     (drop (inc i) all-cells)
+            :when (peers? a b)]
+      (v/assert kb (list 'peerOf (cell-sym a) (cell-sym b)) S {:strength :monotonic}))
+    ;; a filled peer rules its value out; a filled cell rules every value out
+    (v/assert kb '(implies (and (peerOf ?c ?c2) (filled ?c2 ?v)) (ruledOut ?c ?v))
+              S {:direction :forward :strength :monotonic})
+    (v/assert kb '(implies (and (filled ?c ?v2) (sudoku_value ?v)) (ruledOut ?c ?v))
+              S {:direction :forward :strength :monotonic})
+    ;; the choice: any cell may take any value — except one already ruled out
+    (v/assert kb '(exceptWhen (ruledOut ?c ?v)
+                              (set/assumptionRule
+                               (implies (and (sudoku_cell ?c) (sudoku_value ?v))
+                                        (cellValue ?c ?v))))
+              S {:strength :monotonic})
+    ;; round 1 sees the structure and adds the clues
+    (v/assert kb '(genlCx CxRound1 CxSudoku) S {:strength :monotonic})
+    (doseq [rc all-cells :when (not (open-cells rc))]
+      (v/assert kb (list 'filled (cell-sym rc) (val-sym (solution rc)))
+                'CxRound1 {:strength :monotonic}))))
+
+(defn- promote
+  "Record newly forced cell values as real clues in `ctx`, the next round's context —
+  a genlCx child of `prev`, so the next grounding sees everything so far."
+  [kb forced ctx prev]
+  (v/assert kb (list 'genlCx ctx prev) prev {:strength :monotonic})
+  (doseq [s forced
+          :let [[_ c vv] (vec s)]]
+    (v/assert kb (list 'filled c vv) ctx {:strength :monotonic})))
+
+(deftest sudoku-solved-by-progressive-solve-contexts
+  (when asp?
+    (tu/with-cleared-kb [kb tu/fresh]
+      (load-sudoku kb)
+
+      (let [r1 (v/assert kb '(do/label CxRound1 CxRoundOnePlan) 'CxRound1)
+            c1 (v/assert kb '(do/classify CxRoundOnePlan) 'CxRound1)]
+        (testing "round 1: C11 is open three ways, the other four open cells are naked singles"
+          (is (= 3 (:count r1)))
+          (is (= #{'(cellValue C12 V2) '(cellValue C13 V3)
+                   '(cellValue C21 V3) '(cellValue C31 V2)}
+                 (set (:forced c1))))
+          (is (= #{'(cellValue C11 V1) '(cellValue C11 V2) '(cellValue C11 V3)}
+                 (set (:supportable c1))))
+          (is (empty? (:excluded c1))))
+        (testing "each world keeps the four singles plus one of C11's candidates"
+          (doseq [l (:labelings r1)]
+            (is (= 5 (count (:true l))))
+            (is (= 2 (count (:false l)))))
+          (is (= #{'V1 'V2 'V3}
+                 (set (map (fn [l]
+                             (some (fn [s] (let [[_ c vv] (vec s)]
+                                             (when (= c 'C11) vv)))
+                                   (:true l)))
+                           (:labelings r1))))))
+        (testing "the labeling contexts hang under the round that produced them"
+          (is (every? #(v/sees? kb % 'CxRound1)
+                      (map :context (:labelings r1)))))
+
+        (promote kb (:forced c1) 'CxRound2 'CxRound1)
+        (let [r2 (v/assert kb '(do/label CxRound2 CxRoundTwoPlan) 'CxRound2)
+              c2 (v/assert kb '(do/classify CxRoundTwoPlan) 'CxRound2)]
+          (testing "round 2: the promoted clues squeeze C11 to a single — one world, one forced value"
+            (is (= 1 (:count r2)))
+            (is (= ['(cellValue C11 V1)] (:forced c2)))
+            (is (empty? (:supportable c2))))
+
+          (promote kb (:forced c2) 'CxRound3 'CxRound2)
+          (testing "round 3: every cell is decided, so grounding offers nothing"
+            (let [r3 (v/assert kb '(do/label CxRound3 CxRoundThreePlan) 'CxRound3)]
+              (is (zero? (:count r3)))
+              (is (= :no-choices (:reason r3)))))
+
+          (testing "the chain of round contexts proves the unique solution"
+            (doseq [rc all-cells]
+              (let [vs (distinct (map #(get % '?v)
+                                      (v/prove kb (list 'filled (cell-sym rc) '?v)
+                                               'CxRound3)))]
+                (is (= [(val-sym (solution rc))] vs)
+                    (str "cell " rc)))))
+
+          (testing "no choice ever leaked into belief, and nothing contradicts"
+            (is (empty? (v/prove kb '(cellValue ?c ?v) 'CxRound3)))
+            (is (zero? (count (v/contradictions kb)))))
+
+          (testing "re-running a round replaces its labelings instead of accreting"
+            ;; CxRound1's up-closure is unchanged by the later rounds (they sit
+            ;; below it), so the same three worlds come back — into freshly rewritten
+            ;; contexts, each holding exactly one grounding's truth values
+            (let [r1b (v/assert kb '(do/label CxRound1 CxRoundOnePlan) 'CxRound1)]
+              (is (= 3 (:count r1b)))
+              ;; five kept + two rejected truth values + the labelingOf marker
+              (doseq [l (:labelings r1b)]
+                (is (= 8 (count (v/sentexes-in-context kb (:context l)))))))))))))

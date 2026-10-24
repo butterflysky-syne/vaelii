@@ -30,7 +30,7 @@ be a clash, even when they are the same woman — and functional roles
 | relation | scope | contract |
 |----------|-------|----------|
 | `(rewriteOf P D)` | any term | directional: `D` is **deprecated**, migrate off it |
-| `(sameAs A B)` | individuals | OWL: reflexive, symmetric, transitive, substitutive |
+| `(sameAs A B)` | individuals, by OWL's reading | OWL: reflexive, symmetric, transitive, substitutive |
 | `(equals A B)` | any terms | equality without OWL's individual restriction |
 
 All three feed **one equivalence closure**. They differ in what they say *about*
@@ -41,29 +41,36 @@ the members, not in the classes they produce:
   well — which is what vocabulary alignment on import needs.
 - `sameAs` follows OWL, which uses `sameAs` for individuals, `equivalentClass` for
   classes and `equivalentProperty` for properties. Both names stay first-class;
-  neither is deprecated; the representative is an internal detail.
-- `equals` is `sameAs` without the individuals-only restriction, kept deliberately
-  cheap — see "What is not built" below.
+  neither is deprecated; the representative is an internal detail. No check holds a
+  `sameAs` to individuals: core.txt types both arguments `thing`, so `(sameAs dog cat)`
+  is stored and merges two types.
+- `equals` states an identity between any two terms, with no individuals-only reading.
 
 Picking a canonical representative and rewriting to it is how OWL reasoners
 implement `sameAs` anyway, so one mechanism serves all three.
 
 ### Choosing the representative
 
-Order independence is non-negotiable ([nmtms.md](nmtms.md)), so the choice can
-never depend on handle ids or arrival order — handles are allocated in assertion
-order, and keying on one is how the Nixon diamond starts answering differently
-depending on which side was asserted first.
+The choice is keyed on content, never on a handle or on arrival order
+([nmtms.md](nmtms.md)), since handles are allocated in assertion order.
 
-1. If a `rewriteOf` edge in the class names a preferred term, it wins. Chains
-   compose: `rewriteOf A B` and `rewriteOf B C` make `A` the representative of all
-   three.
-2. Otherwise, and to break a tie among several preferred candidates, the
-   **lexicographically smallest symbol**. Arbitrary but content-keyed and stable,
-   the same discipline as `solve/content-key`.
+1. The candidates are the class's **preferred** terms minus its **deprecated** ones, so
+   the head of a `rewriteOf` chain wins. Chains compose: `rewriteOf A B` and `rewriteOf B
+   C` make `A` the representative of all three, and with `(rewriteOf A B)` and `(sameAs B
+   Aardvark)` the representative is `A`, though `Aardvark` sorts first.
+2. Otherwise, and to break a tie among several heads, the **lexicographically smallest
+   symbol**, the same content key as `solve/content-key`.
 
-A `rewriteOf` cycle has no representative and is rejected by `wff`, like a `genl`
-cycle.
+A **preference is per supporter**, not per edge. One edge may be supported by a `sameAs`
+and a `rewriteOf` at once, and disbelieving the `rewriteOf` withdraws the deprecation
+while the merge stands on the `sameAs`.
+
+`wff` refuses a `rewriteOf` self-edge, `(rewriteOf A A)`, and an edge closing a cycle over
+the active preferences, found by reachability, as it refuses a `genl` cycle. `(sameAs A
+A)` is accepted, since OWL makes `sameAs` reflexive. The taxonomy's election
+(`tax/class-rep`) stays **total**, because `wff` runs above the taxonomy: a cycle falls
+back to the smallest preferred term, then to the smallest member, and the closure never
+returns nil for a term it holds.
 
 ## The unique-name assumption survives
 
@@ -94,14 +101,14 @@ blanket caveat.
 
 - **Variable arity.** `(different A B C)` asserts the arguments are pairwise
   distinct.
-- **Not assertible.** It is answered by a prover and never stored. Asserting it is
-  rejected. (An assertible `different` would be OWL's `differentFrom` — a positive
-  commitment that makes a later `sameAs` contradictory. Deliberately not built.)
+- **Not assertible.** A prover answers it and nothing stores it, and an assert of it is
+  refused ([defenses.md](defenses.md#there-is-no-assertible-differentfrom)).
 - **Ground only.** The prover is inapplicable unless every argument is bound.
   `(different ?x Y)` would enumerate every term in the KB that is not `Y`, so it is
   refused rather than answered explosively.
 - **Not canonicalized.** No chain merging, no clique merging, no subsumption
-  elimination, no argument sorting.
+  elimination, no argument sorting
+  ([defenses.md](defenses.md#different-is-not-chain-merged-or-clique-merged)).
 - **At least two arguments.** Fewer is inapplicable, matching the evaluable
   provers. `(different A)` asserts nothing and `(different)` is meaningless.
 
@@ -109,33 +116,22 @@ Two contract details the closure must settle, because `different` reads them:
 
 - **A term the closure has never seen is its own singleton class.** So
   `same-class?` is reflexive everywhere, and an unmerged symbol is different from
-  every other unmerged symbol. (The prover short-circuits `(different A A)` before
-  consulting the closure, so it stays correct either way — but the closure should
-  not leave the question open.)
-- **The closure holds symbols, not compound terms.** Equality *between* compounds
-  is the equational-theory case deliberated away below, so `sameAs` / `equals` /
-  `rewriteOf` take symbols and `wff` rejects a compound argument. `different`,
+  every other unmerged symbol. The prover answers `(different A A)` false before it
+  reads the closure.
+- **The closure holds symbols, not compound terms.** `wff` refuses a compound argument
+  to all three relations, except a `rewriteOf` NAT declaration ([nat.md](nat.md)) and a
+  schematic `equals` ([equational.md](equational.md)) (`wff/equality-problems`). `different`,
   though, may compare ground compounds: it normalizes each argument by replacing
   its symbols with their representatives and compares the results, which is
   congruence-consistent and needs no theory.
 
-That last point deserves its reason, because the obvious analogy is wrong.
-`lessThan` merges chains because it is **transitive**: `a<b` and `b<c` give `a<b<c`
-for free. `different` is **not** transitive — `A≠B` and `B≠C` say nothing about `A`
-and `C` — so chain-merging it would manufacture a claim nobody made. The only
-sound merge would be a *clique* (every pair present), which is more machinery than
-the feature is worth. And since `different` is never stored, there is nothing to
-canonicalize *for*: canonical form exists to make logically identical knowledge
-store once, and this stores never.
-
 Because it consumes bindings rather than producing them, `different` is a
 **deferred literal**, the same class as `lessThan` / `greaterThan` / `evaluate`.
-`sentex/canonicalize-rule` holds that whole class back in the author's order — `held?`
-there asks the public `sentex/deferred-literal?` — because their position is operational
-rather than logical. (`sentex/cmp-blind` is the total order the *generators* are sorted
-by, and never sees them. Blind, because a comparator that read variable names would let
-the author's choice of `?x` over `?a` decide antecedent order, and two spellings of one
-rule would canonicalize apart.)
+`sentex/canonicalize-rule` keeps that class in the author's order
+(`sentex/deferred-literal?`), because a deferred literal's position is operational
+rather than logical. The generators are sorted by `sentex/cmp-blind`, which never sees a
+deferred literal and ignores variable names, so two spellings of one rule that differ in
+`?x` against `?a` canonicalize together.
 
 ## Answering an equation
 
@@ -193,20 +189,14 @@ Four parts, all reusing machinery that already exists:
 2. **Supersede the original.** The stale spelling stays stored but is not believed
    and does not match. Handles that callers already hold stay valid.
 
-   This needs **new TMS state**. `exceptWhen`'s `:blocked` is a set of
-   *justification* ids read by `valid?`, but a directly asserted
-   `(bornIn Dep Chicago)` is a **premise** with no justification at all, and
-   `relabel` holds a premise IN unconditionally. So superseding a premise needs a
-   force-OUT set over *datums*, carrying its own reason so `why-not` can tell a
-   superseded datum from one no justification supports.
-
-   It also deliberately reintroduces the stored-but-not-believed state that
-   [`exceptWhen`](exceptions.md) refuses, and the difference is in what is at stake
-   either side of it. An excepted conclusion is the *engine's* own derivation, so
-   deleting it loses nothing that cannot be recomputed. A superseded spelling is
-   the **caller's premise**. The KB may not delete what someone asserted merely
-   because it learned two names denote one thing — retracting the equality has to
-   give it back.
+   Supersession is TMS state of its own, `jtms`'s `:superseded` map, `datum ->
+   {old-term representative}`. `exceptWhen`'s `:blocked` holds *justification* ids, and
+   a directly asserted `(bornIn Dep Chicago)` is a **premise** with no justification,
+   which `relabel` holds IN unconditionally. `:superseded` subtracts *reported* belief
+   (`in?`, `in-datums`) and leaves the label alone
+   ([defenses.md](defenses.md#a-supersession-is-not-a-forced-out)), and `why-not`
+   reports the datum `:superseded`. It is read from the sentex's own context, the
+   context migration writes it in.
 
    **A superseded spelling does not fire a forward rule**, and it is the one
    unbelieved datum that does not — a defeated default still fires, because a defeat is
@@ -235,7 +225,8 @@ Four parts, all reusing machinery that already exists:
    same membership
    (`argtype_entail_test/a-mint-over-a-retired-spelling-is-believed-at-the-elected-name-in-every-order`).
 3. **Rewrite goals.** A query naming a non-representative is rewritten before
-   lookup, since its own sentexes are no longer believed.
+   lookup, since its own sentexes are no longer believed. `handle-of` and the `lookup`
+   levels do not rewrite, since they answer about storage.
 4. **Queue the re-check.** Steps 2 and 3 are exactly what a closed-world condition —
    an `exceptWhen` query, an `unknown`, an aggregate's census — cannot see coming. A
    retired spelling leaves no fact arriving or departing on its predicate, and a
@@ -406,43 +397,24 @@ spelling a context reads a fact under does not depend on whether the context edg
 or inferred.
 
 The removal side needs no twin of this: dropping an edge narrows what a reader sees, and
-a twin names the equality edges it was elected over, so the ordinary dependency-directed
-sweep collects one whose merge the reader can no longer see and `refresh-supersessions`
-hands the spelling back.
+a twin names, for each term its reader's election displaces, every equality on one path
+from the term to its representative (`tax/scoped-path-supporters`), one justification per
+choice of supporter along the path, and the `genlCx` edges its reader sees the original
+and each equality through (`special/migrate-into`). The ordinary dependency-directed
+sweep collects one whose merge, link or original the reader can no longer see,
+`rederive-descended` restates it again over a surviving path, and
+`refresh-supersessions` hands the spelling back.
 
 **A late `rewriteOf` can move a representative, and that means re-migration.**
 `(sameAs A B)` elects a representative lexicographically; a later `(rewriteOf B A)`
-names `B` preferred and re-elects it. Everything already migrated to `A` has to
-migrate again. The machinery handles it — invalidate the old twins, create new ones
-— but it is the expensive case and it must be recognised rather than discovered.
-
-### Choosing among class members
-
-The candidate set for the representative is **preferred minus deprecated**, not all
-members. Given `(rewriteOf A B)` and `(sameAs B Aardvark)`, the representative is
-`A` — the head of the `rewriteOf` chain — even though `Aardvark` is
-lexicographically smaller. Chain composition is what makes `rewriteOf` mean
-anything; a plain member joining the class must not displace the head.
-
-The taxonomy's representative function stays **total**. A `rewriteOf` cycle has no
-head, and `wff` rejects one, but `wff` runs above the taxonomy and the closure must
-still answer — so it falls back to lexicographic order over the preferred set, then
-over all members. The closure never returns nil for a term it holds.
-
-A **preference is per-supporter**, not per-edge. One edge may be supported by a
-`sameAs` and a `rewriteOf` at once; disbelieving the `rewriteOf` withdraws the
-deprecation while the merge survives on the `sameAs`.
-
-`(sameAs A A)` is accepted — OWL makes `sameAs` reflexive. `(rewriteOf A A)` is
-rejected: it is the degenerate cycle, it deprecates a term in favour of itself, and
-it is what a sloppy import pipeline actually emits.
+names `B` preferred and re-elects it. Everything already migrated to `A` migrates
+again: `migrate-class` walks the whole class an edge moved, so a re-election
+re-migrates with no separate code path.
 
 ### Congruence comes free
 
 Congruence — if `a = b` then any term containing `a` equals the same term with `b`
-substituted — is normally the expensive half of equality reasoning.
-
-Here it is a side effect of the cheap implementation. The inverted term index
+substituted — has no algorithm of its own here. The inverted term index
 locates a term at **any nesting depth**, and migration rewrites it there, so
 merging performs congruence closure eagerly over all ground content. No congruence
 algorithm is written, because the index already answers the question it would ask.
@@ -490,16 +462,16 @@ holds of it unchanged: the same merge-or-nogood rule, the same four arrival dire
 same justification shape. Two differences matter. The clash the checks hand
 back carries the **position** — with the generalized mark a predicate may be constrained
 at more than one position at once, and two slots of one sentex are two different incoming
-fillers — so nothing downstream reads the filler as "argument 2" any more
-(`checks/functional-filler` is the one place that assumption is left). And the merge rests
+fillers — so the filler is read at the clash's position (`checks/functional-filler`),
+not as argument 2. And the merge rests
 on *every* declaration constraining that position, both spellings unioned
 (`checks/functional-declaration-supporters`), so a predicate carrying `(functional P)` and
 `(functionalInArg P 2)` keeps its merge when either one is retracted — the same rule two
-`(functional P)` sentexes in different contexts already follow, applied one level up.
+`(functional P)` sentexes in different contexts follow, applied one level up
+([defenses.md](defenses.md#a-functional-merge-rests-on-every-declaration-of-the-convicting-mark)).
 
-`equals` specifically, not `sameAs`: a functional value need not be an individual —
-a birth year, a measurement — and `sameAs` is individuals-only by OWL. `equals` is
-the only one of the three that always type-checks here.
+The merge derives `equals`, not `sameAs`, because a functional value need not be an
+individual.
 
 The fluent lane has its own counterpart. A value carried under `initiates` never becomes a
 bare literal, so this closure never sees it; `(functional_at_instant F)` states that `F` has
@@ -509,19 +481,18 @@ two symbols, a contradiction otherwise. It reports rather than merges: whether t
 overlap at an instant follows from the clipping closure and is read on demand, the shape
 `specified-violations` uses. See [time.md](time.md).
 
-Making it a real justification rather than a side effect is what makes it safe. The
-risk of auto-inference is that one wrong `functional` declaration silently merges
-two real individuals across the whole KB — so the merge is justified, `why` names
-exactly which declaration and which two facts caused it, and retracting any one of
-them runs the existing sweep and un-merges. An opaque merge would be dangerous; an
-inspectable, reversible one is knowledge.
+The merge is a justified derivation: `why` names the declaration and the two facts, and
+retracting any one of them un-merges. One wrong `functional` declaration merges two
+individuals across the KB, and the justification makes that merge inspectable and
+reversible.
 
 **The mark is read up the predicate hierarchy**, since two `fatherOf` mothers for one
 child are two `parentOf` values and `(functional parentOf)` is what says a child has one
 ([taxonomy.md](taxonomy.md)). The slot is probed at the marked predicate — `(parentOf a
 ?v)` finds a filler written either way through the matcher's fan, where `(fatherOf a ?v)`
 would miss one written at the general spelling — and the merge then rests on the
-subsumption as well, so the `genl` edge handles join the declaration in the antecedents.
+subsumption as well, so the `genl` edges **both** members descended through join the
+declarations of the mark that convicted the pair (`via`) in the antecedents.
 Retracting the edge un-merges, exactly as retracting the declaration does; without them
 two names would stay merged on a declaration that no longer reaches either of them.
 
@@ -539,28 +510,21 @@ stands at or above `super`, and
 context edge changes no predicate and no fact, only which contexts see one another — so
 what it sweeps is the **ancestor set the edge widens**: every context the readers of `sub` can
 see once the edge integrates, which is the same reachability `migrate-under-context-edge`
-computes for the same trigger. (An earlier draft swept every marked predicate's whole
-extent KB-wide, capped only by the budget; that made an edge between two small unrelated
-contexts pay for a predicate it had nothing to do with.) It keeps the stored facts there
-whose functor a mark could reach, up to `tax/*exposure-instance-budget*` candidates
-(below), and hands each to
-`special/derive-functional-equalities` **at its own storage context**; that function no
-longer answers only for the context it is handed, it now sweeps every reader below that
-context too (`context-down`), which is what reaches the joining context this edge
-connected without this arm computing reachability of its own. Two blind sibling contexts
+computes for the same trigger. It keeps the stored facts there whose functor a mark
+could reach, up to `tax/*exposure-instance-budget*` candidates (below), and hands each
+to `special/derive-functional-equalities` **at its own storage context**, which sweeps
+every reader below that context (`context-down`), the joining context the edge connected
+among them. Two blind sibling contexts
 each holding one of two clashing fillers derive nothing until *both* of the edges wiring
 some context under both of them have landed — visibility is the union of every edge that
-grants it, not the effect of the latest one alone. Whether two spellings denote one woman
-is a question about the KB's content, and an answer that depended on whether the schema,
-an edge or the facts were loaded first would be an answer about the file. Written the
+grants it, not the effect of the latest one alone. Written the
 ordinary way — declaration first — the sweep finds an empty extent and costs one root
 read.
 
 **This one direction is budgeted, unlike the other three.** A `genl` edge's subtree is
-bounded by real vocabulary growth — the edge names the predicate whose subtree is swept —
+bounded by the vocabulary under the predicate the edge names —
 where a `genlCx` edge names two *contexts*, and the ancestor set they open can be large even when
-the edge itself is small: a context wired under a genuinely huge store makes all of it
-newly relevant. `equate-under-context-edge` caps its candidates at
+the edge itself is small: a context wired under a large store exposes all of it. `equate-under-context-edge` caps its candidates at
 `tax/*exposure-instance-budget*` (shared with `vaelii.impl.settle`'s own bounded sweeps,
 so one dial governs every cross-context sweep in the KB) and, past it, files a
 `:context-edge-exposure-truncated` violation — never silently. Unlike a cut sweep in
@@ -568,19 +532,16 @@ so one dial governs every cross-context sweep in the KB) and, past it, files a
 prevents has no second chance: nothing re-triggers on a `genlCx` edge that already
 finished landing, so the pairs past the cut stay unmerged for good, this edge.
 
-**All three of these fire for an edge nobody asserted.** A `genlCx` edge reaches the
-store by three entry points — asserted (`assert-entry/assert-one`), concluded by a rule
+**All three run for an edge nobody asserted.** A `genlCx` edge reaches the store by
+three entry points: asserted (`assert-entry/assert-one`), concluded by a rule
 (`chain/place-fact-conclusion`), or **computed** by the structural producer off a
-`contextArgSubrelation` declaration ([context-nat.md](context-nat.md)) — and the first
-two spelled `migrate-under-context-edge`, `equate-under-context-edge` and
-`antisym-equate-under-context-edge` out side by side while the third called none of
-them. A calendar month→year edge therefore reached the taxonomy and the exception
-re-checks and stopped: two fillers of one functional slot, made jointly visible for the
-first time by that edge, stayed unmerged and unreported, and whether the KB merged them
-came down to whether the year's fact was written before January existed (vaelii#56).
-The settle's drain runs the sweeps for every `genlCx` move, whichever path stored the edge
-([contexts.md](contexts.md#one-context-move)), and the producer settles once it has built
-an edge.
+`contextArgSubrelation` declaration ([context-nat.md](context-nat.md)). The settle's
+drain runs `migrate-under-context-edge`, `equate-under-context-edge` and
+`antisym-equate-under-context-edge` for every `genlCx` move, whichever entry point stored
+the edge ([contexts.md](contexts.md#one-context-move)), and the producer settles once it
+has built an edge. A calendar month→year edge therefore merges two fillers of one
+functional slot it makes jointly visible, whether the year's fact was written before or
+after the month existed.
 
 **Past that cap, and only past it, order independence is a residual rather than a
 guarantee.** The ancestor set is enumerated in handle order — assertion order — and the budget
@@ -593,10 +554,9 @@ every cut, so no reader has to infer completeness from silence. Below the cap, w
 every KB that has not put more than `*exposure-instance-budget*` marked facts in one
 ancestor set, the sweep is exact and the invariant holds outright.
 
-The four directions ask one question from four sides, so none can drift about what a
-functional slot licenses: the equality names both facts and the declaration whichever way
-round it was reached, and retracting any of the direct antecedents un-merges. Re-deriving
-is idempotent — `same-class?` skips a pair the closure already holds and
+The four directions hand each pair to one derivation, so the equality names both facts
+and the declaration whichever way round it was reached, and retracting any of the direct
+antecedents un-merges. Re-deriving is idempotent — `same-class?` skips a pair the closure already holds and
 `has-justification?` skips an argument it already has — so a slot filled by three values
 collapses to one class rather than to the first pair walked. The sweep reads what is
 **stored** rather than what is believed, for `entail-existing`'s reason: an equality
@@ -642,12 +602,11 @@ content order and each posting in the index's order. An edge under no such mark 
 nothing, which `constraint-genl-edge-unmarked` holds flat
 (`order_independence_test/a-revived-genl-edge-merges-up-to-the-budget-and-names-the-cut`).
 
-One antecedent the fourth direction's equality does **not** carry: the `genlCx` edge that
-made the pair jointly visible is not among the facts `why` names, so retracting that edge
-later does not by itself un-merge — a limitation the other three directions already share
-whenever a fact or the declaration arrives last under a `genlCx` edge asserted earlier,
-since none of their antecedent-building reaches for a context edge either. Closing it is a
-`genlCx`-aware `edge-support`, not a change owed by any one of the four directions.
+The equality also names the `genlCx` edges its reader sees each fact and the declaration
+through, one path each (`checks/visibility-support`), in all four directions. Retracting
+the edge that made the pair jointly visible un-merges, and a second path draws the merge
+again (`special/rederive-descended`;
+`order_independence_test/a-merge-seen-through-a-context-edge-given-back-is-the-merge-that-never-came`).
 
 ## Storage
 
@@ -659,14 +618,17 @@ each supporter through the read walk ([nmtms.md](nmtms.md#a-read-with-no-reader)
 
 It is an **equivalence**, not a partial order, so it is stored as a partition —
 member → class, class → members and representative — rather than as up/down
-closures. Insertion is a union and cheap. Deletion can **split** a class, which
+closures. Insertion is a union that re-keys every member of the joined class, so growing
+one class to n members costs Θ(n²). Deletion can **split** a class, which
 union-find cannot undo, so a retraction rebuilds the affected class from its
 remaining believed edges — the same shape as the ancestor-set-local `genl` deletion, and
 bounded by the class rather than the KB.
 
 `closures`-style from-scratch recomputation survives as the oracle, and the
 incremental result is checked against it after every edit, as
-[taxonomy.md](taxonomy.md) describes for `genl`.
+[taxonomy.md](taxonomy.md) describes for `genl`. `recover` rebuilds the partition from
+the stored `rewriteOf` / `sameAs` / `equals` sentexes and recomputes supersession from
+it.
 
 ## Public surface
 
@@ -697,7 +659,9 @@ displaced it.
   stored does not depend on which member the clash had defeated. A nogood placed over
   the originals before the merge keeps its placement, since the families detect over
   the network's IN label, and the reports leave out its `contradicts`, which names a
-  superseded member ([nmtms.md](nmtms.md#a-nogood-placed-as-a-conclusion)).
+  superseded member ([nmtms.md](nmtms.md#a-nogood-placed-as-a-conclusion)). An
+  inadmissible twin (an argument conviction, a malformed sentence) is dropped, its
+  original stays believed, and `violations` reports the drop.
 - **Stratification.** `different` in a rule antecedent is a **negative
   dependency**, so it joins the rule dependency graph beside `exceptWhen`
   ([exceptions.md](exceptions.md)). A rule concluding an equality from a
@@ -705,15 +669,17 @@ displaced it.
   belief would depend on arrival order. The same refusal covers a rule concluding
   `indeterminate_term` or a `genl` into it, since the unique-name assumption is
   suspended for a member and the guard is withdrawn the same way
-  ([predall.md](predall.md)).
+  ([predall.md](predall.md)). The negative edge runs to the three equality relations.
+  `checks/negative-edge-rules` reads the re-check index beside the antecedent index, so
+  a stored `different` rule keeps a `genl` edge's stratification walk on, and a cycle a
+  later taxonomy edge closes beneath it is refused.
 - **A rule concluding one of the three relations merges.** A rule-concluded
   `(sameAs A B)` reaches `special/integrate-equality-sentex` — the same arm the table
   runs for an asserted one — so the closure learns the edge, migration restates every
   sentex it displaces, the retired spelling stops being believed, and a migration the
-  integrity checks refuse is filed as a violation. That has to hold, because
-  `rebuild-taxonomy` replays every stored `rewriteOf` / `sameAs` / `equals`: a
-  derivation path that skipped the merge would leave a running KB and its own restart
-  disagreeing about what the KB entails, silently and in both directions.
+  integrity checks refuse is filed as a violation. `rebuild-taxonomy` replays every
+  stored `rewriteOf` / `sameAs` / `equals`, so a derivation path that skipped the merge
+  would leave a running KB and its own restart disagreeing about what the KB entails.
 
   It is reached **by name rather than by the `:derived?` flag** `genl` carries, and the
   reason is the return value: `integrate-transitive` discards what an arm hands back,
@@ -722,76 +688,64 @@ displaced it.
   justification**, since migration justifies each twin by the equality edges it believes
   and a node nothing supports yet merges nothing.
 
-  So the migration writes from inside the join that concluded the equality, and two
-  things make that safe rather than merely tolerable. The twins go **back on the
-  agenda**, like every other new datum `place-conclusion` returns — and they must,
-  because the retired spelling stops matching the moment the supersession lands, so a
-  rule that had not yet reached the original would otherwise fire on neither spelling.
-  And the arms migration runs re-enter neither `assert` nor `chain`: they add cache
-  entries, justifications and re-check queue items (`special/integrate-twin`). The
-  engine's own `derive-functional-equalities` concludes a merge from this same place, so
-  the cost is one the derivation path carries anyway.
+  The migration writes from inside the join that concluded the equality, under two
+  conditions. The twins go **back on the agenda**, like every other new datum
+  `place-conclusion` returns, because the retired spelling stops matching the moment the
+  supersession lands, and a rule that had not yet reached the original would otherwise
+  fire on neither spelling. The arms migration runs re-enter neither `assert` nor
+  `chain`: they add cache entries, justifications and re-check queue items
+  (`special/integrate-twin`). `derive-functional-equalities` concludes a merge from the
+  same place.
+- **A rule naming a retired spelling is restated.** A merge that displaces a symbol a
+  rule mentions migrates the rule, an individual constant as much as a predicate or a
+  type (`kb/rewritable-sentex?`; "Merging predicates and types" has the mechanism). The
+  twin names the representative and fires on the facts restated under it, and the
+  original is superseded where the merge is visible
+  (`equality_test/a-rule-naming-a-retired-spelling-fires-under-the-representative-in-every-order`).
 - **Symmetric predicates.** Argument sorting for a symmetric predicate is done at
   canonicalization time against the *stored* symbols. A later merge changes what
   the sorted order should be, so migration must re-canonicalize rather than
   substitute textually.
 
-- **Deferred literals are evaluated in a forward join** — `different` included.
-  Being deferred is about *ordering*, and ordering is not evaluation. A forward join
-  that matched every antecedent against the index would look a `different` (or
-  `lessThan`, or `evaluate`) antecedent up as a fact nobody stores, find nothing, and
+- **Deferred literals are evaluated in a forward join, and `different` at the
+  placement.** Being deferred is about *ordering*, and ordering is not evaluation. A
+  forward join that matched every antecedent against the index would look a `lessThan`
+  (or `evaluate`) antecedent up as a fact nobody stores, find nothing, and
   kill the join; `chain/join-antecedent` instead sends a deferred antecedent to
   `provers/solve-goal`, the same registry the backward chainers discharge it through.
-  The two ask at **different contexts**, though, and `different` is one of the two
-  deferred literals that notices: the forward join asks at the wildcard `'?ctx`, so it
-  reads the whole equality partition, where a backward search reads the partition its
-  goal's context sees. See [inference.md](inference.md) for the pair and for what the
-  justification records.
+  The two ask at **different contexts**, though: the forward join asks at the wildcard
+  `'?ctx`, which reads the whole equality partition, where a backward search reads the
+  partition its goal's context sees. So the forward join withholds a `different`
+  antecedent (`chain/join-order`) and decides it at the placement: a firing whose
+  `different` fails in the conclusion's context is refused and recorded
+  (`chain/refusal-reason`, `:naf`), and the re-check re-decides it when a merge arrives
+  or leaves. A reader below the placement that sees a merge joining the two arguments
+  reads a guard defeat of the conclusion, as an `unknown` that holds there does
+  ([naf.md](naf.md)). The defeat rests on the supporters of one path joining them at
+  that reader, or on the membership making an argument an indeterminate term, and on
+  the `genlCx` edges the reader sees them through (`chain/different-guard-placements`),
+  so retracting one releases the conclusion there
+  (`equality_test/a-merge-below-the-placement-defeats-a-different-guarded-firing-there-in-every-order`).
+  See [inference.md](inference.md) for the pair and for what the justification records.
 
 ## What is not built
 
-**Symbolic equational reasoning is built — as oriented term rewriting.** A
-schematic `(equals L R)` whose sides carry variables —
-`(equals (fatherOf (fatherOf ?x)) (grandfather_of ?x))` — is **oriented by a
-reduction order** (KBO with unit weights) into a terminating rewrite `L → R`, cached
-in the taxonomy's rewrite-rule set (belief-following like the partition).
-`rewrite-term` normalizes both stored terms and query goals to one normal form, and
-migration justifies each rewritten twin by `[original, equation]`, so retracting the
-equation collects the rewrites and revives the originals — the same discipline
-ground congruence has. Orientation is content-derived (the bigger side by term size
-shrinks, under the variable condition), so it is order-independent and rewriting
-always terminates. See [equational.md](equational.md) for the full mechanism.
+A schematic equation with variables is oriented by the Knuth-Bendix order into a rewrite
+rule that normalizes stored terms and goals alike ([equational.md](equational.md)). A
+compound equality over **reifiable NATs**, `(equals (MotherOf A) (MotherOf B))`, needs
+nothing more: each side reifies to its constant before it reaches the closure
+([nat.md](nat.md)). These are not built:
 
-Compound equality over **reifiable NATs** — `(equals (MotherOf A) (MotherOf B))`,
-*A and B share a mother* — needs nothing new: each side reifies to its constant
-before it reaches the closure ([nat.md](nat.md)), reducing to an ordinary symbol
-merge that the partition + migration already handle.
-
-Orientation is the **full Knuth-Bendix order** (`rewrite/kbo>`): unit weights decide
-unequal sizes, and an equal-size pair is oriented by a fixed symbol precedence, so
-`(f (g ?x)) = (g (f ?x))` orients too. Only a **permutative** equation —
-`(rel ?x ?y) = (rel ?y ?x)`, which no term order can orient — is refused; that needs
-AC-rewriting, a separate mechanism. Normalization reaches all four query paths:
-`sentexes-matching`, `ask`, `prove`, and `query` all rewrite the top goal — the last two
-through `quasiquote/prepare-goal-for-read`, which is what keeps a goal naming a merged spelling
-from being answered by `ask` and silently missed by `prove`. `different` and a positive
-equation are exempt, since their arguments must stay un-rewritten to read class
-membership.
-
-The **open-goal / search** half stays unbuilt. No **E-unification or
-paramodulation** — proving `(equals ?x ?y)` by searching rewrites of a goal on
-demand — which is non-terminating without careful control; the oriented path covers
-the term-definition case that motivates it. No **Knuth-Bendix completion** — a
-non-confluent rule set is *detected and reported* (a `:non-confluent` violation when
-two equations disagree about a shared term) but not made confluent; the normal form
-stays deterministic and `match` stays the arbiter, so a rewrite is never *wrong*, only
-sometimes missed (see [equational.md](equational.md), "Confluence"). And equality over
-**structural NAT / evaluated** functions is the compute provers' job (`sameQuantity`,
-`evaluate`), never the closure's.
-
-**`differentFrom`.** See above: `different` is not assertible, so there is no way
-to positively commit to two things being distinct. UNA covers the default case,
-which is the common one.
+- **E-unification and paramodulation**: proving `(equals ?x ?y)` by searching rewrites
+  of a goal on demand. A goal open on both sides returns the stated equations only
+  ("Answering an equation").
+- **Knuth-Bendix completion**: a non-confluent rule set is reported as a
+  `:non-confluent` violation and not completed ([equational.md](equational.md)).
+- **AC-rewriting**: a permutative equation, `(rel ?x ?y) = (rel ?y ?x)`, is refused.
+- **Equality over structural NAT and evaluated functions**: the compute provers
+  (`sameQuantity`, `evaluate`) answer it, not the closure.
+- **`differentFrom`**: `different` is not assertible
+  ([defenses.md](defenses.md#there-is-no-assertible-differentfrom)).
 
 ## Merging predicates and types
 
@@ -855,104 +809,3 @@ and a reified NAT constant ([nat.md](nat.md)) is one the engine minted — what 
 denotes is settled by its materialized result types, so retiring one into the real term
 its function's corresponding predicate names is exactly the move this check must not
 refuse.
-
-## Where the pieces are
-
-- The closure in `vaelii.impl.taxonomy` — belief-following `:support`, incremental
-  union, class-local rebuild on delete, checked against the from-scratch oracle after
-  every edit. `representative` / `same-class?` / `equiv-class` / `deprecated?` are
-  re-exported on `vaelii.core`.
-- The `different` prover: ground-only, refuses an open goal, reads the closure.
-- The equation prover, `provers/EqualityProver`: a ground `sameAs` / `equals` goal
-  compared by normal form, a symbol-bound one answered by the scoped class, read from the
-  asking context ("Answering an equation").
-- Routing in `special/integrate-sentex` / `disintegrate-sentex!`, beside `genl` and the
-  predicate metadata. `different` is refused by `wff` on the way in.
-- The **derivation** path's routing, `special/integrate-equality-sentex`, called by name
-  from `chain/place-fact-conclusion` because the arm's return value is the twins and the
-  violations and the `:derived?` walk discards it ([taxonomy.md](taxonomy.md), "What a
-  rule may conclude"). The supersessions the merge produced are applied there too, by
-  the same `refresh-supersessions` call `assert` makes before it chains: a spelling
-  *starts* being displaced when migration says so, and reaches the reconcile only as its
-  `extra`, so a merge whose entries nobody hands over displaces nothing.
-- Migration (`migrate-sentex` / `migrate-class`): re-canonicalized rather than
-  substituted, one justification per incident equality edge, and applied only where the
-  equality is *visible* by the `genlCx` up-closure — once per **reader** whose
-  election differs (`reader-contexts-for`, over `tax/meet-closure`), each twin placed in
-  the context that elected it. Runs over the whole class, so a late `rewriteOf`
-  re-electing the representative re-migrates with no separate code path.
-- The third arrival order, `special/migrate-under-context-edge`: a `genlCx` edge widens
-  which merges a context can see, so it restates the sentexes the widened ancestor set newly
-  exposes to one — both ancestor sets, enumerated from the merges through the term index, and
-  run from `assert` and from `chain/place-fact-conclusion` alike.
-- `chain/process-datum` declines to fire a rule off a **superseded** datum, which is
-  the one unbelieved datum that does not fire: a defeat is a label the conclusion
-  inherits, where a supersession is not, so a conclusion drawn off a retired spelling
-  would stand believed under a name nothing asks after.
-- Supersession as **new TMS state** — `jtms`'s `:superseded`, a `datum -> {old-term
-  representative}` map beside `blocked`. It is deliberately *not* a
-  forced-OUT inside the fixpoint: the twin is justified by the original, so forcing
-  the original out structurally would invalidate the twin and the merge would believe
-  neither spelling. What it subtracts is *reported* belief — `in?` and `in-datums`
-  read it — so the stale spelling stops matching while everything derived from it
-  stands. Recomputed from the closure each `settle`, like the other two, so a
-  retracted equality gives the caller's premise back with no un-supersede path. Read
-  from the sentex's **own** context, the way migration writes it. Because the flip moves
-  belief with no relabel behind it, the spelling coming back is a **revival the settle's
-  region cannot see**, and it is re-seeded onto the chaining agenda through a channel of
-  its own — otherwise a conclusion the twin made while the merge stood is swept with the
-  twin and never remade at the surviving spelling
-  ([nmtms.md](nmtms.md#the-other-half-a-spelling-an-un-merge-gives-back)).
-- The reader-scoped half of it, `res/without-retired`, in `matches-visible` and
-  `sentexes-matching-as-stored`: a match whose stored spelling the *asking* context has
-  retired is dropped, so a reader below a merge reports the fact once, under the name it
-  elected. It runs only when the closure is non-empty.
-- Goal rewriting in `sentexes-matching` and `ask`, with `different` and a positive
-  equation exempt (`res/goal-held-as-spelled?`). `handle-of` and the
-  `lookup` levels deliberately do not rewrite: they answer about storage, not truth.
-  Scoped by the goal's context, so a merge the asker cannot see does not rename what it
-  asked.
-- `functional` derives `(equals V1 V2)` from `[both facts, the declaration]` on the
-  assert path *and* the derivation path, rather than throwing: two values for one
-  functional first argument is a claim that they are the same value.
-- `wff` refuses a compound argument to all three relations, a `rewriteOf` cycle
-  (multi-edge, by reachability over the preference graph) and self-edge, and a
-  **cross-role** `rewriteOf` — predicate-with-type, type-with-individual. A
-  `rewriteOf` between two predicates or two types is legal and is the point of the
-  relation. `(sameAs A A)` is accepted.
-- `different` in a rule antecedent is a negative dependency in the stratification
-  graph, with its negative edge running to the three equality relations. A rule
-  concluding an equality from a `different` antecedent is refused at assert time.
-- A merge that creates a disjointness clash stores the twin and reports the clash in
-  `contradictions` or `conflicts`. An inadmissible twin (an argument conviction, a
-  malformed sentence) is dropped, its original stays believed, and the drop is reported
-  through `violations`, appended *after* `chain-all`. The ledger accumulates across runs
-  rather than resetting per run (`chain/chain-all`, [nmtms.md](nmtms.md)).
-- `recover` rebuilds the partition from the stored `rewriteOf` / `sameAs` / `equals`
-  sentexes and recomputes supersession from it.
-
-### Known gaps
-
-- **A functional clash between non-symbols still throws.** The closure is a partition
-  over symbols, so `(equals 1980 1990)` is not a sentence the KB can hold — and two
-  numbers genuinely cannot be one thing. `checks/mergeable-values?` therefore admits an
-  equality only when both values are plain symbols, and `checks/functional-problems`
-  keeps the hard `:functional` rejection otherwise. That is the line between a clash
-  that is knowledge and a clash that is an error, and it is what lets the numeric
-  functional tests stand unchanged.
-- **A `different` antecedent is a re-check condition, not only a stratification edge.**
-  `rules/rechecked?` registers the rule in the re-check index under the predicates that
-  can flip the guard, so a merge or an indeterminacy arriving after the firing withdraws
-  it and a retraction brings it back
-  ([predall.md](predall.md#a-different-guard-is-re-checked-not-supported)).
-  `checks/negative-edge-rules` reads that index and the antecedent index beside it, so
-  a stored `different` rule keeps a `genl` edge's stratification walk on, and a cycle
-  closed by a *later taxonomy edge* underneath it is refused rather than missed.
-- **An individual merge does not migrate a rule.** `rewritable-sentex?` holds a rule
-  back when the merge only touches an individual constant: rewriting it is congruence
-  over a schema rather than over ground content, and the rewritten copy would fire
-  alongside its original. A **predicate or type** merge does migrate the rule (see
-  "Merging predicates and types"), because it changes a functor the rule reasons
-  over and the original is superseded — carrying the rule's `exceptWhen` exceptions
-  (re-pointed onto the twin) and its NAF antecedents (rewritten in the sentence) with
-  it, so the twin fires guarded.

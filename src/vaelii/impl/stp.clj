@@ -674,6 +674,12 @@
   narrowing's `:sources`."
   (into (into stp-predicates endpoint-predicates) provers/unit-table-predicates))
 
+(def allen-narrowing-bindings
+  "The dynamic vars the metric narrowing of the interval algebra reads: the tolerance the
+  magnitudes are snapped to.  `vaelii.impl.interval` declares these as the narrowing's
+  `:bindings`."
+  [#'provers/*quantity-tolerance*])
+
 (defn unsatisfiable-narrowing
   "The narrowing an unsatisfiable or refused source answers over `intervals`: the pair of
   the two first under `nm/print-key` emptied both ways, `support` behind it.  An empty

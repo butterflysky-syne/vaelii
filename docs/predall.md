@@ -2,9 +2,10 @@
 
 - **Covers:** the eight `pred*` relations that quantify one argument position of a binary
   predicate and fix the other, in three semantic classes — the *Instance* pair that
-  generates a rule, the *Exists* four that derive nothing, and the *Specified* pair that
-  audits; the `indeterminate_term` determinacy category behind the audit; the identity
-  exemption that category carries; and the entry points that run the audit.
+  generates a rule, the *Exists* four that derive nothing and are audited on demand, and
+  the *Specified* pair that audits; the `indeterminate_term` determinacy category behind
+  the audit; the identity exemption that category carries; and the entry points that run
+  the audits.
 - **Not here:** the generator mechanism the *Instance* pair is built on →
   [generators.md](generators.md); the equality closure and the unique-name assumption the
   exemption is carved out of → [equality.md](equality.md); a skolem constant and how one is
@@ -22,9 +23,9 @@ while `predInstanceAll` fixes position 1 and quantifies position 2.
 
 | | fixed second argument | collection second argument |
 |---|---|---|
-| **universal first** | `predAllInstance` (generates a rule) | `predAllExists` (inert) · `predAllSpecified` (audit) |
-| **existential first** | `predExistsInstance` (inert) | `predExistsAll` (inert, universal second) |
-| **fixed first** | — | `predInstanceAll` (generates a rule) · `predInstanceExists` (inert) |
+| **universal first** | `predAllInstance` (generates a rule) | `predAllExists` (derives nothing) · `predAllSpecified` (audit) |
+| **existential first** | `predExistsInstance` (derives nothing) | `predExistsAll` (derives nothing, universal second) |
+| **fixed first** | — | `predInstanceAll` (generates a rule) · `predInstanceExists` (derives nothing) |
 | **audited first** | — | `predSpecifiedAll` (audit) |
 
 Where a cell quantifies both positions, the universal outscopes the existential.
@@ -94,6 +95,23 @@ has no collection to range a generated rule over and fails range restriction the
 alternative — a plain rule with a variable functor in its consequent — files under the
 concluding-rule catch-all and makes the query planner see a candidate rule for every
 predicate in the KB. A declaration that generates nothing has neither problem.
+
+`exists-violations` audits one declaration when a caller asks, and derives nothing:
+
+```clojure
+(v/exists-violations kb '(predAllExists owns person dog) 'CxUniverse)
+;; => {:status :audited :violations #{Bob}}   ; no believed (owns Bob y) with (dog y)
+```
+
+The violations of `predAllExists` and `predExistsAll` are the members of the universal
+collection with no believed tuple to or from a member of the filler collection. Those of
+`predExistsInstance` and `predInstanceExists` are the fixed term, when no such tuple bears
+to it or from it. A tuple to the cell's placeholder for the subject counts as a filler, and
+so does a tuple to any member of the filler collection, an `indeterminate_term` member
+included, since the declaration asks for existence and not for a determinate filler.
+`all-specified-violations` audits every visible *Exists* declaration beside the
+*Specified* ones, each keyed by its `[functor pred a b]` tuple. The cost is that of the
+*Specified* audit below, so it runs at a checkpoint and never at the write.
 
 ## Specified: an integrity audit a caller runs
 
@@ -240,9 +258,13 @@ The re-check index answers it instead — the same index `unknown`, `exceptWhen`
 and closed-extent negatives use. A rule reading `different` is registered under the
 predicates that can flip it (`rules/different-flip-predicates`: the three equality
 relations, `indeterminate_term` and `genl`), a fact arriving on one queues the rule, and
-`chain/different-blocks?` re-evaluates the guard against the firing's settled bindings.
-The firing is blocked where the guard has stopped holding and comes back when it holds
-again, so a merge, an indeterminacy declaration and their retractions all reach it:
+`chain/different-blocks?` re-evaluates the guard against the firing's settled bindings in
+the conclusion's context. The firing is blocked where the guard has stopped holding and
+comes back when it holds again. A context below the conclusion's that sees a merge or an
+indeterminacy declaration the conclusion's context does not reads a guard defeat of the
+conclusion, resting on the handles of that merge or declaration
+(`chain/different-guard-placements`). A merge, an indeterminacy declaration and their
+retractions all reach the firing:
 
 ```clojure
 (v/assert kb '(set/forwardRule (implies (and (pRel ?x ?y) (different ?x ?y)) (qRel ?x ?y))) 'CxUniverse)

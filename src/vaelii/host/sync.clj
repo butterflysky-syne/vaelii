@@ -47,6 +47,10 @@
   `sync-each!` makes the plan's changes in the same order as one `edit!` each, reporting
   each change and how many are left; it costs a settle per change and gives up the shared
   witness, and buys a sync whose progress can be read and which stops between changes.
+  It runs in two stages.  A rule the engine ships forward lands **backward** in the first,
+  beside the rest of the content, so no addition fires a new forward rule over a corpus;
+  the second turns each such rule forward, one reported change apiece, and a rule whose
+  forward chaining is expensive is then the one change the job stops on.
 
   **Write-back** is the other direction: `write-back!` edits the shipped files to state
   what a KB's exact contexts gained and lost since a `held` reading, one line per
@@ -157,6 +161,67 @@
         have (some->> h (v/sentex kb) :strength)]
     (boolean (and have (or (= have :monotonic) (not= :monotonic (:strength o)))))))
 
+(defn- backward-form
+  "`form` with its forward direction wrapper (`set/forwardRule`, `set/forwardOnlyRule`)
+  turned `set/backwardRule`, or nil when it runs no rule forward.  The strength, default
+  and solve wrappers around it are kept; an `exceptWhen` is left as it is, since its
+  records are two."
+  [form]
+  (let [w (when (seq? form) (first form))]
+    (cond
+      (#{:forward :forward-only} (sx/rule-direction-wrappers w))
+      (list 'set/backwardRule (second form))
+
+      (#{sx/strength-wrapper sx/default-rule-wrapper sx/solve-rule-wrapper} w)
+      (some->> (backward-form (second form)) (list w))
+
+      :else nil)))
+
+(defn- undirected
+  "`sentence` with its rule direction wrappers taken off, under the default and solve
+  wrappers it keeps: the record a rule lands on whichever direction states it, since the
+  direction is a field of the record (`sx/rule-direction-wrappers`)."
+  [sentence]
+  (let [w (when (seq? sentence) (first sentence))]
+    (cond
+      (sx/rule-direction-wrappers w)                             (undirected (second sentence))
+      (#{sx/default-rule-wrapper sx/solve-rule-wrapper} w)       (list w (undirected (second sentence)))
+      :else                                                      sentence)))
+
+(defn- backward?
+  "Does `sentence`, a stored rule as a file renders it, run backward alone: no direction
+  wrapper, or `set/backwardRule`?"
+  [sentence]
+  (and (seq? sentence)
+       (let [w (first sentence)]
+         (cond (= 'set/backwardRule w)                               true
+               (#{sx/default-rule-wrapper sx/solve-rule-wrapper} w) (backward? (second sentence))
+               :else                                                (= 'implies w)))))
+
+(defn- canonical-form
+  "`form` as a KB file renders the record it asserts: a `set/backwardRule` wrapper is
+  dropped where backward is what an unwrapped rule runs, so a shipped backward rule and
+  the stored one compare equal.  A generator, a rule concluding a rule, runs forward
+  unwrapped and keeps its wrapper."
+  [form]
+  (let [[s o] (text/peel-form form)
+        rule? #(and (seq? %) (or (= 'implies (first %))
+                                 (sx/rule-direction-wrappers (first %))
+                                 (= sx/default-rule-wrapper (first %))))
+        strip (fn strip [x]
+                (let [w (when (seq? x) (first x))]
+                  (cond
+                    (and (= 'set/backwardRule w) (rule? (second x))
+                         (not (rule? (last (second x)))))
+                    (second x)
+
+                    (#{sx/default-rule-wrapper sx/solve-rule-wrapper} w) (list w (strip (second x)))
+                    :else                                                x)))
+        s' (strip s)]
+    (cond (= s s')              form
+          (:strength o)         (list sx/strength-wrapper s')
+          :else                 s')))
+
 (defn plan
   "What `sync!` would change in `kb`, without changing it:
 
@@ -166,12 +231,16 @@
              ship, each naming only terms of its `vocabulary`
 
   A premise the engine ships at a higher strength is an `:add` alone: asserting it raises
-  the held one.  One it ships at a lower strength is a `:remove` and an `:add`.
+  the held one.  One it ships at a lower strength is a `:remove` and an `:add`.  A rule's
+  direction is read the same way: a rule held backward and shipped forward is an `:add`
+  alone, which raises the one record to forward in place, and one held forward and
+  shipped backward is a `:remove` and an `:add`.
 
   `shipped` defaults to a fresh `(premises)`."
   ([kb] (plan kb (premises)))
   ([kb shipped]
-   (let [exact   (set (exact-contexts))
+   (let [shipped (map #(update % :form canonical-form) shipped)
+         exact   (set (exact-contexts))
          root    sx/root-context
          ;; each layer belongs to a KB that holds some of it: the upper ontology to one
          ;; whose CxUniverse holds a premise it ships, and the closing batch, which a
@@ -193,10 +262,16 @@
          wanted  (filter #(present (:file %)) shipped)
          ;; a default premise of one record, shipped known-true: the `:add` raises it.
          ;; An exceptWhen is two records, and is restated whole.
+         forward (into #{} (keep (fn [{:keys [context form]}]
+                                   (when (backward-form form)
+                                     [context (undirected (first (text/peel-form form)))])))
+                       wanted)
          raised? (fn [{:keys [context form handles]}]
-                   (and (= 1 (count handles))
-                        (nil? (second (text/peel-form form)))
-                        (contains? ours [context (list sx/strength-wrapper form)])))]
+                   (let [[s o] (text/peel-form form)]
+                     (or (and (= 1 (count handles)) (nil? o)
+                              (contains? ours [context (list sx/strength-wrapper form)]))
+                         ;; a rule held backward and shipped forward
+                         (and (backward? s) (contains? forward [context (undirected s)])))))]
      {:add    (into []
                     (comp (remove (fn [{:keys [context form]}]
                                     (if (and (exact context) (not (edge? form)))
@@ -243,15 +318,15 @@
               remaining)))))))
 
 (defn- records
-  "The records asserting `form` lands on, each spelled without its strength: the sentence,
-  or for an `exceptWhen` the wrapper and the rule it qualifies — a rule another form
-  states too."
+  "The records asserting `form` lands on, each spelled without its strength or a rule's
+  direction: the sentence, or for an `exceptWhen` the wrapper and the rule it qualifies —
+  a rule another form states too."
   [form]
   (let [[s _] (text/peel-form form)]
     (if (and (seq? s) (= sx/except-wrapper (first s)) (= 3 (count s)))
       (let [[_ q rule] s]
-        #{(list sx/except-wrapper (first (text/peel-form q)) rule) rule})
-      #{s})))
+        #{(list sx/except-wrapper (first (text/peel-form q)) (undirected rule)) (undirected rule)})
+      #{(undirected s)})))
 
 (defn- edit-entry
   "`{:context :form}` as a `v/edit!` `:add` line."
@@ -335,41 +410,67 @@
   one batch would run for hours without a word.  The plan comes first and its size is
   reported, then `report` is called before each change as
 
-    {:done i :total n :op {:op :add|:remove :context :form}}
+    {:done i :total n :op {:op :add|:remove|:forward :context :form}}
 
   and once more with `:done n` at the end, so a reader always knows how far it has got.
   The order is `sync!`'s: the retractions an addition lands on, the additions, the other
   retractions.  An addition `edit!` refuses is set aside and retried after the rest while
   a round makes progress (`add!`), and costs no rollback of anything else.  A `report`
   that throws stops the sync between two changes, each of which has settled, so a rerun's
-  plan is what is left.  Returns what `sync!` returns."
+  plan is what is left.
+
+  **A forward rule is added backward, and turned forward last.**  Each addition that runs
+  a rule forward (`backward-form`) is asserted with `set/backwardRule` in its place, so
+  the content lands with no new rule firing over it.  Once every other change has
+  settled, each is an `:op :forward` change of its own: the shipped form asserted over
+  the backward rule, which raises the one record to forward in place.  A sync stopped
+  between the two stages leaves the rule held backward, which a rerun's plan reads as an
+  `:add` alone (`plan`), so the rerun turns it forward there.
+
+  Returns what `sync!` returns, with `:forwarded n`."
   ([kb report] (sync-each! kb (premises) report))
   ([kb ships report]
    (let [{:keys [before adds after]} (ordered (plan kb ships))
-         ops   (vec (concat (map #(assoc % :op :remove) before)
-                            (map #(assoc % :op :add) adds)
-                            (map #(assoc % :op :remove) after)))
-         n     (count ops)
-         aside (reduce (fn [aside [i {:keys [op handles] :as o}]]
-                         (report {:done i :total n :op (select-keys o [:op :context :form])})
-                         (if (= :add op)
-                           (try (v/edit! kb {:add [(edit-entry o)]})
-                                aside
-                                (catch clojure.lang.ExceptionInfo ex
-                                  (let [{:keys [rolled-back in] :as data} (ex-data ex)]
-                                    (if (and rolled-back (= :add in))
-                                      (conj aside (assoc (select-keys o [:context :form])
-                                                         :type (:type data) :message (ex-message ex)))
-                                      (throw ex)))))
-                           (do (v/edit! kb {:remove (vec (distinct handles))}) aside)))
-                       [] (map-indexed vector ops))
-         refused (if (seq aside)
-                   (add! kb (map #(select-keys % [:context :form]) aside))
-                   [])]
+         deferred (filterv #(backward-form (:form %)) adds)
+         as-added (fn [{:keys [form] :as o}] (assoc o :form (or (backward-form form) form)))
+         ops      (vec (concat (map #(assoc % :op :remove) before)
+                               (map #(as-added (assoc % :op :add)) adds)
+                               (map #(assoc % :op :remove) after)))
+         n        (+ (count ops) (count deferred))
+         set-aside (fn [aside o ex]
+                     (let [{:keys [rolled-back in] :as data} (ex-data ex)]
+                       (if (and rolled-back (= :add in))
+                         (conj aside (assoc (select-keys o [:context :form])
+                                            :type (:type data) :message (ex-message ex)))
+                         (throw ex))))
+         aside    (reduce (fn [aside [i {:keys [op handles] :as o}]]
+                            (report {:done i :total n :op (select-keys o [:op :context :form])})
+                            (if (= :add op)
+                              (try (v/edit! kb {:add [(edit-entry o)]})
+                                   aside
+                                   (catch clojure.lang.ExceptionInfo ex (set-aside aside o ex)))
+                              (do (v/edit! kb {:remove (vec (distinct handles))}) aside)))
+                          [] (map-indexed vector ops))
+         refused  (if (seq aside)
+                    (add! kb (map #(select-keys % [:context :form]) aside))
+                    [])
+         ;; a rule whose backward assert stayed refused has nothing to turn forward
+         skip     (set (map (juxt :context :form) refused))
+         stage2   (reduce (fn [acc [i {:keys [context form] :as o}]]
+                            (report {:done (+ (count ops) i) :total n
+                                     :op {:op :forward :context context :form form}})
+                            (if (skip [context (backward-form form)])
+                              acc
+                              (try (v/edit! kb {:add [(edit-entry o)]})
+                                   (update acc :forwarded inc)
+                                   (catch clojure.lang.ExceptionInfo ex
+                                     (update acc :refused set-aside o ex)))))
+                          {:forwarded 0 :refused []} (map-indexed vector deferred))]
      (report {:done n :total n})
-     {:added   (- (count adds) (count refused))
-      :removed (+ (count before) (count after))
-      :refused refused})))
+     {:added     (- (count adds) (count refused))
+      :removed   (+ (count before) (count after))
+      :forwarded (:forwarded stage2)
+      :refused   (into refused (:refused stage2))})))
 
 ;; ---- writing back ---------------------------------------------------------
 

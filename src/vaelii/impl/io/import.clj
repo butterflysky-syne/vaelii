@@ -153,39 +153,13 @@
                     {:type :truncated-dump :kind what :read n :stated stated}))))
 
 ;;; ── frames this build will not construct ──────────────────────────────────
-;;; The structural checks `sentex` runs — NAF closure, quantifier locality, the
-;;; aggregate reduction slots — are not the same question as whether the corpus is
-;;; loadable, and a dump is not a program being written.  A rule stored by an older
-;;; build, or by another engine, can be one this build's checks refuse; there is no
-;;; record to store when they do, since the check runs inside the constructor.
-;;;
-;;; The naming path settled the policy for the other entry point already: a name `assert`
-;;; would refuse is stored, counted, and reported, because a store the public entry point
-;;; disagrees with is a *fact about that store* rather than a reason to have no store.
-;;; The structural entry point gets the same treatment for the same reason, and the argument
-;;; is sharper here — one refusal aborting the load discards a finished multi-hour pass
-;;; over millions of good frames to punish a record nobody can fix from this end.
+;;; A frame the constructor refuses is skipped and counted in `:refused`, and the load
+;;; carries on (docs/naming.md, "Whose invariants: the two policies").
 
 ;;; ── what `assert` refuses and a frame carries ─────────────────────────
-;;; `assert` refuses more than the constructor does, and an import builds records without
-;;; `assert`, so each of those refusals is answered here in one of three ways.  The line
-;;; between the first two is whether the stored record would answer wrongly.
-;;;
-;;; - **A name** `assert` refuses is stored and counted in `:naming` (`nm/tally`).  The
-;;;   record means what it says under a spelling `assert` refuses, and a live KB whose
-;;;   `:naming` policy is `:warn` or `:off` stores the same record.
-;;; - **An open literal** (`checks/check-sentex-ground`), **a malformed connective
-;;;   frame** (`sx/connective-problem`), **a rule `checks/check-rule-shape` refuses** (a
-;;;   `do/` imperative, an `or` no expansion removes, a consequent variable no antecedent
-;;;   binds, a variable antecedent functor), and **a context that is a query context or
-;;;   not a symbol** are skipped and counted in `:refused`, under the `:type` `assert`
-;;;   raises.  `assert` refuses each whatever the KB's policies say, and each stored
-;;;   record answers wrongly.  The rule checks that read the KB do not run, since their
-;;;   verdict would depend on frame order (docs/naming.md says both).
-;;;   An `exceptWhen` meta-sentex is exempt from the ground check, since
-;;;   `assert-exceptWhen-meta!` stores its query in the rule's variables.
-;;; - **`(ist Ctx S)`** is stored as S in Ctx, which is what `assert` stores, so it is
-;;;   neither refused nor counted (`as-asserted`).  A malformed one is `:shape`.
+;;; A name `assert` refuses is stored and counted in `:naming`; a record that would answer
+;;; wrongly is skipped and counted in `:refused`; an `(ist Ctx S)` is stored as S in Ctx
+;;; (docs/naming.md, "Whose invariants: the two policies").
 
 (defn- as-asserted
   "The decoded frame `fm` with an `(ist Ctx S)` sentence replaced by S and its context by
@@ -213,7 +187,7 @@
     (throw (ex-info (str (pr-str context) " is not a context a sentex is stored in: a"
                          " stored context is a symbol, and not a query context")
                     {:type :shape :context context})))
-  (when-let [p (sx/connective-problem sentence)]
+  (when-let [p (or (sx/connective-problem sentence) (checks/quantity-shape-problem sentence))]
     (throw (ex-info (:message p) (dissoc p :message))))
   ;; `entry/assert-one`'s test for a rule; the shape checks run on each stored form
   ;; before the constructor, as `assert` runs them
@@ -221,7 +195,14 @@
         forms (if (and rule? (nil? (first (rules/split-exceptWhen sentence))))
                 (rules/expand-rule sentence)
                 [sentence])]
+    (let [[exc inner] (rules/split-exceptWhen sentence)]
+      (when-let [p (and exc (not (sx/sentex-handle? inner)) (rules/exceptWhen-not-a-rule exc inner))]
+        (throw (ex-info (:message p) (dissoc p :message)))))
     (when rule? (run! checks/check-rule-shape forms))
+    ;; a nil taxonomy skips the arms that read stored content, which a later frame can hold
+    (when-let [ps (and (not rule?) (seq (special/wff-problems nil sentence context)))]
+      (throw (ex-info (str "not well-formed: " (str/join "; " ps))
+                      {:type :not-well-formed :sentence sentence})))
     (mapv (fn [form]
             (let [rec (res/kb-sentex kb form context)]
               (when-not (sx/exceptWhen-meta? form)
@@ -1118,14 +1099,10 @@
   stored and `:frames` is what the stream yielded — the two differ by the refusals and by
   the further forms of the expanded frames.
 
-  It also **counts** what it does not check.  This path stores names `assert` refuses —
-  that is what a bulk path is for — but a store the public entry point disagrees with is a fact
-  about that store, and here, with each record already decoded and in hand, is the one
-  cheap moment to learn it.  `nm/tally` is counts and classes only; the spellings behind
-  them are a separate question (`vaelii.bench.survey naming`).  A sentence this build
-  will not *construct* is the same policy one entry point over: counted in `:refused`, skipped,
-  and reported — and so is a record `assert` refuses as one that would answer wrongly
-  (`storable-sentexes`)."
+  `:naming` folds `nm/tally` over the stored records, counts and classes only (the
+  spellings are `vaelii.bench.survey naming`'s).  `:refused` counts the frames this build
+  will not construct and the records `storable-sentexes` refuses (docs/naming.md, \"Whose
+  invariants: the two policies\")."
   [kb frames decode preserve? index? report-every on-progress total]
   (let [records (:records kb)
         index   (:index kb)
@@ -1581,7 +1558,8 @@
   as a reason to abandon the load.  A rule an older build stored, or another engine's,
   can be one a since-widened check refuses.  The frames `assert` refuses whose record
   would answer wrongly — an open literal, a rule whose antecedent functor is a variable, a
-  sentex in a query context — are skipped and counted here too, under the `:type` `assert`
+  malformed special-predicate declaration, a non-finite measure, an `exceptWhen` over a
+  fact, a sentex in a query context — are skipped and counted here too, under the `:type` `assert`
   raises; an `(ist Ctx S)` frame is stored as S in Ctx, as `assert` stores it (the note
   above `as-asserted`).  A rule frame `assert` would expand is stored as one record per
   form, counted in `:expanded` as `{:frames n :records n}`.  `:sentexes` and `:frames`

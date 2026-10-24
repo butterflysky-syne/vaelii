@@ -297,11 +297,11 @@
 
 (defn all-specified-violations
   "Audit every binary `predAllSpecified` and `predSpecifiedAll` declaration visible in
-  `context`, and return `{[functor pred indep] result…}` — each result carrying a
-  `:status`, either `{:status :audited :violations #{…}}` or a `{:status :gap …}`
-  diagnostic (`:missing-slot-typing`, or `:legacy-ternary-declaration` for a stored
-  pre-migration ternary sentex the bulk import path can carry past the assert-time
-  refusal)."
+  `context`, and every *Exists* declaration (`exists-violations`, keyed `[functor pred a
+  b]`), and return `{[functor pred indep] result…}` — each result carrying a `:status`,
+  either `{:status :audited :violations #{…}}` or a `{:status :gap …}` diagnostic
+  (`:missing-slot-typing`, or `:legacy-ternary-declaration` for a stored pre-migration
+  ternary sentex the bulk import path can carry past the assert-time refusal)."
   [conn context]
   (c/all-specified-violations conn context))
 
@@ -508,6 +508,16 @@
   ([conn goal context floor] (c/escalate conn goal context floor))
   ([conn goal context floor opts] (c/escalate conn goal context floor opts)))
 
+(defn exists-violations
+  "The audit result for one *Exists* declaration in `context`, `{:status :audited
+  :violations #{x…}}`: for `(predAllExists pred indep dep)` each member x of `indep` with
+  no believed `(pred x y)` whose y is a member of `dep`; for `(predExistsAll pred dep
+  indep)` each member x of `indep` with no believed `(pred y x)` whose y is a member of
+  `dep`; for `(predExistsInstance pred indep fixed)` and `(predInstanceExists pred fixed
+  dep)` the fixed term when no such tuple bears to it or from it."
+  [conn declaration context]
+  (c/exists-violations conn declaration context))
+
 (defn explain-levels
   "What every level yields for `goal`: a seq of {:level :name :count}."
   ([conn goal] (c/explain-levels conn goal))
@@ -524,6 +534,13 @@
   was written."
   [conn]
   (c/exposed-clashes conn))
+
+(defn filed-violations
+  "The filed ledger alone: the entries `violations` begins with, in its order, without the
+  `:forced-conclusion`, `:inert-argument` and `:inert-rule` entries it reads off the
+  stored firings and held sentexes."
+  [conn]
+  (c/filed-violations conn))
 
 (defn find-sentexes-all
   "Every stored sentex that contains all of `terms`."
@@ -910,8 +927,17 @@
   the taxonomy separates from its declared type (`:arg-type`, `:arg-genl`,
   `:inter-arg-type`), under either argtype reading; an `arg` / `genlArg` / `interArg`
   declaration a stored tuple breaks; a rule one of whose variables no term can fill
-  (`:arg-variable`); and an `arg` / `genlArg` / `quotedArg` declaration that would convict
-  a stored, believed rule so, which names the rule in `:clashes-with`."
+  (`:arg-variable`); an `arg` / `genlArg` / `quotedArg` declaration that would convict a
+  stored, believed rule so, which names the rule in `:clashes-with`; a fact whose length
+  breaks its relation's length binding, or a length binding, `genl` edge or `:monotonic`
+  metatype membership or edge that would break the length of stored tuples, or an `except`
+  of a binding (`:arity`); a self tuple of an `irreflexive` relation, or an `irreflexive`
+  mark over stored ones (`:irreflexive`), or the converse of a believed tuple of an
+  `anti_symmetric` one (`:anti-symmetric`), where the relation is marked or below a marked
+  one through `genl`; and a literal whose complement (`(not S)` for `S`, `S` for `(not
+  S)`) a read from `context` answers `:monotonic` through `:monotonic` edges alone
+  (`:complement`), a forced-monotonic complement at either written strength, unless the
+  literal is itself a forced-monotonic positive."
   ([conn sentence] (c/try-assert conn sentence))
   ([conn sentence context] (c/try-assert conn sentence context))
   ([conn sentence context opts] (c/try-assert conn sentence context opts)))

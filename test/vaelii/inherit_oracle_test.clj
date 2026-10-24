@@ -4,15 +4,11 @@
   "The two ways of finding the claims that bear on a preservation goal answer the same
   set.
 
-  A claim bearing on `(P a b)` is a stored sentence whose argument tuple lies in the
-  **product** of the preserved arguments' reaches.  There are two ways to intersect a
-  product with a store: enumerate the product and probe each tuple, or read the
-  predicate's extent and keep the tuples that land in the product.  `inherit`
-  (`*retrieval* :auto`) picks per goal by weighing one against the other, so on any
-  given KB only one of them runs — and a divergence would be a silently different
-  *answer*, not a crash.
+  `inherit/*retrieval*` at `:auto` picks the product or the extent per goal
+  (docs/inherit.md, \"What one question costs\"), so on any given KB only one of them
+  runs, and a divergence would be a different answer, not a crash.
 
-  So this tests them against each other directly, on randomized KBs, comparing the raw
+  This tests them against each other directly, on randomized KBs, comparing the raw
   claim set rather than the verdict: a future change to `undercut?` or `verdict` could
   hide a retrieval difference behind an unchanged yes/no, and the set is what those
   read.  The shapes are the ones the two paths could disagree on — several claims at

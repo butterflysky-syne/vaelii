@@ -21,9 +21,10 @@
     resolution's flip check reads no `except` root when the region is smaller.
   * The placement settle a `recover` closes with walks each subsumption its nogoods'
     routes climb, and each `genlCx` reach their placements see over, once per scope,
-    however many nogoods share it.  A witness walk expands a bounded number of nodes off
-    its target's down-closure, and what a placement pass holds does not grow with the
-    targets' down-closures.
+    however many nogoods share it.  A cover nogood's routes read the covers above a held
+    type off the cover table and build no closure of it.  A witness walk expands a
+    bounded number of nodes off its target's down-closure, and what a placement pass
+    holds does not grow with the targets' down-closures.
   * Nogoods placed below their ingredients over one shared subsumption read its routes
     once per pass.
   * A nogood whose subsumption is one edge, seen where its members are or the only edge
@@ -34,7 +35,9 @@
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
+            [vaelii.impl.caches :as caches]
             [vaelii.impl.chain :as chain]
+            [vaelii.impl.decide :as decide]
             [vaelii.impl.decide.membership :as membership]
             [vaelii.impl.decide.negation :as negation]
             [vaelii.impl.jtms :as jtms]
@@ -548,6 +551,28 @@
     (is (pos? n10))
     (is (= n10 n40))
     (is (= w10 w40) (str w10 " terms held over 10 fans, " w40 " over 40"))))
+
+(deftest the-cover-routes-of-a-held-type-build-no-closure-of-it
+  ;; a held type under two types of a braid of 20 levels of four types below a root, a
+  ;; cover over the root with both parts denied: the route reads the covers above the
+  ;; held type off the cover table, so no type of the braid holds a closure after the read
+  (let [t    (tax/create-taxonomy)
+        h    (atom 0)
+        add  #(tax/add-genl t %1 %2 (swap! h inc))
+        node #(symbol (str "crb_" %1 "_" %2))]
+    (dotimes [j 4] (add (node 0 j) 'crbroot))
+    (doseq [i (range 1 20) j (range 4)]
+      (add (node i j) (node (dec i) j))
+      (add (node i j) (node (dec i) (mod (inc j) 4))))
+    (add 'crbleaf (node 19 0))
+    (add 'crbleaf (node 19 1))
+    (tax/add-cover t 'crbroot '[crbpa crbpb] :covering (swap! h inc))
+    (let [routes ((deref #'membership/cover-routes) (decide/unscoped-closures t)
+                                                    '#{crbleaf} '#{crbpa crbpb})
+          held   (fn [n] (caches/lru-get (:closure-lru @t) [:genl (:gen (:genl @t)) :fwd n]))]
+      (is (= [{:keys #{[:cover '[crbroot [crbpa crbpb]] :covering]} :links '[[crbleaf crbroot]]}]
+             (vec routes)))
+      (is (not-any? held (list* 'crbleaf 'crbroot (for [i (range 20) j (range 4)] (node i j))))))))
 
 (deftest descent-placements-over-a-shared-subsumption-read-its-routes-once
   ;; CxSrdD → CxUniverse, (disjoint srd_top srd_other) and n terms each in srd_q and

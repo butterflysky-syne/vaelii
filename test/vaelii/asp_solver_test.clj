@@ -189,9 +189,8 @@
             (is (= 12 (count (:atoms r))))))))))
 
 (deftest content-key-survives-an-ambient-print-length
-  ;; the key decides which side of a tie gives way; under a REPL's *print-length*
-  ;; two sentences sharing a prefix elided to one key, and the arbitration fell
-  ;; back to arrival order — the exact dependence the key exists to remove
+  ;; under an ambient *print-length* two sentences sharing a prefix would elide to one
+  ;; key, and the order would fall back to arrival
   (let [program {:content {1 {:sentence '(likes Ann Bo Cy Dee) :context 'C}
                            2 {:sentence '(likes Ann Bo Cy Eve) :context 'C}}}]
     (binding [*print-length* 2 *print-level* 1]

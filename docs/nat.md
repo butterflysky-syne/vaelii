@@ -20,23 +20,16 @@ are supported by **reification**, and functions split by declaration into two ki
   **structural NAT** — `(QuantityFn 5 Meter)` keeps its magnitude and
   unit readable for a downstream prover; it is never minted.
 
-`QuantityFn` must **not** be reifiable — reifying it would collapse `5` and `Meter`
-into an opaque atom and lose the very structure a unit prover needs.
-
 ## The strategy: reify before the index
 
-The invasive way to support function terms is to *structurally index* nested
-compounds — change the trie key and `sentex/index-terms` so `(color (FruitFn
-AppleTree) Red)` is findable by the nested `FruitFn` occurrence. That reaches further
-into the engine than anything else here touches. Reification sidesteps all of it. A reifiable NAT is replaced by an atomic constant on
-the write path, so:
+A reifiable NAT is replaced by an atomic constant on the write path, so:
 
 - the trie key is unchanged — `(color K Red)` keys `[color K Red]`, K one token;
 - `sentex/index-terms` is unchanged — K is an ordinary symbol subterm;
 - the reified NAT autoindexes, is retrieved, and is retracted exactly like any symbol.
 
-There is **no structural indexing of unreified or open NATs**: the reifiable path needs
-none, because a reified NAT is a symbol by the time the index sees it.
+Indexing nested compounds structurally is the alternative
+([defenses.md](defenses.md#a-nat-is-reified-before-the-index-rather-than-indexed-structurally)).
 
 ## The data model — all ordinary stored facts
 
@@ -66,8 +59,8 @@ compound shape, so it is stored as an inert quoting fact, never entering the clo
 ## Which mark a function gets
 
 `reifiable_function` and `unreifiable_function` describe two mechanisms — minted into a
-constant, or left structural for a prover to compute — and the choice between them is not
-a matter of taste. The criterion is **boundedness of the application space**.
+constant, or left structural for a prover to compute. The criterion between them is
+**boundedness of the application space**.
 
 Reifying stores one opaque constant per distinct application and keeps it, so it is safe
 exactly when the applications are bounded: `(FatherFn Muffet)` is one constant per animal,
@@ -76,8 +69,8 @@ a continuous or open-ended domain is not, and takes `unreifiable_function` inste
 `(QuantityFn 5 Meter)`, `(QuantityFn 5.001 Meter)` and every magnitude between them run
 over the reals, so a constant apiece is a store nothing bounds. That is why `QuantityFn`
 and `QuantityIntervalFn` are unreifiable, and why a **measure function is never reifiable
-however atomic its value reads** — the shape is the trap, since a measure looks like a
-thing you would want a name for.
+however atomic its value reads**: reifying `(QuantityFn 5 Meter)` would also hide the
+magnitude and the unit a prover reads.
 
 Both marks classify: `(reifiable_function F)` and `(unreifiable_function F)` each say F is a
 `function`, which is what `(disjoint function predicate)` — derived from the partition
@@ -91,8 +84,8 @@ check time, and the two say the same thing about the same function.
 
 A function's kind is metadata cached in the taxonomy, so the per-sentence presence check —
 "does the KB declare any function that reifies?" — is a free **in-memory set read**
-(`nat/any-reifiable-functions?` ⇒ `seq` of the `:reifiable` props), belief-following and
-needing no mtime cache. A KB that declares none pays one set read per assert / query for
+(`nat-read/any-reifiable-functions?` ⇒ `seq` of the `:reifiable` props),
+belief-following and needing no mtime cache. A KB that declares none pays one set read per assert / query for
 the argument reify. The maintenance a minted constant owes (the orphan sweep, the
 collision merge, the structural `genlCx` producer) reads `nat/any-reified-constants?`,
 which adds one O(1) `natFormula` functor count when the set is empty, since a context
@@ -100,14 +93,18 @@ slot mints a `cx/` constant with no declaration ([context-nat.md](context-nat.md
 
 ## Write path
 
-`assert` runs `maybe-reify-nats` **first — before `expand-consequent`, WFF, and the
-constraint checks**:
+`assert` runs `maybe-reify-nats` **before `expand-consequent`, WFF and the constraint
+checks**:
 
 - every **ground, reifiable** NAT subterm `(F a…)` is replaced by its constant `K`
   (an existing one via dedup, else a fresh mint) — inner args reified first, then the
   outer NAT;
 - the walk descends into nested non-NAT literals (rule bodies, conjuncts) but leaves
-  the head predicate and every quoting-predicate argument opaque;
+  the head predicate, every quoting-predicate argument and a `modal_predicate`'s
+  proposition opaque. A stored `(believes Ann (likes Tom (FruitFn Apple)))` keeps the
+  application, and the read entry points leave it as written in a goal, so the belief
+  projection reifies it in the agent's context
+  ([belief.md](belief.md#where-the-barrier-sits-and-what-it-covers));
 - a **vector** is descended element by element, and every element of it. A vector in a
   sentence is a list of forms rather than a literal — an `exceptWhen`'s conjuncts, a
   `thereExists`'s binders — so it has no head predicate to hold opaque and no element
@@ -131,41 +128,38 @@ one declaration bind both classes of function.
 `mint-nat!` allocates the opaque `K`, asserts `(natFormula K E)`, materializes the
 result types (`(T K)` per `result`, `(genl K T)` per `genlResult`), and returns
 `K`, all at `:monotonic` strength — a reified NAT's identity and result types are structural,
-not defeasible. `assert` stores synchronously, so a second occurrence of `E` in the
-same sentence dedups against the first; a `(rewriteOf T E)` declaration short-circuits
-the mint to the real term `T`.
+not defeasible. The map is asserted with chaining off unless a `resultArg` of `F` is
+declared ([defenses.md](defenses.md#the-mints-natformula-fact-does-not-chain)). `assert`
+stores synchronously, so a second occurrence of `E` in the same sentence dedups against
+the first; a `(rewriteOf T E)` declaration short-circuits the mint to the real term `T`.
 
-`K` is **named by the content of `E`**, not a process-local gensym: `constant-for`
-hashes `E` with SHA-256, takes the first 96 bits, and encodes them base62 behind a
-one-letter scheme tag — `nat/a<17 base62>` for an object NAT, `cx/a…` for a context one
-(`nat-scheme-tag`). So the same expression reifies to the **same** constant in any
-process and after any rebuild, and the skolem digest ([skolem.md](skolem.md)) names its
-witnesses the same way and for the same order-independence reason. This pays off in two
-places: two dumps that minted the same NAT hold the same `(natFormula K E)` fact and merge
-by deduplication, and a re-mint after an orphan sweep resolves to the constant it had
-before — where a gensym would have minted a second name for one expression and left the
-collision for `merge-colliding-nats!` to reconcile. base62 rather than a shorter
-base64url because `K` stands in argument position, held to the naming convention
-(`naming/argument-problem`), and base64url's `-` and `_` are exactly the characters that
-convention forbids; the tag's leading letter keeps the name a readable token (a
-digit-leading name is not) and doubles as the version — a later hash or encoding change
-is `nat/b…`, old constants keeping their names.
+`K` is **named by the content of `E`**: `constant-for` hashes `E` with SHA-256, takes the
+first 96 bits, and encodes them base62 behind a one-letter scheme tag — `nat/a<17
+base62>` for an object NAT, `cx/a…` for a context one (`nat-scheme-tag`). So the same
+expression reifies to the **same** constant in any process and after any rebuild, as the
+skolem digest ([skolem.md](skolem.md)) names its witnesses. Two dumps that minted the same
+NAT hold the same `(natFormula K E)` fact and merge by deduplication, and a re-mint after
+an orphan sweep resolves to the constant it had before. The base62 digits keep `K` within
+the argument naming convention (`naming/argument-problem`). The leading letter keeps the
+name a readable token, since a digit-leading name is not one, and it versions the scheme:
+a later hash or encoding change is `nat/b…`, and old constants keep their names
+([defenses.md](defenses.md#a-reified-constant-is-named-by-its-content-in-base62)).
 
 ## Derivation path
 
 The forward chainer stores a rule's conclusion itself rather than through `assert`, and it
 reifies the same way. `chain/place-conclusion` replaces every ground reifiable NAT in a
-fired conclusion with its constant before it stores anything (`reify-conclusion`). A rule
-concluding `(grownIn (FruitFn ?t) ?o)`, fired on `(bears AppleTree Orchard)`, stores
-`(grownIn K Orchard)`. `K` is the constant an asserted `(tagged (FruitFn AppleTree))`
-stores too, so a join between the two sentences meets, and a goal spelled with the compound
-finds the derived fact. A generator's generated rule goes through the same pass, so a ground
+fired conclusion with its constant before it stores anything (`reify-conclusion`). A stored
+rule holds no open application of a reifiable function ([A rule or a goal that names an
+open application](#a-rule-or-a-goal-that-names-an-open-application)), so a ground
+application reaches a conclusion through a generator's generated rule, whose application
+the generator's firing binds. The generated rule goes through this pass, so a ground
 application in its antecedent is spelled with the constant the facts it matches are stored
 under.
 
 - An application that already has a term resolves to it — a `rewriteOf` target, the
   value its corresponding predicate names, or the minted constant — through
-  `nat/reify-existing`, which mints nothing.
+  `nat-read/reify-existing`, which mints nothing.
 - An application with no term is checked before it is minted. The placement's own checks
   run over the conclusion under `checks/*entry-mints?*`, which reads the application as
   the constant a mint would give it, the reading `check` uses (below). A conclusion those
@@ -191,9 +185,10 @@ under.
 
 **The derived conclusion is a use of the constant, and the bookkeeping does not rest on
 the firing.** The conclusion is justified like every other firing; the map and the result
-types are premises. The map says what the constant denotes, which does not vary by context
-or by which firing named it, so it is stored where every reader sees it and belongs to no
-one derivation. When the derived use goes — its antecedent retracted, or the settle's sweep
+types are premises. The map is one map: it says what the constant denotes, independent of
+which firing named it, so it is stored in `CxUniverse` and belongs to no one derivation.
+Which constant an expression resolves to depends on the merges the reader sees (Read path,
+below). When the derived use goes — its antecedent retracted, or the settle's sweep
 deleting what it solely supported — the removal reaches the orphan sweep through
 `integrate/*removed-sink*` like any other removal (Rename and remove, below), and the
 constant is collected once nothing but its own bookkeeping names it. An asserted use keeps
@@ -201,13 +196,11 @@ it, and a derived use keeps it after the asserted one goes. A re-derivation afte
 collection mints the same name, so derive-then-assert, assert-then-derive and a derivation
 retracted and restated all store the same sentences.
 
-**A backward proof mints nothing.** `prove` and `query` store no conclusion, so a backward
-rule concluding `(grownIn (FruitFn ?t) ?o)` binds `?f` to the compound `(FruitFn
-AppleTree)` in its answer, the way a computed term is a value in a binding map (below). The
-resolver does not unify a stored constant with an application in a rule's head, so a goal
-naming `K` is not answered by that rule — `(grownIn K ?o)` directly, or a conjunction that
-binds `?f` to `K` from a stored `(tagged K)`. A rule stored with a forward direction
-materializes the constant, and those goals then read the stored fact.
+**A backward proof mints nothing.** `prove` and `query` store no conclusion. A backward
+rule reads an application through its function's corresponding predicate, as a forward
+rule does: `(implies (bears ?t ?o) (grownIn (FruitFn ?t) ?o))` answers `(grownIn K ?o)`
+from the `(fruitOf AppleTree K)` the mint of `K` stored, and answers nothing for an
+application no constant and no value names.
 
 ## Typing an application that is never minted
 
@@ -270,7 +263,7 @@ Four things fix what that reading is and is not.
 
 **`check` reads a reifiable application as the constant `assert` would mint.** `check`
 writes nothing, so it mints nothing. An application that already has a term
-(`nat/reify-existing`) is checked as that term. One that has none is read under
+(`nat-read/reify-existing`) is checked as that term. One that has none is read under
 `checks/*entry-mints?*`, with its function's result types standing where the minted
 constant's memberships would. Under assertive argument types ([argtypes.md](argtypes.md))
 the demand then refuses only a result type the taxonomy separates from the demanded type,
@@ -293,9 +286,10 @@ A **quoting function's** argument is a mention as well. `Quote` and `Quasiquote`
 quoting functions, fixed by the engine (`sx/quoting-functors`) rather than declared, so
 no KB can add one or take one away. The reify pass does not reify a NAT nested in their
 argument: `(Quote (FruitFn Apple))` mints against the literal `(FruitFn Apple)`, not
-against that NAT's own constant, and a read resolves against the same literal. The
-argument is held opaque to an identity merge in the congruence walk too
-([equality.md](equality.md)).
+against that NAT's own constant, and a read resolves against the same literal. A
+quotation names its syntax, and reifying the nested NAT would collapse two quotations
+whose payloads' referents merge onto one mention. The argument is held opaque to an
+identity merge in the congruence walk too ([equality.md](equality.md)).
 
 `disjoint-problem` is the check that still skips a compound. Its `:opposing-handle` is
 the conflicting *membership's* handle — what `settle` weighs the pair by — and a result
@@ -306,8 +300,15 @@ one application's assertion defeat a claim about the whole function.
 
 Before matching, a query goal's ground reifiable NATs are reified to their
 **existing** constant (dedup, never mint). An unknown (never-minted) NAT resolves to
-the reserved `nat/no-match` sentinel, which can never be a real constant — so an
-unknown-NAT query returns empty without minting.
+the reserved `nat-read/no-match` sentinel, which can never be a real constant — so an
+unknown-NAT query returns empty without minting. `no-match` names no term: a literal
+holding it as an argument is read by the stored-fact prover alone
+(`provers/applicable-provers`), so `(different (FooFn Xa Xb) Zed)`, `(equals ?x (FooFn Xa
+Xb))` and `(genl (FooFn Xa Xb) ?y)` answer nothing. A positive equation goal
+(`res/equation?`) reads a never-minted application as written
+(`nat-read/reify-existing`), and the equality closure answers it by identity and congruence: `(equals (FooFn Xa Xb) (FooFn
+Xa Xb))` holds, and `(equals (FooFn Xa Xb) (FooFn Xc Xd))` holds only in a context that sees
+`(equals Xa Xc)` and `(equals Xb Xd)`.
 
 It is wired at every read entry, and the enumeration is the whole of the guarantee:
 `sentexes-matching`, `ask`, `prove`, `query`, the anytime `ask-within` /
@@ -319,15 +320,31 @@ against a store that holds a symbol, and nothing comes back, which is
 indistinguishable from a KB that was never told.
 
 Two paths resolve a NAT the same way — dedup, never mint — without being query reads,
-through `nat/resolve-for-read`, which answers nil when a NAT was never minted rather than
-a sentence carrying the `no-match` sentinel. `handle-of` reads the constant `ist` stored,
-so a lookup of the compound finds the stored sentex. `assert-inert` stores the resolved
+through `nat-read/resolve-for-read`, which answers nil when a NAT was never minted rather
+than a sentence carrying the `no-match` sentinel. `handle-of` reads the constant `ist`
+stored, so a lookup of the compound finds the stored sentex. `assert-inert` stores the resolved
 sentence, so an inert record keys on the constant every read reifies to instead of a
 compound no read finds, and refuses a NAT this KB never minted (`:unminted-nat`) — it
 never mints, since a `natFormula` is a belief-carrying write this entry point does not do.
 `canonical-sentex` resolves before it canonicalizes, so its content identity agrees with
 `handle-of`; a NAT with no minted constant has no canonical stored form yet, and the
 compound stands.
+
+### A NAT resolves under the reader's merges
+
+A read resolves an expression for the context it reads from, and a write for the context
+it stores in (`CxUniverse` for a caller that names none). `nat-read/map-rows` reads the
+map from every context, so a reader that does not see `CxUniverse` still finds the constant a mint
+stored there. The merges applied to the expression are the ones the reader sees. A
+`natFormula` row answers when its expression, normalized under the reader's merges, is the
+expression's normal form there, and either the row is stated (a premise, superseded or
+not) or the reader sees the row's context. A migration twin is not stated, so it answers
+only where its merge is visible. The stated rows are probed once per spelling the reader's
+equality classes give each symbol argument (`class-spellings`), one spelling when no
+argument has merged. A compound `(rewriteOf T E)` target is read the same way
+(`rewrite-target`). With `(sameAs Apple Pomme)` in `CxUniverse`, a reader that does not see
+`CxUniverse` leaves `(FruitFn Pomme)` unresolved; with the merge in the reader's own
+context, `(FruitFn Pomme)` resolves to the constant minted for `(FruitFn Apple)`.
 
 ## The corresponding predicate
 
@@ -348,11 +365,11 @@ It is read in **both** directions, and that is the point: a KB told only one of 
 spellings can otherwise reason with only that one.
 
 - **value → term.** A believed `(motherOf Muffet Mary)` reifies `(MotherFn Muffet)` to
-  `Mary`. The expression names the object the KB already has a name for rather than
-  minting a second one beside it, so the correspondence is a *computed* `rewriteOf`
-  target — the same protocol, looked up through the predicate instead of declared per
-  expression. It is consulted before the dedup probe, because a real term outranks a
-  placeholder.
+  `Mary` for a write or a read in a context that sees the fact. The expression names the
+  object the KB already has a name for rather than minting a second one beside it, so the
+  correspondence is a *computed* `rewriteOf` target — the same protocol, looked up through
+  the predicate instead of declared per expression. It is consulted before the dedup
+  probe, because a real term outranks a placeholder.
 - **term → value.** When no value is known, the mint proceeds and the constant is
   **projected** back onto the predicate: `(motherOf Muffet K)`, asserted with the rest of
   `K`'s bookkeeping and *after* the result types, since the projected literal is
@@ -368,30 +385,172 @@ declaration — and each of the three landing last has an arm:
 | Last to arrive | What happens |
 |---|---|
 | the application | reifies to the believed value; nothing is minted |
-| the fact | `(rewriteOf V K)` retires the placeholder, and the equality migration folds every use of `K` — its `natFormula` map included — onto `V` |
-| the declaration | each constant already minted for `F` is equated with its value, or projected when it has none |
+| the fact | `(rewriteOf V K)`, stated in the fact's context, retires the placeholder there, and the equality migration folds every use of `K` — its `natFormula` map included — onto `V` |
+| the declaration | each constant already minted for `F` is equated with its value in each context holding one, and projected when CxUniverse reads none |
 
-`rewriteOf` rather than `equals` because the two sides are not interchangeable: `V` is
-a name somebody wrote and `K` is a stand-in for not knowing it, so the class needs a
-term that wins the election rather than whichever one sorts first. A minted constant is
-`:opaque` to `wff`'s same-role check — the naming invariants are conventions over names
-a person *chose*, and what a reified NAT denotes is settled by its materialized result types —
-so merging one into an individual is the intended move, not the import bug that check
-catches.
+**A value applies where it is visible.** The mint reads the values the corresponding facts
+visible from the writing context name, each spelled under that context's merges
+(`nat-read/correspondence-value`), and a read does the same from the reading context. A
+fact stated in `CxStory` reifies `(MotherFn Muffet)` written there or below, while a write in
+`CxUniverse` mints a placeholder. The placeholder is then retired in each context holding
+a corresponding fact, once that context reads exactly one value beside it
+(`nat/retire-onto-values!` after the mint), so `CxStory` reads the placeholder as `Mary`
+and `CxUniverse` does not, in every arrival order. A merge's restatement of a
+corresponding fact is no second value for a context that reads the original and the
+restatement as one term.
 
-**Several believed declarations for one function decide nothing.** Two correspondences
-are two different claims about what `(F a…)` denotes, and choosing between them would
-have to key on a handle, which belief may never do — so neither is read and the
-application mints as if none were declared. The same for a value: `correspondence-value`
-answers only when exactly one is believed.
+The merge is a `rewriteOf`, so `V` represents the class
+([defenses.md](defenses.md#a-placeholder-is-retired-by-rewriteof-not-equals)). A minted
+constant is `:opaque` to `wff`'s same-role check — the naming invariants are conventions
+over names a person *chose*, and what a reified NAT denotes is settled by its materialized
+result types — so merging one into an individual is the intended move, not the import bug
+that check catches.
+
+**Several believed declarations for one function decide nothing at the mint.** Two
+correspondences are two different claims about what `(F a…)` denotes, and choosing
+between them would have to key on a handle, which belief may never do — so neither is
+read and the application mints as if none were declared. A rule and a goal read through
+every one, which picks nothing ([below](#a-rule-or-a-goal-that-names-an-open-application)). The same for a value: `correspondence-value`
+answers only when the context reads exactly one, and a context reading two values beside
+a placeholder retires it onto neither. The same for a `rewriteOf` target:
+`rewrite-target` answers nil when the believed `(rewriteOf T E)` declarations name two
+targets, and two declarations of one target are one answer.
 
 The declaration is read through the **index**, not a taxonomy cache. It is consulted
 once per NAT, where the reify is already probing for a `rewriteOf` target and a dedup,
 and a KB declaring none pays one O(1) functor count per assert
-(`nat/any-corresponding-predicates?`). Nothing to integrate means nothing for `recover`
+(`res/any-corresponding-predicates?`). Nothing to integrate means nothing for `recover`
 to rebuild — a correspondence works across a restart because the declaration is a
-stored fact and always has been. It bites only for a `reifiable_function`: an undeclared
+stored fact and always has been; `recover` holds the rules below again
+(`checks/force-stored!`). It bites only for a `reifiable_function`: an undeclared
 function's application is a raw compound the reify pass never visits.
+
+### A rule or a goal that names an open application
+
+The engine does not pattern-match a function application. `res/kb-sentex`, the
+constructor every store and lookup builds a sentex through, respells a rule whose
+antecedents or consequent hold an open application `(F a…)` of a `reifiable_function`
+(`res/respell-applications`). The application becomes a variable `?v`, and the literal
+the correspondence makes equivalent to it, `(P a… ?v)` with `?v` at the declared position,
+joins the antecedents. Inner applications are respelled first, and one application
+written twice is one variable:
+
+```clojure
+(implies (tagged (FruitFn ?t)) (ripe ?t))
+;; is stored as
+(implies (and (fruitOf ?t ?fruit) (tagged ?fruit)) (ripe ?t))
+
+(implies (bears ?t ?o) (grownIn (FruitFn ?t) ?o))
+;; is stored as
+(implies (and (bears ?t ?o) (fruitOf ?t ?fruit)) (grownIn ?fruit ?o))
+```
+
+An `equals` literal one of whose sides is an open application is the corresponding
+literal itself, with the other side at the value position: `(equals ?food (FruitFn ?t))`
+is `(fruitOf ?t ?food)`, in a rule and in a goal, and searches no equality.
+
+The variable is named for the function, its `Fn` suffix dropped and its first letter
+lowercased, with a hash of the application appended where the rule uses the name already.
+Canonicalization renames it with the rule's other variables, so the two spellings store
+one handle, and `why` and the browser show the predicate form. The DFS prover, the node
+engine and rete read the stored rule, so none of them reads an application. A forward rule
+concluding about an application fires on the value its predicate names, a stated fact or
+the projection a mint writes, and mints nothing.
+
+A function with several believed correspondences gives the rule one spelling per
+correspondence, and a rule applying several such functions one per combination
+(`res/rule-respellings`). The row keeps the spelling that reads each function's
+content-least correspondence, so both written spellings still store one handle. Each
+other spelling is stored beside it, justified `respell` by the rule and the declarations
+it reads (`chain/sync-rule-respellings!`), so the rule answers through the union of its
+correspondences and a declaration leaving takes its spelling with it. A read picks no
+correspondence, so the union is order independent.
+
+A rule applying a function with no believed correspondence is stored as written and held
+in the `:out` forced set (`nat/held-application?`, read by `checks/forced-out?`): it
+fires nothing, and its application is never matched as written. A rule holding a
+variable-functor application, `(tagged (?fn ?t))`, is held the same way
+([What reification does not cover](#what-reification-does-not-cover)), except where the
+compound sits in a sentence position (`res/formula-position?`). An application inside an `unknown`,
+`thereExists`, `forall`, `exists`, `ist` or aggregate condition is not respelled, so a rule
+holding one is held too. A quoting function's argument and a quoting predicate's payload
+are mentions, neither respelled nor held. A generator's consequent rule is not read: the
+rule it generates is respelled or held when it is stored. `kb-integrity` reports each
+function a held rule applies with no correspondence
+([integrity.md](integrity.md#what-an-uncorresponded-function-finding-means)).
+
+The rule follows the correspondence in both directions:
+
+| The correspondence | The rule |
+|---|---|
+| arrives, the first believed | is respelled in place, leaves the `:out` set, and the settle joins it |
+| arrives beside another | adds its spelling, which the settle joins; the row moves to the content-least spelling |
+| leaves, another still believed | takes its spelling away, and the firings it made with it |
+| leaves, the last believed | returns the row to its written spelling, held again |
+
+`assert` records a respelled rule's written spelling on its row (`integrate/spellings-key`,
+the record a permuting mark keeps), and the move back restores it. A row holding premise
+assertions in two spellings splits, each assertion returning to its own spelling. The rows
+are found as a reifiable mark's are (`chain/reconcile-reified!`), and through the antecedent
+index of each predicate a declaration of the function names (`nat/corresponded-rules`).
+A declaration arriving runs the move from `nat-maintenance/reconcile-assert`, and one
+leaving runs it from `collect-orphans!`, so both arrival orders store the same rule.
+A move that changes a rule's antecedents or its hold drops the firings the rule made in
+the spelling it left, and a rule left believed fires again
+(`order_independence_test/a-late-reifiable-declaration-re-spells-a-stored-rule-and-withdraws-an-application-firing`).
+A rule that concluded `(SkillFn ?x)` before `SkillFn` was reifiable therefore keeps no
+conclusion, and no constant, that the declaration arriving first would not have made.
+
+The sentence positions a variable-functor rule's hold reads move the rule the same way. An
+`arg`, `argN` or `quotedArg` declaration typed `formula` or under it, and a `genl` edge
+putting a declared type under `formula`, stored or torn down, re-decide the rules with an
+antecedent or a consequent on the declaration's predicate that hold a variable-functor
+application (`nat/formula-declared-predicates`, `nat/formula-position-rules`). The move is
+the row move above with the hold re-read (`chain/reconcile-formula-positions!`): a rule
+left held keeps no firing, a rule left believed fires again, and a rule that also applies
+a fixed function moves between its written and respelled spellings. `(implies (holdsIn ?c
+(?p Rex)) (heardOf ?c ?p))` is held beside no declaration and believed beside `(arg holdsIn
+2 sentence)`, whichever arrives first
+(`nat_test/a-formula-declaration-releases-a-held-variable-functor-rule-in-every-order`).
+
+A goal is respelled before it is answered (`res/goal-alternatives`). A function with one
+believed correspondence reads its predicate: `prove (grownIn (FruitFn ?t) ?o)` asks
+`[(fruitOf ?t ?fruit) (grownIn ?fruit ?o)]`, and its answers bind `?fruit` too. A function
+with several reads the declaration and a predicate variable, so the goal answers through
+each correspondence and merges the answers:
+
+```clojure
+(favoriteFood Pace (FruitFn ?tree))
+;; with fruitOf and producesFruit both declared, asks
+[(functionCorrespondingPredicate FruitFn ?fruitPredicate)
+ (?fruitPredicate ?tree ?fruit) (favoriteFood Pace ?fruit)]
+```
+
+A variable-functor application reads every function's declarations the same way:
+`(favoriteFood Pace (?fn AppleTree))` asks `(functionCorrespondingPredicate ?fn
+?fnPredicate)`, `(?fnPredicate AppleTree ?fnValue)` and `(favoriteFood Pace ?fnValue)`,
+and binds `?fn` to the function. Declarations putting the value at different positions
+are different literal shapes, so the goal runs one conjunction per distinct position and
+merges their answers, each projected onto the variables every conjunction binds:
+`(owns Bob (?fn Xing North))` answers `?fn StreetCornerFn` from
+`(functionCorrespondingPredicate StreetCornerFn streetCornerOf 1)`,
+`(streetCornerOf Lot Xing North)` and `(owns Bob Lot)`. A variable-functor compound in a
+position an `arg`, `argN` or `quotedArg` declaration types as a `formula`
+(`res/formula-position?`), or in a construct's argument, is a sentence pattern and is not
+expanded: `(believes Pace (?p Rex))` matches `(believes Pace (dog Rex))`. An `and` goal is
+read as its conjuncts.
+
+`prove`, `provable?`, `query` and their bounded forms merge the conjunctions. The readers
+that report on one search, `query-status`, `abduce`, `search-tree`, `compare-tacticians`
+and `prove-within`, refuse a goal that needs more than one with a `:shape` refusal
+(`quasiquote/prepare-conjunction-for-read`). A goal applying a function with no
+correspondence answers nothing: the application is replaced by `nat-read/no-match`. A
+**ground** application in a goal keeps the
+[read path](#read-path)'s reify, which resolves it to the constant, value or `rewriteOf`
+target the KB holds for it; with a correspondence the respell reaches the same term
+through the projection or the value's fact. `ask` reads one sentence and expands no rule,
+and a stored fact holds a constant rather than an application, so an open application in
+an `ask` goal finds nothing.
 
 ## Display / export
 
@@ -401,7 +560,7 @@ back to its functional expression — `(color (FruitFn AppleTree) Red)`, never a
 reified NAT-bearing forms are rebuilt.
 
 **A constant is never what a reader sees.** It is an implementation of term *identity*
-— a `nat/`-namespaced gensym is not a name anybody wrote — so a display layer resolves
+— a `nat/`-namespaced hash is not a name anybody wrote — so a display layer resolves
 it, and `vaelii.core` carries the pair that lets one: `reified-term?`, a pure test on the
 reserved namespace that adds no work on a KB that has minted none, and
 `term-expression`, **one hop** of the map. One hop rather than the whole expansion,
@@ -418,10 +577,20 @@ expression with **bold parens** and the opening one linking to the constant's ow
 sentex naming it, including `(natFormula K (FruitFn AppleTree))`, whose rewritten twin
 is `(natFormula K (FruitFn MalusTree))`. `K` stays **stable** — it is not the term
 renamed — so nested NATs referencing `K` need no cascade. A rename can collapse two
-NATs onto one expression; `merge-colliding-nats!` (run after an equality assert, behind
-the reifiable-function presence check) restores the 1:1 invariant by merging each
-colliding group's constants into its lexicographically-smallest survivor via a further
-equality, which migrates their uses.
+NATs onto one expression; `merge-colliding-nats!` (behind the reified-constant presence
+check) restores the 1:1 invariant by merging each colliding group's constants into its
+lexicographically-smallest survivor via a further equality, which migrates their uses.
+A collision holds where a context sees both rows, so the repair runs per context:
+`merge-collisions!` visits the contexts holding the rows most general first and states
+each equality in the context that reads the collision, skipping a pair a visible equality
+already merges. A merge stated in `CxQ` joins `(FruitFn AppleTree)` and
+`(FruitFn MalusTree)` in `CxQ` alone, and `CxUniverse` keeps the two constants apart.
+Three writes can join a collision, and each reads only the rows it can have joined: an
+equality reads the rows naming its terms' classes, a mint's `natFormula` the rows naming
+its expression's merged arguments, and a `genlCx` edge the rows its migration restated
+below its lower context. A collision an import stored stays until a caller asks
+`colliding-constant-groups`
+([defenses.md](defenses.md#the-collision-merge-reads-the-merged-class-not-the-whole-map)).
 The retired spelling stays a usable *question*: a goal naming the old term
 goal-rewrites to the new expression and still resolves to `K`.
 
@@ -453,27 +622,29 @@ the constant *is*, and counting it as a use would make every placeholder immorta
 `natFormula` map plus exactly what `mint-nat!` wrote about it, and `nat/minted-for`
 re-derives that set the way the mint derived it: `(T K)` for each believed `(result F
 T)`, `(genl K T)` for each `(genlResult F T)`, `F` being the function of the expression
-`K` maps to, and the correspondence projection. A membership an argument declaration on
-`natFormula` or a `resultArg` of `F` derives off the map alone is `K`'s own as well
-(`nat/derived-from-map?`), and leaves when the map does. Everything else naming `K` is somebody's
+`K` maps to, and the correspondence projection. A record the argument-type entailment
+derives off `K`'s own sentexes alone is `K`'s own as well (`nat/entailed-from?`), and
+leaves with them. Two such records are a membership an argument declaration on
+`natFormula` or a `resultArg` of `F` derives off the map, and the `(predicate K)` the
+declaration on `genl` derives off a materialized `(genl K T)`. The test follows the
+source of each justification, so a record entailed off such a record is `K`'s own too;
+a record with one justification resting on a use, or a rule's conclusion, is a use.
+Everything else naming `K` is somebody's
 assertion whatever its arity — `(prime K)` is a claim about `K` exactly as `(noted Author
 K)` is, and a sweep reading arity alone would retract the claim along with the constant.
-The set is computed behind a **delay**, and the `natFormula` clause is what makes that
-pay: a constant a teardown collects has its map and nothing else left, so the common
-answer is reached without reading the declarations at all. The one constant this keeps
+The set is computed behind a **delay**, and the `natFormula` clause is tested first: a
+constant a teardown collects has its map and nothing else left, so the common answer is
+reached without reading the declarations at all. The one constant this keeps
 alive that a shape test would have collected is one whose `result` declaration was
 retracted after the mint: the materialized `(T K)` is then a believed sentence no rule
 supports and nobody has withdrawn, and holding `K` for it is the direction to err in.
 
-**The answer is realized before the caller acts on it**, and the delay is what makes
-that a rule rather than a detail. `bookkeeping-handles` is read *for* a retraction and
-decides membership by re-reading `K`'s `natFormula`, so an answer still being computed
-while the caller retracts through it reads a KB the caller has already taken that map
-out of — and everything past that point answers "not bookkeeping" and stays stored,
-which is the dangling `nat/` symbol the sweep exists to prevent. Which sentex the term
-index hands back first decides whether it happens, so a lazy answer here is a bug in
-some retrieval orders and not in others. Both the per-constant set and the sweep's own
-per-round orphan list are realized before the round's first retraction.
+**The answer is realized before the caller acts on it.** `bookkeeping-handles` decides
+membership by re-reading `K`'s `natFormula`, and its caller retracts that map. A lazy
+answer read after the map's retraction calls every later sentex "not bookkeeping" and
+leaves it stored, naming a collected constant, in the term-index orders that yield the
+map first. Both the per-constant set and the sweep's per-round orphan list are realized
+before the round's first retraction.
 
 **The sweep asks about the region the teardown removed, not about the KB.** A constant
 becomes an orphan only when something that referenced it goes, so the candidates are the
@@ -483,15 +654,10 @@ materialized types are all sentexes naming it ([indexing.md](indexing.md)). What
 retraction costs is the size of what it removed, and a KB that has minted a hundred
 thousand NATs the retraction is not about adds nothing to it.
 
-**A `cx/` context constant is collected by the same sweep**, by the same rule with one more
-source of liveness: a context is somewhere sentexes *are* as well as something sentences
-name, so the last fact leaving its slot orphans it as surely as the last sentence dropping
-its name. `orphans-named-by` reads a removed sentex's **context** beside its sentence for
-that, and `orphan?` asks a context's extent — one O(1) `count-in-context` — before the term
-index. Its whole bookkeeping is the `natFormula`, the mint writing no result types for a
-place; what the structural producer **computed** off that map is not a reference to it, and
-holding an ordered pair up on its own edges is the failure that reading would cause.
-[context-nat.md](context-nat.md) has the definition, the trigger and the cost.
+**A `cx/` context constant is collected by the same sweep**, with its extent as one more
+source of liveness: `orphans-named-by` reads a removed sentex's **context** beside its
+sentence, and `orphan?` reads the extent, one O(1) `count-in-context`, before the term
+index ([context-nat.md](context-nat.md#orphan-collection-a-context-is-a-place-as-well-as-a-name)).
 
 The removals reach the sweep through `integrate/*removed-sink*`, the record the removal
 choke point fills while a teardown runs, because they arrive from three places: the
@@ -530,7 +696,9 @@ application of `F`, and every use of a constant whose expression holds one, at a
 nesting. A constant's own bookkeeping is not a use and does not move. A quoting
 predicate's payload is a mention and does not move either. Each row is re-spelled by
 expanding its constants and reifying again (`nat/respelled`), which is the write path's
-own walk. A rule's antecedent and consequent move the same way.
+own walk. A rule's antecedent and consequent move the same way, and a rule holding an open
+application of `F` is respelled through `F`'s correspondence or held
+([A rule or a goal that names an open application](#a-rule-or-a-goal-that-names-an-open-application)).
 
 - **A row moves in place** when no row holds its new spelling, keeping its handle,
   premise mark and justifications (`integrate/move-row!`, the move a late `symmetric`
@@ -546,10 +714,21 @@ own walk. A rule's antecedent and consequent move the same way.
   the rows moved off. A settle has no teardown entry point, so each bookkeeping handle is
   taken out through `integrate/take-out!`.
 
+**A map that leaves while uses still name its constant re-spells those uses.** The region
+walk reaches a constant only through its stored `natFormula` map, so a map retracted
+before the mark would leave its uses spelled with a constant nothing expands. The teardown
+that removes the map reads the expression off its removal record and re-spells each
+remaining use, and each use of a constant whose expression names the departed one, with
+the departed constant written as that expression (`chain/reconcile-stranded!`, run from
+`nat-maintenance/collect-orphans!` before the orphan sweep). Under a believed mark the
+use keeps its spelling and the constant is minted again, map included, under a new
+handle. With the mark gone the use names the application. The mark and its maps
+therefore leave the same store in any retraction order.
+
 A reader that does not believe the mark reads no row naming a constant minted for `F`,
 the mint and its result types included, and a reader that believes it reads no row holding
 an application of `F` unreified (`res/without-unbelieved-spellings`). A goal is reified
-with the marks its reader believes (`nat/maybe-reify-for-read` given the reader). The
+with the marks its reader believes (`nat-read/maybe-reify-for-read` given the reader). The
 readers are found as for a permuting mark
 ([canonicalization.md](canonicalization.md#a-mark-a-reader-does-not-believe)), and a write
 naming such an application queues the function for the settle (`nat/queue-split-uses!`).
@@ -566,20 +745,27 @@ comes first (`nat/reconcile-nats!`).
 
 ## Where it lives
 
-- `vaelii.impl.nat` — detectors (`reified-nat-symbol?`, `reifiable-function?`,
-  `reifiable-ground-nat?`), lookups (`nat-expression`, `dedup-constant`,
-  `rewrite-target`, `result-types` / `genl-result-types`,
-  `correspondence-of` / `correspondence-value` / `corresponding-literal`),
-  `expand-expression`, the shared reify walk in both modes, `mint-nat!`, and the
-  rename / remove / correspondence maintenance — the orphan questions among it
+- `vaelii.impl.nat-read` — below `provers`, so `BeliefProjectionProver` calls it: the
+  detectors (`reified-nat-symbol?`, `reifiable-function?`, `reifiable-ground-nat?`), the
+  `E → K` lookups (`dedup-constant`, `rewrite-target`, `correspondence-value` /
+  `corresponding-literal`), the shared reify walk (`reify-in`) and the read mode
+  (`maybe-reify-for-read`, `reify-existing`, `resolve-for-read`). Reads through
+  `resolution` and `reads`.
+- `vaelii.impl.nat` — `held-application?`, the lookups `nat-expression`, `result-types` /
+  `genl-result-types` and `corresponded-rules`, `expand-expression`, the write mode
+  (`maybe-reify-nats`, `mint-nat!`), and the rename / remove / correspondence maintenance — the orphan questions among it
   (`orphan?` per constant, `orphans-named-by` over a region, `orphaned-constants` over
   the KB, `reified-nats-in` for the candidates) and `reconcile-nats!`, the collision
   merge and the correspondence in the order the assert path runs them. Reads the store,
   taxonomy and belief directly, and reaches assertion through `wiring/assert-sentence`.
+- `vaelii.impl.resolution` — the correspondence reads (`correspondence-of`,
+  `believed-correspondences`) and the respell of a rule's and a goal's open applications
+  (`respell-applications`, which `kb-sentex` runs, and `respell-goal-applications`).
 - `vaelii.impl.nat-maintenance` — the sequencing the write paths run around that:
-  `reconcile-assert` once a sentence is stored (`reconcile-nats!`, then the structural
-  `genlCx` edges the fact entails and the merges those edges license) and
-  `collect-orphans!` on the `retract!` and `edit!` sweeps, which loops
+  `reconcile-assert` once a sentence is stored (`reconcile-nats!`, the rules a
+  correspondence declaration respells, then the structural `genlCx` edges the fact entails
+  and the merges those edges license) and `collect-orphans!` on the `retract!` and `edit!`
+  sweeps, which respells the rules a removed declaration respelled and loops
   `remove-orphaned-nats!` to a fixpoint. The teardown entry point is an argument, so the
   engine requires nothing above it.
 - `vaelii.core` — the reify call sites: the write-path reify at the head of `assert`,
@@ -588,13 +774,15 @@ comes first (`nat/reconcile-nats!`).
 - `vaelii.impl.chain` — `reify-conclusion`, the derivation-path reify `place-conclusion`
   runs on a fired conclusion, with the checks asked before the mint. It runs only when
   `nat/names-reifiable-nat?` holds, a walk that rebuilds nothing. Also `reconcile-reified!`, the
-  settle's re-spelling when a reifiable mark moves.
+  settle's re-spelling when a reifiable mark or a correspondence moves.
 - `vaelii.impl.integrate` — `*removed-sink*`, the removal choke point's record of what a
   teardown took away, which is the region the orphan sweep runs over.
 - `vaelii.impl.special` — the two function-kind prop marks, the correspondence's
   wff-only entry, and the equality-arm skip for a compound-arg `rewriteOf`.
 - `vaelii.impl.checks` — `convicting-result-type`, the arm `args-problem` and
-  `genls-problem` read a compound argument through ([argtypes.md](argtypes.md)).
+  `genls-problem` read a compound argument through ([argtypes.md](argtypes.md)), and the
+  `forced-out?` arm that holds a rule `nat/held-application?` accepts.
+- `vaelii.impl.quasiquote` — `prepare-conjunction-for-read`, the goal respell.
 - `vaelii.impl.wff` — `function-decl-problems`, `correspondence-problems`, the
   `:opaque` role a minted constant carries through the same-role check, and the
   `equality-problems` waiver for a compound-arg `rewriteOf`.
@@ -606,16 +794,37 @@ comes first (`nat/reconcile-nats!`).
   NAT findable, so a NAT that cannot be reified is reachable only through the coarser
   keys ([indexing.md](indexing.md)).
 - **An existential rule head is not skolemized here** ([skolem.md](skolem.md)).
-- **A backward rule's application is not reified.** A proof stores nothing, so its answer
-  carries the compound, and a goal naming the constant does not unify with the
-  application in the rule's head (Derivation path, above).
-- **A NAT's identity follows the merges `CxUniverse` holds, in every context.** The
-  dedup probe reads `(natFormula K E)` in `CxUniverse` under that context's equality
-  partition. With `(sameAs Apple Pomme)` in `CxUniverse`, a reader that does not see
-  `CxUniverse` resolves `(FruitFn Pomme)` to the constant minted for `(FruitFn Apple)`,
-  while the same merge stated in the reader's own context leaves `(FruitFn Pomme)`
-  unresolved there. A `modal_predicate`'s proposition is reified like any other position
-  ([belief.md](belief.md#where-the-barrier-sits-and-what-it-covers)).
+- **A rule's open application is read only through a correspondence.** With no believed
+  `functionCorrespondingPredicate`, a rule applying the function is held inert and a goal
+  applying it answers nothing
+  ([A rule or a goal that names an open application](#a-rule-or-a-goal-that-names-an-open-application)).
+  An application inside an `unknown`, `thereExists`, `forall`, `exists`, `ist` or
+  aggregate condition is held with one too.
+- **A rule moves between its spellings when a declaration is stored or torn down.** A
+  declaration derived by a rule, or hidden from a reader by an `except`, moves no rule,
+  and the respell reads the reifiable mark unscoped, so a reader that does not believe the
+  mark reads the rule respelled.
+- **No rule reads a variable-functor application.** A rule holding `(?fn a…)` outside a
+  sentence position is held inert and fires nothing; only a goal expands one.
+- **A sentence position moves a rule only when its declaration or `genl` edge is stored
+  or torn down.** A declaration a rule derives re-decides no rule as it arrives, and one
+  hidden from a reader by an `except` re-decides none.
+- **A variable-functor goal matches no stored compound.** `(likes ?x (?f Bob))` reads only
+  the declared correspondences, so a structural application of an undeclared function
+  stored as a compound term does not answer it.
+- **An `unreifiable_function`'s application is computed, not reified.** A rule matches it
+  as written, and the respell does not read it.
+- **A context that does not see `CxUniverse` reads no collision repair.** Its reads
+  resolve an expression to the content-least constant it reads (A NAT resolves under the
+  reader's merges), and the uses of the other constant do not answer there.
+- **A spelling rename nested in a quoted compound reaches a reader only through a twin.**
+  `class-spellings` varies the symbol arguments at the top level, so a reader that does
+  not see `CxUniverse` does not resolve `(Quote (foo Muffet))` through a rename of
+  `Muffet` stated in a context it sees.
+- **A placeholder is retired in each context holding a value, separately.** With
+  `(motherOf Muffet Mary)` in `CxA` and `(motherOf Muffet Maria)` in `CxB`, a context
+  seeing both reads the placeholder as `Mary` and as `Maria`, so it reads the two as one
+  term.
 - **A reifiable mark leaving does not re-spell a use whose application resolved to a real
   term.** A `rewriteOf` target, a correspondence value and a placeholder an equality
   retired stand where a KB that never declared the function holds the application.

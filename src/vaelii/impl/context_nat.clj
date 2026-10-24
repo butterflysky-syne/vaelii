@@ -32,6 +32,7 @@
             [vaelii.impl.kb :as kb]
             [vaelii.impl.naming :as nm]
             [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.reads :as reads]
             [vaelii.impl.sentex :as sx]
@@ -80,7 +81,7 @@
 
 (defn any-context-subrelations?
   "Presence check: does the KB declare any `contextArgSubrelation`?  The producer is a no-op
-  otherwise — one O(1) functor count per assert, the shape `nat/any-corresponding-predicates?`
+  otherwise — one O(1) functor count per assert, the shape `res/any-corresponding-predicates?`
   has."
   [kb]
   (pos? (reads/stored-count-with-functor (:index kb) 'contextArgSubrelation)))
@@ -113,7 +114,7 @@
                  (when (and (= universal-context (:context sx))
                             (= 'natFormula (nm/functor (:sentence sx)))
                             (jtms/in? (reasoning/tms kb) (:id sx))
-                            (nat/reified-context-symbol? k)
+                            (nat-read/reified-context-symbol? k)
                             (sequential? e) (= f (first e)))
                    [k e (:id sx)]))))
        distinct))
@@ -241,7 +242,7 @@
         (= 'contextArgSubrelation head)
         (reconcile-function kb x)
 
-        (and (= 'natFormula head) (nat/reified-context-symbol? x) (sequential? y) (seq y))
+        (and (= 'natFormula head) (nat-read/reified-context-symbol? x) (sequential? y) (seq y))
         (reconcile-function kb (first y) (fn [ksub _ ksup _] (or (= x ksub) (= x ksup))))
 
         :else

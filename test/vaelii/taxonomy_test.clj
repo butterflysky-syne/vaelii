@@ -1718,6 +1718,32 @@
       (is (= ws (mapv #(tax/reach-support t :genl (node 39 %) 'rbroot nil (constantly :monotonic))
                       (range 4)))))))
 
+(deftest the-separation-routes-of-two-types-build-the-closure-of-neither
+  ;; each type under two types of a braid of 20 levels of four types below a root, the
+  ;; roots disjoint: the routes read both types' supertypes cut to the separable ones, so
+  ;; no type of either braid holds a closure after the read
+  (let [t      (tax/create-taxonomy)
+        h      (atom 0)
+        add    #(tax/add-genl t %1 %2 (swap! h inc))
+        node   #(symbol (str "srb" %1 "_" %2 "_" %3))]
+    (doseq [s ["a" "b"]]
+      (dotimes [j 4] (add (node s 0 j) (symbol (str "srb" s "root"))))
+      (doseq [i (range 1 20) j (range 4)]
+        (add (node s i j) (node s (dec i) j))
+        (add (node s i j) (node s (dec i) (mod (inc j) 4))))
+      (add (symbol (str "srb" s "leaf")) (node s 19 0))
+      (add (symbol (str "srb" s "leaf")) (node s 19 1)))
+    (tax/add-disjoint t 'srbaroot 'srbbroot (swap! h inc))
+    (let [routes (tax/separation-routes t 'srbaleaf 'srbbleaf)
+          lru    (:closure-lru @t)
+          held   (fn [n] (caches/lru-get lru [:genl (:gen (:genl @t)) :fwd n]))]
+      (is (= [{:keys #{[:disjoint #{'srbaroot 'srbbroot}]} :pair ['srbaroot 'srbbroot]
+               :links [['srbaleaf 'srbaroot] ['srbbleaf 'srbbroot]]}]
+             (vec routes)))
+      (is (not-any? held (for [s ["a" "b"], n (cons (symbol (str "srb" s "leaf"))
+                                                    (for [i (range 20) j (range 4)] (node s i j)))]
+                           n))))))
+
 (deftest the-uncovered-routes-a-pass-reads-over-held-neighbours-are-those-read-alone
   ;; random graphs of 60 types, edges stated in four contexts (one with none) under two
   ;; branches, some edges with two supporters of two classes: the uncovered routes, with

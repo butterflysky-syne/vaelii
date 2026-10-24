@@ -1,39 +1,17 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.sort-by-content-key-test
-  "`nm/sort-by-content-key` / `nm/min-by-content-key` / `nm/print-key` — the
-  decorate-sort-undecorate the engine's content orders share, and the one guarded
-  printer they use when a key is printed at all.  This namespace asserts the contract
-  every caller leans on: the key is built **once per element** (not once per
-  comparison), the sort short-circuits below two so a one-element listing builds no key
-  at all, ties fall to arrival order, and `min-by-content-key` is
-  `(first (sort-by-content-key …))` in one pass.
+  "`nm/sort-by-content-key`, `nm/min-by-content-key` and `nm/print-key`: the key is built
+  once per element, a listing under two elements builds none, ties fall to arrival order,
+  and `min-by-content-key` is `(first (sort-by-content-key …))` in one pass.
 
-  The last tests are **scans of the sources**, not unit assertions, and they are here
-  because this is the class of order-dependence that keeps coming back one site at a
-  time.  Three shapes, one rule — an order the engine answers off is keyed on content:
-
-    * a `pr-str` or `str` ordering key with the print vars left ambient.  A REPL binds
-      `*print-length*`, two long sentences elide to one prefix, the key collapses, and
-      the tie falls back to the enumeration order the content key existed to remove —
-      silently, because every value involved is still legal.
-    * an ordering keyed on the **handle** (`sort-by :id`, `min-key :id`, `(sort
-      handles)`).  A handle is allocated in assertion order, so this is arrival order
-      written down as a key: the same knowledge typed the other way round reads
-      differently ([docs/defenses.md](../../docs/defenses.md), \"Tie-breaks and
-      orderings key on content, not the handle\").
-    * a positional take off a **match set** — `(first (sentexes-matching …))`.  The
-      retrieval promises the set, never an order, so `first` names whichever member the
-      index enumerated: a KB holding two matches answers by the order it was written in.
-
-  A fourth scan is here for a different reason — cost, not correctness.  `sort-by` runs
-  its key fn *inside* the comparator, so a key that reads the KB is a taxonomy closure
-  re-read ~2·n·log₂n times where `sort-by-content-key` reads it n times.  Same file
-  because it is the same fix, and because these sites are found the same way: by reading
-  the key a call is handed.
-
-  What every one of them reads is the **form**, not the line.  A key written below its
-  call was invisible until it was, which is the whole content of #50."
+  The last tests scan the sources for an order the engine answers off that is not keyed on
+  content: a `pr-str` or `str` key with the print vars left ambient, a key on the handle,
+  and a positional take off a match set ([docs/defenses.md](../../docs/defenses.md),
+  \"Tie-breaks and orderings key on content, not the handle\").  A fourth scan fails a
+  `sort-by` whose key reads the KB, which `sort-by` calls inside the comparator, about
+  2·n·log₂n times against `sort-by-content-key`'s n.  Every scan reads the key as a form,
+  so a key written below its call is read too."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
@@ -103,6 +81,44 @@
              (nm/min-by-content-key key cmp xs))
           (str "min == first-of-sort for cmp " cmp " at n=" n)))))
 
+(deftest compare-form-is-a-total-content-order
+  (testing "different kinds order deterministically instead of throwing (compare does)"
+    (is (neg? (nm/compare-form 1 "a")))                 ; number before string
+    (is (neg? (nm/compare-form :a 'a)))                 ; keyword before symbol
+    (is (neg? (nm/compare-form 'a '(a))))               ; scalar before a sequential
+    (is (zero? (nm/compare-form nil nil))))
+  (testing "same-kind scalars follow the natural compare"
+    (is (neg? (nm/compare-form 'a 'b)))
+    (is (neg? (nm/compare-form 'ns/a 'ns/b)))
+    (is (neg? (nm/compare-form 1 2))))
+  (testing "sequentials compare element by element, then shorter first"
+    (is (neg? (nm/compare-form '(a) '(a b))))           ; a prefix precedes the longer
+    (is (neg? (nm/compare-form '(a b) '(a c))))
+    (is (neg? (nm/compare-form '(rel A B) '(rel A C))))
+    (is (zero? (nm/compare-form '(not (p X)) '(not (p X))))))
+  (testing "the order is insensitive to an ambient *print-length* / *print-level* —"
+    (let [a '(likes Ann Bo Cy Dee)
+          b '(likes Ann Bo Cy Eve)
+          under (fn [pl lv] (binding [*print-length* pl *print-level* lv]
+                              (nm/compare-form a b)))]
+      (is (neg? (under nil nil)))
+      (is (= (under nil nil) (under 2 1) (under 1 1) (under 0 0))
+          "the verdict is the same however the printer is configured")))
+  (testing "and insensitive to it on the last-resort branch too —"
+    ;; the `:else` rank prints; sentence content never reaches it, a caller's key can
+    (doseq [[a b] [[{:a 1 :b 2 :c 3 :d 4} {:a 1 :b 2 :c 3 :d 5}]
+                   [#{#{1}} #{#{2}}]]]
+      (let [under (fn [pl lv] (binding [*print-length* pl *print-level* lv]
+                                (nm/compare-form a b)))]
+        (is (not (zero? (under nil nil))) "distinct values are distinguished")
+        (is (= (under nil nil) (under 3 1) (under 1 1) (under 0 0))
+            "and stay distinguished however the printer is configured"))))
+  (testing "a mixed vector of forms sorts stably and reproducibly"
+    (let [forms ['(dog Rex) '(cat Rex) '(not (dog Rex)) 'CxUniverse 3 "s" :k]]
+      (is (= (sort nm/compare-form forms)
+             (sort nm/compare-form (reverse forms))
+             (sort nm/compare-form (shuffle forms)))))))
+
 ;; ---- print-key: the guarded printer, and the scan that keeps it the only one ----
 
 (deftest print-key-is-unmoved-by-an-ambient-print-bound
@@ -117,6 +133,9 @@
         (is (not= (nm/print-key a) (nm/print-key b)))
         (is (= [a b] (nm/sort-by-content-key nm/print-key compare [b a]))
             "and the order is the content one, under the bound that would have collapsed it")))
+    (testing "name-key hands a collection to print-key, so it does not collapse either"
+      (binding [*print-length* 3]
+        (is (not= (nm/name-key a) (nm/name-key b)))))
     (testing "metadata is no part of what a sentence says"
       (binding [*print-meta* true]
         (is (= (nm/print-key a) (nm/print-key (with-meta a {:tagged true}))))))))

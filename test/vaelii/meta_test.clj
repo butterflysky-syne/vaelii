@@ -180,8 +180,8 @@
 
 (tu/deftest-kb genlcx-is-a-forced-decontextualized-predicate
   (testing "a genlCx edge is forced to live in CxUniverse, wherever asserted"
-    (is (seq   (v/sentexes-matching kb '(genlCx CxBiology CxUniverse) 'CxUniverse)))
-    (is (empty? (v/sentexes-matching kb '(genlCx CxBiology CxUniverse) 'CxBiology)))))
+    (is (= '[CxUniverse]
+           (mapv :context (v/sentexes-matching kb '(genlCx CxBiology CxUniverse) '?ctx))))))
 
 ;; ---- forced_monotonic_predicate: the forced-monotonic set no default reaches --------
 
@@ -932,7 +932,8 @@
   ;; separation is re-asserted at `:monotonic`.
   (doseq [membership-strength [:monotonic :default] disjoint-first? [true false]]
     (tu/with-neutral-kb [kb tu/isolated-fresh]
-      (let [p    (predicate-spelled "ForcedRel")
+      ;; a bare lowercase word takes any length; a camelCase one bound unary is refused
+      (let [p    (gensym "tmpforcedrel")
             decl #(v/assert kb '(disjoint unary binary) 'CxUniverse {:strength :default})
             why  (str membership-strength " memberships, disjoint first: " disjoint-first?)]
         (v/assert kb '(genl unary_predicate unary) 'CxUniverse {:strength :monotonic})

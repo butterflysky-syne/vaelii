@@ -3,24 +3,14 @@
 (ns vaelii.impl.asp.clasp
   "Subprocess wrapper around the clasp ASP solver.
 
-   Consumes ASPIF text on stdin, returns parsed results as Clojure maps.
-   clasp exit codes encode the solve outcome (10=sat, 20=unsat, 30=optimum,
-   bitmask combinations) and are NOT error codes — we rely on the JSON
-   `Result` field from `--outf=2` and only throw when clasp itself fails
-   to run or produces no parseable output.
+   Takes ASPIF text on stdin and reads the JSON `Result` of `--outf=2`.  clasp's exit
+   codes encode the solve outcome (10 sat, 20 unsat, 30 optimum) and are not errors; a
+   run throws only when clasp does not run or answers nothing parseable.  The five modes
+   are `solve`'s.  The search flags are `search-args`, and the limits are docs/asp.md's
+   \"The solve limit\" and \"The time limit\".
 
-   The four modes are the ones `vaelii.impl.asp.edge` asks for:
-   :label, :all-optima, :classify-true, :classify-supportable.
-
-   Every run is single-threaded under a fixed seed and carries `--solve-limit` from
-   `config/asp-solve-limit` when it is positive (`search-args`), so where a search stops
-   is a function of the program.  `--time-limit` from `config/asp-time-limit` (0 lifts
-   it) is the backstop, and a process still running at `deadline-ms` is killed.  A
-   search stopped by either limit is read as `:interrupted` (`stopped-short?`).
-
-   Ownership: `run-clasp` starts the process and is its only owner.  It returns only
-   after the process has exited, and it kills the process and every descendant on the
-   paths that leave it running: the deadline and a throw out of the wait (an interrupt)."
+   `run-clasp` owns the process: it returns only after the process has exited, and kills
+   it with every descendant at the deadline and on a throw out of the wait."
   (:require
    [cheshire.core :as json]
    [clojure.java.io :as io]
@@ -36,16 +26,11 @@
   *clasp-binary* "clasp")
 
 (def ^:private mode-args
-  "argv tails for each supported solve mode. The enumerating modes use --opt-mode=optN
-   so that brave/cautious enumerations run over optimal models only — atoms present in
-   models that pay extra contradiction cost never contaminate the supportable/true
-   classification. `:label` uses --opt-mode=opt with -n 0 instead: it wants ONE labeling,
-   but must stream every improving witness as the bound descends, so a run cut off by the
-   time limit still leaves its best witness in the JSON (read back as `:best-effort`)
-   rather than the nothing optN yields before it proves the optimum.  `-n 1` would stop at
-   the first, un-optimized witness.  `:sat` is `-n 1`: a program with no objective has
-   nothing to improve, and `-n 0` there enumerates every model — so `solve` runs a
-   `:label` solve of such a program under `:sat`'s flags (`objective?`)."
+  "The argv tail per mode.  The enumerating modes run `--opt-mode=optN`, over optimal
+   models only.  `:label` runs `--opt-mode=opt -n 0`, which streams each improving witness,
+   so a run the limit stops still has its best one (`:best-effort`) where `optN` yields
+   none before the proof.  `:sat` is `-n 1`, the first model of a program with no
+   objective."
   {:label                ["--opt-mode=opt"  "-n" "0"]
    :sat                  ["-n" "1"]
    :all-optima           ["--opt-mode=optN" "-n" "0"]
@@ -130,13 +115,10 @@
   (or (-> parsed :Call first :Witnesses) []))
 
 (defn- stopped-short?
-  "Did clasp stop before its search finished — the solve limit, the time limit, or a
-   signal?  None of the three is in `Result`: a run that found a model before it stopped
-   still says `SATISFIABLE`, and that model is not the answer the mode asked for.  The
-   time limit and a signal are flags beside it; the solve limit sets neither and shows
-   only as `More: yes`, a search that did not exhaust its space.  Under `-n 1` (`sat?`)
-   a search stops at its first model on purpose and says `More: yes` too, so there it
-   stopped short only when it has no model."
+  "Did clasp stop before its search finished: the solve limit, the time limit, or a
+   signal?  The time limit and a signal are flags beside `Result`; the solve limit shows
+   only as `More: yes`.  Under `-n 1` (`sat?`) a search with a model says `More: yes` by
+   design, so there only a search with no model stopped short."
   [parsed sat?]
   (boolean (or (some #(= 1 (get parsed (keyword %))) ["TIME LIMIT" "INTERRUPTED"])
                (and (= "yes" (-> parsed :Models :More))
@@ -170,17 +152,13 @@
       (pos? n) (conj (str "--solve-limit=" n)))))
 
 (defn- optimum-costs
-  "Full optimum cost VECTOR reported by clasp — one entry per minimize
-   priority level (e.g. `[pri1 pri0]`), highest priority first. A
-   single-tier program reports `[c]`. Nil for programs with no minimize
-   statement, or for UNSAT."
+  "clasp's optimum cost vector, one entry per minimize level, highest first; nil with no
+   minimize statement, or for UNSAT."
   [parsed]
   (-> parsed :Models :Costs))
 
 (defn- optimum-cost
-  "Top-level (highest-priority) optimum cost, or nil. Kept scalar for the
-   single-tier common case and for backward compatibility of the public
-   `:cost` field."
+  "The highest level's optimum cost, or nil: the result's `:cost`."
   [parsed]
   (first (optimum-costs parsed)))
 
@@ -188,13 +166,9 @@
   (vec (or (:Value witness) [])))
 
 (defn- optimal-witnesses
-  "Witnesses whose FULL cost vector equals the reported optimum. clasp may
-   emit intermediate non-optimal witnesses during the search; we filter
-   them. The whole `:Costs` vector is compared rather than its first level,
-   because a multi-priority lexicographic program reports one cost per
-   level: a single-level compare (`[cost]` against the witness's `:Costs`)
-   matches no witness at all once more than one minimize tier is present,
-   and `:label` / `:all-optima` then have none to read."
+  "The witnesses whose whole cost vector equals the reported optimum, dropping the
+   improving witnesses clasp streams before it.  A multi-level program reports one cost
+   per level, so the whole vector is compared."
   [parsed]
   (let [costs (optimum-costs parsed)]
     (if (nil? costs)
@@ -225,15 +199,9 @@
      :witnesses — vector of value vectors (only populated for :all-optima)
      :raw       — full parsed JSON (for diagnostics)
 
-   A `:label` solve of a program with no objective runs under `:sat`'s flags: streaming
-   improving models there would enumerate every model.
-
-   `:interrupted` is the solve limit (`config/asp-solve-limit`), the time limit
-   (`config/asp-time-limit`) or a signal with NO witness to show for it.  A `:label`
-   run cut off *after* it had a witness is `:best-effort` instead — that model is a
-   valid labeling, its optimality merely unproven — which the imperative `:one` caller
-   takes over nothing (`asp.edge/kept-of`); the enumerating modes need a finished
-   search, so they stay `:interrupted`."
+   A `:label` solve of a program with no objective runs under `:sat`'s flags.
+   `:interrupted` is a search the solve limit, the time limit or a signal stopped; a
+   stopped `:label` or `:sat` solve holding a witness is `:best-effort` instead."
   [aspif-text mode]
   (let [run    (if (and (= :label mode) (not (objective? aspif-text))) :sat mode)
         argv   (or (mode-args run)
@@ -245,9 +213,6 @@
     (case mode
       (:label :sat)
       (let [best (first (optimal-witnesses parsed))]
-        ;; interrupted mid-optimization but a witness is in hand: that model is a valid
-        ;; labeling (lowest cost seen, optimality unproven), so hand it back `:best-effort`
-        ;; rather than discard it — mirrors the in-process clingo backend.
         {:status (if (and (= :interrupted status) best) :best-effort status)
          :atoms  (value-of best)
          :cost   (optimum-cost parsed)
@@ -261,16 +226,14 @@
        :raw       parsed}
 
       (:classify-true :classify-supportable)
-      ;; clasp streams intermediate approximations during brave/cautious
-      ;; enumeration; the last witness is the converged answer.
+      ;; the last streamed witness is the converged consequence set
       {:status status
        :atoms  (value-of (last (all-witnesses parsed)))
        :cost   (optimum-cost parsed)
        :raw    parsed})))
 
 (defn available?
-  "True if the clasp binary can be executed in the current environment.
-   Used by tests to skip cleanly when clasp isn't installed."
+  "True if the clasp binary runs in the current environment."
   []
   (try
     (zero? (long (:exit (run-clasp ["--version"] ""))))

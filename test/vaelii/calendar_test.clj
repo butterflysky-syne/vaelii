@@ -2,14 +2,8 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.calendar-test
   "The calendar clock (`vaelii.impl.calendar`): a calendar term's two bounding moments read
-  off its fields, and the orderings that follow.
-
-  Three claims run through all of it.  The convention is **half-open**, so the end of one
-  term is the same term as the start of the next and consecutive terms `meet` rather than
-  being `before`.  Nothing is **stored** — every test here runs under the net-neutrality
-  fixture, which is the check that a computed endpoint leaves no sentex, no justification
-  and no term behind.  And the answer is a function of the two terms alone, so it carries
-  no support and refuses an open end rather than enumerating the calendar."
+  off its fields, and the orderings that follow.  Every test runs under the
+  net-neutrality fixture, which checks that a computed endpoint stores nothing."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.calendar :as cal]
@@ -21,10 +15,8 @@
             [vaelii.impl.types.prover :as prover-types]
             [vaelii.test-util :as tu]))
 
-;; A fresh KB per test: the upper layer, whose time.txt holds the vocabulary the goals are
-;; written in (which is also what the clock's scoping check reads), the CxChange event
-;; calculus the last test drives, and the prover registered.  Opt-in like every other
-;; reasoner, so an unregistered KB stores and retrieves calendar facts and pays nothing.
+;; A fresh KB per test: the upper layer, CxChange for the event-calculus tests, and the
+;; prover registered.
 (use-fixtures :each (tu/neutral-fresh
                      #(doto (tu/fresh)
                         (tu/load-core-with! '[[CxChange "middle"]])
@@ -118,10 +110,8 @@
     (is (v/ask? kb '(temporallyDisjoint (MonthFn 2000 1) (MonthFn 2000 2)) C))))
 
 (deftest the-two-readings-of-containment-agree-everywhere
-  ;; `datetime/subinterval?` is what orders a time-keyed CONTEXT (docs/context-nat.md) and
-  ;; the clock is what answers a SENTENCE about the terms.  They are separate mechanisms
-  ;; over one field reader, and this is the claim that they cannot disagree: `b`'s fields
-  ;; being a prefix of `a`'s is the same claim as `a`'s bounds lying inside `b`'s.
+  ;; `datetime/subinterval?` orders time-keyed contexts; the clock answers sentences
+  ;; (docs/time.md, "It agrees with the context ordering").
   (let [terms '[(YearFn 2000) (YearFn 2001)
                 (MonthFn 2000 1) (MonthFn 2000 3) (MonthFn 2000 12) (MonthFn 2001 1)
                 (DayFn 2000 1 1) (DayFn 2000 3 15) (DayFn 2000 12 31)
@@ -218,7 +208,7 @@
 (tu/deftest-kb a-calendar-term-stops-a-calculus-running-alone
   ;; `CalculusProver` claims completeness 100 over the network it reads, and correctly —
   ;; but a calendar term appears in no stored fact and so in no network, and its fields
-  ;; are a source the calculus does not read.  That is `shadowing-channels`' fourth
+  ;; are a source the calculus does not read.  That is `shadowing-channels`' `:calendar`
   ;; channel, and without it the union would drop the clock's answer.
   (v/add-reasoner kb :allen :point)
   (testing "the channel names the goal's own terms, and no index read decides it"
@@ -244,11 +234,7 @@
   ;; unranked, it is reached last with both ends already ground and the clock answers,
   ;; deriving a `holdsAt` this test exists to say the theory does not reach.
   (tu/with-shipped [#'plan/*enabled*]
-    ;; The clock orders two moments; it supplies no `instantBefore` EDGE.  Both halves of
-    ;; the event calculus reach that predicate with one end **open** — "what happened before
-    ;; six", not "is three before six" — so both stop at the same place, which is what keeps
-    ;; a fluent from being reported as persisting past an event the clock could have ordered
-    ;; and the narrative did not (docs/time.md, "What `clipped` can see").
+    ;; docs/time.md, "What `clipped` can see"
     (let [W  'CxWell
           t3 '(InstantFn 2000 1 15 15 0 0)
           t4 '(InstantFn 2000 1 15 16 0 0)
@@ -279,9 +265,8 @@
 ;; ---- the vocabulary the answers are written in --------------------------
 
 (tu/deftest-kb the-clock-answers-the-whole-shipped-vocabulary-and-only-what-holds
-  ;; A predicate the clock answered but the algebras did not name would be one nothing else
-  ;; in this tree can compose with, so the predicate lists are read off the algebras themselves: for
-  ;; a pair whose relation is `:during`, exactly the predicates denoting `:during` hold.
+  ;; The predicate lists are read off the algebras: for a pair whose relation is `:during`,
+  ;; exactly the predicates denoting `:during` hold.
   (let [a '(MonthFn 2000 3)
         b '(YearFn 2000)
         i '(InstantFn 1999 6 1 0 0 0)

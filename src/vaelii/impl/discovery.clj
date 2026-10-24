@@ -243,27 +243,12 @@
 (defn- preserving-moves
   "What the moved handles `moves` (`[handle region?]`, `region?` false for a withdrawal
   alone) re-open, as `[whole reached sep-moved?]`: the predicates whose stored extent is
-  re-asked (`inherit/moved-channels`' other channels, and a `genl` edge between
-  predicates), and the stored facts a moved claim reaches (`inherit/claim-reach-extent`,
-  and the memberships it can deny, `inherit/claim-reach-separated`).
-  A claim reaches when it is believed and known-true,
-  and, moved in the region, when `vantaged` (a delay) holds its predicate: the claims of every
-  class decide which vantages ask.  A `genl` edge re-opens the facts `inherit/edge-reach`
-  names for a predicate preserved along `genl` and along no relation above it.  `narrow?`
-  false re-opens the stored extent of every predicate a claim or an edge moves, and the
-  memberships below both ends of an edge.  A handle with no record is read from `left`,
-  the sentences `note-removed!` recorded: it is OUT, so it reaches as a claim moved in the
-  region.  The `genl` closures are global, since what a moved edge re-opens is asked from
-  every context that reads it.
-
-  A preserved predicate's extent re-opens the memberships of the types separated from it
-  (`inherit/separated-types`) when a stored claim states it (`inherit/claims-stored?`).
-  A type a moved `genl` edge or separation moves separations below (`separation-ends`)
-  re-opens the memberships of every type at or below it when it is separated from such a
-  predicate (`inherit/separated-preserved`), and the extent of each preserved predicate at
-  or below it.  `sep-moved?` is true when a handle has no record or a `genl` edge or
-  separation moved, for the caller to re-ask the memberships `inherit/separated-claims`
-  answered."
+  re-asked, the stored facts a moved claim reaches, and whether a handle with no record,
+  a `genl` edge or a separation moved, for the caller to re-ask the memberships
+  `inherit/separated-claims` answered.  `vantaged` (a delay) holds the predicates with an
+  entry; `left` is `note-removed!`'s sentences; `narrow?` false re-opens the whole extent
+  of every predicate a claim or an edge moves (docs/nmtms.md, \"The inherited-clash
+  memo\", the vocabulary, claim and separation inputs)."
   [kb pairs left moves vantaged narrow?]
   (let [recs   (:records kb)
         tms    (reasoning/tms kb)
@@ -356,28 +341,14 @@
   "The standing inherited clashes after this call, `{:entries {handle entry} :by by :asked
   hs :moved hs}` (`preserving-entry`), `by` their inverted index (`file-entries`),
   `:asked` the handles whose entries were dropped or found, and `:moved` the handles whose
-  belief moved since the last call; both nil when nothing was carried.  An entry is carried
-  when the `genlCx` relation was not rebuilt and the placement cursor
-  was read since the candidate index was emptied (`first?` false), the flat-cache keys that
-  moved are known (`flat-reading`'s `moved`), every handle in the region without a record
-  has its sentence in `:left` (`note-removed!`), its own handle is not in `:left`, its
-  predicate's extent was not re-opened, no moved claim reaches it (`preserving-moves`,
-  over the region and the supporters of each moved key), no except that moved reaches a
-  handle it reads (`except-reach`), no `genlCx` move since the last pass reaches it
-  (`reach`: a context it reads is in `:below`, or one it asked is in `:under`), and its
-  members hold the classes it recorded.  Each test looks up in `by` the entries it names,
-  so a call reads no entry nothing names.  A member's belief moves in a relabel the touched set
-  records, in a supersession `special/pending-supersession-moves` names, or after the
-  last settle's last question, which `:moved` records (`note-touched!`).  Every other entry, the region, and what the moves re-open are asked.  An
-  entry whose candidate is OUT is kept and publishes nothing.  The region is what the touched set recorded since the
-  last call's mark (`jtms/touched-since`), so a later pass of one settle asks only what the
-  passes before it moved, and `region`, the settle's whole touched set, when the mark predates
-  the last reset.  Under `*whole-store-region?*` with no `:mark` in `prev`, nothing is
-  carried, no extent is swept, and the questions are the preserved predicates' stored
-  extents and the memberships their stored claims reach (`separated-reach`; docs/nmtms.md,
-  \"The inherited-clash memo\").  An entry keyed by or reading a
-  handle of `declared`, the facts a forced-monotonic declaration that moved reaches, is asked
-  again: the declaration moves which claims the vantage believes."
+  belief moved since the last call; both nil when nothing was carried.  An entry is
+  carried unless an input it reads moved (docs/nmtms.md, \"The inherited-clash memo\"),
+  and each input looks up in `by` the entries it names.  Nothing is carried when
+  `*incremental-preserving*` is false, the `genlCx` relation was rebuilt, `first?` is true, `moved` is nil, or a region handle has
+  neither a record nor a `:left` sentence.  Under `*whole-store-region?*` with no `:mark`
+  in `prev`, the questions are the preserved predicates' stored extents and the
+  memberships their stored claims reach (`separated-reach`).  `declared` is the facts a
+  forced-monotonic declaration that moved reaches, whose entries are asked again."
   [kb pairs region prev reach first? moved declared]
   (let [recs    (:records kb)
         tms     (reasoning/tms kb)

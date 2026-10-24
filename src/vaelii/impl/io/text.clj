@@ -86,40 +86,16 @@
 
 ;; ---- the entry-point wrappers ------------------------------------------
 
-(def inert-wrapper
-  "`(set/inert S)` — `S` stored through `assert-inert`: indexed and durable, never a
-  premise.  Read by the text KB format alone, around a whole form; `assert` does not read
-  it."
-  'set/inert)
-
 (defn peel-form
-  "`[sentence opts]` for one form of a text KB file: `(set/monotonic S)` is `S` with
-  `{:strength :monotonic}`, `(set/inert S)` is `S` with `{:inert true}`, which tells the
-  caller to write `S` through `assert-inert`, and anything else is itself with `nil`.
-  `assert` refuses `:inert` as an unknown option, so a caller that does not dispatch on
-  it fails at the write.
-
-  A malformed wrapper is refused `:shape`: one wrapping no sentence or two, and one
-  wrapping the other, since an inert sentex has no strength.  Passed through, each would
-  reach `assert` as a sentence whose functor is a namespace-qualified symbol."
+  "`[sentence opts]` for one form of a text KB file (`sx/form-peel`): `(set/monotonic S)`
+  is `S` with `{:strength :monotonic}`, `(set/inert S)` is `S` with `{:inert true}`, which
+  tells the caller to write `S` through `assert-inert`, and anything else is itself with
+  nil.  Throws `sx/form-peel`'s `:shape` problem for a malformed wrapper."
   [form]
-  (let [wrapper? #(and (sequential? %) (#{sx/strength-wrapper inert-wrapper} (first %)))]
-    (if (wrapper? form)
-      (let [w (first form)]
-        (cond
-          (not= 2 (count form))
-          (throw (ex-info (str "(" w " …) wraps exactly one sentence, got "
-                               (dec (count form)) ": " (pr-str form))
-                          {:type :shape :form form}))
-
-          (wrapper? (second form))
-          (throw (ex-info (str "(" w " …) wraps a sentence, not another (" (first (second form))
-                               " …): an inert sentex has no strength, and a strength is"
-                               " stated once: " (pr-str form))
-                          {:type :shape :form form}))
-
-          :else [(second form) (if (= w inert-wrapper) {:inert true} {:strength :monotonic})]))
-      [form nil])))
+  (let [[sentence opts problem] (sx/form-peel form)]
+    (when problem
+      (throw (ex-info (:message problem) (dissoc problem :message))))
+    [sentence opts]))
 
 ;; ---- reading ------------------------------------------------------------
 
@@ -442,7 +418,7 @@
              ;; weaker class than the rule stands at
              (and (by-rule (:id sx)) (not= :monotonic (:strength sx))) [written skipped]
 
-             (nil? (:strength sx)) (keep! (list inert-wrapper (authored sx)) [(:id sx)])
+             (nil? (:strength sx)) (keep! (list sx/inert-wrapper (authored sx)) [(:id sx)])
 
              :else (keep! (with-strength (authored sx) (:strength sx)) [(:id sx)]))))
        [[] []]

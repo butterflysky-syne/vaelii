@@ -64,15 +64,40 @@ position is operational rather than logical:
 - The **recursive** literal of a recursive rule. Reordering it could turn a
   right-recursive rule left-recursive, which the backward chainers cannot execute.
 
+Two spellings of a rule that differ only in the order of their held-back literals are two
+rules. The planner runs the held-back literals whose inputs are bound in the stored order
+(`plan/ready`), so the order decides which test short-circuits the others.
+
 ## A NAF conjunction's conjuncts sorted
 
 `(unknown (and A B))` and `(unknown (and B A))` are one rule. The conjuncts are
 independent ground existence checks — closure leaves every variable bound before the
 query runs — so their written order, and a repeat, are not their identity. Sorted with
 the variable-blind comparator, since this runs on the surface literal, where the
-author's variable names are still what they wrote. The exceptWhen exception gets the
-same treatment one layer up (`sentex/sort-conjuncts`, applied in `vaelii.core` once the
-query is aligned to the rule's varmap).
+author's variable names are still what they wrote. Every conjunction in the query is
+sorted: the `unknown`'s own, a `thereExists` body's, and that of an `unknown` or
+`thereExists` conjunct at any depth. A `forall` desugars to that shape, its body into
+the `thereExists` conjunction and its head into a nested `unknown`. An exceptWhen
+exception's top-level conjuncts are sorted once the query is aligned to the rule's
+varmap (`sentex/canonical-exception`), and the conjunctions inside each conjunct are
+ordered as an `unknown` antecedent's are, by the sort and the tie-break below, with one
+difference: a deferred literal inside an exception's conjunction is held back after the
+generators in its written order. The forward join runs a deferred literal whose inputs
+are unbound in that order, and an exception's aggregate can bind what a later test
+reads, which an `unknown` query refuses (`:naf-not-closed`).
+
+Conjuncts the blind sort leaves tied (`(likes ?x ?c)` beside `(likes ?c ?x)`) are
+ordered when the rule is numbered, by the antecedents' prefix minimization run from the
+numbering the rule has reached at that literal (`sentex/naf-numberings`): the outer
+variables already hold their canonical numbers, and the binder's variables take the
+next ones by first occurrence. The comparison is over the whole rule, as it is for the
+antecedents. A conjunction with no tie is numbered straight through, so its stored form
+is the one the blind sort alone gives.
+
+A `thereExists` or `forall` binder is a set. Its variables are reserved the block of
+numbers after the ones the rule has reached, take them by first occurrence in the body,
+and are stored in number order, so `(thereExists (?c ?d) …)` and `(thereExists (?d ?c)
+…)` are one rule. A one-variable binder is stored bare: `(?c)` is `?c`.
 
 ## Symmetric arguments sorted — ground literals only
 
@@ -502,20 +527,23 @@ it covers.
 
 The connective is accepted only where canonicalization removes it, so the positions it
 cannot disappear from are refused at the shape entry point — before the KB is read at all,
-by `assert`, `assert-inert` and `check` alike:
+by `assert`, `assert-inert` and `check` alike, and an `import!` skips the frame:
 
 | position | refused | because, and instead |
 |---|---|---|
 | a rule **conclusion**, or a standalone sentence | `:not-well-formed` | belief is a label on a sentex, not on a set of them, so a disjunctive head is a *choice* rather than a derivation — offer the alternatives to a solve with `set/assumptionRule` ([solving.md](solving.md)) |
 | an `unknown` / `thereExists` / aggregate body | `:not-well-formed` | each is answered as one closed level-6 query and nothing there unions two runs ([naf.md](naf.md), [aggregate.md](aggregate.md)) — `(unknown (or A B))` is "neither A nor B", so write two `unknown` antecedents; a `thereExists` or an aggregate takes one rule per alternative |
 | an `exceptWhen` query | `:not-well-formed` | the conjuncts of one exception all have to hold — but a rule's exceptions block if **any** holds, so a disjunctive exception is two exceptions, one `exceptWhen` per alternative against the same handle ([exceptions.md](exceptions.md)) |
-| under `not` | `:not-well-formed` | `(not (or A B))` is "neither A nor B", a conjunction of negations, so expanding on it would store the opposite claim — write the two negations as separate antecedents |
+| under `not` | `:not-well-formed` | `(not (or A B))` is "neither A nor B", a conjunction of negations, so expanding on it would store the opposite claim — write the two negations as separate antecedents, or assert each as its own fact |
 | an empty `(or)` | `:not-well-formed` | it expands to no rules at all |
 | a **goal** | `:shape` | a rule is expanded once at the write entry point; a goal would have to be expanded at every read, and a read normalizes to *one* conjunction that the planner orders once and every engine walks as one ([api.md](api.md)). Run the query once per alternative and concatenate, or put the disjunction in a rule — which *is* expanded — and ask for its conclusion |
 
 An `or` in an **argument** slot is not a connective frame at all and is left where it
 stands, exactly as a compound argument is everywhere else: `(likes Tom (or A B))` is one
-literal whose second argument happens to be a list.
+literal whose second argument happens to be a list. The refusals above read the literal
+positions `nm/applied-literals` descends, so the argument stays a term in every rule
+position as well: `(likes ?x (or A B))` is accepted under `not` or `unknown` in an
+antecedent, and as a conclusion.
 
 ## What the shape checks cost
 

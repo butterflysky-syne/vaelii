@@ -118,6 +118,34 @@
       (is (contains? (binds (v/ask kb (list childOf Bob '?p) 'CxUniverse) '?p) Tom))
       (is (contains? (binds (v/ask kb (list childOf '?c Tom) 'CxUniverse) '?c) Bob)))))
 
+(tu/deftest-kb a-known-true-inverse-carries-a-denial-to-the-partner-and-its-specs
+  ;; `(not (parentOf Tom Bob))` under `(inverse parentOf childOf)`, with `sonOf` below
+  ;; `childOf` and `fatherOf` below `parentOf`, all `:monotonic`.  A denial of a predicate
+  ;; denies its specs, so it reaches the partner's spec and says nothing about the
+  ;; super-predicate's partner.  `dPart` and `dInv` are the same shape at `:default`,
+  ;; which does not contrapose (docs/inference.md, "Under a negation the fan reverses").
+  (tu/with-terms [parentOf childOf sonOf fatherOf fChildOf dPart dInv Tom Bob Ann]
+    (let [mono {:strength :monotonic}]
+      (v/assert kb (list 'inverse parentOf childOf) 'CxUniverse mono)
+      (v/assert kb (list 'genl sonOf childOf) 'CxUniverse mono)
+      (v/assert kb (list 'genl fatherOf parentOf) 'CxUniverse mono)
+      (v/assert kb (list 'inverse fatherOf fChildOf) 'CxUniverse mono)
+      (v/assert kb (list 'inverse dPart dInv) 'CxUniverse)
+      (v/assert kb (list 'not (list parentOf Tom Bob)) 'CxUniverse)
+      (v/assert kb (list 'not (list dPart Tom Bob)) 'CxUniverse)
+      (doseq [[goal want] [[(list 'not (list childOf Bob Tom)) true]
+                           [(list 'not (list sonOf Bob Tom)) true]
+                           [(list 'not (list fChildOf Bob Tom)) true]
+                           [(list 'not (list childOf Tom Bob)) false]
+                           [(list childOf Bob Tom) false]
+                           [(list 'not (list dInv Bob Tom)) false]]]
+        (is (= want (v/ask? kb goal 'CxUniverse)) (pr-str goal)))
+      (is (= #{Tom} (binds (v/ask kb (list 'not (list childOf Bob '?p)) 'CxUniverse) '?p))
+          "an open argument binds through the partner")
+      (v/assert kb (list 'not (list fChildOf Ann Bob)) 'CxUniverse)
+      (is (not (v/ask? kb (list 'not (list parentOf Bob Ann)) 'CxUniverse))
+          "a denial on a spec's partner leaves the super-predicate open"))))
+
 (tu/deftest-kb an-inverse-composes-with-its-partner's-transitivity
   ;; InverseProver delegates the swapped goal to the engine (minus itself and
   ;; backchaining), which is what reaches the closure prover.  Mapping it through raw

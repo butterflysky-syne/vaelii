@@ -100,7 +100,8 @@
   (testing "the argument constraints' subject props"
     (is (= '{arg :declares-arg-isa, genlArg :declares-arg-genl,
              quotedArg :declares-quoted-arg, interArg :declares-inter-arg-isa,
-             argArg :declares-arg-arg, args :declares-args-isa, argsGenl :declares-args-genl,
+             argArg :declares-arg-arg, interArgEqual :declares-inter-arg-equal,
+             args :declares-args-isa, argsGenl :declares-args-genl,
              argAndRest :declares-arg-and-rest-isa,
              argAndRestGenl :declares-arg-and-rest-genl,
              interArgs :declares-inter-args-isa,
@@ -153,7 +154,7 @@
   ;;
   ;; The argument constraints reach through `special/entail-existing`, which *mints*
   ;; rather than convicting, being open-world, and runs only when
-  ;; `checks/*assertive-arg-types?*` is true.  `arg1` / `arg2` / `arg3` reach through that same
+  ;; `argument/*assertive-arg-types?*` is true.  `arg1` / `arg2` / `arg3` reach through that same
   ;; mechanism at one remove, the bridge rule's `arg` conclusion being what
   ;; entail-existing reads: a late `(arg1 owns person)` mints `(person Ann)` over an
   ;; `(owns Ann Rex)` stored before it, exactly as the ternary spelling does.
@@ -164,7 +165,7 @@
   ;; rule's `(commutativeInArgAndRest P 1)` conclusion being what the re-spelling fires on.
   (is (= (into '#{genl genlCx disjoint disjoint_metatype sibling_disjoint
                   covering separating partition
-                  arity arityMin arg argArg genlArg interArg arg1 arg2 arg3 arg4 arg5
+                  arity arityMin arg argArg genlArg interArg interArgEqual arg1 arg2 arg3 arg4 arg5
                   commutative commutativeInArgs commutativeInArgAndRest
                   irreflexive anti_symmetric functional functionalInArg asymmetric
                   anti_transitive negates}
@@ -203,7 +204,7 @@
         (is (= :bad-table-entry (:type data)))
         (is (= :family-list (:mismatch data)))
         (is (= 'provers/meta-constraint-functors (:list data)))
-        (is (= '#{quotedArg arg argArg genlArg interArg args argsGenl argAndRest
+        (is (= '#{quotedArg arg argArg genlArg interArg interArgEqual args argsGenl argAndRest
                   argAndRestGenl interArgs interArgAndRest}
                (:declared data))
             "and the throw names both sets, so the reader sees which half is missing")))
@@ -354,6 +355,13 @@
       (is (nil? (refusal [['brokenPred (ok {:facets #{:arbitrable :convicts :reach}
                                             :opposing-read "the mark is not a member of the nogood"})]]))))
 
+    (testing "a clash check the layer above does not answer"
+      (is (= :clash-check
+             (:mismatch (refusal [['brokenPred (ok {:clash-checks {:fact :nope}})]]))))
+      (is (= [['brokenPred (ok {:clash-checks {:fact :arity}})]]
+             (pr/check-facets [['brokenPred (ok {:clash-checks {:fact :arity}})]]
+                              {:clash-checks {:fact #{:arity}}}))))
+
     (testing "an inert term carrying a second opinion about itself"
       (is (= :inert (:mismatch (refusal [['brokenPred (ok {:facets #{:inert :answers}
                                                            :inert "nothing reads it"})]])))))))
@@ -468,3 +476,12 @@
     (testing "every term the vocabulary calls inert carries one, since :inert is a
               decision and a decision has a reason"
       (is (set/subset? (pr/by-facet :inert) noted)))))
+
+(deftest every-clash-check-is-named-by-a-grammar-entry
+  ;; `check-facets` holds each entry's `:clash-checks` to a check `checks` answers; this
+  ;; is the other direction, a check no grammar entry names
+  (doseq [[dir checks] {:fact checks/fact-clash-checks :declaration checks/declaration-clash-checks}]
+    (is (= (into #{} (map first) checks)
+           (into #{} (keep dir) (vals (pr/clash-checks))))
+        (name dir))))
+

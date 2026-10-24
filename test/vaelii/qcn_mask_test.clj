@@ -1,31 +1,12 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.qcn-mask-test
-  "The bitmask compilation, held against the algebra it was compiled from.
-
-  `qcn` runs its pass over bitmasks: a constraint is the bits of a long, composition and
-  converse are table reads, and the tables are built by dynamic programming over the
-  *base* relations — `f(s) = f(s minus its lowest relation) | f(that relation)`.  That
-  recurrence is only valid because composition and converse distribute over union, which
-  is true of every algebra here by construction and is exactly the kind of assumption that
-  fails silently: a wrong table entry is a wrong *entailment*, reported with as much
-  confidence as a right one, never a crash.
-
-  So the tables are checked against the algebra's own set-valued `:compose` and
-  `:converse`, which share no code with them.  Exhaustively where the relation count
-  allows, and over a deterministic sample where 2^k squared does not.
-
-  Both table strategies are covered: the six shipped calculi all take the **dense**
-  whole-mask table, so a synthetic algebra wide enough to fall back to the base-table loop
-  stands in for the other branch."
+  "The compiled bitmask tables against the algebra's own set-valued `:compose` and
+  `:converse`: exhaustively where the relation count allows, over a seeded sample where it
+  does not, and over a synthetic algebra wide enough to take the sparse table."
   (:require [clojure.test :refer [deftest is testing]]
-            [vaelii.impl.distance :as dist]
-            [vaelii.impl.interval :as iv]
-            [vaelii.impl.orientation :as dir]
-            [vaelii.impl.point :as pt]
             [vaelii.impl.qcn :as qcn]
-            [vaelii.impl.relative :as rel]
-            [vaelii.impl.space :as space])
+            [vaelii.qcn-algebra-test :refer [algebras]])
   (:import [vaelii.impl.types.qcn IRelationOps]))
 
 (def ^:private compile-algebra #'qcn/compile-algebra)
@@ -40,23 +21,13 @@
   [compiled ^long m]
   (.converse ^IRelationOps (:ops compiled) m))
 
-(def algebras
-  "Every shipped algebra, by name."
-  {:rcc8     space/rcc8-algebra
-   :allen    iv/allen-algebra
-   :cardinal dir/direction-algebra
-   :relative rel/relative-algebra
-   :distance dist/distance-algebra
-   :point    pt/point-algebra})
-
 (defn- masks
   "Every mask of a `k`-relation algebra."
   [k]
   (range (bit-shift-left 1 k)))
 
 (defn- sample-masks
-  "`n` masks drawn deterministically from a `k`-relation algebra — a fixed seed, so a
-  failure is reproducible and a passing run is not luck that varies per build."
+  "`n` masks drawn from a `k`-relation algebra under `seed`."
   [k n seed]
   (let [rnd (java.util.Random. seed)
         hi  (bit-shift-left 1 k)]
@@ -108,9 +79,7 @@
       (let [{:keys [decode] :as compiled} (compile-algebra algebra)
             set-compose (:compose algebra)
             k    (count (:universe algebra))
-            ;; exhaustive where 2^k squared is small (k <= 7), and a
-            ;; deterministic sample where it is not — the base-pair test above already
-            ;; covers every table entry the whole-mask one is built from.
+            ;; exhaustive where 2^k squared is small (k <= 7), else a seeded sample
             pairs (if (<= k 7)
                     (for [a (masks k) b (masks k)] [a b])
                     (map vector (sample-masks k 4000 42) (sample-masks k 4000 4242)))]
@@ -122,11 +91,7 @@
 ;; ---- the two table strategies --------------------------------------------
 
 (deftest the-two-numbers-that-bound-this-layer-are-the-documented-ones
-  ;; Neither is a cache — nothing is held and nothing is evicted — so neither has a row
-  ;; on the caches page, and docs/qcn.md ("Two numbers bound this layer, and neither is a
-  ;; cache") is where a reader meets them instead.  The tests below spell the threshold
-  ;; out again as an arithmetic bound, so a constant that moved with nothing else moving
-  ;; would leave three readings disagreeing rather than one.
+  ;; docs/qcn.md, "Two numbers bound this layer, and neither is a cache"
   (is (= 62 @#'qcn/max-base-relations)
       "a constraint is the bits of a long, and 62 is what one holds")
   (is (= (bit-shift-left 1 18) @#'qcn/dense-table-limit)
@@ -146,9 +111,8 @@
   (vec (map #(keyword (str "r" %)) (range 16))))
 
 (def ^:private wide-base
-  "A composition table over them.  It need not be a *sound* algebra — this is a test of
-  the compilation, and what the compilation must reproduce is the union over base pairs,
-  whatever those pairs compose to.  Deterministic, so the table is the same every run."
+  "A seeded composition table over them, not a sound algebra: the compilation reproduces
+  the union over base pairs whatever those compose to."
   (let [rnd (java.util.Random. 7)]
     (into {} (for [a wide-relations]
                [a (into {} (for [b wide-relations]
@@ -157,8 +121,7 @@
                                            wide-relations))]))]))))
 
 (def ^:private wide-converse
-  "Its converse: the relations paired off end to end, so the map is a permutation and the
-  converse of a set is the union of its members' — which is all the compilation assumes."
+  "Its converse: the relations paired off end to end, a permutation."
   (into {} (map-indexed (fn [i r] [r (nth wide-relations (- 15 i))])) wide-relations))
 
 (def ^:private wide-algebra

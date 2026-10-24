@@ -13,6 +13,7 @@
             [vaelii.cli :as pcli]
             [vaelii.core :as v]
             [vaelii.host.cli :as cli]
+            [vaelii.host.sync :as sync]
             [vaelii.impl.disk.backend :as backend]
             [vaelii.impl.io.import :as imp]
             [vaelii.impl.reasoning-image :as ri]
@@ -380,6 +381,79 @@
                                                   (cli/upgrade! dir {:trust true :verify true}))))
                             [:type :mismatch])))
         (finally (rm-rf! (io/file dir)))))))
+
+;; the upper ontology states `dropped` and does not state `stale`, and both name only
+;; shipped terms, so `sync/plan` over a store holding `stale` and lacking `dropped` is one
+;; removal and one addition
+(def ^:private dropped '(disjoint animal vehicle))
+(def ^:private stale '(disjoint vertebrate vehicle))
+
+(defn- stale-upper-store!
+  "A temporary directory holding a closed `:disk-snapshot` store of the upper ontology as
+  an older engine would have shipped it: `dropped` retracted, `stale` asserted."
+  ^String []
+  (let [dir (str (Files/createTempDirectory "vaelii-cli-stale" (make-array FileAttribute 0)))
+        kb  (tu/load-core! (v/open-kb {:backend :disk-snapshot :dir dir}))]
+    (v/retract! kb (v/handle-of kb dropped 'CxUniverse))
+    (v/assert kb stale 'CxUniverse)
+    (v/close! kb)
+    dir))
+
+(defn- records-bytes
+  "Every file under `dir`'s `records/`, as `{relative-path bytes-as-vector}`."
+  [dir]
+  (let [root (io/file dir "records")]
+    (into {} (for [^File f (file-seq root) :when (.isFile f)]
+               [(str (.relativize (.toPath root) (.toPath f)))
+                (vec (Files/readAllBytes (.toPath f)))]))))
+
+(def ^:private ships
+  "The starter's content, computed once: `sync/premises` loads the starter into a scratch KB."
+  (delay (sync/premises)))
+
+(defn- plan-size
+  "`sync/plan` of the store in `dir`, as `{:add n :remove n}`."
+  [dir]
+  (let [kb (v/open-kb {:backend :disk-snapshot :dir dir})]
+    (try (update-vals (select-keys (sync/plan kb @ships) [:add :remove]) count)
+         (finally (v/close! kb)))))
+
+(deftest upgrade-syncs-the-shipped-contexts-only-under-sync
+  (tu/with-snapshot-platform
+    (let [a       (stale-upper-store!)
+          b       (stale-upper-store!)
+          shipped @ships]
+      ;; `upgrade!` reads the shipped content off a scratch starter load per sync; the
+      ;; cached reading is the same content
+      (try
+        (with-redefs [sync/premises (constantly shipped)]
+          (testing "a plain upgrade leaves the records as they were"
+            (let [before (records-bytes a)
+                  r      (cli/upgrade! a)]
+              (is (not (contains? r :sync)))
+              (is (= before (records-bytes a)))
+              (is (= {:add 1 :remove 1} (plan-size a)))))
+          (testing "--sync brings the store to the empty plan, and :reasoning is what the open did"
+            (let [err (java.io.StringWriter.)
+                  r   (binding [*err* err] (cli/upgrade! a {:sync true}))]
+              (is (= {:added 1 :removed 1 :refused []} (select-keys (:sync r) [:added :removed :refused])))
+              (is (= ["sync 0/2 add (disjoint animal vehicle) in CxUniverse"
+                      "sync 1/2 remove (disjoint vertebrate vehicle) in CxUniverse"
+                      "sync 2/2"]
+                     (str/split-lines (str err)))
+                  "a progress line per change on stderr")
+              (is (= :current (:reasoning r)))
+              (is (= {:add 0 :remove 0} (plan-size a)))))
+          (testing "--verify --sync compares the images before the sync moves the records"
+            ;; a first --verify writes the image of a recover, so the second compares like with
+            ;; like and reads :same only when it compares before the sync's two changes
+            (cli/upgrade! b {:verify true})
+            (let [r (binding [*err* (java.io.StringWriter.)] (cli/upgrade! b {:verify true :sync true}))]
+              (is (= :same (:labels (:verify r))))
+              (is (= {:added 1 :removed 1} (select-keys (:sync r) [:added :removed])))
+              (is (= {:add 0 :remove 0} (plan-size b)))
+              (is (not (.exists (io/file b "reasoning.prev")))))))
+        (finally (rm-rf! (io/file a)) (rm-rf! (io/file b)))))))
 
 (deftest compare-images-reads-a-belief-change-off-the-labels
   (tu/with-snapshot-platform

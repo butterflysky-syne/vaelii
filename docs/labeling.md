@@ -24,11 +24,7 @@ handles with both sides' justifications, and the engine arbitrates nothing. So
 `settle` builds no `Program`, and `core/last-program` — which `label/classify` reads —
 is **nil in exactly the cases where labeling is interesting**.
 
-`asp_label_test`'s preamble names the bridge: *"an application that wants to rank a
-dilemma can still do so through this machinery — it just has to ask for it rather than
-have the engine decide behind its back."*
-
-`do/labeling` is that asking.
+`do/labeling` is the bridge: an application that wants a dilemma ranked asks for it.
 
 ## The `do/` channel
 
@@ -72,10 +68,7 @@ Four steps, in an order the imperative fixes so a caller cannot get it wrong:
 
 1. **Build a `Program` from the current dilemmas.** Not from `last-program` — see
    above, that is nil here. `contradictions` supplies the nogoods, their members are
-   the contested assumptions, and `label/sides-content` supplies what each side asserts
-   (the settle path has a private helper of its own for the same job).
-   Known-true content is never contested, so it enters as `:fixed` background exactly
-   as it would have from `settle`.
+   the contested assumptions, and `label/sides-content` supplies what each side asserts.
 2. **Classify** brave/cautious over the optimal resolutions, read from the dependency
    graph (the solve-free bracket below).
 3. **Record** the `Program`, carrying that classification, in the KB's `:program` slot,
@@ -93,13 +86,8 @@ being a thing a caller has to remember.
 
 ### Where the labeling comes from, and why it differs from `label-context`
 
-`label/label-context` reads the labeling from the **TMS**, and `label.clj`'s namespace
-docstring is emphatic about refusing to re-solve: *"A re-solve would usually agree, and
-'usually' is not a property worth building on."*
-
-`do/labeling` on a dilemma reads it from a **resolution** computed for the purpose. That
-is not a reversal. Both
-follow the same rule — *report what actually decided it* — applied to two different
+`label/label-context` reads the labeling from the **TMS**, and `do/labeling` on a dilemma
+reads it from a **resolution** computed for the purpose. Both follow the same rule — *report what actually decided it* — applied to two different
 situations:
 
 | situation | who decided | so read from |
@@ -119,21 +107,10 @@ lost: the strengthened copy out-ranks it and `decide/verdict` defeats the strict
 weaker member. So `Ctx` is a **world** — the uncontested background is inherited, and
 the contested atoms are decided within it.
 
-Both halves of that are required, and the two neighbouring designs are the
-argument:
-
-* **A copy at `:default`** merely ties with the side it is supposed to beat, so it
-  reports a second dilemma instead of deciding the first — `contradictions` **1 to 2**,
-  and a second labeling would report it three times. Entrenchment is correct for
-  `label-context`, where the loser is already defeated and the copy meets no live
-  rival; here both sides are IN and a tying copy walks straight into a fresh nogood.
-* **A detached `Ctx`** avoids that double-report and leaves the base bit-for-bit
-  untouched, but then holds only the labeled literals and inherits no background — a
-  record to read rather than a world to query.
-
 The `:monotonic` copy into an inheriting context leaves `contradictions` at **1**: the
 base still holds both sides, and inside `Ctx` the dilemma is decided rather than
-duplicated.
+duplicated. A copy at `:default` and a detached `Ctx` each fail
+([defenses.md](defenses.md#a-labelings-copies-are-monotonic-in-an-inheriting-context)).
 
 ### The commitment is scoped to `Ctx`
 
@@ -168,26 +145,11 @@ spend a defeat per dilemma, and one of them gives up `a`, `b` and `c` together.
 A cluster past the bracket's caps is labeled by a solve over its dilemmas' `Program`
 instead, and with a backend a member of one whose members derive from none of each other is
 classified by brave and cautious solves, where the `Program` is exact. That is up to three
-solves, and separate solves have to be *reconciled*. `classify-program` needs to enumerate optima,
-which only ASP does, so it goes straight to the backend and ignores `(:solver kb)`. A
-labeling taken from the installed solver — on a default KB, the greedy `local-solver` —
-would answer from a different search procedure, and the two diverge in practice.
-Measured on two nogoods sharing a member, where greedy spends two defeats and the
-optimum spends one:
-
-```
-stub  defeats {1,3} -> labels {2}     classification: {:true {1,3} :false {2}}
-ASP   defeats {2}   -> labels {1,3}
-```
-
-The stub's labeling keeps an assumption holding in **no** optimum and drops two
-holding in **every** one. Under commit semantics that materializes an impossible world
-and defeats, inside `Ctx`, the atoms classification calls forced.
+solves, and separate solves have to be *reconciled*.
 
 Two things hold them together. The labeling solve uses the **ASP edge solver whenever a
-backend is reachable**, deliberately bypassing `(:solver kb)` so both answers come from
-one search procedure; with no backend the two degrade together, since `classify-program`
-then claims nothing and any labeling satisfies it. And the invariant is **checked before
+backend is reachable**, bypassing `(:solver kb)` so both answers come from one search
+procedure ([defenses.md](defenses.md#a-labelings-solve-ignores-the-installed-solver-when-a-backend-is-reachable)). And the invariant is **checked before
 committing** rather than assumed:
 
 ```
@@ -319,8 +281,7 @@ Three limits, none silent:
 * **Ground `S` only, and a query rather than an antecedent.** An open `(bravely (pacifist
   ?x))` is not applicable — the same restraint `different` takes. As a rule antecedent the
   answer carries no support (the prover is not a `SupportingProver`), so the forward join
-  drops it and it derives nothing. Threading its support — the dilemma's contested handles —
-  so a rule could rest on it is deferred until a use asks for it.
+  drops it and it derives nothing.
 
 ### The solve-free bracket
 
@@ -382,7 +343,7 @@ only adds.
 
 ## Status
 
-`labeling_test` covers this channel in 17 tests: the `do/` channel itself, the
+`labeling_test` covers this channel: the `do/` channel itself, the
 dilemma-to-`Program` bridge (`label/dilemma-program`), the solve-sourced labeling, and
 `label/label-dilemmas`. `label/classify-program`, `label/label-context`,
 `edge/edge-solver` and the clingo/clasp backends are `asp_label_test` /

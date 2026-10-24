@@ -6,18 +6,13 @@
 
   `(carriesLoad hauler_kind Bone1)` asserted `{:strength :monotonic}` reaches
   `(carriesLoad cart_kind Bone1)`, and a stored `(not (carriesLoad cart_kind Bone1))`
-  denies a claim that has no handle.  A reading is as strong as its weakest reason: one
-  whose general claim, declaration or `genl` edge is `:default` yields to the nearer
-  contrary claim and forms no nogood, while a reading known-true throughout is \"a
-  contradiction to report rather than a refinement to defer to\".
+  denies a claim that has no handle (docs/inherit.md).
 
-  This namespace asserts that the report exists, that it names enough to be acted on —
-  the claim nobody wrote, the sentex it was read off, the declaration and the edge — and
-  that it is a function of the knowledge rather than of the order it arrived in.  The
-  belief consequence is asserted beside it, because the two are one decision: the nogood's
-  members are the stored claim and everything the reading rests on, so `decide/verdict`
-  weighs them as it weighs any other nogood and the **weakest member decides**
-  (docs/inherit.md).
+  This namespace asserts that the report exists, that it names the claim nobody wrote,
+  the sentex it was read off, the declaration and the edge, and that it is a function of
+  the knowledge rather than of arrival order.  The belief consequence is asserted beside
+  it: the nogood's members are the stored claim and every reason, and the weakest member
+  decides.
 
   `ontology_test` reads the same mechanism as a modelling claim about the shipped
   vocabulary; this namespace reads it as an engine contract."

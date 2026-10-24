@@ -1466,20 +1466,34 @@
                                                  (named-ops idx :post (kv/key-relation k) handle)))))
       {handle ctx})))
 
-(defn- retire!
-  "Take `handle` out of taxonomy key `k`'s supporters in `tax`'s index store, from
+(defn- retire-posting!
+  "Take `handle` out of taxonomy key `k`'s supporters in index store `idx`, from
   whichever context it is stated in, and the facts naming it out of `k`'s relation in the
   `:tax-named` family when `handle` installs no other key of the relation: true when it
   was one."
-  [tax k handle]
-  (let [idx (:index @tax)
-        rel (kv/key-relation k)
+  [idx k handle]
+  (let [rel (kv/key-relation k)
         was (some? (first (p/family-apply! idx [[:retire :tax-support (conj k p/any-context) handle]
                                                 [:retire :tax-installs [handle] k]])))]
     (when-let [ops (seq (named-ops idx :retire rel handle))]
       (when-not (some #(= rel (kv/key-relation %)) (reads/as-stored-installed-keys idx handle))
         (p/family-apply! idx (vec ops))))
     was))
+
+(defn- retire!
+  "`retire-posting!` in `tax`'s index store."
+  [tax k handle]
+  (retire-posting! (:index @tax) k handle))
+
+(defn retire-stored-supporter!
+  "Take stored handle `h` out of the supporters of every taxonomy key it installs, in
+  index store `idx` alone: the index half of a declaration's departure, for a KB whose
+  taxonomy is not built (`vaelii.impl.record-edit`).  The taxonomy's in-memory entries
+  are untouched.  Returns the number of keys."
+  [idx h]
+  (let [ks (vec (reads/as-stored-installed-keys idx h))]
+    (doseq [k ks] (retire-posting! idx k h))
+    (count ks)))
 
 (defn- add-supported
   "Record `handle` as asserting the flat-cache key `k` from `ctx`, installing the entry,
@@ -2252,35 +2266,10 @@
   tax)
 
 ;; ---- equality: rewriteOf / sameAs / equals, one partition ----------------
-;;
-;; `genl` is a partial order, so it caches up/down closures.  Equality is an
-;; **equivalence**, and copying that shape would store every class as a complete
-;; graph — quadratic, and it still would not answer "who represents this class?",
-;; which is the only question the rewrite path actually asks.  So this is a
-;; **partition**: member → class, class → members and representative.
-;;
-;; All three assertable relations feed it.  They differ in what they say *about* the
-;; members, not in the classes they produce, and the whole of that difference rides
-;; in one argument: `preferred` names the term a `rewriteOf` puts on top, and is nil
-;; for `sameAs` / `equals`.  The edge itself is therefore undirected while the
-;; preference belongs to the *supporter* that made the claim — which is what lets a
-;; `(sameAs A B)` and a `(rewriteOf B A)` support one edge while only the second
-;; deprecates anything, and lets belief withdraw the preference without withdrawing
-;; the merge.
-;;
-;; Support is belief-following exactly as it is for genl.  `:out` is the disbelieved
-;; supporter set; `refresh-beliefs` recomputes it wholesale from the current support
-;; keys, so it cannot accumulate handles whose sentex has since gone.
-;;
-;; Insertion is a union, and it costs the **joined class** rather than a pointer:
-;; `install-class` re-keys every member and `class-rep` scans each member's incident
-;; edges for the preference claims on them, so merging a term into a class of n costs n
-;; and n asserts growing one class to n cost Θ(n²) between them.  That is the price of
-;; storing the representative rather than deriving it per read, and the bound is the
-;; class rather than the relation.  **Deletion can split a class**, which union-find
-;; cannot undo, so it rebuilds the affected class from its surviving believed edges —
-;; the same bound, the same shape as the ancestor-set-local `genl` deletion, never the whole
-;; relation.
+;; A partition, member → class and class → members and representative, over undirected
+;; edges whose `rewriteOf` preference belongs to each supporter (docs/equality.md,
+;; "Storage").  A union re-keys the joined class, so n asserts growing one class to n
+;; cost Θ(n²); a deletion rebuilds the class it can split.
 
 (defn- pair
   "The canonical undirected edge key for `a` and `b`.  Equality is symmetric, so
@@ -2306,20 +2295,10 @@
   (if-let [r (get (:class rel) t)] (get (:members rel) r #{t}) #{t}))
 
 (defn- class-rep
-  "The representative of a class, from its members and the preference claims carried
-  by the active edges inside it.
-
-  1. A term some `rewriteOf` names preferred wins, and **chains compose**: the heads
-     are the preferred terms that nothing else deprecates, so `rewriteOf A B` plus
-     `rewriteOf B C` leaves only `A` and it represents all three.
-  2. A tie among heads — and a class with no `rewriteOf` at all — falls back to the
-     lexicographically smallest term.  Arbitrary, but content-keyed and stable, the
-     same discipline as `solve/content-key`: one class yields one representative no
-     matter what order its edges arrived in.
-
-  A `rewriteOf` cycle deprecates every preferred term and so has no head.  `wff`
-  rejects it like a `genl` cycle; the second fallback is here so this stays total
-  rather than returning nil if it ever becomes reachable."
+  "The representative of a class, from its members and the preference claims its active
+  edges carry (docs/equality.md, \"Choosing the representative\"): the smallest head, a
+  preferred term nothing deprecates; else, for a `rewriteOf` cycle `wff` refuses, the
+  smallest preferred term; else the smallest member.  Total."
   [rel members]
   (let [ps        (into #{}
                         (mapcat (fn [m] (mapcat #(get (:edge-prefs rel) % #{})
@@ -2418,15 +2397,12 @@
     (reduce (fn [r k] (update-in r [:moved k] (fnil into #{}) ms)) rel equality-move-readers)))
 
 (defn- refresh-equality
-  "Reconcile the equality partition with belief, scoped to what `moved` names: only a
-  moved supporter can change its believed status or its own edge's state, so the
-  reconcile updates `:out` for `moved ∩ handles` and re-applies exactly those edges,
-  through the reverse map `:handle-edge`, walked from whichever side is smaller.
-  Unscoped, the i-th merge of a load re-asked belief of every supporter and re-derived
-  the live state of every edge, Θ(N²) across the load.  nil `moved` is the unconditional reconcile
-  (`refresh-beliefs`' two-arity): every supporter re-asked, every edge re-applied.  The
-  edge of each supporter whose `:out` entry flipped is noted in `:moved`, and each
-  supporter that left `:out` is added to `:believed-again` (`take-believed-again!`)."
+  "Reconcile the equality partition with belief, scoped to the supporters `moved` names:
+  `:out` is updated for `moved ∩ handles` and only their edges are re-applied, through
+  `:handle-edge`, walked from the smaller side.  nil `moved` re-asks every supporter
+  (`refresh-beliefs`' two-arity).  The edge of each supporter whose `:out` entry flipped
+  is noted in `:moved`, and each supporter that left `:out` joins `:believed-again`
+  (`take-believed-again!`)."
   [rel believed? moved]
   (if-not (moved-touches? moved (:handles rel))
     rel
@@ -2545,21 +2521,10 @@
   (get-in @tax [:equality :class term] term))
 
 (defn scoped-class
-  "`[members representative]` for `term` counting only the equality edges some
-  supporter `visible?` admits — the equality analogue of the scoped closure reads,
-  and the form a **context-scoped** rewrite needs.
-
-  It has to be recomputed rather than filtered out of the global partition, because
-  dropping an edge can *split* a class: `A~B~C` with only `A~B` visible is the class
-  `{A B}`, and its representative is elected among those two alone, not inherited from
-  the class `C` was in.  The election rule is `class-rep`'s, over the visible edges'
-  preference claims — so a `rewriteOf` this context cannot see neither retires a term
-  nor promotes one.
-
-  Recomputed per call and not memoized: a class is a handful of terms, and the callers
-  already pay a record fetch per supporter to decide `visible?`.  The **global** read
-  is `representative` above and stays the fast path — nothing that has not merged ever
-  reaches here."
+  "`[members representative]` for `term` over the equality edges some supporter
+  `visible?` admits, elected by `class-rep`'s rule over the visible preference claims.
+  Recomputed per call rather than filtered from the global partition, since dropping an
+  edge can split a class: `A~B~C` with only `A~B` visible is the class `{A B}`."
   [tax term visible?]
   (let [rel  (:equality @tax)
         out  (:out rel #{})
@@ -2584,22 +2549,48 @@
             heads     (set/difference preferred (into #{} (map second) ps))]
         [members (term-min (cond (seq heads) heads (seq preferred) preferred :else members))]))))
 
+(defn scoped-path-supporters
+  "The supporters of one path joining `a` and `b` over the equality edges some supporter
+  `visible?` admits, as a vector holding each edge's admitted supporters in path order;
+  nil when no such path joins them.  The path is a shortest one, searched breadth-first
+  with each term's edges in content order, so the path chosen does not depend on the
+  order the edges arrived in."
+  [tax a b visible?]
+  (when (not= a b)
+    (let [rel  (:equality @tax)
+          out  (:out rel #{})
+          sup  (fn [e] (into (sorted-set)
+                             (keep (fn [[h _]] (when (and (not (contains? out h)) (visible? h)) h)))
+                             (get (:support rel) e {})))
+          ekey (memoize (fn [e] (mapv term-key e)))]
+      (loop [frontier [a] prev {a nil}]
+        (cond
+          (contains? prev b)
+          (loop [t b acc ()]
+            (if-let [[p e] (get prev t)] (recur p (conj acc (sup e))) (vec acc)))
+
+          (empty? frontier) nil
+
+          :else
+          (let [step  (for [t frontier
+                            e (sort-by ekey compare (get (:edge-idx rel) t #{}))
+                            :let [[x y] e, n (if (= x t) y x)]
+                            :when (and (not (contains? prev n)) (seq (sup e)))]
+                        [n t e])
+                prev' (reduce (fn [m [n t e]] (if (contains? m n) m (assoc m n [t e]))) prev step)]
+            (recur (into [] (comp (map first) (distinct)) step) prev')))))))
+
+(defn path-alternatives
+  "The handle sets a path's per-edge supporter sets give (`scoped-path-supporters`): one
+  supporter of each edge, in every combination."
+  [path]
+  (reduce (fn [acc hs] (for [a acc, h hs] (conj a h))) [#{}] path))
+
 (defn class-fully-visible?
-  "Does `visible?` admit **every believed supporter of every active edge** in `term`'s
-  class?  When it does, the scoped election *is* the global one — same members, because
-  no edge drops, and same representative, because no preference claim drops — so the
-  caller can take `representative`'s O(1) map lookup instead of rebuilding the class.
-
-  The condition is per *supporter*, not per edge, and that is what makes it sound.  One
-  edge may carry a `sameAs` and a `rewriteOf` at once; hiding only the `rewriteOf` leaves
-  the class intact and moves the head, so an edge-level test would licence the fast path
-  on exactly the case that needs the slow one.
-
-  This is the common shape rather than an optimisation for a corner: a KB states its
-  merges in `CxUniverse`, or in the context doing the reading, and either way every
-  supporter is visible.  A reader pays one memoized `visible?` per supporter of a class
-  that is a handful of terms — against `scoped-class`'s reachability walk and preference
-  election, which is the cost this exists to skip."
+  "Does `visible?` admit every believed supporter of every active edge in `term`'s class?
+  Then the scoped election equals the global one, and a caller takes `representative`'s
+  map lookup.  The test is per supporter, not per edge: hiding only the `rewriteOf` of an
+  edge that a `sameAs` also supports keeps the class and moves the head."
   [tax term visible?]
   (let [rel (:equality @tax)
         out (:out rel #{})]
@@ -2641,15 +2632,9 @@
   (boolean (seq (get-in @tax [:equality :edge-idx term]))))
 
 (defn merged-term-pred
-  "A `term -> boolean` closed over **one** snapshot of the partition, or nil when the
-  closure is empty — the presence check for a caller asking `merged?` of many terms in a
-  row.
-
-  `merged?` derefs per call, which is the right shape for the single question a scoped
-  class read asks and the wrong one for a filter running over every symbol of every
-  match in a query's answer set.  Returning nil rather than a constantly-false predicate
-  is what lets such a caller drop the whole filter, which is what every KB that has
-  merged nothing does."
+  "A `term -> boolean` closed over one snapshot of the partition, or nil when the closure
+  is empty, so a caller filtering every symbol of an answer set drops the filter
+  outright for a KB that has merged nothing."
   [tax]
   (let [rel (:equality @tax)]
     (when (seq (:edges rel))
@@ -2658,15 +2643,8 @@
 
 (defn deprecated?
   "Did a believed `rewriteOf` name `term` the dispreferred side?  False for a `sameAs`
-  or `equals` member — those merge without deprecating either name.
-
-  With a `visible?` supporter predicate, only the `rewriteOf`s that reader inherits
-  count — the same scoping `representative` / `same-class?` / `equiv-class` take, and
-  necessary for the same reason: a retirement is a sentex, so a context that cannot see
-  it has not been told, and reporting the term deprecated there would contradict the
-  representative that same context elects for it.  Read per supporter rather than off
-  the aggregated `:edge-prefs`, since one edge may carry a `rewriteOf` and a `sameAs`
-  at once and only the first deprecates."
+  or `equals` member.  With `visible?`, only the supporters that reader admits count,
+  read per supporter, since one edge may carry a `rewriteOf` and a `sameAs` at once."
   ([tax term] (deprecated? tax term nil))
   ([tax term visible?]
    (let [rel (:equality @tax)]
@@ -2695,19 +2673,11 @@
           (get (:support rel) e {}))))
 
 (defn spelling-representative
-  "`term`'s representative considering only `rewriteOf` (spelling) edges — a `sameAs` /
-  `equals` identity merge is **not** followed.  This is the mention read: a quoted term
-  tracks a *spelling* rename of its symbol but not a *coreference* merge of its referent,
-  so `res/representative-term` uses it inside a quoting function's arguments.
-
-  The rewriteOf edges form their own sub-partition; the answer is the representative of
-  `term`'s rewriteOf-connected component, elected by the same rule `class-rep` uses — a
-  preferred term nothing deprecates, else the lexicographically smallest.  A term no
-  rewriteOf touches — including one merged only by `sameAs` — is its own representative,
-  returned unchanged.  With `visible?`, only the believed edges that reader inherits
-  count, the scoping `deprecated?` / `representative` take.  Recomputed per call: a class
-  is a handful of terms, and the caller's `merged?` check skips it entirely for an
-  unmerged one."
+  "`term`'s representative over the `rewriteOf` edges alone, a `sameAs` / `equals` merge
+  not followed: the mention read `res/representative-term` takes inside a quoted
+  position.  Elected by `class-rep`'s rule over the `rewriteOf`-connected component; a
+  term no `rewriteOf` touches is returned unchanged.  With `visible?`, only the believed
+  edges that reader admits count."
   ([tax term] (spelling-representative tax term nil))
   ([tax term visible?]
    (let [rel (:equality @tax)]
@@ -2735,12 +2705,8 @@
   (into #{} (mapcat identity) (vals (get-in @tax [:equality :edge-prefs] {}))))
 
 (defn equality-supporters
-  "The handles of the sentexes asserting an **active** equality edge incident on
-  `term` — the merges that put `term` in a class other than its own.
-
-  Migration reads this to justify a rewritten twin: each incident edge is an
-  independent witness for the rewrite, so the twin gets one justification per
-  supporter and survives losing any single one."
+  "The handles of the believed sentexes asserting an active equality edge incident on
+  `term`: the equalities migration reads a reader's copy's witnesses from."
   [tax term]
   (let [rel (:equality @tax)]
     (into #{}
@@ -5894,10 +5860,13 @@
   out.  Empty exactly when `disjointness-test` reading no exemption answers false from
   `a`'s side.  A placed nogood names one route's supporters and edges as its grounds
   (docs/nmtms.md).  A route through a mark carries `:mark? true`: an exception can exempt
-  it (`route-exempted?`)."
+  it (`route-exempted?`).  `b`'s supertypes are read cut to the separable ones
+  (`separable-genls`), as `separation-test` reads them, and whole only for the sibling
+  arm."
   [tax a b]
   (let [{:keys [seps metas sibs parts]} (separation-frame tax a nil)
-        bs     (genls-global tax b)
+        bs     (separable-genls tax b)
+        all-bs (delay (genls-global tax b))
         unrel? (fn [x y] (and (not= x y) (not (genl?-global tax x y)) (not (genl?-global tax y x))))
         route  (fn [ks x y & links]
                  {:keys ks :pair [x y] :mark? true
@@ -5907,7 +5876,7 @@
        (dissoc (route #{[:disjoint #{x y}]} x y) :mark?))
      (for [[m ms in-a] metas, x in-a, y ms :when (and (contains? bs y) (unrel? x y))]
        (route #{[:metatype m] [:member m x] [:member m y]} x y))
-     (for [[c under-c? below-a] sibs, x below-a, y bs
+     (for [[c under-c? below-a] sibs, x below-a, y @all-bs
            :when (and (not= y c) (under-c? y) (unrel? x y))]
        (route #{[:sib-disjoint c]} x y [x c] [y c]))
      (for [[ps in-a k] parts, x in-a, y ps :when (and (contains? bs y) (unrel? x y))]
@@ -6824,6 +6793,28 @@
                                             (some (fn [h] (= :monotonic (supporter-class h)))
                                                   (visible-supporters tax (genl-inverse-key s y) context)))
                                           (genl-inverse-hop tax :up s context))))))))
+
+(defn inverses-over
+  "The partners a denial of `p` reads: each `Q` an `(inverse P' Q)` declares for a `P'`
+  at or above `p`.  `(not (Q y x))` is `(not (P' x y))`, and a denial of `P'` denies `p`.
+  With `context` and `supporter-class` (`contrapositive-closure`'s), `P'` ranges over
+  the straight half of `contrapositive-closure` and the declaration needs a visible
+  supporter `supporter-class` reads `:monotonic`, since a `:default` declaration does not
+  contrapose.  Without them, the unscoped superset over every `genl` edge and declaration,
+  for a trigger."
+  ([tax p]
+   (if (empty? (get @tax :inverse))
+     #{}
+     (into #{} (mapcat #(inverses-of tax %)) (genls-global tax p))))
+  ([tax p context supporter-class]
+   (if (empty? (get @tax :inverse))
+     #{}
+     (into #{}
+           (mapcat (fn [t]
+                     (filter (fn [q] (some #(= :monotonic (supporter-class %))
+                                           (visible-supporters tax (inverse-key t q) context)))
+                             (inverses-of tax t))))
+           (first (contrapositive-closure tax p context supporter-class))))))
 
 (defn- visible-flat-supporters
   "The supporters of flat-cache key `k` a reader at `context` can use, as `[handle ctx]`

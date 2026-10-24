@@ -1,25 +1,16 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.rewriteof-predicate-test
-  "`rewriteOf` over **predicates** and **types** — round two of equality
-  (docs/equality.md).  A merge `(rewriteOf Canonical Deprecated)` where the two are
-  predicates or types (not individuals) retires the deprecated spelling and moves
-  its *functor* uses — facts headed by it, the `genl` closure, the predicate
-  metadata, and the rules that mention it — onto the representative, riding the same
-  belief-following migration machinery that round one built for individuals.
-
-  Each test asserts one acceptance from the design prompt.  House rules apply:
-  gensym'd temporaries via `tu/with-terms` (a predicate `bornIn` and a type `dog`
-  come out camelCase / snake_case respectively, so the merge is between two fresh
-  same-role terms), engine vocabulary (`rewriteOf`, `genl`, `transitive`,
-  `disjoint`, `implies`) literal, and the neutral fixture asserts the KB restores."
+  "`rewriteOf` over predicates and types: the merge moves the retired term's functor
+  uses (facts, the `genl` closure, predicate metadata, rules) onto the representative.
+  See docs/equality.md, \"Merging predicates and types\"."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.test-util :as tu]))
 
 (use-fixtures :each (tu/neutral-fresh tu/fresh))
 
-;; ---- helpers (mirroring equality_test) -----------------------------------
+;; ---- helpers ------------------------------------------------------------
 
 (defn- believed? [kb sentence context]
   (let [h (v/handle-of kb sentence context)]
@@ -33,7 +24,7 @@
   (set (map #(get % var) (v/ask kb goal context))))
 
 ;; ==========================================================================
-;; 1. wff: rewriteOf is now legal over predicates and types, same-role only
+;; 1. wff: rewriteOf over predicates and types, same role only
 ;; ==========================================================================
 
 (tu/deftest-kb predicate-and-type-rewriteof-is-well-formed
@@ -51,17 +42,15 @@
                    (v/assert kb (list 'rewriteOf parentOf Muffet) CxName))))
     (testing "a clearly-camelCase predicate with a clearly-snake_case type"
       ;; built by hand rather than taken from `with-terms`: a predicate temp is bare
-      ;; lowercase now, which satisfies both conventions and so clashes with neither —
+      ;; lowercase, which satisfies both conventions and so clashes with neither, and
       ;; this assertion needs a name that is unambiguously a relation
       (let [camelPred (symbol (str (tu/tmp-pred) "Of"))]
         (is (thrown? clojure.lang.ExceptionInfo
                      (v/assert kb (list 'rewriteOf camelPred physical_object) CxName)))))))
 
 ;; ==========================================================================
-;; 2. Predicate merge over facts (roles 2 — functor position)
+;; 2. Predicate merge over facts
 ;; ==========================================================================
-;; Store a fact under the deprecated predicate, merge, and the representative
-;; predicate now answers while the deprecated predicate's extent does not.
 
 (tu/deftest-kb predicate-merge-moves-facts-to-the-representative-functor
   (tu/with-terms [bornIn birthplaceOf Ada London CxName]
@@ -80,10 +69,8 @@
       (is (seq (v/sentexes-with-functor kb bornIn {:believed? true}))))))
 
 ;; ==========================================================================
-;; 3. Predicate merge over rules (role 4 — the genuine work)
+;; 3. Predicate merge over rules
 ;; ==========================================================================
-;; A rule written on the deprecated predicate fires after the merge as though it
-;; had been written on the representative; retracting the merge restores it.
 
 (tu/deftest-kb a-rule-on-the-deprecated-predicate-fires-under-the-representative
   (tu/with-terms [bornIn birthplaceOf knownPlace Ada London CxName]
@@ -125,9 +112,8 @@
       (is (:moved rbm))
       (is (:blocked rbm)))))
 
-;; A migrated rule keeps the flavour of the rule it restates — its wrappers ride the
-;; record, not the stored sentence, so re-canonicalizing the rewritten bare implies
-;; must put them back (`rules/rewrap`).
+;; The wrappers ride the record, not the stored sentence, so `rules/rewrap-sentex` puts
+;; them back on the re-canonicalized twin.
 
 (tu/deftest-kb rule-migration-preserves-defeasibility
   (tu/with-terms [bornIn birthplaceOf knownPlace Ada London CxName]
@@ -155,9 +141,6 @@
       (is (not (believed? kb (list knownPlace London) CxName))))
     (testing "but it is still backward-provable under the representative"
       (is (v/query? kb (list knownPlace London) CxName {:max-depth 2})))))
-
-;; A migrated rule keeps its exceptWhen exception — the meta-sentex is re-pointed onto
-;; the twin, so the twin fires guarded (docs/equality.md, round two).
 
 (tu/deftest-kb a-migrated-rule-keeps-its-exception
   (tu/with-terms [bornIn birthplaceOf knownPlace secret Ada London Bob Paris CxName]
@@ -190,11 +173,8 @@
         (is (not (believed? kb (list knownPlace Paris) CxName))
             "Bob is excepted again under the original rule")))))
 
-;; The mirror of the above with the arrival order flipped: the merge runs FIRST, then the
-;; exception arrives.  Migration ran before the exception existed, so it never saw it —
-;; the exception lands on the superseded original and the live twin fires *unguarded*
-;; unless it is re-pointed onto the twin on arrival (`migrate-meta-onto-twins`,
-;; docs/equality.md, the meta-after-merge case).
+;; The merge arrives before the exception, so the exception lands on the superseded
+;; original and `migrate-meta-onto-twins` re-points it onto the twin on arrival.
 
 (tu/deftest-kb an-exception-asserted-after-the-merge-guards-the-live-twin
   (tu/with-terms [bornIn birthplaceOf knownPlace secret Ada London Bob Paris CxName]
@@ -268,7 +248,7 @@
           "the twin rule's unknown-guard re-check index moved with it"))))
 
 ;; ==========================================================================
-;; 4. Type merge — the genl closure moves (roles 3, 2)
+;; 4. Type merge: the genl closure moves
 ;; ==========================================================================
 
 (tu/deftest-kb type-merge-moves-the-genl-closure-and-memberships
@@ -304,7 +284,7 @@
         (is (not (v/isa? kb Rex canine CxName)) "canine is no longer dog")))))
 
 ;; ==========================================================================
-;; 5. Predicate metadata moves under the representative (role 5)
+;; 5. Predicate metadata moves under the representative
 ;; ==========================================================================
 
 (tu/deftest-kb transitive-metadata-survives-a-predicate-merge
@@ -330,10 +310,8 @@
 ;; ==========================================================================
 ;; 5b. Soundness: a type merged in an exceptWhen QUERY keeps blocking
 ;; ==========================================================================
-;; The flight rule mentions no merged predicate (so it is not migrated), but its
-;; exception query does — and the exception meta-sentex migrates its query onto the
-;; representative, so the exception keeps holding of the migrated facts.  Losing this
-;; would be *unsound*: a penguin renamed would suddenly fly.
+;; The flight rule mentions no merged predicate, so it is not migrated; its exception
+;; query does, and the exception's twin queries the representative.
 
 (tu/deftest-kb an-exception-query-migrates-and-keeps-blocking
   (tu/with-terms [bird flies penguin antarctic_bird Opus CxName]
@@ -353,10 +331,10 @@
           "the migrated exception still holds of the migrated fact — Opus stays grounded"))))
 
 ;; ==========================================================================
-;; 6. No regression — an individual merge still holds rules back
+;; 6. A rule naming only the representative is not migrated
 ;; ==========================================================================
 
-(tu/deftest-kb an-individual-merge-does-not-migrate-a-rule
+(tu/deftest-kb a-merge-leaves-a-rule-naming-the-representative-unmigrated
   (tu/with-terms [likes friendly Tom Thomas Ann CxName]
     ;; a rule mentioning an individual constant Tom
     (let [rule (v/assert-rule kb [(list likes '?x Tom)] (list friendly '?x) CxName {:direction :forward})]

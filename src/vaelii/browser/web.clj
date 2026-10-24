@@ -329,7 +329,7 @@
      "Removed"]
     [:a {:href "/network"} "Network"]
     [:a {:href "/stats"} "Stats"]
-    [:a {:href "/lists" :title "whole-KB lists: defeats, contradictions, types without a genl"}
+    [:a {:href "/lists" :title "whole-KB lists: defeats, contradictions, types without a genl, held facts and rules"}
      "Lists"]
     ;; long work runs on its own thread, so the way to it has to be in the chrome rather
     ;; than on the page that started it — the reader who wants it navigated away
@@ -2626,27 +2626,33 @@
   (ledger-rows "conflicts" cs offset
                (fn [c] [:li (render-form env (:sentence c))])))
 
+(defn- violation-row
+  "One `violations` entry as a list item: its kind, then whichever of its sentence,
+  context, run and message it carries."
+  [env v]
+  ;; **Not every entry is about a sentence.**  The cross-context reports and
+  ;; both sweep notices carry a `:detail` and no `:sentence` or `:context` —
+  ;; rendered unconditionally those became the text "nil" beside a live link
+  ;; to `/term?q=nil`, since `term-link`'s fallback arm links whatever it is
+  ;; handed.  And `:message` sits at the top level on `:non-confluent` and
+  ;; `:aggregate` where every other kind puts it under `:detail`, so reading
+  ;; only one of the two dropped the line those two exist to print.
+  ;; the present-field arms are seqs rather than `[:span …]` wrappers, so an
+  ;; entry that has a sentence renders exactly the markup it always did
+  [:li [:span.tag (name (:violation v))]
+   (when-let [s (:sentence v)] (list " " (render-form env s)))
+   (when-let [c (:context v)] (list in-cx (term-link env c)))
+   (when-let [r (:run v)] [:span.muted " · run " r])
+   (when-let [m (or (:message (:detail v)) (:message v))]
+     [:span.muted " — " m])])
+
 (defn- violation-rows
-  "The dropped derivations, a page at a time.  The ledger accumulates across runs and is
-  capped at the newest 1000, so which run dropped a conclusion is part of the entry rather
-  than something the reader can infer from where it sits."
+  "The filed ledger of dropped derivations (`filed-violations`), a page at a time.  The
+  ledger accumulates across runs and is capped at the newest 1000, so which run dropped a
+  conclusion is part of the entry rather than something the reader can infer from where
+  it sits."
   [{:keys [kb] :as env} offset]
-  (ledger-rows "violations" (v/violations kb) offset
-               ;; **Not every entry is about a sentence.**  The cross-context reports and
-               ;; both sweep notices carry a `:detail` and no `:sentence` or `:context` —
-               ;; rendered unconditionally those became the text "nil" beside a live link
-               ;; to `/term?q=nil`, since `term-link`'s fallback arm links whatever it is
-               ;; handed.  And `:message` sits at the top level on `:non-confluent` and
-               ;; `:aggregate` where every other kind puts it under `:detail`, so reading
-               ;; only one of the two dropped the line those two exist to print.
-               ;; the present-field arms are seqs rather than `[:span …]` wrappers, so an
-               ;; entry that has a sentence renders exactly the markup it always did
-               (fn [v] [:li [:span.tag (name (:violation v))]
-                        (when-let [s (:sentence v)] (list " " (render-form env s)))
-                        (when-let [c (:context v)] (list in-cx (term-link env c)))
-                        (when-let [r (:run v)] [:span.muted " · run " r])
-                        (when-let [m (or (:message (:detail v)) (:message v))]
-                          [:span.muted " — " m])])))
+  (ledger-rows "violations" (v/filed-violations kb) offset #(violation-row env %)))
 
 (defn stats-rows-page
   "One more page of a stats-page list — what its scroll sentinel fetches.  Every section is
@@ -2745,15 +2751,33 @@
              [:h3 "Conflicts " [:span.muted "(irreducible clashes among known-true content)"]]
              [:ul (conflict-rows env cs 0)]])))))])
 
+(defn- held-section
+  "The control that lists the held facts and rules and the convicted firings: the
+  `:inert-argument`, `:inert-rule` and `:forced-conclusion` entries `violations` reads off
+  the stored state.  That read fetches every held sentex and every convicted firing from
+  the record store and sorts them by content, minutes on a corpus, so the button runs the
+  `held` list (`/lists/run`) as a read job and the page load reads none of it."
+  []
+  [:div
+   [:h3 "Held facts and rules"]
+   [:form {:method "post" :action "/lists/run"}
+    [:input {:type "hidden" :name "list" :value "held"}]
+    [:button.primary {:type "submit"} "Scan for held facts and rules"]
+    [:span.muted " — the stored facts and rules held out of belief for a failed argument "
+     "constraint, and the firings held void at a forced-monotonic conclusion. It reads "
+     "each one from the store, so it runs as a " [:a {:href "/jobs"} "job"] "."]]])
+
 (defn stats-page
-  "KB-wide statistics: the headline counts (contexts, types, stored sentexes, and the
-  reasoning-health tallies), what the last chaining run did and a control to run
-  another, a contexts-by-size table, and — when non-empty — the dropped-derivation
-  violations.  Every count is a stored count: a page load reads no belief.
+  "KB-wide statistics: the headline counts (contexts, types, stored sentexes, the placed
+  nogoods and the filed violations), what the last chaining run did and a control to run
+  another, a contexts-by-size table, and — when non-empty — the filed ledger of dropped
+  derivations (`filed-violations`).  Every count is a stored count and the ledger a
+  deref: a page load reads no belief and fetches no record.
 
   `clashes?` asks the standing disjointness question and `nogoods?` the contradictions
   and conflicts the placed nogoods come to (`nogoods-section`).  Each is computed rather
-  than filed, so neither is asked unless the reader asks for it.
+  than filed, so neither is asked unless the reader asks for it.  The held facts and
+  rules and the convicted firings are a button that runs a job (`held-section`).
 
   `note` is what a just-finished forward-chaining run reported, shown above the
   numbers it changed."
@@ -2766,7 +2790,7 @@
          ;; sentexes all the same, and summing the table would quietly lose them
          total   (v/sentex-count kb)
          placed  (v/count-with-functor kb 'contradicts)
-         viols   (v/violations kb)
+         viols   (v/filed-violations kb)
          chain   (v/chain-stats kb)]
      (render env "stats"
              [:h2 "Statistics"]
@@ -2830,6 +2854,7 @@
              ;; the standing disjointness question, behind a control because it is
              ;; computed on demand rather than filed — see the section below
              (nogoods-section env nogoods? placed)
+             (held-section)
              (exposed-clashes-section env clashes?)))))
 
 ;; ---- the concept graph at the top of a term page ------------------------
@@ -8081,6 +8106,22 @@
                       {:term t :thing? (contains? ups 'thing)}))))
           (counted tell (by-print-key terms)))))
 
+(def ^:private held-kinds
+  "The `violations` kinds read off the stored state rather than filed: what the `held`
+  list keeps."
+  #{:inert-argument :inert-rule :forced-conclusion})
+
+(defn- held-list
+  "The stored facts and rules held out of belief for a failed argument constraint, and the
+  firings held void at a forced-monotonic conclusion: the `held-kinds` entries of
+  `violations`, in its order.  One read with no progress inside it, so a cancel lands when
+  it returns."
+  [kb progress!]
+  (progress! {:phase :held :done 0 :total nil :note "reading the held sentexes and firings"})
+  (let [rs (filterv (comp held-kinds :violation) (v/violations kb))]
+    (progress! {:phase :held :done (count rs) :total (count rs)})
+    rs))
+
 (def ^:private kb-lists
   "Each list by its name in a URL: what its button and its page call it, what it holds,
   and the fn computing its rows from a KB and a progress fn."
@@ -8093,7 +8134,10 @@
     :about "Every contradiction the last settle left standing: the represented dilemmas, then the clashes among known-true content that nothing could decide."}
    "orphan-types"
    {:title "Unary predicates without a genl" :rows orphan-type-list
-    :about "Every believed unary predicate whose only direct genl is thing, or which has none."}))
+    :about "Every believed unary predicate whose only direct genl is thing, or which has none."}
+   "held"
+   {:title "Held facts and rules" :rows held-list
+    :about "Every stored fact and rule held out of belief for a failed argument constraint, and every firing held void at a forced-monotonic conclusion."}))
 
 (defn- list-job
   "Run list `which` over `kb` as a job and return its id.  The rows ride in the summary's
@@ -8124,7 +8168,9 @@
      " " (interpose " ⇄ " (map #(handle-ref env (:handle %)) (:sides r)))]
     "orphan-types"
     [:li (term-link env (:term r))
-     (when (:thing? r) [:span.muted " genl thing only"])]))
+     (when (:thing? r) [:span.muted " genl thing only"])]
+    "held"
+    (violation-row env r)))
 
 (defn- list-rows
   "One page of a finished list job's rows from `offset`, ending in the continuation that

@@ -1298,12 +1298,20 @@ E16_GLOBAL_ALLOW = {
     ("src/vaelii/impl/taxonomy.clj", "all-keys"),
     # A declaration's `(unary_predicate T)` entailment, in whatever context the declaration
     # holds, read when T's length moves: a length holds at every context.
-    ("src/vaelii/impl/special.clj", "withdrawn-type-entailments"),
+    ("src/vaelii/impl/special.clj", "declared-type-justifications"),
+    # The mints in a type bound to another length, in every context, read when its
+    # length moves: a length holds at every context.
+    ("src/vaelii/impl/special.clj", "withdrawn-type-mints"),
+    # The rules on a typed calculus predicate in every context, queued when a membership
+    # moves what the predicate admits: each queued rule is re-checked from its own context.
+    ("src/vaelii/impl/special.clj", "recheck-typed-admission"),
     # The supporter visibility check and its readers: the targets every stored except and
     # defeat names, each filtered by the reader's view afterwards.
     ("src/vaelii/impl/except.clj", "named-entries"),
     ("src/vaelii/impl/kb.clj", "supporter-reaches?"),
     ("src/vaelii/impl/except.clj", "genlCx-excepts"),
+    # A defeat naming a declaration in any context retires a pass's reader frames.
+    ("src/vaelii/impl/except.clj", "frame-watch"),
     # The declared forced-monotonic set: a reader's rules reading a predicate it misses, kept by its
     # ancestor set, and a declaration's switch over every reader's network state.
     ("src/vaelii/impl/except.clj", "forced-state"),
@@ -1316,15 +1324,18 @@ E16_GLOBAL_ALLOW = {
     ("src/vaelii/impl/resolution.clj", "defeated-index"),
     # A rule read with no reader context: `concluding-rule-handles`' unscoped arities and
     # `concludes?`, the shadowing check that probes the same buckets, a stratification
-    # check over every rule and its test for a rule concluding below an edge, and three
-    # whole-KB reports.
+    # check over every rule and its test for a rule concluding below an edge, three
+    # whole-KB reports, and the rules a correspondence moving re-spells in every context.
     ("src/vaelii/impl/resolution.clj", "concluding-rule-handles"),
     ("src/vaelii/impl/resolution.clj", "concludes?"),
-    ("src/vaelii/impl/checks.clj", "stratification-readers"),
+    ("src/vaelii/impl/checks.clj", "stored-stratification-graph"),
     ("src/vaelii/impl/checks.clj", "edge-negation-cycle"),
     ("src/vaelii/impl/checks.clj", "declared-firings"),
     ("src/vaelii/impl/chain.clj", "rule-firing-report"),
     ("src/vaelii/impl/integrity.clj", "rule-macro-findings"),
+    ("src/vaelii/impl/nat.clj", "corresponded-rules"),
+    ("src/vaelii/impl/nat.clj", "held-application-rules"),
+    ("src/vaelii/impl/nat.clj", "formula-position-rules"),
     # The planner's lead choice under a variable context, which has no ancestor set yet:
     # the argument's census over every context bounds what the lead can cost.
     ("src/vaelii/impl/resolution.clj", "arg-lead"),
@@ -1344,6 +1355,7 @@ E16_GLOBAL_ALLOW = {
     # A relation's length is read the same at every context, off its bindings in every
     # context.
     ("src/vaelii/impl/decide/arity.clj", "held-bindings"),
+    ("src/vaelii/impl/decide/arity.clj", "write-breaks"),
     # The argument holds' candidates are a superset over every context, each decided
     # again from its own context (`checks/argument-conviction`).
     ("src/vaelii/impl/checks.clj", "declaration-candidates"),
@@ -1372,12 +1384,11 @@ E16_GLOBAL_ALLOW = {
     ("src/vaelii/impl/special.clj", "recheck-on-separation"),
     ("src/vaelii/impl/inherit.clj", "rejoin-rules"),
     ("src/vaelii/impl/special.clj", "recheck-on-qualitative"),
-    ("src/vaelii/impl/special.clj", "index-closed-extent-rules"),
+    ("src/vaelii/impl/provers.clj", "closed-extent-rules"),
     ("src/vaelii/impl/special.clj", "transitive-partner-functors"),
     ("src/vaelii/impl/special.clj", "closure-reader-rules"),
     ("src/vaelii/impl/checks.clj", "negative-edge-rules"),
     ("src/vaelii/impl/checks.clj", "stored-generators"),
-    ("src/vaelii/impl/checks.clj", "check-closed-extent-stratified"),
     ("src/vaelii/impl/integrity.clj", "converse-rule"),
     ("src/vaelii/impl/integrity.clj", "known-exception?"),
     ("src/vaelii/impl/rules.clj", "direct-concluders"),
@@ -1405,6 +1416,14 @@ E16_GLOBAL_ALLOW = {
     # The distinct arguments at a declared position: the trie keys the context last, and
     # each argument's contexts are then read narrowed to the declaration's.
     ("src/vaelii/impl/checks.clj", "declaration-conflict"),
+    # The contexts holding a predicate's facts, the reader enumeration of a computed goal
+    # and of a support-carrying antecedent: every such context is a candidate reader.
+    ("src/vaelii/impl/provers.clj", "held-contexts"),
+    # An open `(t ?x)`'s declared types and the distinct arguments at a declared position:
+    # a presence count before the scoped declaration read, and the trie keys the context
+    # last, so each argument's contexts are then read narrowed to the reader's.
+    ("src/vaelii/impl/provers.clj", "uncovered-declarations"),
+    ("src/vaelii/impl/provers.clj", "open-candidates"),
 }
 E16_GLOBAL_CALL = re.compile(r"\breads/([\w?!*-]+-global)(?![\w?-])")
 E16_EVERY = re.compile(r"\bp/every-context\b")
@@ -1516,6 +1535,8 @@ E17_ALLOW = {
     ("src/vaelii/impl/wff.clj", "negation-walk"),
     ("src/vaelii/impl/wff.clj", "genl-negation-cycle"),
     ("src/vaelii/impl/checks.clj", "edge-negation-cycle"),
+    ("src/vaelii/impl/checks.clj", "stored-stratification-graph"),
+    ("src/vaelii/impl/checks.clj", "stratification-graph-current?"),
     ("src/vaelii/impl/checks.clj", "genls-problem"),
     ("src/vaelii/impl/checks.clj", "covering-genls-problem"),
     ("src/vaelii/impl/checks.clj", "breaks-demand?"),
@@ -1543,7 +1564,7 @@ E17_ALLOW = {
     # bound on the scoped one; the search itself reads the scoped `genl?`.
     ("src/vaelii/impl/inherit.clj", "stated-reached?"),
     ("src/vaelii/impl/inherit.clj", "goal-reached?"),
-    ("src/vaelii/impl/vantage.clj", "subsumption-support"),
+    ("src/vaelii/impl/provers.clj", "subsumption-routes"),
     # Re-check triggers. A trigger must over-approximate in the direction the answer
     # is: a declaration this edge cannot see still qualifies a rule in some context
     # that can, and a missed trigger is a wrong belief where a spare one is a query
@@ -1551,10 +1572,10 @@ E17_ALLOW = {
     ("src/vaelii/impl/special.clj", "recheck-declaration"),
     ("src/vaelii/impl/special.clj", "arg-declared-types"),
     ("src/vaelii/impl/special.clj", "recheck-arg-inferred"),
-    ("src/vaelii/impl/special.clj", "recheck-on-predicate"),
     ("src/vaelii/impl/special.clj", "composed-exception-rules"),
-    ("src/vaelii/impl/special.clj", "recheck-genl-edge"),
-    ("src/vaelii/impl/special.clj", "recheck-negated-exceptions"),
+    ("src/vaelii/impl/special.clj", "answered-predicates"),
+    ("src/vaelii/impl/special.clj", "recheck-typed-admission"),
+    ("src/vaelii/impl/special.clj", "negated-rechecks"),
     ("src/vaelii/impl/special.clj", "subtree-sentexes"),
     ("src/vaelii/impl/special.clj", "stored-facts-in-ancestors"),
     ("src/vaelii/impl/special.clj", "edge-route-candidates"),
@@ -1570,9 +1591,12 @@ E17_ALLOW = {
     # in; each fact is then asked its own context's declarations.
     ("src/vaelii/impl/special.clj", "declared-functors"),
     ("src/vaelii/impl/special.clj", "trigger-entailments"),
+    # The predicates an `argArg` is declared of, a superset over every context; each fact
+    # found is then asked its own context's declarations (`deduce-placed`).
+    ("src/vaelii/impl/special.clj", "mints-on-lengths"),
     ("src/vaelii/impl/special.clj", "descent-surplus-placements"),
     ("src/vaelii/impl/inherit.clj", "moved-goal-test"),
-    ("src/vaelii/impl/qcn_kb.clj", "governing-contexts"),
+    ("src/vaelii/impl/qcn_kb.clj", "held-contexts"),
     ("src/vaelii/impl/qcn_kb.clj", "calculi-triggered-by"),
     ("src/vaelii/impl/chain.clj", "answered-by-calculus?"),
     ("src/vaelii/impl/special.clj", "rule-reads-above?"),
@@ -1581,7 +1605,7 @@ E17_ALLOW = {
     ("src/vaelii/impl/special.clj", "under-seen-edges"),
     # Settle's candidate discovery. An over-approximated candidate merely checks and
     # yields nothing, and the arbitration that follows is context-scoped anyway.
-    ("src/vaelii/impl/recheck.clj", "reachable-predicates"),
+    ("src/vaelii/impl/recheck.clj", "negates-reaches?"),
     ("src/vaelii/impl/discovery.clj", "separated-reach"),
     ("src/vaelii/impl/discovery.clj", "preserved-below"),
     ("src/vaelii/impl/inherit.clj", "edge-reach"),
@@ -1600,6 +1624,8 @@ E17_ALLOW = {
     ("src/vaelii/impl/checks.clj", "declaration-candidates"),
     ("src/vaelii/impl/checks.clj", "value-kind-moved?"),
     ("src/vaelii/impl/checks.clj", "lattice-candidates"),
+    ("src/vaelii/impl/checks.clj", "declarations-below"),
+    ("src/vaelii/impl/checks.clj", "end-candidates"),
     ("src/vaelii/impl/checks.clj", "definition-candidates"),
     ("src/vaelii/impl/checks.clj", "refresh-argument-holds!"),
     ("src/vaelii/impl/checks.clj", "members-below"),
@@ -1629,14 +1655,20 @@ E17_ALLOW = {
     # A relation's length is read the same at every context: the predicates above a
     # functor are its unscoped closure cut to the bound predicates.
     ("src/vaelii/impl/decide/arity.clj", "bound-above"),
+    # A metatype route a write not yet stored would extend is read over every edge, as
+    # the class membership it derives is (`class-paths`).
+    ("src/vaelii/impl/decide/arity.clj", "route-types"),
     ("src/vaelii/impl/discovery.clj", "preserving-moves"),
     # The visibility filter cannot be scoped by the filter it derives — asking
     # `context-up` here would make except evaluation recursive on itself.
     ("src/vaelii/impl/except.clj", "visible-exception-index"),
     ("src/vaelii/impl/except.clj", "except-hidden-fn"),
     ("src/vaelii/impl/except.clj", "excepts-seen"),
-    ("src/vaelii/impl/except.clj", "build-reader-state"),
+    ("src/vaelii/impl/except.clj", "reader-frame"),
     ("src/vaelii/impl/except.clj", "forced-at"),
+    # A pass keeps its reader frames while the KB-wide sets read here stand: each
+    # context's frame reads a part of them.
+    ("src/vaelii/impl/except.clj", "frame-inputs"),
     ("src/vaelii/impl/except.clj", "forced-reads?"),
     # The declared forced-monotonic set's union over every reader, which the network computes and the
     # placement re-places from: a declaration's reach and the predicates declared.
@@ -1686,9 +1718,14 @@ E17_ALLOW = {
     ("src/vaelii/impl/integrate.clj", "permuting?"),
     ("src/vaelii/impl/integrate.clj", "recanonicalizing-subject"),
     ("src/vaelii/impl/kb.clj", "permuting-literal?"),
-    ("src/vaelii/impl/nat.clj", "reifiable-function?"),
+    ("src/vaelii/impl/nat_read.clj", "reifiable-function?"),
     ("src/vaelii/impl/quasiquote.clj", "ensure-quasiquote-functions"),
     ("src/vaelii/impl/resolution.clj", "kb-sentex"),
+    ("src/vaelii/impl/resolution.clj", "respell-walk"),
+    ("src/vaelii/impl/resolution.clj", "formula-type?"),
+    ("src/vaelii/impl/nat.clj", "formula-declared-predicates"),
+    ("src/vaelii/impl/nat.clj", "names-open-application?"),
+    ("src/vaelii/impl/integrity.clj", "uncorresponded-units"),
     ("src/vaelii/impl/resolution.clj", "raw-match-with"),
     ("src/vaelii/impl/special.clj", "meta-target"),
     ("src/vaelii/impl/special.clj", "deduce-lifts"),
@@ -1698,10 +1735,8 @@ E17_ALLOW = {
     # or reifiable function a per-reader test admits.
     ("src/vaelii/impl/chain.clj", "reified-fns"),
     ("src/vaelii/impl/nat.clj", "queue-split-uses!"),
-    ("src/vaelii/impl/checks.clj", "unmintable-named-types"),
     ("src/vaelii/impl/clashes.clj", "exposure-probes"),
     ("src/vaelii/impl/decide/membership.clj", "term-nogoods"),
-    ("src/vaelii/impl/decide/membership.clj", "cover-routes"),
     ("src/vaelii/impl/decide/membership.clj", "separation-tests"),
     ("src/vaelii/impl/decide/membership.clj", "cover-convicted-at?"),
     ("src/vaelii/impl/decide/related.clj", "contradicted-somewhere?"),
@@ -1743,6 +1778,8 @@ E17_ALLOW = {
     ("src/vaelii/impl/resolution.clj", "representative-term"),
     ("src/vaelii/impl/resolution.clj", "displaced-terms-in"),
     ("src/vaelii/impl/resolution.clj", "retired-for?"),
+    ("src/vaelii/impl/nat_read.clj", "reify-in"),
+    ("src/vaelii/impl/nat.clj", "names-reifiable-nat?"),
     # A candidate superset a later step narrows: a trigger whose firing names the mark it
     # was read through, which the read walk hides per reader; a walk the prover filters
     # again at its context; nogood candidate rows; a per-reader filter.
@@ -1757,13 +1794,17 @@ E17_ALLOW = {
     ("src/vaelii/impl/decide/tuple.clj", "marks-family"),
     ("src/vaelii/impl/inherit.clj", "permuted-read-supports"),
     ("src/vaelii/impl/integrate.clj", "mark-witness"),
-    ("src/vaelii/impl/nat.clj", "withheld-at"),
+    ("src/vaelii/impl/nat_read.clj", "withheld-at"),
     ("src/vaelii/impl/resolution.clj", "reified-reading"),
     ("src/vaelii/impl/resolution.clj", "constraining-predicates"),
     ("src/vaelii/impl/special.clj", "declaring-predicates"),
     ("src/vaelii/impl/special.clj", "marked-roots"),
     # The re-join reads every context, so an edge's upper end is read through every edge.
     ("src/vaelii/impl/provers.clj", "support-answers-reading"),
+    # The joint reading's candidate readers of a computed goal: a context holding a fact
+    # its own readers cannot use is asked, and answers nothing.
+    ("src/vaelii/impl/provers.clj", "adjacent-edge-contexts"),
+    ("src/vaelii/impl/provers.clj", "prover-ingredient-contexts"),
     ("src/vaelii/impl/provers.clj", "relation-moved-answers"),
     ("src/vaelii/impl/provers.clj", "relation-membership?"),
 }

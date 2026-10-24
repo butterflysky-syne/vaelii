@@ -1,79 +1,10 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.interval
-  "Allen's interval algebra — a relation algebra over the generic constraint network in
-  `vaelii.impl.qcn`, and the third alongside the RCC-8 topology of `vaelii.impl.space`
-  and the cardinal directions of `vaelii.impl.orientation`.  Those two say where things
-  are; this one says *when* they are, and about intervals rather than instants: an
-  interval has extent, so two of them can meet, overlap, or nest, and not merely precede
-  one another.
-
-  The thirteen base relations are jointly exhaustive and pairwise disjoint, so exactly
-  one holds of any two intervals.  Each is a claim about the four ways their endpoints
-  can compare — writing an interval as `[start end]` with `start < end`:
-
-    :before        a-end   < b-start
-    :meets         a-end   = b-start
-    :overlaps      a-start < b-start < a-end < b-end
-    :finished-by   a-start < b-start,  a-end = b-end
-    :contains      a-start < b-start,  a-end > b-end
-    :starts        a-start = b-start,  a-end < b-end
-    :equal         a-start = b-start,  a-end = b-end
-    :started-by    a-start = b-start,  a-end > b-end
-    :during        a-start > b-start,  a-end < b-end
-    :finishes      a-start > b-start,  a-end = b-end
-    :overlapped-by b-start < a-start < b-end < a-end
-    :met-by        a-start = b-end
-    :after         a-start > b-end
-
-  Six of them pair off with their converses (`:before`/`:after`, `:meets`/`:met-by`,
-  `:overlaps`/`:overlapped-by`, `:starts`/`:started-by`, `:during`/`:contains`,
-  `:finishes`/`:finished-by`); `:equal` is its own converse and the algebra's identity.
-
-  Intervals are **stored as ordinary sentexes** — the thirteen named binary predicates
-  (`before`, `meets`, `during`, …), plus seven derived predicates (`precedes`,
-  `subintervalOf`, `sharesTimeWith`, …) that each name a *disjunction* of them.
-  Intervals are ordinary individuals; nothing about them is special, and nothing here
-  reasons about clocks, dates or durations — only about order and containment.
-
-  The calculus reads every asserted interval relation visible from a context into a
-  qualitative constraint network — `{[i j] → #{possible base relations}}`, an unrecorded
-  pair meaning \"unknown\", i.e. all thirteen — and `qcn/path-consistent` tightens it to a
-  fixpoint.  the prover then answers a goal `(P i j)` by **entailment**: it holds iff
-  every relation still possible between i and j satisfies P, `possible ⊆ denotation(P)`.
-  So `(before A B)` and `(before B C)` entail `(before A C)`, and `(during A B)` with
-  `(during B C)` entails `(during A C)` and the weaker `(subintervalOf A C)` with it.
-
-  **Stored facts are not the only reader.**  This is the one calculus with a
-  `qcn-kb` **narrowing**: `stp/allen-narrowing-with-support` closes the metric constraints
-  over the instants `(startOf I P)` / `(endOf I P)` name and reads back what they determine
-  about the interval relations, and that is intersected into the same network.  So a KB
-  that states two meetings' start and end times, and the gap between them, answers
-  `(before A B)` with no interval relation written anywhere — and the entailment names the
-  metric facts, the endpoint facts and the unit rows behind it, so retracting any of them
-  withdraws whatever was concluded from it.  It runs one way only: metric narrows
-  qualitative, never the reverse (docs/stp.md).
-
-  The **point network** is a second such reader (`points-narrowing-with-support`): the
-  instant facts over two things' `(StartFn X)` / `(EndFn X)` points leave some of the four
-  endpoint comparisons settled, and a relation whose endpoint signature needs an ordering
-  the point network rules out is removed.  Also one way only: an interval fact does not
-  constrain the points.
-
-  An emptied constraint anywhere means the asserted relations are unsatisfiable, and then
-  *no* interval goal is answered — an inconsistent theory should not be mined for
-  conclusions.
-
-  **Soundness.** Path consistency is sound but not in general complete: it decides the
-  maximal tractable subclass of the interval algebra and no more, so an entailment
-  reported here is real while a *non*-entailment means \"not provable\", never \"provably
-  false\" — the same open-world reading `arg` and `exceptWhen` take.
-
-  The vocabulary ships as `kb/upper/time.txt`, a domain file rather than the vocabulary
-  file: these twenty predicates are *about* time, so core.txt keeps only the grammar they
-  are declared in.  The prover is **opt-in** on top of it: register it with
-  `vaelii.core/add-prover`, and until then a KB stores and retrieves interval relations as
-  ordinary facts without paying for the network."
+  "Allen's interval algebra as a `vaelii.impl.qcn` relation algebra and a `qcn-kb`
+  calculus: thirteen base relations, seven derived predicates, the transcribed composition
+  table, and the two narrowings, metric (`stp`) and point (`points-narrowing-with-support`).
+  See docs/time.md and docs/qcn.md."
   (:require [clojure.set :as set]
             [vaelii.impl.naming :as nm]
             [vaelii.impl.point :as pt]
@@ -85,14 +16,12 @@
 ;; ---- the algebra --------------------------------------------------------
 
 (def all-relations
-  "The thirteen jointly-exhaustive, pairwise-disjoint interval relations — the universe
-  of the algebra, and so the constraint on a pair nothing is known about."
+  "The thirteen interval relations: the universe of the algebra."
   #{:before :after :meets :met-by :overlaps :overlapped-by
     :starts :started-by :during :contains :finishes :finished-by :equal})
 
 (def allen-converse
-  "Each base relation's converse — reading the claim backwards.  Six pairs and one
-  self-converse, since `:equal` is the identity."
+  "Each base relation's converse."
   {:before :after,     :after :before
    :meets :met-by,     :met-by :meets
    :overlaps :overlapped-by, :overlapped-by :overlaps
@@ -102,18 +31,12 @@
    :equal :equal})
 
 (defn converse-set
-  "The converse of a relation set — how an asserted `(P a b)` constraint is read
-  backwards as the constraint on `(b a)`."
+  "The converse of a relation set."
   [rels]
   (into #{} (map allen-converse) rels))
 
-;; The composition table below is written out of thirteen recurring blocks rather than 169
-;; loose sets, because that is what its entries actually are.  Composing two relations
-;; determines some of the four endpoint comparisons between the outer intervals and leaves
-;; the rest free, and each block is the set of relations agreeing on the comparisons it
-;; determines —
-;; so an entry says *which comparison survived the composition*, and can be read back
-;; against the endpoint definitions above rather than merely trusted.
+;; Each block is the set of relations agreeing on the endpoint comparisons a composition
+;; determines (docs/time.md, "The composition table, and why it is checked").
 
 (def ^:private starts-first  "a-start < c-start" #{:before :meets :overlaps :finished-by :contains})
 (def ^:private starts-last   "a-start > c-start" #{:after :met-by :overlapped-by :finishes :during})
@@ -133,19 +56,8 @@
   #{:overlaps :overlapped-by :starts :started-by :during :contains :finishes :finished-by :equal})
 
 (def allen-composition
-  "The canonical Allen composition table: `(get-in allen-composition [r1 r2])` is the set
-  of base relations possible between A and C given `r1`(A,B) and `r2`(B,C).  `:equal` is
-  the identity element on both sides.
-
-  Only three entries are the whole universe, and each is the same shape: two intervals
-  positioned against a third that constrains neither against the other.  A before B and C
-  after B says nothing (both sit on the far side of B, in either order); so does A during
-  B with B containing C, where A and C are both loose inside B.
-
-  `interval_test` derives all 169 entries independently, by enumerating every ordering of
-  six endpoints and reading off which outer relation each admits, and asserts the derived
-  table equals this one — so a mis-transcribed entry is a test failure, not a wrong
-  answer."
+  "The Allen composition table: `(get-in allen-composition [r1 r2])` is the set of base
+  relations possible between A and C given `r1`(A,B) and `r2`(B,C)."
   {:before        {:before #{:before}     :after all-relations :meets #{:before}
                    :met-by ends-first    :overlaps #{:before}   :overlapped-by ends-first
                    :starts #{:before}     :started-by #{:before} :during ends-first
@@ -214,9 +126,8 @@
                    :equal #{:equal}}})
 
 (defn compose
-  "The composition of two relation SETS: every base relation possible between A and C
-  when r(A,B) ∈ `s1` and r(B,C) ∈ `s2` — the union of the table entries, since a
-  disjunction on either side admits every combination."
+  "The composition of two relation sets: the union of the table entries over every
+  member pair."
   [s1 s2]
   (into #{}
         (mapcat (fn [a] (mapcat (fn [b] (get-in allen-composition [a b])) s2)))
@@ -232,9 +143,7 @@
 ;; ---- the vocabulary -----------------------------------------------------
 
 (def base-relation-predicate
-  "Base relation keyword → the binary predicate a fact about it is stored under.
-  `:equal` is spelled `intervalEqual`: it is a claim about extent in time, not about the
-  identity of two terms, so it must not be confused with the equality closure's `equals`."
+  "Base relation keyword → the binary predicate a fact about it is stored under."
   '{:before        before
     :after         after
     :meets         meets
@@ -252,13 +161,7 @@
 (def interval-denotation
   "Every interval predicate — the thirteen base ones and the seven derived ones — mapped
   to the set of base relations it denotes.  A goal `(P i j)` is entailed exactly when the
-  relations still possible between i and j are a *subset* of P's denotation, so a derived
-  predicate with a wide denotation is entailed by more networks than a base one, and the
-  base predicates are the singletons.
-
-  The derived seven are the disjunctions worth asking about: the two orderings that do
-  not care whether the intervals touch, the three part-of relations, and the pair that
-  says whether two intervals share any time at all."
+  relations still possible between i and j are a subset of P's denotation."
   (merge
    (into {} (map (fn [[rel pred]] [pred #{rel}])) base-relation-predicate)
    {'precedes            #{:before :meets}
@@ -279,16 +182,8 @@
   still admits, and its support is the four comparisons' support.  Only narrowed pairs
   are recorded.  An inconsistent point network answers `stp/unsatisfiable-narrowing`,
   supported by the point network's culprits, its `:point` source naming the point pairs
-  unsatisfiable as written and those culprits.
-
-  The comparisons are read off the one closed point network, and the support off one
-  support-carrying pass (`qcn-kb/closure-with-support`), rather than asked of the network
-  as a goal each.  A thing's start and end are nodes of the network already, so a goal
-  reads the same closure, but first walks the network's node set, and a read over n
-  things asks 4n² goals.
-
-  Each comparison is read on its own, so the reading is sound but not sharp — the same
-  trade `stp/allen-narrowing-with-support` makes."
+  unsatisfiable as written and those culprits.  The comparisons are read off one closed
+  point network and the support off one `qcn-kb/closure-with-support` pass."
   [kb context]
   (let [calc    pt/instants
         net     (qkb/network kb calc context)
@@ -341,25 +236,13 @@
 ;; ---- the calculus, and the glue it shares with every other algebra -------
 
 (def allen
-  "Allen's interval algebra as a `vaelii.impl.qcn-kb` calculus — the algebra, the
-  vocabulary, the two caches, and the metric narrowing.  Everything below delegates to the
-  shared glue, which is the same code RCC-8 and the cardinal directions run.
-
-  The **narrowing** is what the other five calculi have no counterpart for, and it is why
-  this namespace requires `stp` rather than the other way about: an interval is bounded by
-  two instants a metric constraint can speak of, so the metric layer is a second reader of
-  this network.  `:sources` is every predicate whose arrival moves what it answers —
-  the constraints, the two endpoint predicates and the unit table their magnitudes convert
-  through — and `:contexts` the ones that put an interval *into* a network, which is what
-  makes a context worth reading one at.  A `conversionFactor` is in the first and not the
-  second: it changes what a bound comes to, and a context holding one and no interval has
-  nothing to narrow.
-
-  `subintervalOf` and `properSubintervalOf` are the **typed** predicates: they take time
-  intervals, and every other interval predicate takes any temporal thing.  So the network
-  answers the two only over arguments their declared types admit (`qcn-kb/solve-goal`)."
+  "Allen's interval algebra as a `vaelii.impl.qcn-kb` calculus, narrowed by
+  `both-narrowings` (`:sources` and `:contexts`: docs/stp.md).  `subintervalOf` and
+  `properSubintervalOf` are typed: the network answers them only over arguments their
+  declared types admit."
   (qkb/calculus :allen allen-algebra interval-denotation
                 {:fn       both-narrowings
+                 :bindings stp/allen-narrowing-bindings
                  :sources  (into stp/allen-narrowing-sources (keys pt/instant-denotation))
                  :contexts (-> stp/stp-predicates
                                (into stp/endpoint-predicates)
@@ -368,28 +251,20 @@
 
 (defn possible-allen-relations
   "The Allen base relations still possible between intervals `i1` and `i2` given
-  everything believed in `context` — `#{}` when the network is inconsistent.
-
-  This is the algebra read directly rather than through a goal, so a caller that needs to
-  know *how much* is determined — rather than whether one named relation is entailed —
-  asks here.  `vaelii.impl.duration` is the one in tree."
+  everything believed in `context` — `#{}` when the network is inconsistent."
   [kb context i1 i2]
   (qkb/possible allen kb context i1 i2))
 
 (defn allen-support
   "The handles of the stored sentexes the relation set between `i1` and `i2` rests on —
-  `possible-allen-relations`' support (`qcn-kb/support`).
-
-  `#{}` when the pair is unconstrained: an unconstrained pair
-  leaves all thirteen relations open, and nothing stored says so.  A caller drawing a
-  conclusion from what the relations *narrow* rests on exactly this set."
+  `possible-allen-relations`' support (`qcn-kb/support`), `#{}` for an unconstrained
+  pair."
   [kb context i1 i2]
   (qkb/support allen kb context i1 i2))
 
 (defn allen-predicates
-  "Every predicate the Allen calculus reads — the thirteen base relations and the seven
-  derived ones.  What a caller whose answer depends on the interval network names as its
-  sources (`prover-types/SupportingProver`)."
+  "Every predicate the Allen calculus reads: the sources a `SupportingProver` whose
+  answer depends on the interval network names."
   []
   (:predicates allen))
 

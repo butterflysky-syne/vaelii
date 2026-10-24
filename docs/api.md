@@ -122,6 +122,8 @@ default-chain-opts                              ; the bounds a chain run takes w
                                                ; :silent.  O(rules), off the ledger
 (violations kb) / (clear-violations! kb)         ; accumulating ledger of dropped derived conclusions (tagged with the run, capped),
                                                 ; then the :forced-conclusion entries read off the stored void firings
+                                                ; and the :inert-argument / :inert-rule entries read off the held sentexes
+(filed-violations kb)                           ; the ledger alone, a deref: none of the entries read off stored state
 (kb-quality kb opts)                            ; the seven readings about the *knowledge* —
                                                 ; {:rules :extents :chains :taxonomy :declarations
                                                 ;  :subsumption :clashes}, opts :limit /
@@ -165,7 +167,15 @@ default-chain-opts                              ; the bounds a chain run takes w
                                                 ; {[functor pred indep] result…}, the ones that hold
                                                 ; omitted and the gaps never, so an empty map is a clean
                                                 ; sweep. A legacy-ternary gap keys by its whole stale
-                                                ; tuple [functor pred a b], displacing nothing
+                                                ; tuple [functor pred a b], displacing nothing. Each
+                                                ; Exists declaration is audited too, keyed by its tuple
+(exists-violations kb declaration ctx)          ; audit one Exists declaration, e.g.
+                                                ; '(predAllExists owns person dog): {:status :audited
+                                                ; :violations #{…}}, the members of the universal
+                                                ; collection (or the fixed term) with no believed tuple
+                                                ; to a member of the filler collection or to the cell's
+                                                ; placeholder. An indeterminate member is a filler.
+                                                ; Reads only, nothing filed (docs/predall.md)
 (kb-integrity kb candidate-terms ctx)
 (kb-integrity kb candidate-terms ctx opts)       ; the bounded checkpoint sweep: the complete specified
                                                 ; audit above, query-only definition clashes over an
@@ -193,7 +203,8 @@ default-chain-opts                              ; the bounds a chain run takes w
                                                 ; :not-under-thing, :implicit-genl,
                                                 ; :implicit-arity-class,
                                                 ; :orthogonal-over-separation, :rule-macro,
-                                                ; :undeclared-arity, :twin-genls,
+                                                ; :undeclared-arity,
+                                                ; :uncorresponded-function, :twin-genls,
                                                 ; :derivable-stated-edge,
                                                 ; :disjoint-could-be-partition and :missing-arg. opts may bound :max-work,
                                                 ; :max-ms and :max-results, and :categories names the
@@ -298,6 +309,12 @@ default-chain-opts                              ; the bounds a chain run takes w
                                                ; opts: `compare-tacticians-opt-keys` — the same three
                                                ; bounds + :tacticians, and NOT :strategy (set per row)
 (add-prover kb prover)                         ; register a custom prover
+(prover {:applicable? f :solve f})             ; a prover built from fns of [kb goal context], for
+                                               ; add-prover.  :solve-with-support in place of :solve,
+                                               ; with :support-functors and :support-sources, names the
+                                               ; handles each answer was read from, so a forward
+                                               ; firing on it goes when they do.  :est-bindings :cost
+                                               ; :completeness, a constant or a fn (docs/inference.md)
 (add-evaluatable kb pred f opts)               ; wrap a plain fn as a computed predicate -> kb.
                                                ; A check (all args ground, truthy holds) or, with
                                                ; {:result :first|:last|n}, a value bound into that
@@ -556,7 +573,7 @@ default-chain-opts                              ; the bounds a chain run takes w
 (rests-on justification)                        ; the handles it needs believed: antecedents, plus
                                                 ; the informant when that is a rule handle
 query-contexts                                  ; the set of reading modes spelled as a context
-                                                ; (?ctx and its siblings); a write given one is refused
+                                                ; (CxEverything, CxInference, CxNothing); a write given one is refused
 assertable-strengths                            ; #{:monotonic :default}, the set `assert` checks
                                                 ; {:strength s} against
 ;; reified non-atomic terms (docs/nat.md).  The constant is term *identity*, not a name
@@ -621,6 +638,15 @@ assertable-strengths                            ; #{:monotonic :default}, the se
                                                 ; (or {:contexts cs}) -> {:marked n :handles}
                                                 ; (docs/storage.md, "A record no premise and no
                                                 ; justification supports")
+(edit-records! kb {:remove hs :direction {h d}}) ; on a KB opened {:recover? false}: delete the
+                                                ; removed records and what rests on them, write
+                                                ; each rule's direction; no check, sweep or settle
+                                                ; -> {:removed :unpremised :absent :redirected
+                                                ;     :justifications-removed :seeds}
+(settle-record-edits! kb {:seeds ss})           ; one recover (or reindex), then sweep the seeds
+                                                ; and the unrooted, chain, record-arg-types
+                                                ; (docs/storage.md, "Editing the records of a
+                                                ; KB without belief")
 (in? kb handle)                                 ; raw structural JTMS IN, before contextual exceptions
 (believed? kb handle context)                   ; IN and not withdrawn from context (an except, a
                                                 ; placed defeat it sees, or resting only on one), before
@@ -1027,10 +1053,38 @@ that would open a definitional clash with believed content visible from the cont
 ;;         :detail {:types [cat dog]}}
 ```
 
-The refusal reads seven things, and the call stores nothing when one of them clashes:
+The refusal reads twelve things, and the call stores nothing when one of them clashes:
 
 - the sentence against believed content: a `:disjoint`, `:functional`, `:asymmetric`,
   `:anti-transitive` or `:cover` clash, from the checks `assert` runs;
+- a positive tuple against its functor's length (`arity/relation-length`): a tuple whose
+  argument count breaks the length is `:violation :arity`, `:clashes-with` names the
+  bindings stating the length, and `:detail` holds `:length` (or `:min`), `:via` (the
+  predicate the length is bound on), `:route` (the `genl` edges up to it) and
+  `:arguments`. `assert` stores the tuple and holds it inert
+  ([taxonomy.md](taxonomy.md#arity));
+- a ground binary tuple against the `irreflexive` and `anti_symmetric` marks its context
+  sees on its functor or a predicate above it: a self tuple `(P a a)` is `:violation
+  :irreflexive` and names the mark, and a tuple whose believed converse holds two distinct
+  arguments is `:violation :anti-symmetric` and names the converse, unless both arguments
+  are symbols and the write and the converse are both `:monotonic`, which merges the two.
+  `:detail :pred` is the marked predicate. `assert` stores both, and the settle places
+  each ([nmtms.md](nmtms.md#the-nogood-families));
+- a length binding (`arity`, `arityMin`, an exact-arity class, `variable_arity`), a `genl`
+  edge, or a `:monotonic` membership or `genl` edge of a metatype route
+  ([taxonomy.md](taxonomy.md#arity)) against the stored positive tuples of each functor
+  whose length the write moves: a stored length that the length with the write breaks,
+  and the length without it does not, is `:violation :arity`. `:detail :shapes` lists
+  `{:relation :arguments :count}` per such length, `:detail :count` the tuples and
+  `:detail :relations` the relations. An `except` of a stored binding is `:violation
+  :arity` too, naming the binding in `:clashes-with` and `:detail :excepted`. `assert`
+  stores each write: the tuples are held inert, and the length stays bound under the
+  except;
+- an `irreflexive` mark against the believed self tuples of its predicate and of the
+  predicates below it that its context sees, stated in a context its context sees or
+  one below it: `:violation :irreflexive`, with `:detail :count` the number of tuples and
+  `:clashes-with` up to ten of them, in content order. `assert` stores the mark, and the
+  settle places each tuple;
 - each argument against the argument declarations its context sees, under either
   reading ([argtypes.md](argtypes.md)): a symbol holding a type the taxonomy separates
   from the declared one, a value whose kind misses it, or an application whose declared
@@ -1060,17 +1114,32 @@ The refusal reads seven things, and the call stores nothing when one of them cla
   ([contexts.md](contexts.md#forced_decontextualized_predicate-a-canonical-home-in-cxuniverse)),
   against believed content there. A refused move leaves the premise where it was stored;
 - the sentence and those mints against each other. A member that is part of the write
-  appears in `:clashes-with` without a `:handle`.
+  appears in `:clashes-with` without a `:handle`;
+- the sentence against its complement, `(not S)` for a positive `S` and `S` for a denial,
+  as a read from the context answers it: a believed `:monotonic` match whose path to the
+  complement crosses only `genl` and `genlInverse` edges held at `:monotonic` is
+  `:violation :complement`, and `:clashes-with` names each such match. With
+  `(genl dog animal)` at `:monotonic`, a stored `(not (animal Rex))` refuses `(dog Rex)`
+  and a stored `(dog Rex)` refuses `(not (animal Rex))`; a `:default` edge on the path
+  refuses nothing ([inference.md](inference.md#predicate-subsumption-in-matching)). A
+  forced-monotonic literal reads `:monotonic` at either written strength
+  ([nmtms.md](nmtms.md#the-forced-monotonic-set)), so a denial of a believed one is
+  refused. A forced-monotonic positive is never refused here, since it wins against its
+  denial. A complement at `:default` refuses nothing: the pair is stored and
+  `contradictions` lists it. A rebuttal whose loss the complement's strength alone decides
+  is refused here, and a rebuttal the settle weighs lands. `assert` stores both.
 
 `:violation` names the clash kind and `:detail` holds that kind's own keys. Every other
-refusal is `assert`'s, under its own `:type`. The refusal does not depend on strength: a `:monotonic` write that would defeat
-a `:default` member is refused too.
+refusal is `assert`'s, under its own `:type`. The complement arm reads the complement's
+strength, and the `anti_symmetric` arm reads the write's and the converse's for the
+merge. A `:monotonic` write that would defeat a `:default` member of any other clash is
+refused too.
 
 The check reads the written sentence, the mints placed in its own context and the
 argument declarations stated below it, so four clashes still land and are placed by the
-settle: a clash a rule concludes when it fires; a declaration other than the three above,
-or a `genl` edge, that turns stored content into a clash, such as a `disjoint` over two
-types with a shared instance; a rebuttal `(not S)` of a believed `S`; and a clash with
+settle: a clash a rule concludes when it fires; a declaration other than those above, or
+a `genl` edge other than by the length it moves, that turns stored content into a clash,
+such as a `disjoint` over two types with a shared instance; a rebuttal `(not S)` of an `S` believed at `:default`; and a clash with
 content that is stored and not believed. A compound argument at a declared position is
 not read by the declaration check. `check` reports what `assert` refuses, and does not report the
 clashes `try-assert` adds, a fact's own argument conviction among them.

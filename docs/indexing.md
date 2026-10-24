@@ -112,7 +112,7 @@ through the same fold and a floor on one side alone would make a reopened index 
 with the one that wrote it. It adds no work (the fold has the new value in hand) and
 changes no decision on the ordinary path, where a retraction reads the reply to find the
 nodes that emptied and asks `<= 0`. It removes a negative `[:trie :count prefix]`,
-which `plan/prefix-estimate` divides by: not a wrong estimate but a meaningless one.
+which `plan/prefix-estimate` returns as a match bound: not a wrong estimate but a meaningless one.
 
 **The retraction is checked, the assert is not, and the asymmetry is the threat model.**
 `unindex-sentex!` decrements without looking and frees a node whose count reaches zero
@@ -327,7 +327,7 @@ key](defenses.md#handles-get-a-key-separate-from-tokens): handles under
 `[:trie :handles prefix]`, tokens under `[:trie :children prefix]`.
 `lookup` reads only the leaf key at its terminus, so it never returns a token as a
 handle; `p/children` reads only the child set, so it is correct at such a node and
-`plan/prefix-estimate`'s fan-out carries no phantom branches.
+the planner's distinct-value count (`plan/prefix-summary`) carries no phantom branches.
 
 **How many children is its own read**, not `(count (children …))`. `family-child-count`
 (`reads/stored-count-children`)

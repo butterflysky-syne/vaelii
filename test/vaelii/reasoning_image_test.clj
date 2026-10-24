@@ -17,6 +17,7 @@
             [vaelii.core :as v]
             [vaelii.impl.checks :as checks]
             [vaelii.impl.decide :as decide]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.dense-jtms :as dense]
             [vaelii.impl.discovery :as discovery]
             [vaelii.impl.disk.record-store :as drs]
@@ -631,7 +632,7 @@
 ;; `(dog Fred)` withholds the mint `(animal Fred)` that `(parentOf Fred Mary)` entails, and
 ;; its retraction under `special/*release-withheld?*` false leaves that mint owed
 (defn- owe-a-release! [kb]
-  (binding [checks/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
+  (binding [argument/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
     (doseq [s '[(genl animal thing) (genl dog animal) (arg parentOf 1 animal)
                 (dog Fred) (parentOf Fred Mary)]]
       (v/assert kb s 'CxUniverse))
@@ -640,7 +641,7 @@
 
 (deftest the-image-carries-the-owed-releases-and-an-image-without-them-installs
   (tu/with-snapshot-platform
-    (binding [checks/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
+    (binding [argument/*assertive-arg-types?* true checks/*prune-subsumed-mints?* true]
       (let [dir (tmpdir)]
         (try
           (let [kb (open dir)]

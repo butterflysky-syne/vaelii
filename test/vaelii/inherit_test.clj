@@ -5,12 +5,9 @@
   `(transitiveInArgInverse P n R)`, the specificity that lets a stated claim override an
   inherited one, and the `(asymmetric P)` conflict that a strict claim raises instead.
 
-  The running example is the one that makes the semantics necessary: `(largerThan dog
-  cat)` reaches a golden retriever and a maine coon, and it also reaches a *chihuahua*
-  and a maine coon, where it is false.  Which of those two the KB gets is decided by
-  how the general claim was asserted, not by the vocabulary — known-true content is a
-  fixed background that a contrary specific claim contradicts, a default is a
-  generality a specific claim is entitled to override."
+  The running example: `(largerThan dog cat)` reaches a golden retriever and a maine
+  coon, and also a chihuahua and a maine coon, where it is false (docs/inherit.md,
+  \"Strict versus typical, from the strength that was already there\")."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.budget :as budget]
@@ -331,13 +328,8 @@
         "a half-open goal bound off the stored extent enumerates nothing")))
 
 (tu/deftest-kb the-licence-stays-with-the-predicate-it-names
-  ;; Subsumption makes a sub-predicate's *facts* serve the super-predicate's goals; the
-  ;; licence itself does not travel the other way.  `(transitiveInArgInverse largerThan 1 genl)`
-  ;; is a claim about how *largerThan* distributes over subkinds, and it no more
-  ;; descends to `muchLargerThan` than `transitive` or `symmetric` does: dogs may be
-  ;; larger than cats without every subkind being *much* larger.  A relation property
-  ;; is stated of the relation that has it, and a sub-predicate goal inherits nothing
-  ;; until someone declares that predicate preserving.
+  ;; docs/inherit.md, opening section: facts travel up the predicate hierarchy, and
+  ;; licences do not travel down it.
   (tu/with-terms [dog_t cat_t golden_retriever_t maine_coon_t chihuahua_t siamese_t
                   largerThan muchLargerThan]
     (kinds! kb {:dog dog_t :cat cat_t :gr golden_retriever_t
@@ -353,12 +345,7 @@
         "the sub-predicate's goal does not: nobody declared muchLargerThan preserving")))
 
 (tu/deftest-kb a-relation-nobody-declared-transitive-is-refused
-  ;; The declaration's reach is walked to a **fixpoint**, so naming a relation that was
-  ;; never said to compose would manufacture transitivity for it: two hops of `begat`
-  ;; licensing a claim only one hop was ever evidence for.  `(arg transitiveInArg 3
-  ;; transitive)` cannot say so — arg is open-world, so it bites for a
-  ;; relation carrying some other type and waves through the one carrying none — and the
-  ;; second is the common authoring order.  Both spellings must reach the same outcome.
+  ;; Both spellings of the declaration reach the same refusal.
   (tu/with-terms [cursed begat sired A B D]
     (doseq [[what rel] [["untyped" begat] ["typed" sired]]]
       (when (= "typed" what)
@@ -429,10 +416,6 @@
                                              'CxUniverse))))))))
 
 (tu/deftest-kb the-transitivity-licence-is-read-from-the-asking-context
-  ;; `usable-relation?` reads `(transitive R)` from the vantage, exactly as the
-  ;; declaration itself is read: a transitivity some context this one cannot see
-  ;; states is not a licence it holds.
-  ;;
   ;; The pair lives here rather than in `context_scoping_test` because it cannot be
   ;; built on a KB carrying the upper layer: `transitive` is a `decontextualized_predicate`
   ;; there, so every declaration is lifted into CxUniverse and every context sees
@@ -563,14 +546,7 @@
 ;; ---- the scope: kinds, and not their members -----------------------------
 
 (tu/deftest-kb preservation-along-genl-stays-at-the-level-of-kinds
-  ;; `genl` relates types, so `(largerThan dog cat)` reaches the subkinds and stops.
-  ;; It says nothing about Rex and Whiskers, and that silence is the semantics rather
-  ;; than a gap: `relation_kind` is a disjoint_metatype over `type_relation_predicate` and
-  ;; `instance_relation_predicate`, so one predicate symbol relates kinds *or* instances
-  ;; and never both.  Preservation moves an *argument* along a relation; the predicate
-  ;; and the level it relates at are left alone.  Crossing the line links two
-  ;; predicates and has a quantifier reading to settle — `typeToInstancePred`, which
-  ;; the engine does not act on.
+  ;; docs/inherit.md, "Preservation stays on one side of the type/instance line"
   (tu/with-terms [dog_t cat_t golden_retriever_t maine_coon_t chihuahua_t siamese_t
                   largerThan Rex Whiskers]
     (kinds! kb {:dog dog_t :cat cat_t :gr golden_retriever_t
@@ -899,14 +875,10 @@
   (v/ask? kb (list pred b a) sub))
 
 (tu/deftest-kb the-strongest-visible-claim-decides-not-the-first-one-stored
-  ;; One sentence, two visible contexts, two strengths.  `:class` decides which member
-  ;; of the asymmetry nogood loses, so reading it off whichever handle `matches-visible`
-  ;; happened to yield first would key a *verdict* on arrival order — and handles are
-  ;; allocated in assertion order.
-  ;;
-  ;; Every combination of (which context holds the monotonic claim) x (which was
-  ;; asserted first) must give the same answer, and it must be the strong one: a claim
-  ;; that is known true anywhere the asking context can see is a fixed background.
+  ;; One sentence, two visible contexts, two strengths.  Every combination of (which
+  ;; context holds the monotonic claim) x (which was asserted first) must give the same
+  ;; answer, and it must be the strong one: a claim that is known true anywhere the asking
+  ;; context can see is a fixed background.
   (doseq [[i strong] (map-indexed vector [:super :sub])
           [j first-where] (map-indexed vector [:super :sub])]
     (tu/with-terms [dog_t cat_t largerThan CxSuper CxSub]
@@ -1043,14 +1015,58 @@
                    [(v/ask? kb (list down_kind lower) 'CxUniverse)
                     (v/ask? kb (list down_kind lower) CxA)]))))))
 
+(tu/deftest-kb a-reached-denial-answers-the-negated-goal-and-its-exception-whichever-sentence-arrives-last
+  ;; `(not (bigP dog cat))` reaches `(bigP chi mc)` along both positions, and the rule's
+  ;; exception asks `(not (bigP chi mc))`.  Each row is `[ask? positive, ask? negated,
+  ;; firing believed]`; the row without `:edge` reaches nothing.  Each sentence arrives
+  ;; last once, which is the arrival the re-check answers for.
+  (let [mono {:strength :monotonic}]
+    (doseq [[strength items want]
+            [[:monotonic [:edge :deny :decl :rule :premise] [false true false]]
+             [:default   [:edge :deny :decl :rule :premise] [false true false]]
+             [:monotonic [:deny :decl :rule :premise]       [false false true]]]]
+      (is (= #{want}
+             (into #{}
+                   (for [order (map #(concat (remove #{%} items) [%]) items)]
+                     (tu/with-terms [bigP probe_kind fits dog_t cat_t chi_t mc_t Thing]
+                       (v/assert kb (list 'genl mc_t cat_t) 'CxUniverse mono)
+                       (doseq [op order]
+                         (case op
+                           :edge    (v/assert kb (list 'genl chi_t dog_t) 'CxUniverse mono)
+                           :deny    (v/assert kb (list 'not (list bigP dog_t cat_t)) 'CxUniverse
+                                              {:strength strength})
+                           :decl    (doseq [n [1 2]]
+                                      (v/assert kb (list 'transitiveInArgInverse bigP n 'genl)
+                                                'CxUniverse mono))
+                           :rule    (v/assert kb (list 'exceptWhen (list 'not (list bigP chi_t mc_t))
+                                                       (list 'set/forwardRule
+                                                             (list 'implies (list probe_kind '?x)
+                                                                   (list fits '?x))))
+                                              'CxUniverse)
+                           :premise (v/assert kb (list probe_kind Thing) 'CxUniverse)))
+                       [(v/ask? kb (list bigP chi_t mc_t) 'CxUniverse)
+                        (v/ask? kb (list 'not (list bigP chi_t mc_t)) 'CxUniverse)
+                        (boolean (seq (v/sentexes-matching kb (list fits Thing) 'CxUniverse)))]))))
+          (str strength " " items)))))
+
+(tu/deftest-kb a-separated-membership-answers-a-denial-only-over-known-true-edges
+  ;; `(mid_kind lower)` climbs `(genl mid_kind plain_kind)` to the separation from
+  ;; `down_kind`.  The separation undercuts a claim over either edge, and a `:default` edge
+  ;; fails the soundness rule a refutation is held to.
+  (doseq [[strength want] [[:default false] [:monotonic true]]]
+    (tu/with-terms [down_kind plain_kind mid_kind lower]
+      (v/assert kb (list 'transitiveInArgInverse down_kind 1 'genl) 'CxUniverse)
+      (v/assert kb (list 'disjoint down_kind plain_kind) 'CxUniverse {:strength :monotonic})
+      (v/assert kb (list 'genl mid_kind plain_kind) 'CxUniverse {:strength strength})
+      (v/assert kb (list mid_kind lower) 'CxUniverse)
+      (is (= want (v/ask? kb (list 'not (list down_kind lower)) 'CxUniverse))
+          (str strength)))))
+
 ;; ---- the memo's growth claim, counted -------------------------------------
 ;;
-;; docs/inherit.md's memo claim is that the reach walk is **linear in the claims**:
-;; `positions` is asked by four callers, and `witness-terms` once per preserved position
-;; and then again per *pair* of claims inside `undercut?` — so an unmemoized walk is
-;; quadratic in how many claims reach the term.  The answers are identical either way and
-;; only the cost moves, so nothing but a count can see it.  `res/matches-visible` is the
-;; probe point: a reach over a fact-relation reads it once per node walked (`inherit/fact-reach`).
+;; docs/inherit.md, "What one question costs": the reach walk is linear in the claims.
+;; `res/matches-visible` is the probe point: a reach over a fact-relation reads it once per
+;; node walked (`inherit/fact-reach`).
 ;;
 ;; A ratio of **second differences** rather than an exact number: linear growth doubles the
 ;; step from 4→8 claims to 8→16 and quadratic growth quadruples it, so 3.0 sits between the

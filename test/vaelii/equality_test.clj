@@ -1,33 +1,8 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.equality-test
-  "Equality — `rewriteOf` / `sameAs` / `equals`, and the `different` that survives
-  them.  Every test here holds against the shipped feature: one belief-following
-  partition behind the three relations, recomputed on edge change like the `genl`
-  and `genlCx` closures beside it.
-
-  Each test asserts one decision from [docs/equality.md](../../docs/equality.md) and
-  carries a comment naming it.  The shape under test is three assertable relations
-  feeding **one equivalence closure**
-
-    (rewriteOf Preferred Deprecated)   directional: the second argument is retired
-    (sameAs A B)                       OWL, individuals, neither deprecated
-    (equals A B)                       sameAs without the individuals restriction
-
-  and one *unassertable* one, `(different A B ...)`, which is negation as failure
-  over that closure — the unique-name assumption OWL drops and vaelii keeps.
-
-  The five claims the shape makes are: a merge **migrates** every sentex mentioning
-  the loser and **blocks** (never deletes) the stale spelling; congruence is a side
-  effect of the term index, so a nested occurrence is rewritten too; the
-  representative is **content-keyed**, so it cannot depend on arrival order;
-  `functional` **derives** an equality rather than throwing; and a **rule** may
-  conclude one of the three, which merges where the conclusion is placed.
-
-  House rules apply as everywhere else: gensym'd temporaries via `tu/with-terms`,
-  engine vocabulary (`rewriteOf`, `sameAs`, `equals`, `different`, `functional`,
-  `genl`, `disjoint`, `symmetric`, contexts) literal, and the neutral fixture
-  asserts the KB is restored."
+  "Equality: `rewriteOf`, `sameAs` and `equals` merging into one belief-following
+  partition, and the `different` prover that reads it.  See docs/equality.md."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.kb :as kb]
@@ -57,7 +32,7 @@
 
 (defn- stored-not-believed?
   "The signature of a **blocked** spelling: the sentex is still there (handles callers
-  hold stay valid) and the JTMS holds it OUT."
+  hold stay valid) and `in?` reports it unbelieved."
   [kb sentence context]
   (let [h (v/handle-of kb sentence context)]
     (and (some? h) (some? (v/sentex kb h)) (not (v/in? kb h)))))
@@ -82,11 +57,6 @@
       (cons (nth coll i) p))))
 
 ;; ---- 1. the three relations and one closure ------------------------------
-;; DECISION (Three assertable relations, one closure): "`rewriteOf` names the
-;; representative and marks the loser deprecated."  Direction is the whole content of
-;; the relation, so the preferred term must win *regardless* of how it sorts — this
-;; test deliberately gives the preferred term the lexicographically **larger** name,
-;; which is the tie-break `sameAs` would otherwise use.
 
 (tu/deftest-kb rewrite-of-deprecates-its-second-argument-whatever-the-spelling
   (tu/with-terms [bornIn Chicago CxName]
@@ -99,13 +69,6 @@
       (testing "and the deprecated spelling is blocked, not deleted"
         (is (stored-not-believed? kb (list bornIn lo Chicago) CxName))))))
 
-;; DECISION (Three assertable relations, one closure): "`sameAs` ... Both names stay
-;; first-class; neither is deprecated; the representative is an internal detail" —
-;; and the representative is then chosen by decision 2, the **lexicographically
-;; smallest symbol**.  So the observable difference between `rewriteOf` and
-;; `sameAs`/`equals` is exactly this: with the same two symbols and the same argument
-;; order, `rewriteOf` elects its first argument and `sameAs` elects the smaller one.
-
 (tu/deftest-kb same-as-states-no-preference-so-the-smaller-symbol-represents
   (tu/with-terms [bornIn Chicago CxName]
     (let [[lo hi] (sort [(tu/tmp-ind "Obama") (tu/tmp-ind "Obama")])]
@@ -117,10 +80,6 @@
         (is (believed? kb (list bornIn lo Chicago) CxName)))
       (testing "so the fact written under the larger one is the blocked spelling"
         (is (stored-not-believed? kb (list bornIn hi Chicago) CxName))))))
-
-;; DECISION (Three assertable relations, one closure): "All three feed **one
-;; equivalence closure**.  They differ in what they say *about* the members, not in
-;; the classes they produce."  Each of the three, alone, must migrate.
 
 (tu/deftest-kb all-three-relations-merge
   (doseq [rel ['rewriteOf 'sameAs 'equals]]
@@ -136,10 +95,8 @@
           (is (stored-not-believed? kb (list bornIn hi Chicago) CxName)
               (str rel " did not block the non-representative spelling")))))))
 
-;; DECISION (Choosing the representative): "Chains compose: `rewriteOf A B` and
-;; `rewriteOf B C` make `A` the representative of all three."  The middle term is a
-;; representative when the first edge is read alone, so a one-hop implementation
-;; passes the A/B half and fails here.
+;; The middle term represents the first edge read alone, so a one-hop election passes
+;; the A/B half and fails here.
 
 (tu/deftest-kb a-rewrite-chain-composes-into-one-class-with-one-representative
   (tu/with-terms [bornIn Chicago Berlin CxName]
@@ -157,12 +114,8 @@
       (testing "B is deprecated too, so it does not represent C"
         (is (not (believed? kb (list bornIn B Berlin) CxName)))))))
 
-;; DECISION (Choosing the representative): "Order independence is non-negotiable
-;; ..., so the choice can never depend on handle ids or arrival order — handles are
-;; allocated in assertion order, and that was a real bug in the Nixon diamond."
-;; Every ordering of the merge and the facts must produce the identical reading.  The
-;; permutation harness is `order_independence_test`'s, on the isolated database pair
-;; so the loop's clears cannot pull the scratch space out from under this namespace.
+;; The permutation harness is `order_independence_test`'s, on the isolated pair, so the
+;; loop's clears do not empty this namespace's scratch space.
 
 (deftest the-representative-does-not-depend-on-assertion-order
   (tu/with-terms [bornIn worksAt Chicago Acme CxName]
@@ -199,10 +152,6 @@
       (tu/clear-kb! (tu/isolated-test-kb)))))
 
 ;; ---- 2. migration --------------------------------------------------------
-;; DECISION (What a merge does — Migrate): "Each gets a rewritten twin under the
-;; representative, **derived and justified** by `[the original sentex, the equality
-;; sentex]`."  Derived, not re-asserted: the twin is not a premise, and its
-;; justification names both parents.
 
 (tu/deftest-kb the-migrated-twin-is-derived-and-justified-by-the-fact-and-the-equality
   (tu/with-terms [bornIn Chicago CxName]
@@ -221,10 +170,8 @@
             (is (contains? antes fact) "the original sentex is not an antecedent")
             (is (contains? antes eq)   "the equality sentex is not an antecedent")))))))
 
-;; DECISION (What a merge does — Block the original): "The stale spelling stays
-;; stored but is not believed and does not match ...  Handles that callers already
-;; hold stay valid."  Blocking, not sweeping: `exceptWhen` deletes an unsupported
-;; conclusion, and this must **not**, because the premise is still the caller's.
+;; Superseded, not swept: `exceptWhen` deletes an unsupported conclusion, and a
+;; superseded spelling is still the caller's premise.
 
 (tu/deftest-kb the-stale-spelling-is-blocked-and-its-handle-stays-valid
   (tu/with-terms [bornIn Chicago CxName]
@@ -241,11 +188,8 @@
         (testing "and it does not match — a raw level-2 lookup sees no believed hit"
           (is (empty? (v/lookup kb 2 (list bornIn Dep Chicago) CxName))))))))
 
-;; DECISION (What a merge does — Rewrite goals): "A query naming a non-representative
-;; is rewritten before lookup, since its own sentexes are no longer believed."  So the
-;; retired spelling is still a usable *question* even though it is not a usable
-;; *answer* — which is what makes migration invisible to a caller who has not heard
-;; about the merge.
+;; The retired spelling stays a usable question though it is no longer an answer, so a
+;; caller who has not heard about the merge reads through it.
 
 (tu/deftest-kb a-goal-naming-the-deprecated-term-is-rewritten-and-still-answers
   (tu/with-terms [bornIn Chicago CxName]
@@ -262,8 +206,8 @@
                                  (v/ask kb (list bornIn '?who Chicago) CxName)))))))))
 
 ;; A merge retires a spelling for the contexts below it, and a rule naming that spelling
-;; is not read there, as a fact naming it is not.
-(tu/deftest-kb a-rule-naming-a-retired-spelling-is-hidden-below-the-merge
+;; is restated there under the representative, as a fact naming it is.
+(tu/deftest-kb a-rule-naming-a-retired-spelling-is-restated-below-the-merge
   (tu/with-terms [bornIn knows CxUpper CxLower]
     (tu/with-terms [Pref Dep]
       (v/assert kb (list 'genlCx CxLower CxUpper) 'CxUniverse)
@@ -271,14 +215,40 @@
         (v/assert kb rule CxUpper)
         (v/assert kb (list 'rewriteOf Pref Dep) CxLower)
         (testing "the context that states the rule, above the merge, reads it"
-          (is (= 1 (count (v/sentexes-matching kb rule CxUpper)))))
-        (testing "a context below the merge has retired Dep, and does not read the rule"
-          (is (empty? (v/sentexes-matching kb rule CxLower))))))))
+          (is (= [CxUpper] (map :context (v/sentexes-matching kb rule CxUpper)))))
+        (testing "a context below the merge reads the twin naming Pref, stored there"
+          (is (= [[CxLower (list knows '?var0 Pref)]]
+                 (map (juxt :context :consequent) (v/sentexes-matching kb rule CxLower)))))))))
 
-;; DECISION (What a merge does — Migrate): "Dedup falls out: when the rewritten form
-;; already exists, find-or-create returns that handle and it simply gains a second
-;; justification."  One handle with two supports, never two handles — this is the
-;; claim that makes a merge idempotent against content the KB already had.
+(defn- retired-spelling-rule-reading
+  "The `knows` sentences CxName believes once `ops` run in order, with the terms read back
+  as `Tom`, `Pref` and `Dep`: `:rule` the forward rule `(bornIn ?x Dep) => (knows ?x
+  Dep)`, `:fact` `(bornIn Tom Dep)`, `:merge` `(rewriteOf Pref Dep)` at `:monotonic`,
+  `:unmerge` its retraction."
+  [ops]
+  (tu/with-neutral-kb [kb tu/fresh]
+    (tu/with-terms [bornIn knows CxName Tom Pref Dep]
+      (let [eq (list 'rewriteOf Pref Dep)]
+        (doseq [op ops]
+          (case op
+            :rule    (v/assert kb (list 'implies (list bornIn '?x Dep) (list knows '?x Dep)) CxName
+                               {:direction :forward})
+            :fact    (v/assert kb (list bornIn Tom Dep) CxName)
+            :merge   (v/assert kb eq CxName {:strength :monotonic})
+            :unmerge (v/retract! kb (v/handle-of kb eq CxName))))
+        (into #{} (comp (filter #(believed? kb % CxName))
+                        (map #(replace {Tom 'Tom Pref 'Pref Dep 'Dep knows 'knows} %)))
+              (for [y [Pref Dep]] (list knows Tom y)))))))
+
+(deftest a-rule-naming-a-retired-spelling-fires-under-the-representative-in-every-order
+  (testing "the merge standing: the rule's twin fires on the fact's twin"
+    (is (= #{#{'(knows Tom Pref)}}
+           (into #{} (map retired-spelling-rule-reading) (permutations [:rule :fact :merge])))))
+  (testing "the merge retracted: the KB that never had it"
+    (is (= #{#{'(knows Tom Dep)}}
+           (into #{} (map #(retired-spelling-rule-reading (concat % [:unmerge])))
+                 (permutations [:rule :fact :merge]))
+           #{(retired-spelling-rule-reading [:rule :fact])}))))
 
 (tu/deftest-kb merging-two-spellings-of-one-fact-yields-one-handle-with-two-supports
   (tu/with-terms [bornIn Chicago CxName]
@@ -337,11 +307,8 @@
       "the except leaves"))
 
 ;; ---- 3. congruence -------------------------------------------------------
-;; DECISION (Congruence comes free): "The inverted term index locates a term at **any
-;; nesting depth**, and migration rewrites it there, so merging performs congruence
-;; closure eagerly over all ground content."  The doc claims this falls out; nothing
-;; else in the suite would notice if it did not, because every other test puts the
-;; merged term in top-level argument position.
+;; Every other test puts the merged term in top-level argument position, so this is the
+;; one test of a nested occurrence (docs/equality.md, "Congruence comes free").
 
 (tu/deftest-kb a-merged-term-nested-inside-a-compound-is-rewritten-too
   (tu/with-terms [reportedThat livesIn Ann Bob CxStory]
@@ -355,12 +322,8 @@
         (is (stored-not-believed? kb (list reportedThat Ann (list livesIn Bob Dep))
                                   CxStory))))))
 
-;; DECISION (Interactions — Symmetric predicates): "Argument sorting for a symmetric
-;; predicate is done at canonicalization time against the *stored* symbols.  A later
-;; merge changes what the sorted order should be, so migration must re-canonicalize
-;; rather than substitute textually."  A textual substitution leaves the twin's stored
-;; sentence out of canonical order, which `handle-of` would hide (it probes both
-;; orders), so the *stored sentence* is read directly.
+;; `handle-of` probes both argument orders of a symmetric literal, so it would hide a
+;; textual substitution; the stored sentence is read directly.
 
 (tu/deftest-kb migration-re-canonicalizes-a-symmetric-literal-rather-than-substituting
   (tu/with-terms [siblingOf CxKin]
@@ -378,11 +341,8 @@
               "the merge substituted textually and left (siblingOf hi mid) stored"))))))
 
 ;; ---- 4. retraction -------------------------------------------------------
-;; DECISION (What a merge does): "Retraction needs no new code.  Dropping the equality
-;; invalidates the derivations, the dependency-directed sweep collects the twins, and
-;; unblocking revives the originals."  Both halves matter: a sweep that left the twin
-;; stored would make the term count wrong, and an unblock that did not happen would
-;; lose the caller's own premise.
+;; Both halves: a twin left stored would make the term count wrong, and an original left
+;; superseded would withhold the caller's premise.
 
 (tu/deftest-kb retracting-the-equality-sweeps-the-twins-and-revives-the-originals
   (tu/with-terms [bornIn worksAt Chicago Acme CxName]
@@ -405,11 +365,7 @@
           (is (true? (v/ask? kb (list 'different Pref Dep) CxName))))))))
 
 ;; ---- 5. `different` ------------------------------------------------------
-;; DECISION (The unique-name assumption survives): "`(different X Y)` is **provable
-;; exactly when the arguments lie in no shared equivalence class** — so distinct
-;; symbols denote distinct individuals until an equality sentex says otherwise."
-;; All three phases in one test, because the interesting claim is the transition and
-;; not any single reading.
+;; All three phases in one test, because the claim is the transition.
 
 (tu/deftest-kb different-tracks-the-closure-in-both-directions
   (tu/with-terms [CxName]
@@ -423,11 +379,6 @@
         (testing "and retracting the merge restores the difference — the closure split"
           (is (true? (v/ask? kb (list 'different Pref Dep) CxName))))))))
 
-;; DECISION (The unique-name assumption survives): "**Variable arity.**  `(different
-;; A B C)` asserts the arguments are pairwise distinct."  Pairwise, so merging *any*
-;; one pair must take the whole literal down — a check that only tested the first pair
-;; would pass on a two-argument test and fail here.
-
 (tu/deftest-kb different-is-variable-arity-and-pairwise
   (tu/with-terms [CxName]
     (tu/with-terms [A B C]
@@ -440,11 +391,6 @@
       (testing "while the untouched pair is still different"
         (is (true? (v/ask? kb (list 'different A B) CxName)))))))
 
-;; DECISION (The unique-name assumption survives): "**Not assertible.**  It is
-;; answered by a prover and never stored.  Asserting it is rejected.  (An assertible
-;; `different` would be OWL's `differentFrom` — a positive commitment that makes a
-;; later `sameAs` contradictory.  Deliberately not built.)"
-
 (tu/deftest-kb different-is-not-assertible
   (tu/with-terms [CxName]
     (tu/with-terms [A B]
@@ -456,18 +402,8 @@
         (is (zero? (v/count-with-functor kb 'different)))
         (is (empty? (v/find-sentexes kb 'different)))))))
 
-;; DECISION (The unique-name assumption survives): "**Ground only.**  The prover is
-;; inapplicable unless every argument is bound.  `(different ?x Y)` would enumerate
-;; every term in the KB that is not `Y`, so it is refused rather than answered
-;; explosively."
-;;
-;; SPEC NOTE — "refused" is not tied to a mechanism by the doc.  Since `different`
-;; is a **prover**, and a prover declares `applicable?`, the reading taken here is
-;; that an open goal makes it inapplicable, so `ask` yields nothing and the goal drops
-;; out of `query-plan` (which lists applicable provers only).  The alternative reading
-;; — throwing on an open `different` — would fail this test, which is the point: the
-;; doc should say which.  The claim both readings share, and the one that actually
-;; matters, is that nothing enumerates.
+;; An open goal makes the prover inapplicable, so `ask` yields nothing and the goal drops
+;; out of `query-plan`, which lists applicable provers only.
 
 (tu/deftest-kb an-open-different-is-refused-rather-than-enumerated
   (tu/with-terms [bornIn Chicago CxName]
@@ -484,16 +420,9 @@
         (is (empty? (v/ask kb (list 'different '?x B)  CxName)))
         (is (empty? (v/ask kb (list 'different '?x '?y) CxName)))))))
 
-;; DECISION (The unique-name assumption survives): "**Not canonicalized.**  No chain
-;; merging ...  `lessThan` merges chains because it is **transitive** ... `different`
-;; is **not** transitive — `A≠B` and `B≠C` say nothing about `A` and `C` — so
-;; chain-merging it would manufacture a claim nobody made."
-;;
-;; `different` is never stored, so the only place a chain merge could happen is a rule
-;; antecedent, where the literal *is* stored as part of the rule sentex.  That is what
-;; is read back here: two `different` literals sharing a variable must survive
-;; canonicalization as two literals, not collapse the way `(lessThan ?a ?b)` +
-;; `(lessThan ?b ?c)` does.
+;; `different` is never stored, so a rule antecedent is the one place a chain merge could
+;; happen: two `different` literals sharing a variable stay two literals, where
+;; `(lessThan ?a ?b)` and `(lessThan ?b ?c)` merge.
 
 (tu/deftest-kb a-different-chain-in-a-rule-antecedent-is-not-merged
   (tu/with-terms [triple item CxStory]
@@ -520,11 +449,6 @@
       (testing "and a rule assert does not store a `different` fact"
         (is (zero? (v/count-with-functor kb 'different)))))))
 
-;; DECISION (Interactions — Stratification): "`different` in a rule antecedent is a
-;; **negative dependency**, so it joins the rule dependency graph beside `exceptWhen`.
-;; A rule concluding an equality from a `different` antecedent is a cycle through
-;; negation and is rejected — otherwise belief would depend on arrival order."
-
 (tu/deftest-kb a-rule-concluding-an-equality-from-a-different-antecedent-is-rejected
   (tu/with-terms [candidate CxMerge]
     (tu/with-terms [Anchor]
@@ -538,20 +462,8 @@
         (is (empty? (v/sentexes-in-context kb CxMerge)))))))
 
 ;; ---- 6. `functional` -----------------------------------------------------
-;; DECISION (`functional` infers equality instead of throwing): "`(functional P)` plus
-;; two different values for the same first argument currently throws.  It will instead
-;; **derive** an equality between the values."  Not throwing is half the claim; the
-;; merge actually happening is the other half.
-;;
-;; SPEC NOTE — the doc says "an equality" without naming which of the three relations
-;; is derived.  `equals` is this suite's choice (the values of a functional role are
-;; any terms, not necessarily individuals, which is exactly `equals`'s remit).  The
-;; assertions about *merging* are spelling-independent and stand whichever is chosen;
-;; only the `derived-equality-exists` assertion below depends on it.
-;;
-;; Until this lands, the second `(motherOf Tom ...)` assert **throws** — that is the
-;; behaviour under specification, so these three tests report as ERROR rather than
-;; FAIL, and the two below never reach their assertions at all.
+;; Only the `handle-of` of the derived `equals` depends on which relation the merge
+;; derives; the merging assertions hold for any of the three.
 
 (tu/deftest-kb functional-derives-an-equality-instead-of-throwing
   (tu/with-terms [motherOf caresFor Tom CxFam]
@@ -569,17 +481,9 @@
         (is (some? (v/handle-of kb (list 'equals lo hi) CxFam)))))))
 
 (tu/deftest-kb a-merge-rests-on-every-functional-declaration-not-on-one-of-them
-  ;; Nothing refuses `(functional P)` in two contexts, which is two sentexes and two
-  ;; handles.  Resting the derived equality on one of them puts an assertion-ordered
-  ;; handle into the justification's antecedents: retracting *that* declaration would
-  ;; withdraw a merge the other one still licenses, and which of the two it was would
-  ;; depend on the order they arrived in.  One justification per declaration is what
-  ;; makes the merge a function of the knowledge.
-  ;;
-  ;; **Both directions, on independent predicates**, because a single arm cannot tell
-  ;; this apart from luck: resting the merge on one arbitrary handle passes whenever the
-  ;; retracted declaration happens not to be the chosen one.  Retiring the first in one
-  ;; predicate and the second in another, no single choice survives both.
+  ;; Retracts the first declaration of one predicate and the second of another, so no
+  ;; single chosen handle passes both (docs/defenses.md, "A functional merge rests on
+  ;; every declaration of the convicting mark").
   (tu/with-terms [Tom CxFam CxStory]
     (v/assert kb (list 'genlCx CxStory 'CxUniverse) 'CxUniverse)
     (v/assert kb (list 'genlCx CxFam 'CxUniverse) 'CxUniverse)
@@ -598,11 +502,7 @@
               (str "the surviving declaration licenses the same equality, so the merge "
                    "stands — it never rested on one arbitrary handle")))))))
 
-;; DECISION (`functional` infers equality instead of throwing): "Making it a real
-;; justification rather than a side effect is what makes it safe ... the merge is
-;; justified, `why` names exactly which declaration and which two facts caused it."
-;; A silent merge would be the dangerous version of this feature, so the *inspectable*
-;; half is asserted separately from the *reversible* half below.
+;; The inspectable half; the reversible half is the next test.
 
 (tu/deftest-kb why-on-a-functional-merge-names-the-declaration-and-both-facts
   (tu/with-terms [motherOf Tom CxFam]
@@ -624,10 +524,6 @@
             (is (contains? said (list motherOf Tom lo)))
             (is (contains? said (list motherOf Tom hi)))))))))
 
-;; DECISION (`functional` infers equality instead of throwing): "retracting any one of
-;; them runs the existing sweep and un-merges.  An opaque merge would be dangerous; an
-;; inspectable, reversible one is knowledge."
-
 (tu/deftest-kb retracting-either-functional-fact-un-merges-the-values
   (tu/with-terms [motherOf caresFor Tom CxFam]
     (let [[lo hi] (sort [(tu/tmp-ind "Mary") (tu/tmp-ind "Mary")])]
@@ -647,11 +543,8 @@
           (is (true? (believed? kb (list caresFor hi Tom) CxFam))))))))
 
 (tu/deftest-kb a-collision-merges-only-when-both-facts-are-monotonic
-  ;; DECISION (docs/reference.md, decisions 6 and 13): a merge is never defeated and is
-  ;; undone only by retracting a premise it rests on, so it rests on `:monotonic`
-  ;; evidence alone.  A `functional` or `anti_symmetric` collision with a `:default` fact
-  ;; is a nogood: the unique `:default` fact is OUT and two `:default` facts are a
-  ;; dilemma, whichever fact arrives first.
+  ;; A merge rests on `:monotonic` evidence alone (docs/reference.md, decisions 6 and
+  ;; 13): with a `:default` member the collision is a nogood, in either arrival order.
   (doseq [mark    ['functional 'anti_symmetric]
           [sa sb] [[:monotonic :default] [:monotonic :monotonic] [:default :default]]
           flip?   [false true]]
@@ -726,15 +619,8 @@
     (is (true? (held-at? kb fa cx)))
     (is (false? (held-at? kb fb cx)))))
 
-;; DECISION (`functional` infers equality instead of throwing) meeting order
-;; independence: a declaration has to reach the facts already stored exactly as it
-;; reaches the facts that follow — the both-directions rule `entail-existing` states
-;; for the argument constraints, and the same rule here.  The three tests above all
-;; write the declaration first, which is the direction that was never the question:
-;; the values a functional slot already holds are co-referent whether the KB is told
-;; the predicate is functional before it is told the facts or after, and if it is not,
-;; then whether two names denote one woman depends on which line of a file arrived
-;; first.
+;; The tests above write the declaration first; these write it after the facts
+;; (`special/equate-existing`), and the KB merges the same values.
 
 (tu/deftest-kb a-functional-declaration-arriving-after-the-facts-merges-them-too
   (tu/with-terms [motherOf caresFor Tom CxFam]
@@ -773,9 +659,7 @@
             "the same three sentences believe different things in the two orders")))))
 
 (tu/deftest-kb a-retroactive-functional-merge-carries-the-same-argument
-  ;; the merge is knowledge only if it is inspectable, and a retroactive one names the
-  ;; same three sentexes a forward one does — otherwise `why` would explain one arrival
-  ;; order and shrug at the other
+  ;; a retroactive merge names the same three sentexes a forward one does
   (tu/with-terms [motherOf Tom CxFam]
     (let [[lo hi] (sort [(tu/tmp-ind "Mary") (tu/tmp-ind "Mary")])]
       (v/assert kb (list motherOf Tom lo) CxFam {:strength :monotonic})
@@ -789,8 +673,7 @@
           (is (contains? said (list motherOf Tom hi))))))))
 
 (tu/deftest-kb retracting-a-retroactive-functional-declaration-un-merges
-  ;; reversibility is the other half of "inspectable, reversible", and the declaration
-  ;; is one of the three antecedents whichever order it arrived in
+  ;; the declaration is an antecedent whichever order it arrived in
   (tu/with-terms [motherOf caresFor Tom CxFam]
     (let [[lo hi] (sort [(tu/tmp-ind "Mary") (tu/tmp-ind "Mary")])]
       (v/assert kb (list motherOf Tom lo) CxFam {:strength :monotonic})
@@ -821,12 +704,9 @@
                  (pr-str (mapv #(v/representative kb %) [a b c]))))))))
 
 (tu/deftest-kb a-functional-merge-a-rule-triggered-displaces-the-spelling-too
-  ;; The second value arrives as a rule's conclusion, so the merge happens from inside
-  ;; the chaining run rather than from the assert that started it.  The migration is the
-  ;; same either way, and so is what it owes: the twin is stored *and* the spelling it
-  ;; restates stops being believed.  Leaving the supersession to whatever runs next
-  ;; leaves both spellings believed — which is the state `recover` would not come back
-  ;; in, since the rebuild reads the twin off the store and displaces the original.
+  ;; The second value arrives as a rule's conclusion, so the merge happens inside the
+  ;; chaining run.  The twin is stored and the restated spelling stops being believed
+  ;; there, as `recover` would rebuild them.
   (tu/with-terms [motherOf parentOf caresFor Tom CxFam]
     (let [[lo hi] (sort [(tu/tmp-ind "Mary") (tu/tmp-ind "Mary")])]
       (v/assert kb (list 'functional motherOf) CxFam)
@@ -841,14 +721,7 @@
         (is (stored-not-believed? kb (list caresFor hi Tom) CxFam))))))
 
 ;; ---- 7. an equality a rule concluded -------------------------------------
-;; DECISION (Interactions — A rule concluding one of the three relations merges): "a
-;; rule-concluded `(sameAs A B)` reaches `special/integrate-equality-sentex` — the same
-;; arm the table runs for an asserted one — so the closure learns the edge, migration
-;; restates every sentex it displaces, the retired spelling stops being believed, and a
-;; migration the integrity checks refuse is filed as a violation."  The live/rebuilt
-;; half of the same claim is
-;; `recovery-test/recover-agrees-about-a-rule-concluded-equality`.
-;;
+;; The live/rebuilt half is `recovery-test/recover-agrees-about-a-rule-concluded-equality`.
 ;; All three relations, because the derivation path dispatches on the functor: the two
 ;; symmetric ones elect the smaller spelling and `rewriteOf` elects its first argument,
 ;; so a fact written `(alias lo hi)` retires `hi` under every one of them.
@@ -895,15 +768,10 @@
             (v/clear-violations! kb)))))))
 
 (tu/deftest-kb a-twin-a-derived-merge-created-fires-the-rules-that-match-it
-  ;; The twin is new content the run has not seen, so it goes back on the agenda exactly
-  ;; as the twin of an asserted merge does — and it has to, because the spelling it
-  ;; restates stops matching the moment the merge lands: a rule that had not yet reached
-  ;; the original would otherwise fire on neither.
-  ;;
-  ;; The second antecedent is what makes the twin the only route to the conclusion.  It
-  ;; holds of the representative and not of the retired spelling, so the join cannot
-  ;; succeed before the merge — and the conclusion cannot be a migrated twin of an
-  ;; earlier firing either, there having been none to migrate.
+  ;; The second antecedent holds of the representative and not of the retired spelling,
+  ;; so the join cannot succeed before the merge and the conclusion cannot be the
+  ;; migrated twin of an earlier firing: the twin's return to the agenda is the only
+  ;; route to it.
   (tu/with-terms [aliasOf caresFor lives devotedTo Tom CxAlias]
     (v/assert-rule kb [(list caresFor '?x '?y) (list lives '?x)]
                    (list devotedTo '?x '?y) CxAlias {:direction :forward})
@@ -953,10 +821,7 @@
         (pr-str tail))))
 
 ;; ---- 8. disjointness -----------------------------------------------------
-;; DECISION (Interactions — Disjointness): a merge can *create* a clash, `(dog Rex)` +
-;; `(cat Fluffy)` + merge makes one individual both.  The twin is stored, supersedes its
-;; original, and the clash is decided and reported like any stored clash; dropping the
-;; twin would leave the member restated second under its old spelling.
+;; Dropping the twin would leave the member restated second under its old spelling.
 
 (tu/deftest-kb a-merge-that-creates-a-disjointness-clash-stores-the-twin-and-reports-it
   (tu/with-terms [dog cat CxPet]
@@ -995,10 +860,8 @@
         (is (stored-not-believed? kb (list dog other) CxZoo))))))
 
 ;; ---- 9. well-formedness --------------------------------------------------
-;; DECISION (Choosing the representative): "A `rewriteOf` cycle has no representative
-;; and is rejected by `wff`, like a `genl` cycle."  Both the two-edge cycle and the
-;; longer one, because a check that only compared the two arguments of the edge being
-;; asserted would pass the first and miss the second.
+;; The two-edge cycle and a longer one, because a check comparing only the two arguments
+;; of the arriving edge passes the first and misses the second.
 
 (tu/deftest-kb a-rewrite-of-cycle-is-rejected
   (tu/with-terms [CxName]
@@ -1015,9 +878,6 @@
         (is (nil? (v/handle-of kb (list 'rewriteOf B A) CxName)))
         (is (nil? (v/handle-of kb (list 'rewriteOf C A) CxName)))))))
 
-;; DECISION (Choosing the representative): a self-edge is the degenerate cycle, and it
-;; is the one an import pipeline actually produces (the same term aligned to itself).
-
 (tu/deftest-kb a-rewrite-of-self-edge-is-rejected
   (tu/with-terms [CxName]
     (tu/with-terms [A]
@@ -1025,22 +885,16 @@
                    (v/assert kb (list 'rewriteOf A A) CxName)))
       (is (nil? (v/handle-of kb (list 'rewriteOf A A) CxName))))))
 
+(tu/deftest-kb a-reflexive-same-as-is-stored-and-merges-nothing
+  (tu/with-terms [A CxName]
+    (is (some? (v/assert kb (list 'sameAs A A) CxName)))
+    (is (= #{A} (set (v/equiv-class kb A CxName))))))
+
 ;; ---- 10. what the supersession reconcile costs ---------------------------
-;;
-;; The blocked spelling of section 3 is *derived state*: `special/refresh-supersessions`
-;; recomputes it every settle so that a supersession cannot outlive the merge behind it.
-;; What a standing merge set costs that reconcile is a shape question rather than a
-;; feature one, and it is the reason these tests count instead of asserting: a KB's
-;; merges are not a small fixed population — `owl:sameAs` is what an RDF import emits in
-;; quantity, and re-examining every displaced spelling on every settle makes loading n
-;; merges quadratic in n.
-;;
-;; So the reconcile is narrowed to the region the settle moved plus what migration just
-;; handed it, and the narrowing is a claim about what cannot have changed.  A wrong
-;; claim is a stale supersession — a spelling left hidden after the merge that hid it is
-;; gone, which is the caller's own premise withheld — so the cost check is followed by
-;; the three cases it must never trade.  The unit counted is `kb/rewrite-term*`, one
-;; call per displaced spelling re-examined.
+;; `special/refresh-supersessions` reconciles the superseded spellings on the write path
+;; (docs/equality.md, "The reconcile in step 2 runs on the write path").  The cost tests
+;; count `kb/rewrite-term*` calls, one per displaced spelling re-examined, and the three
+;; after them are the cases the narrowed reconcile must not miss.
 
 (defn- counting-rewrites
   "Run `f`, returning the number of `kb/rewrite-term*` calls it caused."
@@ -1146,10 +1000,8 @@
         (is (true? (v/in? kb orig))
             "and believed again once nothing normalizes it")))))
 
-;; DECISION (regression): the equality relations relate NAMES — their arguments are
-;; mentions, like a quoting function's — so a merge must not rewrite a denial OF the merge
-;; into the vacuous `(not (sameAs A A))`.  Without that, a monotonic denial of a default
-;; merge was silently superseded and the merge stood (docs/equality.md, the flagged case).
+;; The equality relations' arguments are mentions, so a merge does not rewrite a denial
+;; of the merge into `(not (sameAs A A))`.
 
 (tu/deftest-kb a-denial-of-an-equality-leaves-a-default-merge-standing-in-either-order
   ;; the equality relations are in the baseline forced-monotonic set, so on this bare KB too
@@ -1174,11 +1026,8 @@
 
 ;; ---- a stated equation is answered ----------------------------------------
 
-;; DECISION (Answering an equation): a believed `(sameAs A B)` is answered by every read.
-;; The stored equation is never restated, so no read may call it retired; `ask` reads the
-;; closure for the symmetric, reflexive and transitive forms and enumerates a bound
-;; symbol's class.  The stated sentence reaching none of `ask?`, `prove` and
-;; `sentexes-matching` is the failure this asserts against, and each column below is one of them.
+;; Each column is one read: `ask?`, `prove` and `sentexes-matching` (docs/equality.md,
+;; "Answering an equation").
 
 (defn- equation-reads
   "Every read of `pred` over `a` / `b` / `c`, where `(pred a b)` and `(sameAs b c)` are
@@ -1246,16 +1095,9 @@
 ;; ---- a `different` guard is order-independent ----------------------------
 
 (deftest a-different-guarded-firing-is-withdrawn-by-a-fact-that-arrives-after-it
-  ;; `different` is negation as failure over the equality closure and over the
-  ;; `indeterminate_term` category, so a fact arriving on either **withdraws** it.  It is
-  ;; not assertible and holds by the absence of a merge, so it names no handle a
-  ;; justification could carry and no `SupportingProver` support can reach it: the rule is
-  ;; registered in the re-check index (`rules/different-flip-predicates`) and the firing is
-  ;; re-decided in `chain/different-blocks?`.
-  ;;
-  ;; Both arrival orders are run against each flip source.  The same three sentences must
-  ;; settle to the same belief whichever way round they arrive, which is the order
-  ;; independence README.md lists as a property no code may break.
+  ;; `different` names no handle a justification could carry, so the rule is re-checked
+  ;; (`rules/different-flip-predicates`, `chain/different-blocks?`).  Both arrival orders
+  ;; run against each flip source.
   (doseq [[label flip!]
           [["sameAs — a merge puts the two names in one class"
             (fn [kb a b] (v/assert kb (list 'sameAs a b) 'CxUniverse))]
@@ -1313,8 +1155,8 @@
   ;; and the membership — so withdrawing either restores the difference and owes the
   ;; firing back.  `different-flip-predicates` names `genl` outright and reaches the
   ;; membership through `special/recheck-on-predicate`'s `genls-global` fan, and neither
-  ;; route has a blocked justification to move: the guard is evaluated in the join, so the
-  ;; suppressed firing never existed.
+  ;; route has a blocked justification to move: the guard refuses the firing at its
+  ;; placement, and the refusal record is what the re-check re-decides.
   (doseq [[label lift!]
           [["the membership retracted — reached through the genls fan"
             (fn [kb k a] (v/retract! kb (v/handle-of kb (list k a) 'CxUniverse)))]
@@ -1340,3 +1182,103 @@
               "the exemption is gone, so the two are provably different again")
           (is (v/ask? kb (list qRel Aa Bb) 'CxUniverse)
               "and the firing the guard licensed arrives, with no re-assertion"))))))
+
+(def ^:private undone {:unmerge :merge :unac :ac :unindet :indet :unedge :edge})
+
+(defn- different-guard-reading
+  "What the forward rule `(pRel ?x ?y) ∧ (different ?x ?y) ⇒ (qRel ?x ?y)`, stated in
+  `home`, leaves believed once `ops` run in order: `(different Aa y)` and `(qRel Aa y)`
+  asked at `home`, then at `there`, where `y` is `Cc` when `ops` holds `:fact-ac` and `Bb`
+  otherwise.  `:rule`, `:fact` `(pRel Aa Bb)` and `:fact-ac` `(pRel Aa Cc)` are stated in
+  `home`, and `:plain` states the rule without its `different`; `:merge`
+  `(sameAs Aa Bb)`, `:bc` `(sameAs Bb Cc)`, `:ac` `(sameAs Aa Cc)` and `:indet`
+  `(indeterminate_term Aa)` are stated in `there`; `:edge` is `(genlCx there home)`; each
+  key of `undone` retracts the statement its value names.  `home` and `there` are
+  `:main`, `:other` or `:universe`."
+  [home there ops]
+  (tu/with-neutral-kb [kb tu/fresh]
+    (tu/with-terms [pRel qRel Aa Bb Cc CxMain CxOther]
+      (let [cx     {:main CxMain :other CxOther :universe 'CxUniverse}
+            h      (cx home)
+            t      (cx there)
+            y      (if (some #{:fact-ac} ops) Cc Bb)
+            stated {:merge [(list 'sameAs Aa Bb) t]
+                    :bc    [(list 'sameAs Bb Cc) t]
+                    :ac    [(list 'sameAs Aa Cc) t]
+                    :indet [(list 'indeterminate_term Aa) t]
+                    :edge  [(list 'genlCx t h) 'CxUniverse]}]
+        (doseq [op ops]
+          (case op
+            :rule (v/assert kb (list 'implies (list 'and (list pRel '?x '?y) (list 'different '?x '?y))
+                                     (list qRel '?x '?y))
+                            h {:direction :forward})
+            :plain (v/assert kb (list 'implies (list pRel '?x '?y) (list qRel '?x '?y))
+                             h {:direction :forward})
+            :fact (v/assert kb (list pRel Aa Bb) h)
+            :fact-ac (v/assert kb (list pRel Aa Cc) h)
+            (:merge :bc :ac :indet :edge) (let [[sen c] (stated op)] (v/assert kb sen c {:strength :monotonic}))
+            (let [[sen c] (stated (undone op))] (v/retract! kb (v/handle-of kb sen c)))))
+        (vec (for [c [h t], g [(list 'different Aa y) (list qRel Aa y)]]
+               (v/ask? kb g c)))))))
+
+(deftest a-different-guard-reads-only-the-merges-its-placement-sees-in-every-order
+  (doseq [[label there expected]
+          [["a merge in a context the placement does not see" :other [true true false false]]
+           ["a merge at the placement" :main [false false false false]]]]
+    (testing label
+      (let [orders (permutations [:rule :fact :merge])]
+        (is (= #{expected} (set (map #(different-guard-reading :main there %) orders))))
+        (testing "and retracting the merge gives the reading of a load without it"
+          (is (= #{(different-guard-reading :main there [:rule :fact])}
+                 (set (map #(different-guard-reading :main there (concat % [:unmerge])) orders)))))))))
+
+(deftest a-merge-below-the-placement-defeats-a-different-guarded-firing-there-in-every-order
+  ;; CxOther sees CxMain through the edge, and the merge or the membership only CxOther
+  ;; sees blocks the conclusion there and nowhere above it: a guard defeat placed at
+  ;; CxOther, resting on the merge or the membership (`chain/different-guard-placements`).
+  (doseq [[label flip unflip] [["a merge" :merge :unmerge]
+                               ["an indeterminate_term membership" :indet :unindet]]]
+    (testing label
+      (let [orders (permutations [:rule :fact flip :edge])]
+        (is (= #{[true true false false]}
+               (set (map #(different-guard-reading :main :other %) orders))))
+        (testing "and retracting the flip or the edge gives the reading of a load without it"
+          (is (= #{(different-guard-reading :main :other [:rule :fact :edge])}
+                 (set (map #(different-guard-reading :main :other (concat % [unflip])) orders))))
+          (is (= #{(different-guard-reading :main :other [:rule :fact flip])}
+                 (set (map #(different-guard-reading :main :other (concat % [:unedge])) orders)))))))))
+
+(defn- restatement-link-rows
+  "The merges in CxOther restate the conclusion CxMain stores into CxOther, which sees it
+  through the edge.  The restatement's justification names the edge and every merge on
+  one path from each displaced term to its representative (`special/migrate-into`), so
+  retracting a link withdraws it and a surviving path restates it again.  `orders-of`
+  gives the arrival orders a row's ops are run in."
+  [orders-of]
+  (doseq [[label ops undo]
+          [["the context edge" [:plain :fact :merge :edge] [:unedge]]
+           ["one link of a chain of merges" [:plain :fact-ac :merge :bc :edge] [:unmerge]]
+           ["the direct merge of a triangle, which leaves a path"
+            [:plain :fact-ac :merge :bc :ac :edge] [:unac]]
+           ["both merges at Aa of a triangle" [:plain :fact-ac :merge :bc :ac :edge] [:unac :unmerge]]]]
+    (testing label
+      (let [orders (orders-of ops)]
+        (is (= #{[true true false true]}
+               (set (map #(different-guard-reading :main :other %) orders))))
+        (is (= #{(different-guard-reading :main :other (remove (set (map undone undo)) ops))}
+               (set (map #(different-guard-reading :main :other (concat % undo)) orders))))))))
+
+(deftest ^:slow a-restatement-is-withdrawn-with-a-link-it-rests-on-in-every-order
+  (restatement-link-rows permutations))
+
+(deftest a-restatement-is-withdrawn-with-a-link-it-rests-on-with-the-rule-and-fact-first
+  ;; the sampled twin of the sweep above: the merges and the edge in every order
+  (restatement-link-rows (fn [ops] (map #(concat (take 2 ops) %) (permutations (drop 2 ops))))))
+
+(deftest the-predall-indeterminacy-example-agrees-in-every-order
+  ;; docs/predall.md, "A `different` guard is re-checked, not supported".
+  (let [orders (permutations [:rule :fact :indet])]
+    (is (= #{[false false false false]}
+           (set (map #(different-guard-reading :universe :universe %) orders))))
+    (is (= #{[true true true true]}
+           (set (map #(different-guard-reading :universe :universe (concat % [:unindet])) orders))))))

@@ -563,7 +563,7 @@
   (let [tax (:tax w)]
     (distinct
      (for [s         pos
-           [whole parts] (distinct (tax/covers-over tax s nil))
+           [whole parts] (distinct ((:covers-over-global w) s))
            [ps kind] (tax/covers-of tax whole)
            :when (= ps parts)
            :let [per (for [p parts

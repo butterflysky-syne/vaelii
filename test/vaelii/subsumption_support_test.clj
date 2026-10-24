@@ -26,6 +26,7 @@
             [vaelii.core :as v]
             [vaelii.impl.taxonomy :as tax]
             [vaelii.impl.types.reasoning :as reasoning]
+            [vaelii.ref.gen :as gen]
             [vaelii.test-util :as tu]))
 
 (use-fixtures :once (tu/loaded tu/load-starter!))
@@ -329,6 +330,50 @@
     (v/assert kb (list 'implies (list parentOf '?x '?y) (list ancestorOf '?x '?y)) CxB {:direction :forward})
     (v/assert kb (list fatherOf Tom Bob) CxB)
     (is (= [CxB] (mapv :context (v/sentexes-matching kb (list ancestorOf Tom Bob) '?ctx))))))
+
+(defn- descended-under-an-except
+  "`[before after]`: is `(concl Fido)` believed at CxR once `order` runs, and again once
+  the edge CxR does not except is retracted.  `(genl ta tb)` is stated in CxG and in CxS
+  below it, CxR below CxS excepts the `hide` one, and the rule and `(ta Fido)` are in
+  CxUniverse, so the conclusion descends to a context that sees an edge."
+  [kb order hide]
+  (tu/with-terms [CxG CxS CxR ta tb concl Fido]
+    (v/assert kb (list 'genlCx CxG 'CxUniverse) 'CxUniverse)
+    (v/assert kb (list 'genlCx CxS CxG) 'CxUniverse)
+    (v/assert kb (list 'genlCx CxR CxS) 'CxUniverse)
+    (let [hs       (atom {})
+          step     {:hg     #(swap! hs assoc :hg (v/assert kb (list 'genl ta tb) CxG))
+                    :hs     #(swap! hs assoc :hs (v/assert kb (list 'genl ta tb) CxS))
+                    :fact   #(v/assert kb (list ta Fido) 'CxUniverse)
+                    :rule   #(v/assert kb (list 'implies (list tb '?x) (list concl '?x))
+                                       'CxUniverse {:direction :forward})
+                    :except #(v/assert kb (list 'except (list 'sentexHandle (get @hs hide))) CxR)}
+          believed (fn [] (boolean (some #(:believed? (v/belief-status kb (:id %) CxR))
+                                         (v/sentexes-matching kb (list concl Fido) '?ctx))))]
+      (doseq [s order] ((step s)))
+      (let [before (believed)]
+        (v/retract! kb (get @hs ({:hg :hs :hs :hg} hide)))
+        [before (believed)]))))
+
+(defn- except-orders
+  "Every order of the five writes in which the except follows the edge it names."
+  [hide]
+  (filterv #(< (.indexOf ^java.util.List % hide) (.indexOf ^java.util.List % :except))
+           (gen/permutations [:hg :hs :fact :rule :except])))
+
+(tu/deftest-kb a-descended-conclusion-is-believed-where-an-except-hides-one-of-two-edges
+  ;; CxR sees the edge it does not except, so it believes the conclusion, and retracting
+  ;; that edge withdraws it there.  The sampled orders include the ones that place the
+  ;; conclusion in CxS as well as CxG.
+  (doseq [hide [:hg :hs]
+          order [[:hg :hs :fact :rule :except] [:hs :fact :rule :hg :except]
+                 [:rule :fact :hs :hg :except]]]
+    (is (= [true false] (descended-under-an-except kb order hide)) (pr-str hide order))))
+
+(tu/deftest-kb ^:slow a-descended-conclusion-is-believed-where-an-except-hides-one-of-two-edges-in-every-order
+  (doseq [hide [:hg :hs]]
+    (is (= #{[true false]} (into #{} (map #(descended-under-an-except kb % hide)) (except-orders hide)))
+        (pr-str hide))))
 
 ;; ---- the witness is the placement's, and it is a function of content ------
 

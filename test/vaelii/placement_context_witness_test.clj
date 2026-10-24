@@ -1,25 +1,11 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.placement-context-witness-test
-  "**A firing rests on the `genlCx` edges its placement saw its ingredients over**,
-  and says so.
-
-  A conclusion is placed in the maximal contexts that see the rule, the antecedent facts
-  and the taxonomy the match climbed — and every one of those sightings is a reachability
-  up the context ancestor set, supported by an ordinary sentex somebody asserted and can take
-  back.  A justification that named only the rule and the facts left the conclusion
-  standing, and believed, in a context that could no longer see either of them: the same
-  KB built without the edge derives nothing, so belief would be a function of arrival
-  order.
-
-  So the firing's justification names a **witness** for each sighting: one `genlCx`
-  path from the placement up to each ingredient context, one supporter per edge.  A
-  section per consequence below — `why` shows the edges, retracting either side's edge
-  withdraws what it licensed, an edge caps nothing since every edge is `:monotonic`, and
-  a reachability that outlives the named witness re-derives.
-
-  The `genl` twin of all of it is `subsumption_support_test`, and the two are one claim
-  about two relations."
+  "A firing's justification names one `genlCx` path from its placement up to each
+  ingredient context (docs/contexts.md, \"The consumers\").  A section per consequence:
+  `why` shows the edges, retracting either side's edge withdraws what it licensed, an
+  edge caps nothing, and a reachability that outlives the named path re-derives.  The
+  `genl` counterpart is `subsumption_support_test`."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.test-util :as tu]))
@@ -78,9 +64,7 @@
           derived (v/handle-of kb (list flies Tweety) CxOne)
           j       (first (v/supporting-justifications kb derived))
           named   (into #{} (map #(:sentence (v/sentex kb %))) (:antecedents j))]
-      ;; *which* sentexes, not how many: this file's whole subject is which ingredients a
-      ;; placement rests on, and a count of one is equally true of the wrong one.  The
-      ;; rule is the justification's informant, never one of its antecedents.
+      ;; which sentexes, not how many; the rule is the informant, not an antecedent
       (is (= #{(list bird Tweety)} named) "the fact itself, and nothing else")
       (is (= rh (:informant j)) "and the rule that fired, not some other justification's")
       (is (not-any? #(and (seq? %) (= 'genlCx (first %))) named)
@@ -174,9 +158,7 @@
     (is (empty? (v/sentexes-matching kb (list moves Tweety) '?ctx)))))
 
 (tu/deftest-kb a-retraction-lands-where-a-kb-that-never-had-the-edge-lands
-  ;; the invariant the whole file is about: belief is a function of the knowledge, not of
-  ;; the order it arrived and left in.  Two arms of the same shape, one that lost the edge
-  ;; and one that never had it, and they have to agree.
+  ;; one arm lost the edge and one never had it
   (letfn [(without-edge [] (tu/with-terms [bird flies Tweety CxLow CxHigh]
                              (v/assert kb (list 'genlCx CxHigh 'CxUniverse) 'CxUniverse)
                              (v/assert kb (list 'implies (list bird '?x) (list flies '?x)) CxHigh {:direction :forward})
@@ -193,10 +175,7 @@
         "and losing the edge leaves exactly what never having it would have")))
 
 (tu/deftest-kb the-witness-does-not-depend-on-assertion-order
-  ;; the edge arriving last has to reach what is already stored (`visibility-seeds`) and
-  ;; be named by what it licenses, or the same four sentences mean one thing in one order
-  ;; and another in the other — which is the invariant the witnesses exist to keep.
-  ;; `ask` rather than a store read, because that is the entry point a caller uses.
+  ;; the edge arriving last has to reach what is already stored (`special/visibility-seeds`)
   (letfn [(arm [edge-first?]
             (tu/with-terms [bird flies Tweety CxLow CxHigh]
               (v/assert kb (list 'genlCx CxHigh 'CxUniverse) 'CxUniverse)
@@ -231,11 +210,8 @@
 ;; ---- a reachability that outlives its named witness -----------------------
 
 (tu/deftest-kb an-edge-has-one-supporter-however-many-contexts-state-it
-  ;; the `genl` twin has a case for the same edge asserted from two contexts, and this
-  ;; relation has no equivalent of it: `genlCx` is a
-  ;; `forced_decontextualized_predicate`, so the topology has one canonical home and
-  ;; stating the edge twice is one sentex.  There is therefore nothing for a witness to
-  ;; choose between — the only way a sighting outlives its named edge is a second path.
+  ;; `genlCx` is a `forced_decontextualized_predicate`, so an edge stated from two
+  ;; contexts is one sentex, and only a second path outlives the named edge
   (tu/with-terms [bird flies Tweety CxLow CxHigh]
     (v/assert kb (list 'genlCx CxHigh 'CxUniverse) 'CxUniverse)
     (let [e1 (v/assert kb (list 'genlCx CxLow CxHigh) 'CxUniverse)
@@ -273,14 +249,9 @@
           "with both routes gone the conclusion has nothing left to rest on"))))
 
 (tu/deftest-kb a-second-path-keeps-the-conclusion-where-the-rule-sits-off-the-edge
-  ;; the **meet** shape, and the one the chain above cannot reach.  There the departing
-  ;; edge lay on the line between the rule and the fact, so the rule was in its ancestor set
-  ;; and the seeding check found it.  Here the placement sees the rule down one branch and
-  ;; the fact down another, and the edge that goes is on neither: nothing that matters
-  ;; sits in either of its ancestor sets.  A seeding check reading only those two ancestor
-  ;; sets therefore seeds nothing, and the revival a surviving route still licenses never happens — which is
-  ;; the arrival-order dependence this whole file exists to remove, since the same KB
-  ;; built without the direct edge derives the conclusion perfectly well.
+  ;; the meet shape: the placement sees the rule down one branch and the fact down
+  ;; another, and the departing edge is on neither, so a seeding check reading only the
+  ;; departing edge's two ancestor sets seeds nothing
   (tu/with-terms [bird flies Tweety CxPlace CxRule CxVia CxFact]
     (v/assert kb (list 'genlCx CxRule 'CxUniverse) 'CxUniverse)
     (v/assert kb (list 'genlCx CxFact 'CxUniverse) 'CxUniverse)
@@ -303,10 +274,7 @@
               "as a re-derivation: the sweep took the record the named edge held up"))))))
 
 (tu/deftest-kb the-revival-a-removal-owes-is-not-conditional-on-the-departing-edges-own-ancestor-sets
-  ;; the control for the case above, stated as the rule rather than the shape: a KB that
-  ;; never held the direct edge derives the same conclusion, so a KB that held it and
-  ;; lost it must end in the same place.  Anything else makes belief a function of
-  ;; whether an edge nobody needs was ever asserted.
+  ;; a KB that held the direct edge and lost it ends where a KB that never held it ends
   (tu/with-terms [bird flies Tweety CxPlace CxRule CxVia CxFact]
     (v/assert kb (list 'genlCx CxRule 'CxUniverse) 'CxUniverse)
     (v/assert kb (list 'genlCx CxFact 'CxUniverse) 'CxUniverse)
@@ -371,9 +339,7 @@
           "the conclusion is gone and the ledger is as it was"))))
 
 (tu/deftest-kb the-edge-survives-a-rebuild-in-the-antecedent-list
-  ;; a justification is a durable record, so the edges it names are durable state —
-  ;; `recover` rebuilds the JTMS from those records and must hand back the same
-  ;; dependency, or a restart would quietly restore the standing-on-nothing conclusion
+  ;; `recover` rebuilds the JTMS from the durable justification records
   (tu/with-terms [bird flies Tweety CxLow CxHigh]
     (under! kb CxLow CxHigh)
     (v/assert kb (list 'implies (list bird '?x) (list flies '?x)) CxHigh {:direction :forward})

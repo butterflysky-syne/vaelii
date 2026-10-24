@@ -26,12 +26,14 @@
   *knowledge*, and this destroys only derived state and recreates it from the
   records, which stay untouched."
   (:require [vaelii.impl.capabilities :as cap]
+            [vaelii.impl.except :as exc]
             [vaelii.impl.observe :as observe]
             [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.rules :as rules]
             [vaelii.impl.sentex :as sx]
-            [vaelii.impl.special :as special]))
+            [vaelii.impl.special :as special]
+            [vaelii.impl.taxonomy :as tax]))
 
 (defn- index-rule-entry
   "Register a rule the way `special/index-rule-sentex` does: under all its
@@ -70,11 +72,32 @@
   never drift.  Returns true iff `sx` is a rule (the caller's rule tally)."
   [index sx h]
   (p/index-sentex index sx h)
+  (exc/note-stored! nil sx true)
   (let [rule? (rules/rule? sx)]
     (cond
       rule?                                (index-rule-entry index h sx)
       (sx/exceptWhen-meta? (:sentence sx)) (index-exceptWhen-entry index sx))
     rule?))
+
+(defn unindex-one!
+  "Take stored sentex `sx` at handle `h` out of `index`: the mirror of `index-one!` for a
+  record or a rule, plus its mint family entry and the taxonomy supporters it posted.
+  Reads no belief, so a KB whose network is not built can take a record out
+  (`vaelii.impl.record-edit`).  An `exceptWhen` meta-sentex is not handled: its departure
+  re-posts the predicates its rule's other exceptions still watch."
+  [index sx h]
+  (p/unindex-sentex! index sx h)
+  (exc/note-stored! nil sx false)
+  (when (rules/rule? sx)
+    (rules/unindex-rule! index h
+                         (rules/antecedent-keys (:antecedent sx))
+                         (rules/consequent-index-pred sx)
+                         (:context sx))
+    (when (rules/rechecked? sx)
+      (rules/unindex-exception! index h (rules/recheck-predicates sx))))
+  (special/unpost-mint! index (sx/sentence-of sx) (:context sx) h)
+  (tax/retire-stored-supporter! index h)
+  nil)
 
 (defn- mint-conclusions
   "The handles the stored justifications `special/mint-informant?` accepts conclude: one

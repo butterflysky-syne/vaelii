@@ -9,6 +9,7 @@
             [vaelii.impl.resolution :as res]
             [vaelii.impl.sentex :as sx]
             [vaelii.impl.types.prover :as prover-types]
+            [vaelii.order-independence-test :as oi]
             [vaelii.test-util :as tu]))
 
 (use-fixtures :once (tu/loaded tu/load-starter!))
@@ -428,6 +429,60 @@
           (if rule-first? (do (rule!) (facts!)) (do (facts!) (rule!)))
           (is (= 2 (one kb (asleep-children childOf asleep Bob) '?n)))
           (is (v/ask? kb (list restful Bob) 'CxWell)))))))
+
+(defn- denied-census
+  "The counts `(awakeCount H ?n)` reads after the `steps` in order and the retraction of
+  the step `gone` (nil for none), for a rule counting the children `?c` of `H` with
+  `(not (sleepsIn ?c Bed))`.  The denial of `K1` comes from a `negates` declaration and a
+  tuple of the other side, or under `:separation` from a `disjoint` and a membership of
+  the separated type; `K2` is denied nothing."
+  [kb kind steps gone]
+  (tu/with-terms [household childIn sleepsIn awakeIn sleeper waker awakeCount H K1 K2 Bed CxS]
+    (v/assert kb (list 'genlCx CxS 'CxUniverse) 'CxUniverse)
+    (doseq [s [(list household H) (list childIn H K1) (list childIn H K2)]] (v/assert kb s CxS))
+    (let [neg (case kind
+                :negates    (list 'not (list sleepsIn '?c Bed))
+                :separation (list 'not (list sleeper '?c)))
+          op  {:declare #(v/assert kb (case kind
+                                        :negates    (list 'negates sleepsIn awakeIn)
+                                        :separation (list 'disjoint sleeper waker))
+                                   CxS)
+               :deny    #(v/assert kb (case kind
+                                        :negates    (list awakeIn K1 Bed)
+                                        :separation (list waker K1))
+                                   CxS)
+               :rule    #(v/assert kb (list 'implies
+                                            (list 'and (list household '?x)
+                                                  (list 'agg/count '?n '?c
+                                                        (list 'and (list childIn '?x '?c) neg)))
+                                            (list awakeCount '?x '?n))
+                                   CxS {:direction :forward})}
+          hs  (into {} (map (fn [s] [s ((op s))])) steps)]
+      (when gone (v/retract! kb (hs gone)))
+      (set (map '?n (v/ask kb (list awakeCount H '?n) CxS))))))
+
+(defn- denied-census-agrees!
+  "For each of `orders` of `denied-census`'s steps, under each kind, assert that the count
+  after the order, and after retracting the declaration or the denying fact, is 1 exactly
+  while both are stored, and equals a fresh load of the final state with the rule asserted
+  last.  The declaration and the denying fact are re-check keys of the census body, so
+  each arriving or leaving after the rule re-takes the count."
+  [kb orders]
+  (doseq [kind  [:negates :separation]
+          :let  [fresh (memoize #(denied-census kb kind (filterv % [:declare :deny :rule]) nil))]
+          order orders
+          gone  [nil :declare :deny]
+          :let  [final (disj (set order) gone)]]
+    (is (= #{(if (and (final :declare) (final :deny)) 1 0)} (fresh final)
+           (denied-census kb kind order gone))
+        (pr-str kind order gone))))
+
+(tu/deftest-kb a-negated-census-conjunct-a-declaration-denies-reads-alike-in-sampled-orders
+  ;; the `:default` twin of the walk below: the rule last, between, and first
+  (denied-census-agrees! kb [[:declare :deny :rule] [:declare :rule :deny] [:rule :deny :declare]]))
+
+(tu/deftest-kb ^:slow a-negated-census-conjunct-a-declaration-denies-reads-alike-in-every-order
+  (denied-census-agrees! kb (oi/permutations [:declare :deny :rule])))
 
 (tu/deftest-kb a-sum-joins-its-census-over-a-variable-local-to-the-body
   ;; `?p` is local to the census; the weights differ, since the sum is of distinct values

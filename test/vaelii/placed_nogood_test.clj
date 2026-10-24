@@ -7,10 +7,14 @@
   derives, indexed under the handle it names (docs/glossary.md, `defeat`).
 
   Every test states its lattice in a comment, since the answer is a function of it."
-  (:require [clojure.test :refer [is testing use-fixtures]]
+  (:require [clojure.set :as set]
+            [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.walk]
             [vaelii.core :as v]
             [vaelii.impl.chain :as chain]
+            [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide :as decide]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.except :as exc]
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.naming :as nm]
@@ -1036,27 +1040,187 @@
            (is (= 1 (count (exc/without-excepted kb 'CxUniverse [[1 {} nil]]))))
            (is (= 1 @asked))))))
 
-(tu/deftest-kb a-pass-builds-a-context-s-reader-state-once-while-the-clock-stands
+;; `exc/reader-frame` counted, as each `f` in `fs` is run
+(defn- frames-built [fs]
+  (let [built (atom 0), orig @#'exc/reader-frame]
+    (with-redefs-fn {#'exc/reader-frame (fn [& args] (swap! built inc) (apply orig args))}
+      #(mapv (fn [f] (let [n @built] (f) (- @built n))) fs))))
+
+(tu/deftest-kb a-pass-keeps-a-context-s-reader-frame-across-a-write-that-moves-nothing-it-reads
   ;; a declaration CxA does not see and a rule stated in CxA reading its predicate, so a
   ;; read at CxA owes the walk (`exc/walk-reads?`)
   (tu/with-terms [pf qf Ann Bob Cy CxA CxB]
     (v/assert kb (list 'forced_monotonic_predicate pf) CxB)
     (v/assert-rule kb [(list pf '?x '?y)] (list qf '?x '?y) CxA)
-    (let [h     (v/assert kb (list pf Ann Bob) CxA)
-          built (atom 0)
-          orig  @#'exc/build-reader-state
-          read  #(exc/excepted? kb h CxA)]
-      (with-redefs-fn {#'exc/build-reader-state (fn [& args] (swap! built inc) (apply orig args))}
-        #(let [plain (vec (repeatedly 3 read))
-               n     @built]
-           (binding [exc/*reader-states* (volatile! {})]
-             (is (= plain (vec (repeatedly 3 read))))
-             (is (= 1 (- @built n)))
-             (v/assert kb (list pf Cy Bob) CxA)
-             (let [m @built]
-               (is (= (first plain) (read)))
-               (is (= 1 (- @built m)))))
-           (is (= 3 n)))))))
+    (let [h    (v/assert kb (list pf Ann Bob) CxA)
+          read #(exc/excepted? kb h CxA)
+          was  (read)]
+      (is (= [3 1 2]
+             (frames-built [#(dotimes [_ 3] (read))
+                            ;; a fact moves the clock and nothing the frame reads
+                            #(exc/with-reader-states
+                               (dotimes [_ 3] (read))
+                               (v/assert kb (list pf Cy Bob) CxA)
+                               (read))
+                            ;; an except is read by storage
+                            #(exc/with-reader-states
+                               (read)
+                               (v/assert kb (list 'except (v/sentex-handle (v/handle-of kb (list pf Cy Bob) CxA)))
+                                         CxA)
+                               (read))])))
+      (is (= was (read))))))
+
+(defn- state-reading
+  "What a reader state answers, comparable across two builds: nil, or its fields with the
+  forced-monotonic reading applied to each declared predicate and to `preds`."
+  [kb st preds]
+  (when st
+    (let [on? (:on? (:forced st))]
+      (assoc (select-keys st [:up :closable? :exempting? :conflicts? :yielding?])
+             :excepted? (some? (:excepted? st))
+             :void? (:void? (:forced st))
+             :on (into (sorted-set) (for [k (into (vec (keys (decide/declared (reasoning/taxonomy kb))))
+                                                  (for [p preds] [:forced-monotonic p]))]
+                                      (conj k (boolean (on? (first k) (second k))))))))))
+
+(defn- fresh-state-misses
+  "Run `f` with every reader state a `*reader-states*` memo answers compared with a fresh
+  build (`state-reading`): `[answer [[ctx held fresh] …]]`."
+  [preds f]
+  (let [bad   (atom [])
+        held  @#'exc/reader-state
+        build @#'exc/build-reader-state]
+    (with-redefs-fn {#'exc/reader-state
+                     (fn [kb ctx]
+                       (let [st (held kb ctx)]
+                         (when exc/*reader-states*
+                           (let [a (state-reading kb st preds), b (state-reading kb (build kb ctx) preds)]
+                             (when (not= a b) (swap! bad conj [ctx a b]))))
+                         st))}
+      #(let [r (f)] [r @bad]))))
+
+(tu/deftest-kb every-reader-state-a-pass-reads-is-the-one-a-fresh-read-builds
+  ;; CxA and CxB under CxUniverse, CxC under CxA, then CxB.  One pass writes each kind of
+  ;; change a reader frame or `yielding-reads?` reads, and a plain fact, with a read of
+  ;; every reader after each
+  (tu/with-terms [pkind pkindOut pmark p_penguin p_bird p_flies PA PB PC PD PE PF PO CxA CxB CxC]
+    (let [readers ['CxUniverse CxA CxB CxC]
+          base    (tu/sentex-ids kb)
+          rows    #(set (for [h (remove base (tu/sentex-ids kb)), c readers
+                              :when (v/believed? kb h c)]
+                          [h c]))
+          fw      {:direction :forward}
+          at      (atom {})
+          steps
+          [[:context-edges #(doseq [[c u] [[CxA 'CxUniverse] [CxB 'CxUniverse] [CxC CxA]]]
+                              (v/assert kb (list 'genlCx c u) 'CxUniverse))]
+           [:rules #(do (v/assert kb (list 'implies (list 'and (list pkind '?x '?y)) (list pkindOut '?x '?y)) CxA fw)
+                        (v/assert kb (list 'implies (list 'and (list pmark '?p))
+                                           (list 'forced_monotonic_predicate '?p))
+                                  CxB fw))]
+           [:facts #(do (swap! at assoc :fact (v/assert kb (list pkind PA PB) CxA))
+                        (v/assert kb (list pkind PC PD) CxC))]
+           [:a-guard-defeat
+            #(do (v/assert kb (list 'exceptWhen (list p_penguin '?b)
+                                    (list 'set/defaultRule
+                                          (list 'set/forwardRule (list 'implies (list 'and (list p_bird '?b))
+                                                                       (list p_flies '?b)))))
+                           CxA)
+                 (v/assert kb (list p_bird PO) CxA)
+                 (swap! at assoc :blocker (v/assert kb (list p_penguin PO) CxA)))]
+           [:a-declaration-the-reader-does-not-see
+            #(swap! at assoc :decl (v/assert kb (list 'forced_monotonic_predicate pkind) CxB))]
+           [:a-plain-fact #(v/assert kb (list pkind PE PF) CxA)]
+           [:a-denial-of-a-declared-fact
+            #(swap! at assoc :denial (v/assert kb (list 'not (list pkind PA PB)) CxB))]
+           [:a-context-edge-to-the-declaration #(v/assert kb (list 'genlCx CxC CxB) 'CxUniverse)]
+           [:a-declaration-a-rule-draws #(swap! at assoc :mark (v/assert kb (list pmark pkindOut) CxB))]
+           [:its-ground-leaving #(v/retract! kb (:mark @at))]
+           [:an-except-of-the-declaration
+            #(swap! at assoc :except (v/assert kb (list 'except (v/sentex-handle (:decl @at))) CxC))]
+           [:an-except-of-a-fact #(v/assert kb (list 'except (v/sentex-handle (:fact @at))) CxC)]
+           [:the-first-except-leaving #(v/retract! kb (:except @at))]
+           [:the-denial-leaving #(v/retract! kb (:denial @at))]
+           [:the-declaration-leaving #(v/retract! kb (:decl @at))]
+           [:the-blocker-leaving #(v/retract! kb (:blocker @at))]]
+          [answers misses]
+          (fresh-state-misses
+           [pkind pkindOut]
+           #(exc/with-reader-states
+              (vec (for [[step write] steps]
+                     (do (write)
+                         [step (= (rows) (binding [exc/*reader-states* nil] (rows)))])))))]
+      (is (= [] misses))
+      (is (every? second answers) (pr-str (remove second answers))))))
+
+(deftest a-release-settles-to-the-same-belief-with-its-reader-frames-kept
+  ;; CxC under CxA and CxB.  QM, QE and QO each hold a membership that withholds a mint
+  ;; about them; removing the three releases the mints, and rules reading the mints
+  ;; conclude a forced-monotonic declaration, an except and a guard defeat, which leave
+  ;; with the memberships and come back with the mints in the same settle.  The settle
+  ;; with each reader frame kept (`exc/*reader-states*`) and the one building every reader
+  ;; state afresh store and believe the same
+  (tu/with-terms [q_animal q_dog q_poodle q_penguin q_emperor q_pet q_bird q_flies qOwns qSwims
+                  qkind qkindOut QM QE QO QT QSea QFa QFb CxA CxB CxC]
+    (let [M      {:strength :monotonic}
+          fw     {:direction :forward}
+          U      'CxUniverse
+          moving #{'forced_monotonic_predicate 'except 'defeat}
+          rows   (fn [kb]
+                   (let [row #(let [sx (v/sentex kb %)]
+                                (tu/handle-free kb [(v/sentence-of sx) (:context sx)]))
+                         hs  (tu/sentex-ids kb)]
+                     {:stored   (set (map row hs))
+                      :in       (set (map row (filter #(v/in? kb %) hs)))
+                      :believed (set (for [h hs, c [U CxA CxB CxC] :when (v/believed? kb h c)]
+                                       (conj (row h) c)))
+                      :moving   (set (filter #(moving (first (v/sentence-of (v/sentex kb %)))) hs))}))
+          run    (fn [fresh?]
+                   (tu/with-cleared-kb [kb tu/isolated-fresh]
+                     (doseq [[c u] [[CxA U] [CxB U] [CxC CxA] [CxC CxB]]]
+                       (v/assert kb (list 'genlCx c u) U))
+                     (doseq [s [(list 'genl q_animal 'thing) (list 'genl q_dog q_animal)
+                                (list 'genl q_poodle q_dog) (list 'genl q_penguin q_animal)
+                                (list 'genl q_emperor q_penguin) (list 'genl q_pet q_animal)
+                                (list 'arg qOwns 1 q_animal) (list 'arg qSwims 1 q_penguin)]]
+                       (v/assert kb s U M))
+                     (let [fact (v/assert kb (list qkind QFa QFb) CxA)]
+                       (v/assert kb (list 'implies (list 'and (list qkind '?x '?y)) (list qkindOut '?x '?y)) CxA fw)
+                       (v/assert kb (list 'implies (list 'and (list q_animal QM))
+                                          (list 'forced_monotonic_predicate qkind))
+                                 CxC fw)
+                       (v/assert kb (list 'implies (list 'and (list q_animal QE)) (list 'except (v/sentex-handle fact)))
+                                 CxC fw)
+                       (v/assert kb (list 'implies (list 'and (list q_animal '?x) (list qOwns '?x QT)) (list q_pet '?x))
+                                 CxC fw)
+                       (v/assert kb (list 'exceptWhen (list q_penguin '?b)
+                                          (list 'set/defaultRule
+                                                (list 'set/forwardRule (list 'implies (list 'and (list q_bird '?b))
+                                                                             (list q_flies '?b)))))
+                                 CxC)
+                       (v/assert kb (list q_bird QO) CxC)
+                       (doseq [x [QM QE]]
+                         (v/assert kb (list q_poodle x) CxC M)
+                         (v/assert kb (list qOwns x QT) CxC M))
+                       (v/assert kb (list q_emperor QO) CxC M)
+                       (v/assert kb (list qSwims QO QSea) CxC M))
+                     (let [before (rows kb)
+                           edit   #(v/edit! kb {:remove (mapv (fn [s] (v/handle-of kb s CxC))
+                                                              [(list q_poodle QM) (list q_poodle QE)
+                                                               (list q_emperor QO)])})
+                           misses (if fresh?
+                                    (with-redefs-fn {#'exc/reader-state @#'exc/build-reader-state} edit)
+                                    (second (fresh-state-misses [qkind] edit)))]
+                       [before (rows kb) misses])))
+          [[before kept misses] [_ fresh]]
+          (binding [argument/*assertive-arg-types?* true
+                    checks/*prune-subsumed-mints?*  true]
+            [(run false) (run true)])]
+      (testing "the declaration, the except and the defeat each left and came back"
+        (is (= 3 (count (:moving before)) (count (:moving kept))))
+        (is (empty? (set/intersection (:moving before) (:moving kept)))))
+      (is (= [] misses))
+      (is (= (dissoc fresh :moving) (dissoc kept :moving))))))
 
 (tu/deftest-kb a-declaration-every-reader-of-its-rule-sees-owes-no-walk
   ;; the declaration and the rule reading its predicate are stated in one context, so a

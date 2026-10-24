@@ -10,7 +10,7 @@
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.host.core-context :as core-context]
-            [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.impl.provers :as provers]
             [vaelii.impl.types.prover :as prover-types]
             [vaelii.test-util :as tu]))
@@ -109,7 +109,7 @@
           h (v/assert kb (list 'mass Obj m) C)]
       (testing "the structural NAT is stored structurally, not reified to a constant"
         (is (= (list 'mass Obj m) (:sentence (v/sentex kb h))))
-        (is (nil? (nat/dedup-constant kb m)) "no constant was minted for it"))
+        (is (nil? (nat-read/dedup-constant kb m)) "no constant was minted for it"))
       (testing "it round-trips through query unchanged"
         (is (seq (v/sentexes-matching kb (list 'mass Obj m) '?ctx)))))))
 

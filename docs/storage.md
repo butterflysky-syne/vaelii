@@ -954,7 +954,11 @@ the network; a declined drift or `:seal`-class seal runs after the next operatio
 `:seal`-class operation until its seal runs, a configuration call (`set-solver`,
 `add-prover`, `add-evaluatable`, `add-reasoner`) until the next seal, an argument nippy
 cannot freeze, a write a change-feed listener makes, a record write outside every
-operation, and a frame inside the log that does not decode. A KB with a registered prover
+operation, a frame inside the log that does not decode, and a `VirtualMachineError` thrown
+by a write after its frame was appended (`[:vm-error op cls]`), which the entry point rolls
+back. A `VirtualMachineError` while a frame is frozen, an `OutOfMemoryError` or a
+`StackOverflowError` on a deeply nested sentence, marks nothing: it propagates as itself,
+no frame is written, and the write does not run. A KB with a registered prover
 or solver cannot be sealed, so its log stays unusable and the next open rebuilds.
 
 **A log that cannot take a frame stops.** A failed append, fsync or truncation latches the
@@ -1673,8 +1677,10 @@ stores (`dur/quiesce-writes!`).  Past that bound it logs `::shutdown-write-runni
 **A clean stop always rolls back as a unit.**  Only the part of a write that the entry
 point rolls back whole on a throw honours the stop request (`dur/as-unit`): an `assert`,
 and an `edit!` batch's adds with its removals' refusal checks.  Such a write stops at its
-next clean point, after a rule firing or at the start of a settle pass, where every record
-it wrote has its premise mark or its justification, and throws `:shutdown-abort`.  The
+next clean point, after a rule firing, at the start of a settle pass, or before each moved
+type and each declaration an argument-hold refresh reads ([argtypes.md](argtypes.md)),
+where every record it wrote has its premise mark or its justification, and throws
+`:shutdown-abort`.  The
 entry point then rolls the write back as it rolls back a refusal, with the stop request
 off for the rollback, and an operation log marks itself unusable, since its frame
 describes a write that did not complete as logged.  Every other write runs with the stop
@@ -2012,6 +2018,69 @@ checks) runs *before* any write, so a rejected assert leaves no trace (tested).
 Cross-store atomicity is bounded by the two-store design: each side commits as a
 single unit, and `reindex` rebuilds the index from the records to repair a torn
 write.
+
+### Editing the records of a KB without belief
+
+A removal through `edit!` or `retract!` keeps belief current at the write: it sweeps the
+dependents of what it removes, re-checks what the removal released, and settles, and a
+batch pays that over its whole reach. A repair of many records can apply its batches to
+the records instead and pay one rebuild after them.
+
+```clojure
+(def kb (open-kb {:backend :disk :dir d :recover? false}))
+(def r  (edit-records! kb {:remove hs :direction {rule-h :backward}}))
+;; => {:removed n :unpremised n :absent n :redirected n :justifications-removed n :seeds [h …]}
+(settle-record-edits! kb {:seeds (:seeds r)})
+;; => {:rebuilt :recover :unrooted n :removed-sentexes n :removed-justifications n
+;;     :rules-chained n :arg-types {…}}
+```
+
+**`edit-records!` writes records and nothing else.** It runs no check, no dependency sweep
+and no settle, so it refuses a KB with belief or one answering from an installed image
+(`:belief-built`): open the store with `{:recover? false}`. A batch takes `:remove`, a
+seq of handles, and `:direction`, `{handle direction}` over stored derive rules
+([inference.md](inference.md#rule-direction-virtual-predicates)). It takes no additions:
+canonicalizing a symmetric or commutative argument, homing a forced-decontextualized
+predicate and deduplicating on a derived index each read belief. An addition goes through
+`edit!` after the settle. Per batch:
+
+- A removed record is deleted with its index postings, rule-index and taxonomy-supporter
+  postings among them, unless a justification that survives the batch concludes it. Such
+  a record only loses its premise mark and stays, derived.
+- A rule's direction is written into its record and its postings moved.
+- Every stored justification resting on a deleted record, and every firing of a rule
+  the batch takes off `:forward`, is deleted. The records those firings concluded stay
+  until the sweep.
+- An `except`, `defeat` or `exceptWhen` removal is refused (`:record-edit-unsupported`):
+  its departure re-posts what the remaining ones name, which only `edit!` computes. A
+  direction on a fact, a choice rule or an absent handle is refused too. Every refusal
+  comes before the first write.
+
+**`settle-record-edits!` rebuilds once and sweeps.** It runs `reindex` when the index is
+missing and `recover` when belief is, then the sweep: it deletes the justifications the
+recover left out because a record they name is gone (`:unrooted`, [above](#persistence--recovery)),
+and sweeps the consequence closure of their conclusions and of `:seeds` as a retraction
+does — every record there that is no premise and is OUT goes, with its justifications —
+then settles. A rule a batch put on `:forward` is among the seeds and is chained over the
+stored facts. Last, `record-arg-types` re-asks every fact an argument declaration reaches,
+which releases a general type mint a removed membership or `genl` edge withheld
+([argtypes.md](argtypes.md)); `{:arg-types? false}` skips it when no batch touched a
+membership, an edge or a declaration.
+
+The believed sentences then equal those the same batches through `edit!` leave, handle
+numbers aside: `edit_test/edit-records-then-settle-believes-what-edit-believes` runs each
+case both ways. A record OUT after the rebuild that no seed reaches stays stored and
+unbelieved; `unsupported` reports one no justification concludes.
+
+**A crash loses nothing the rebuild needs.** A KB without belief carries no operation
+log, so neither call is logged; a batch is idempotent instead. It writes the directions
+and premise marks first, then each deleted record with its postings, then the dead
+justifications, which the recover leaves out while their records are gone. The same batch
+run again completes it, counting what is already deleted under `:absent`. Its `:seeds`
+are computed from the justifications it deletes, so a caller keeps them with its own
+record of the batch: a re-run after a crash past those deletes returns fewer, and the
+records the lost seeds reached stay stored and OUT, which `unsupported` reports. A crash
+inside `settle-record-edits!` leaves the records and the rebuild repeats.
 
 ## What a bulk load costs
 

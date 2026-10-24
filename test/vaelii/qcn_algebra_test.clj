@@ -1,46 +1,9 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.qcn-algebra-test
-  "The relation-algebra laws, held over every shipped algebra.
-
-  `qcn_mask_test` checks that the compiled bitmask tables agree with the algebra's own
-  set-valued `:compose` and `:converse`.  This asks the prior question: whether that
-  algebra is a relation algebra at all.  A composition table is transcribed or computed
-  by hand, and a wrong cell is a wrong *entailment* reported with as much confidence as a
-  right one — never a crash — so the tables that have no independent derivation need a
-  check that is not simply reading them again.
-
-  Two of the three transcribed tables are re-derived from first principles by their own
-  tests: `interval_test` enumerates every ordering of six endpoints, `point_test` every
-  ordering of three instants.  **RCC-8's 8×8 has no such derivation** — regions have no
-  coordinates to lay out — so these laws are what stands over it, and they are not weak:
-  every single-cell mutation of `space/rcc8-composition` but three fails one of them, and
-  the three are one shape, dropping a symmetric relation from its own square, where both
-  sides of every law move together.
-
-  The laws, and what each one would catch:
-
-  * **converse is a total involution on the universe** — a converse naming a relation the
-    algebra does not have, or a pair that does not pair off.
-  * **composition is closed and never empty** — a cell naming a foreign relation, and a
-    cell emptied by a typo, which would make a satisfiable network report inconsistent.
-  * **the identity is a singleton, self-converse, and two-sided** — the diagonal reading
-    `qcn/constraint` gives every pair `(i i)` without consulting the network.
-  * **converse reverses composition**, `(a∘b)⌣ = b⌣∘a⌣` — the transposed cell of every
-    entry, which is what makes a single mistyped cell visible from the other direction.
-  * **the cycle law**, `c ∈ a∘b ⟺ a⌣∘c meets b` — Peirce's law, the one that ties all
-    three operations together and the strongest single check on a transcribed table.
-
-  **Associativity is deliberately not among them**, and the reason is a real difference
-  between the algebras rather than an omission.  Five of the six compose associatively;
-  `vaelii.impl.distance` does not, because its composition is exact per *pair* of classes
-  and a set of classes loses the correlation between the two legs — the standard reading
-  of a weak composition, and it costs path consistency nothing, which needs only that
-  composition over-approximate the truth.
-
-  The vocabulary is checked here too: a denotation naming a relation outside the universe
-  encodes to nothing (`compile-algebra` masks against the universe by construction), so
-  the goal it claims would be answered off a denotation the algebra never saw."
+  "The relation-algebra laws over every shipped algebra, and each calculus's vocabulary
+  over its algebra (docs/qcn.md, on what the laws hold over RCC-8's table).  Associativity
+  is not among them: `vaelii.impl.distance` composes weakly, exact per pair of classes."
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
             [vaelii.impl.distance :as dist]
@@ -69,9 +32,7 @@
    :point    pt/instants})
 
 (defn- offenders
-  "The members of `xs` that fail `ok?`, at most five of them — a law is asserted once per
-  algebra with its witnesses in the message, rather than once per pair or triple, so a
-  failure names what broke it without the passing case costing thousands of assertions."
+  "At most five members of `xs` that fail `ok?`, so a law is one assertion per algebra."
   [ok? xs]
   (into [] (comp (remove ok?) (take 5)) xs))
 
@@ -128,9 +89,6 @@
           "(a∘b)⌣ = b⌣∘a⌣ over every pair of base relations"))))
 
 (deftest the-cycle-law-ties-the-three-operations-together
-  ;; Peirce's law: c is possible between x and z given a(x,y) and b(y,z) exactly when b is
-  ;; possible between y and z given a⌣(y,x) and c(x,z).  It reads every cell of the table
-  ;; against a transposed one, which is what makes a single mistyped entry visible.
   (doseq [[nm {:keys [universe compose converse]}] algebras]
     (testing (name nm)
       (is (= [] (offenders (fn [[a b c]]
@@ -141,10 +99,7 @@
           "c ∈ a∘b ⟺ a⌣∘c meets b"))))
 
 (deftest composition-and-converse-distribute-over-union
-  ;; What the bitmask compilation's dynamic programming assumes (`qcn_mask_test` checks
-  ;; the tables it builds; this checks the algebra it builds them from).  Held over the
-  ;; universe and the identity rather than over 2^k sets, since the recurrence needs only
-  ;; that a set's answer is the union of its members'.
+  ;; what the bitmask compilation assumes, over three sets rather than 2^k
   (doseq [[nm {:keys [universe identity compose converse]}] algebras]
     (testing (name nm)
       (let [union-of  (fn [f s] (into #{} (mapcat f) s))
@@ -161,9 +116,7 @@
 ;; ---- the vocabulary over the algebra -------------------------------------
 
 (deftest every-denotation-is-a-subset-of-the-universe
-  ;; A denotation naming a relation the algebra does not have encodes to nothing — the
-  ;; mask is built against the universe — so the predicate would be entailed by a
-  ;; constraint set nobody wrote.
+  ;; a relation outside the universe encodes to nothing
   (doseq [[nm calc] calculi]
     (testing (name nm)
       (let [universe (:universe (:algebra calc))]

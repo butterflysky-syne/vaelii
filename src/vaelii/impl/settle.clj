@@ -47,8 +47,12 @@
   * `:recheck-subjects` — the functors posting exception re-checks through the shared
     path (`special/declaration-subjects`) rather than from an arm of their own.
   * `:family-lists` — `family -> {list-name functors}`, every list that reads a
-    mark family as a family (`predicates_test/a-list-that-enumerates-a-family-is-named-here`)."
+    mark family as a family (`predicates_test/a-list-that-enumerates-a-family-is-named-here`).
+  * `:clash-checks` — the violations `checks/fact-clash-checks` and
+    `checks/declaration-clash-checks` answer, by direction."
   {:recheck-subjects special/recheck-subjects
+   :clash-checks     {:fact        (into #{} (map first) checks/fact-clash-checks)
+                      :declaration (into #{} (map first) checks/declaration-clash-checks)}
    :family-lists     {:argument-constraint
                       {'checks/constraint-declaration-functors
                        checks/constraint-declaration-functors
@@ -129,7 +133,7 @@
   un-merge gives back\")."
   nil)
 
-(defn- apply-removals!
+(defn apply-removals!
   "Delete from the stores what a network removal swept, and tear each deleted record down
   (`integrate/sentex-removed!`, which queues its re-check)."
   [kb {:keys [removed-sentexes removed-justifications] :as r}]
@@ -223,24 +227,6 @@
                         (when (or (not= gens (:gens e)) (contains? @terms (:term e)))
                           (:new (special/release-lift! kb h e gens)))))
               pending)))))
-
-(defn- released-mints
-  "The types minted by declarations whose types have become mintable since they were
-  swept, as new handles to chain from (`special/release-mint!`).  An entry is re-asked
-  when its generations differ from `special/mint-generations`: after a recover, and when
-  the arity family's refresh moved the length of a type it waits on
-  (`special/owe-mints-on-lengths!`), since nothing else changes what `mintable-type?`
-  answers.  The pass ends recording `gens` as the generations every entry stands under
-  (`special/mints-settled!`), so a pass under unmoved generations reads no entry.  Not
-  during a rebuild, for `released-constraint-refusals`' reason."
-  [kb]
-  (let [gens    (special/mint-generations kb)
-        pending (when-not *rebuilding?* (special/mint-refusals kb gens))]
-    (if (empty? pending)
-      (do (when-not *rebuilding?* (special/mints-settled! kb gens)) [])
-      (let [minted (into [] (mapcat #(:new (special/release-mint! kb (first %) gens))) pending)]
-        (special/mints-settled! kb gens)
-        (special/minted-seeds kb minted)))))
 
 (defn- arity-class-seeds
   "The class memberships a metatype route derives that the records stored since the last
@@ -916,8 +902,10 @@
         ;; the inherited clashes found and placed, before the other families place
         inh     (phases/with-phase :discovery (chain/place-inherited! kb region moves))
         ;; the nogoods whose placement can have moved, placed again; a defeat stored
-        ;; there posts its target's re-check before the drain
-        negs    (into inh (when-not *rebuilding?* (chain/place-nogoods! kb region (:negations checked) moves)))
+        ;; there posts its target's re-check before the drain.  The types a declaration
+        ;; could not mint until its type lost another length mint there too (`:minted`)
+        placed  (when-not *rebuilding?* (chain/place-nogoods! kb region (:negations checked) moves))
+        negs    (into inh (:made placed))
         ;; a defeat stored or relabelled moves its target's belief with no relabel of the
         ;; target, and queues the rules watching it for the drain below
         _       (post-defeat-moves! kb region negs (:defeats checked))
@@ -938,12 +926,11 @@
         ;; the firings an argument constraint dropped that the content this settle stored
         ;; no longer convicts (`released-constraint-refusals`)
         cfree   (released-constraint-refusals kb region)
-        ;; the types a declaration could not mint until its type lost another length, the
-        ;; merges and lifts a revived mark owes the facts that arrived while it was OUT,
-        ;; the twins an `except` that began or stopped hiding an equality or a merge mark
-        ;; owes, and the entailments and equalities a defeated genl edge took OUT while a
-        ;; second route still licenses them
-        mnew    (-> (released-mints kb)
+        ;; the merges and lifts a revived mark owes the facts that arrived while it was
+        ;; OUT, the twins an `except` that began or stopped hiding an equality or a merge
+        ;; mark owes, and the entailments and equalities a defeated genl edge took OUT
+        ;; while a second route still licenses them
+        mnew    (-> (into [] (:minted placed))
                     (into (released-lifts kb region))
                     (into (revived-mark-seeds kb (into rs back)))
                     (into (except-move-seeds kb))
@@ -1045,8 +1032,9 @@
 (defn- settle*
   "Relabel, find the inherited clashes, and re-evaluate the `exceptWhen` exceptions the
   triggers queued, to a joint fixpoint of at most `max-settle-passes` passes.  A pass
-  that leaves the blocked set as it was (`set-blocked` replaces) and queues, revives and
-  releases nothing ends the loop; every other pass counts in `settle-stats`'
+  that leaves the blocked set as it was (`set-blocked` replaces), queues, revives and
+  releases nothing, and leaves the arity family no refresh owed (`arity/moved?`) ends the
+  loop; every other pass counts in `settle-stats`'
   `:iterations`.  Returns the spellings superseded since the last settle
   (`settle-finish`)."
   [kb]
@@ -1077,11 +1065,16 @@
       (loop [pass 1, moved 0, reseeded #{}, region region]
         ;; a pass boundary is a point a shutdown can stop a write at
         (dur/check-abort!)
-        (let [w (pass-work kb {:region region :reseeded reseeded :checked checked :asked asked})]
-          (if (and (empty? (:queued w)) (empty? (:blocked (:wdrawn w))) (owes-nothing? w owed))
+        (let [w (pass-work kb {:region region :reseeded reseeded :checked checked :asked asked})
+              ;; a length the pass moved after its arity refresh (the removal of a
+              ;; `(unary_predicate T)` the refresh withdrew) owes the next pass's refresh,
+              ;; which holds the tuples it breaks inert
+              arity? (and (not *rebuilding?*)
+                          (arity/moved? (reasoning/taxonomy kb) @(reasoning/nogood-candidates kb)))]
+          (if (and (not arity?) (empty? (:queued w)) (empty? (:blocked (:wdrawn w))) (owes-nothing? w owed))
             (finish-settle kb pass moved (moved? moved))
             (let [w (block-work kb w)]
-              (if (and (= (:new w) (:was w))
+              (if (and (not arity?) (= (:new w) (:was w))
                        (owes-nothing? w (into owed [:forced :aggs :free :over :gmoved :sep])))
                 (finish-settle kb pass moved (moved? moved))   ; unproductive pass: converged
                 (do (apply-pass! kb w asked)
@@ -1210,7 +1203,9 @@
   \"The other half: a spelling an un-merge gives back\"."
   [kb]
   (binding [special/*release-withheld?* (and special/*release-withheld?*
-                                             (not (special/take-first-deferral! kb)))]
+                                             (not (special/take-first-deferral! kb)))
+            rules/*stratification-memo* (or rules/*stratification-memo* (volatile! nil))
+            exc/*reader-states*         (or exc/*reader-states* (volatile! nil))]
     (let [held (hold-belief! kb)]
       ;; the removals a settle makes, whose defeats moved their targets' belief with no
       ;; label to read it off (`defeat-moves`), and the write record a report reads

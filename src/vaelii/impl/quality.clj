@@ -72,6 +72,7 @@
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.naming :as nm]
+            [vaelii.impl.nat :as nat]
             [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.provers :as provers]
@@ -450,18 +451,20 @@
 (def ^:private declaration-functors
   "The argument constraints, in the order this walks them.  A vector rather than the
   set in `checks`, because this is a walk order and that is a membership test."
-  '[arg genlArg interArg])
+  '[arg genlArg interArg interArgEqual])
 
 (defn- thing-typed
   "The type a declaration's `sentence` mints in is `thing`: the last argument of `arg` and
-  `genlArg`, the fifth of `interArg`."
+  `genlArg`, the fifth of `interArg` and `interArgEqual`."
   [sentence]
-  (= 'thing (if (= 'interArg (nm/functor sentence)) (nth sentence 5 nil) (last sentence))))
+  (= 'thing (if (contains? '#{interArg interArgEqual} (nm/functor sentence))
+              (nth sentence 5 nil)
+              (last sentence))))
 
 (defn- stranded-declarations
   "Which argument constraints name a position their predicate does not have, and which
   type a position `thing` (`:typed-thing`, each with `:facts`, its predicate's stored
-  extent).  A declaration typing `thing` mints nothing (`checks/mintable-type?`), so the
+  extent).  A declaration typing `thing` mints nothing (`arity/mintable-type?`), so the
   remedy is a narrower type in the declaration.
 
   **Enumerated, not probed per predicate.**  Declarations are vocabulary and vocabulary is
@@ -1095,34 +1098,70 @@
         n (range from (inc (min (or to arity) arity)))]
     [n type]))
 
+(def ^:private relation-wide-arity-classes
+  "Each length's relation-wide class in `tax/exact-arity-classes`, the one the predicate
+  and function classes of that length specialize."
+  (into {} (keep (fn [c] (when-let [n (get tax/exact-arity-classes c)] [n c])))
+        '[unary binary ternary quaternary quinary]))
+
+(defn- genl-arity-class
+  "The relation-wide exact-arity class `(genl a P)` demands of `a`, or nil: a spec of `P`
+  has `P`'s length, read by `kb/relation-arity`."
+  [kb l]
+  (let [[f _ p] l]
+    (when (and (= 'genl f) (= 3 (count l)) (symbol? p) (not (sx/variable? p)))
+      (some-> (kb/relation-arity kb p) relation-wide-arity-classes))))
+
+(defn- application-demands
+  "`[term [type :declared]]` for each application `(F …)` written in the arguments `as` of a
+  `pred` literal, at any depth: `F`'s `result` types the application (`nat/result-types`)
+  and `F`'s instance-type declarations type its arguments (`declared-arg-types`).  A
+  formula is not an application: a connective's argument, and a compound whose head is a
+  `predicate`, are not read.  An argument of a quoting predicate or quoting function, or at
+  a position a `quotedArg` declaration types (`checks/quoted-positions`), is a mention and
+  is not descended into."
+  [kb pred as context]
+  (letfn [(used [f xs]
+            (if (some sequential? xs)
+              (let [qs (checks/quoted-positions kb f context)]
+                (keep-indexed (fn [i x] (when-not (contains? qs (inc i)) x)) xs))
+              xs))
+          (walk [x]
+            (let [f (when (sequential? x) (first x))]
+              (when (and (symbol? f) (not (sx/variable? f))
+                         (not (contains? provers/formula-heads f))
+                         (not (kb/isa? kb f 'predicate context)))
+                (let [xs (vec (rest x))]
+                  (concat
+                   (when (nat/any-result-declarations? kb)
+                     (for [t (nat/result-types kb x context)
+                           :when (and (symbol? t) (not (sx/variable? t)))]
+                       [x [t :declared]]))
+                   (for [[n t] (declared-arg-types kb f (count xs) context)]
+                     [(nth xs (dec n)) [t :declared]])
+                   (when-not (sx/quoting-functor? f) (mapcat walk (used f xs))))))))]
+    (when-not (or (contains? provers/formula-heads pred)
+                  (contains? res/nat-quoting-predicates pred)
+                  (sx/quoting-functor? pred))
+      (mapcat walk (used pred as)))))
+
 (defn- arg-type-conflicted?
-  "Does an antecedent `arg` declaration demand a term be of a type disjoint from another
-  type the two rules place that term in?  The separation `separated-antecedents?` cannot
-  read, because the demanding literal is not itself a type membership: `(arity ?r ?a)`
-  demands `?r` be a `relation` through `(arg arity 1 relation)`, and the paired rule
-  concludes `(liar ?r)`, which places the same term under `person`.  `relation` and
-  `person` are disjoint, so no ground term makes both antecedents hold and the pair is
-  unreachable (vaelii#95).
+  "Does a declaration demand a term be of a type disjoint from another type the two rules
+  place that term in?  `lits` are the positive antecedents of both rules and both
+  consequents, already under σ, so a variable the two rules unify appears once.  Each term
+  collects `[type source]` pairs: `:stated` for a type a unary literal names, `:declared`
+  for a type one of these declarations demands:
 
-  `lits` are the positive antecedents of both rules and both consequents, already under σ,
-  so a variable the two rules unify appears once and its demands are read together.  Each
-  term collects a set of `[type source]`: `source` is `:declared` for a type an `arg`
-  declaration binds a position to and `:stated` for a type a unary literal names outright.
-  The pair is unreachable when a term holds two disjoint types **one of which is declared**.
-  Two stated types clashing is the clash the pair already reports, not a reason to hide it,
-  so at least one side of a disjoint pair must be a declared arg type.
+  * an instance-type declaration of the literal's predicate on the term's position, `arg`
+    and its covering forms `args` / `argAndRest` alike (`declared-arg-types`);
+  * the relation-wide arity class of `P`'s length, for `a` in `(genl a P)`
+    (`genl-arity-class`);
+  * for an application written at any depth, its function's `result`, and its function's
+    instance-type declarations on the application's arguments (`application-demands`).
 
-  **The instance-type declarations are read, `arg` and its covering forms `args` /
-  `argAndRest` alike** (`declared-arg-types`): each says a position holds an instance of
-  a type, and a reader honoring one spelling and not another would prune a pair under
-  one way of writing the declaration and report it under the other.
-
-  **`genlArg` is not read.**  `genlArg` demands the argument be a *subtype* of the named type rather than a member of
-  it — a claim one stratum up — so reading a `genlArg` bound against a membership type
-  through `disjoint?` would compare two different levels.  A sound `genlArg` reading is its
-  own check, over two subtype bounds a term cannot satisfy at once, and nothing needs it:
-  no shipped rule concludes a unary type from a `genlArg`-typed antecedent, so no
-  `:disjoint` pair ever carries one to prune."
+  True when one term holds two disjoint types and at least one of them is `:declared`.
+  `genlArg` and `genlResult` are not read: each bounds a subtype rather than a membership.
+  See docs/quality.md, \"Contradictions in waiting\"."
   [kb lits context]
   (let [tax     (reasoning/taxonomy kb)
         demands (reduce
@@ -1133,10 +1172,14 @@
                        m
                        (let [m (if (= 1 (count as))
                                  (update m (first as) (fnil conj #{}) [f :stated])
+                                 m)
+                             m (if-let [c (genl-arity-class kb l)]
+                                 (update m (first as) (fnil conj #{}) [c :declared])
                                  m)]
-                         (reduce (fn [m [n t]]
-                                   (update m (nth as (dec n)) (fnil conj #{}) [t :declared]))
-                                 m (declared-arg-types kb f (count as) context))))))
+                         (reduce (fn [m [x d]] (update m x (fnil conj #{}) d))
+                                 m (concat (for [[n t] (declared-arg-types kb f (count as) context)]
+                                             [(nth as (dec n)) [t :declared]])
+                                           (application-demands kb f as context)))))))
                  {} lits)]
     (boolean
      (some (fn [[_ ts]]
@@ -1174,8 +1217,9 @@
   Five things rule it out and nothing else does: a literal appearing under σ together with
   its own negation, or with the negation of a predicate it is a spec of; one term claimed to
   be of two separated types; one term bound to two arities; one term bounded above the
-  exact arity it is claimed to have; and one term an `arg` declaration demands be of a type
-  disjoint from one the two rules place it in.  **No
+  exact arity it is claimed to have; and one term a declaration demands be of a type
+  disjoint from one the two rules place it in: an `arg` declaration, a `genl` literal's
+  second argument by its arity, or an application's function.  **No
   inference is run and no fact is consulted** — each of the five is a declaration read.  This is what the rules say about each other, and a pair it admits
   is a clash that *could* form rather than one that will — which is the whole reading,
   since a clash that had already formed would be in `(contradictions kb)` instead.

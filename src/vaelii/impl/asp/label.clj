@@ -1,57 +1,11 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.asp.label
-  "Brave/cautious classification of a settled tie, and materializing one labeling as
-  a specialization context.
-
-  ## What this adds over `in?`
-
-  The TMS answers *what do I believe*. After `settle` arbitrates a default/default
-  tie, one side is IN and the other OUT — but that answer flattens two very different
-  situations. A belief can be IN because every consistent way of resolving the
-  contradictions keeps it, or because the solver had two equally good options and
-  picked one. `in?` cannot tell them apart; both read as \"believed\".
-
-  Brave/cautious classification separates them by asking the solver for *all* optimal
-  answer sets rather than one:
-
-  | class | in every optimum | in some optimum | meaning |
-  |---|---|---|---|
-  | `:true` | yes | yes | forced — no consistent labeling gives it up |
-  | `:supportable` | no | yes | arbitrary — the current belief is one of several |
-  | `:false` | no | no | excluded — no consistent labeling holds it |
-
-  `:supportable` is the interesting one, and it is invisible from the TMS alone. In a
-  Nixon diamond both sides are `:supportable`: whichever the TMS committed to, the
-  other was equally available.
-
-  ## Concert with the TMS
-
-  Two rules keep these from drifting apart from belief.
-
-  **Classification reads the recorded program, never a recomputed one.** Resolving a
-  tie erases its own evidence — the defeated side stops matching, so the nogood is no
-  longer derivable from the KB. The `:program` atom on the KB holds what the solver was
-  actually asked (see the KB record); `vaelii.core/last-program` is the public read of it.
-
-  **Labeling reads the TMS, not a fresh solve.** `label-context` materializes the
-  labeling the engine *committed to*, taken from `jtms/in?`, rather than re-solving
-  and hoping for the same answer set back. A re-solve would usually agree, and
-  \"usually\" is not a property worth building on.
-
-  So the invariants hold by construction, and `asp_label_test` asserts them:
-
-      :true        ⊆ believed        (cautious holds in the committed model)
-      :false       ∩ believed = ∅    (excluded holds in no model, including that one)
-      :supportable — either way, by definition
-
-  ## Requirements
-
-  Classifying a `Program` needs a real ASP backend; `local-solver` produces one labeling
-  and cannot enumerate optima. With no backend reachable, `classify-program` reports every
-  contested assumption as `:supportable` — correct (each *is* one of several options)
-  and never overclaims `:true`.  A represented dilemma is classified and labeled off the
-  dependency graph instead (`classify-local`), on every build."
+  "Brave/cautious classification and the two labeling writers.  `classify` reads the
+  `Program` the KB last recorded; `classify-local` and `classify-datum` classify the
+  current dilemmas from the JTMS dependency graph with no backend.  `label-context`
+  records the labeling the engine committed to; `label-dilemmas` (`do/labeling`) commits
+  one inside a context.  See docs/asp.md and docs/labeling.md."
   (:require
    [vaelii.impl.asp.edge :as edge]
    [vaelii.impl.asp.solver :as solver]
@@ -68,33 +22,21 @@
    [vaelii.impl.types.solve :as solve-types]
    [vaelii.impl.wiring :as wiring]))
 
-;; `classify-program` lives in `asp.edge`.  Re-exported here for the KB-level callers,
-;; which reach it at this layer.
+;; `asp.edge`'s, re-exported for the KB-level callers
 (def classify-program edge/classify-program)
 
 (defn classify
-  "Classify the program `kb` last labeled (`last-program`) — which of its assumptions
-  were forced, which were an arbitrary pick, and which were excluded.
-
-  Returns `{:true #{handle} :supportable #{handle} :false #{handle}}`, all empty when
-  no labeling has recorded a program.  A program `label-dilemmas` recorded carries the
-  classification it committed against, which is read back rather than recomputed from
-  the program alone."
+  "Classify the program `kb` last recorded (`last-program`): `{:true #{handle}
+  :supportable #{handle} :false #{handle}}`, all empty when none is recorded.  The
+  classification `label-dilemmas` recorded on the program is read back, not recomputed."
   [kb]
   (if-let [program @(reasoning/program kb)]
     (or (:classification program) (classify-program program))
     {:true #{} :supportable #{} :false #{}}))
 
 ;; ---- the dilemma bridge -------------------------------------------------
-;;
-;; Everything above classifies a tie the engine *arbitrated*.  The engine does not
-;; arbitrate a plain rebuttal: a coexisting P/¬P pair at :default is a represented
-;; dilemma, both sides stay IN, and `settle` builds no Program (docs/exceptions.md).
-;; So `last-program` is nil in exactly the cases classification is interesting for.
-;;
-;; What `contradictions` reports is nevertheless the material a Program is made from —
-;; that is the point of handing back both sides with their justifications rather than
-;; picking one.  `dilemma-program` turns it back into that shape, for a caller who asks.
+;; A `Program` built from what `contradictions` reports (docs/labeling.md, "Why a caller
+;; has to ask").
 
 (defn- sides-content
   "What each side of each dilemma asserts, keyed by handle."
@@ -111,21 +53,14 @@
                  (sides-content ds)))
 
 (defn dilemma-program
-  "One `Program` covering **every** dilemma `kb` currently reports, or nil if it
-  reports none.
-
-  All of them together rather than one at a time, because dilemmas can share a datum:
-  a handle contested in two nogoods must be given up (or kept) once, consistently, and
-  only a solver holding both constraints at once can do that.  Solving them
-  separately would let the same datum be believed by one answer and not the other,
-  which is not a labeling of anything."
+  "One `Program` covering every dilemma `kb` currently reports, or nil if it reports
+  none: one program, so a handle contested in two dilemmas is kept or given up once."
   [kb]
   (some-> (seq (clashes/ranked (clashes/contradictions-of kb))) dilemmas-program))
 
 (defn- cluster-indices
-  "Partition `[0 n)` into connected components under `edges` — a seq of `[i j]` index pairs
-  to union — returned as a seq of index sets.  Union-find, so two nogoods joined by any edge,
-  directly or through a chain, land in one cluster and are enumerated together."
+  "Partition `[0 n)` into the connected components of `edges`, a seq of `[i j]` index pairs,
+  returned as a seq of index sets (union-find)."
   [n edges]
   (let [^ints parent (int-array n)]
     (dotimes [i n] (aset parent i i))
@@ -157,14 +92,9 @@
   while member `m` is believed with `s` forced OUT.
 
   Iterated by increasing size, so the first size with a satisfying subset yields every
-  optimal resolution — genuinely tied optima all return.  Iterating whole subsets rather than
-  branching on one nogood's members is what makes it **belief-faithful**: a member a defeat
-  drops by cascade counts as forced OUT and needs no defeat of its own, so a subset that
-  forces no member of a nogood can still satisfy it — forcing `pb` OUT satisfies `pa`'s nogood
-  when `¬pa` is derived from `pb`.  Returns nil when the subsets examined would exceed
-  `VAELII_CLASSIFY_RESOLUTION_BUDGET` (the caller then leaves the cluster `:supportable`).
-  Each size's count is computed as a binomial before its subsets are generated, so the
-  enumeration never generates a size that would cross the budget."
+  optimal resolution (docs/labeling.md, \"The solve-free bracket\").  Returns nil when the
+  subsets examined would exceed `VAELII_CLASSIFY_RESOLUTION_BUDGET`; each size's binomial
+  count is checked before its subsets are generated."
   [members ngs holds?]
   (let [members (vec members)
         m       (count members)
@@ -225,10 +155,8 @@
                                  (reduce (fn [m d] (assoc! m d (conj (get m d #{}) i)))
                                          m (dep i)))
                                (transient {}) (range n)))
-            ;; two nogoods couple when a member of one is moved by forcing the other — shared
-            ;; members and derivation coupling both.  Union through `touch` rather than
-            ;; comparing every pair, so clustering is linear in the members, not quadratic in
-            ;; the nogoods.
+            ;; two nogoods couple when forcing one moves a member of the other; the union
+            ;; runs through `touch`, linear in the members rather than quadratic in the nogoods
             edges     (for [j (range n), m (nogoods j), i (touch m)] [i j])
             clusters  (cluster-indices n edges)
             cluster-of (into {} (mapcat (fn [c] (map (fn [i] [i c]) c))) clusters)
@@ -239,11 +167,9 @@
                                      [c (when (<= (count ms) max-members)
                                           (min-resolutions ms (mapv nogoods c) holds?))])))
                             clusters)
-            ;; the joint resolutions of `cs` — the clusters that move a datum — as forced
-            ;; sets: the cartesian product of their optima, each combination unioned into one
-            ;; set.  A cluster that does not move the datum leaves it at base whatever it
-            ;; resolves to, so ranging over `cs` alone reaches the datum's every joint optimum.
-            ;; nil when a cluster is unenumerated or the product exceeds `max-optima`.
+            ;; the joint resolutions of `cs`, the clusters that move a datum: the product of
+            ;; their optima as forced sets, nil when a cluster is unenumerated or the product
+            ;; exceeds `max-optima`
             joint  (fn [cs]
                      (reduce (fn [acc c]
                                (let [opt (optima c)]
@@ -287,54 +213,21 @@
          :unenumerated   unenumerated}))))
 
 (defn classify-local
-  "A skeptical/credulous classification of the KB's current dilemmas, or with `context` of
-  the dilemmas a reader there reads (`clashes/contradictions-at`), read from the JTMS
-  dependency graph — **no answer-set enumeration, no backend**.  Returns the `classify`
-  shape `{:true #{} :supportable #{} :false #{}}` plus `:refinable`, or nil when there is
-  no dilemma.  `:refinable` holds the members of the clusters it did not enumerate
-  whose members move none of each other: a `Program` over such a cluster is exact, so a
-  backend may classify them.
-
-  A **resolution** forces OUT a minimum-cardinality set of dilemma members that satisfies
-  every nogood (leaves no nogood with all its members still believed); the resolutions are a
-  dilemma set's optimal labelings.  A believed datum is classified by which resolutions
-  keep it, read through `jtms/grounded-in-region` (belief recomputed with a set forced OUT):
-
-  - `:true` — believed under **every** resolution (skeptical/cautious);
-  - `:supportable` — believed under **some** but not every resolution (credulous/brave);
-  - `:false` — believed under **no** resolution: currently believed only because base belief
-    holds conflicting dilemma sides at once, which no single resolution does.  A
-    `(weird N)` drawn from `(and (pac N) (not (pac N)))` is that case.
-
-  `(hasEthicalStance N)` drawn from **both** the pacifist and non-pacifist side is `:true` —
-  every resolution keeps one side, so one support survives.  `(opposesWar N)` resting on the
-  pacifist side alone is `:supportable`.  It covers derived conclusions, not only the
-  dilemma members a `Program` holds, so `classify-datum` reads it for a derived conclusion
-  with a backend too: base belief believes both sides and would overclaim it cautious.
-
-  **Coupled dilemmas are enumerated together, independent ones apart.**  Nogoods that share
-  a member, or move a member of each other, form one cluster (`cluster-indices`); a cluster's
-  resolutions come from `min-resolutions`.  A datum is classified by the joint resolutions of
-  the clusters that move it — the cartesian product of those clusters' optima, since a cluster
-  that does not move the datum leaves it at base whatever it resolves to.  A `(f N)` from
-  `(and (e1 N) (e2 N))`, where `e1` and `e2` are each `:true` in a separate diamond, is `:true`:
-  it survives every combination.  A datum whose product of clusters exceeds
-  `VAELII_CLASSIFY_MAX_JOINT_OPTIMA`, or that touches a cluster larger than
-  `VAELII_CLASSIFY_MAX_CLUSTER_MEMBERS`, is left `:supportable` — sound, and a backend
-  refines it only when it is `:refinable`.  So the cost is the clusters'
-  consequence closures: linear in the number of **independent** dilemmas
-  (`grounded_in_region_test`), exponential only inside one interacting cluster or across the
-  clusters one datum joins, and capped at both.  See docs/labeling.md."
+  "The skeptical/credulous classification of the KB's current dilemmas, or with `context`
+  of the dilemmas a reader there reads (`clashes/contradictions-at`), from the JTMS
+  dependency graph with no backend.  Returns `{:true #{} :supportable #{} :false #{}
+  :refinable #{}}`, or nil when there is no dilemma: a believed datum is `:true` when every
+  optimal resolution keeps it, `:supportable` when some do, `:false` when none do.
+  `:refinable` holds the members of the unenumerated clusters whose members move none of
+  each other, where a `Program` is exact.  A datum past a cap is `:supportable`.  See
+  docs/labeling.md, \"The solve-free bracket\"."
   ([kb] (:classification (local-analysis kb (clashes/contradictions-of kb))))
   ([kb context] (:classification (local-analysis kb (clashes/contradictions-at kb context)))))
 
 (defn- member-components
-  "The dilemmas `ds` grouped into components: two dilemmas share a component when they
-  share a member, directly or through a chain of dilemmas.  A `Program` holds no
-  derivation between members, so the optima of a program over several components are
-  every combination of each component's optima, and a member's class over the whole
-  program is its class over its own component.  Returns a vector of dilemma vectors, each
-  in `ds` order."
+  "The dilemmas `ds` grouped into member components: two dilemmas share one when they share
+  a member, directly or through a chain.  Returns a vector of dilemma vectors, each in `ds`
+  order."
   [ds]
   (let [ds    (vec ds)
         edges (second
@@ -381,15 +274,9 @@
 
 (defn classify-datum
   "Handle `h`'s class over the optimal labelings of the dilemmas a reader at `context`
-  reads (`clashes/contradictions-at`) — `:true`, `:supportable` or `:false`, as
-  `classify` names them — or nil when no such dilemma classifies it.  Read off the
-  solve-free JTMS bracket (`classify-local`) once per context and change clock, with or
-  without a backend, so a backend never changes an answer the bracket gives: a `Program`
-  encodes no derivation between members, and on dilemmas whose members derive from one
-  another its optima are not the KB's.  A backend refines only a `:refinable` member — one
-  in a cluster the bracket did not enumerate and whose members move none of each other,
-  where the `Program` over its member component is exact.  The `(bravely S)` /
-  `(cautiously S)` prover reads this."
+  reads: `:true`, `:supportable` or `:false`, or nil when no such dilemma classifies it.
+  `classify-local`'s answer, with a backend's member-component classification for a
+  `:refinable` member.  The `(bravely S)` / `(cautiously S)` prover reads it."
   [kb h context]
   (let [{:keys [local backend]} (classification kb context)]
     (if (and backend (contains? (:refinable local) h))
@@ -397,49 +284,15 @@
       (class-of local h))))
 
 (defn- labeling-solver
-  "The solver the labeling solve must use: the **ASP edge solver whenever a backend is
-  reachable**, and only otherwise the one installed on the KB.
-
-  This deliberately bypasses `(:solver kb)`, and the reason is that a labeling and its
-  classification are two answers about one program that have to agree.  Classification
-  needs to enumerate optimal answer sets, which only ASP does, so `classify-program`
-  goes straight to the backend and ignores the installed solver.  If the labeling then
-  came from `local-solver`, the two would be answering from different search
-  procedures — and they diverge in practice, not just in principle.  Measured on two
-  nogoods sharing a member, where greedy spends two defeats and the optimum spends
-  one:
-
-      stub  defeats {1,3} -> labels {2}      classification {:true {1,3} :false {2}}
-      ASP   defeats {2}   -> labels {1,3}
-
-  The stub's labeling keeps an assumption that holds in *no* optimum and drops two
-  that hold in *every* one.  Committing to that would materialize an impossible world
-  and globally defeat the atoms classification calls forced.
-
-  With no backend the two degrade together and stay consistent for free:
-  `classify-program` reports every contested assumption `:supportable` and claims
-  nothing, so any labeling the stub produces satisfies a classification that asserts
-  no `:true` and no `:false`.
-
-  **With a backend the pairing is all-or-nothing**, which is what makes the reasoning
-  above sound in both directions: `edge-solver` answers from the backend or decides
-  nothing (`asp.edge`, \"A result that is not an answer\"), so a labeling solve that ran
-  out of budget can never be silently answered by the stub while the classification
-  beside it came from ASP."
+  "The solver a labeling solve uses: `edge/edge-solver` whenever a backend is reachable,
+  else the one installed on the KB (docs/labeling.md, \"The labeling and its
+  classification must agree\")."
   [kb]
   (if (solver/available?) edge/edge-solver @(:solver kb)))
 
 (defn- check-agrees
-  "Throw unless `labeled` is consistent with `classification` — the invariant that
-  makes a labeling *of* a classification rather than merely alongside one:
-
-      :true  ⊆ labeled          (holds in every optimum, so it must be kept)
-      :false ∩ labeled = ∅      (holds in no optimum, so it must not be)
-
-  Checked rather than assumed because the two come from separate solves, and a
-  disagreement is exactly the failure this design is most exposed to.  `:fixed` is
-  excluded from the first: it is known-true background that is assumed by every model
-  and never an assumption the labeling chooses over."
+  "Throw `:labeling-inconsistent` unless `:true ⊆ labeled` and `:false ∩ labeled = ∅`,
+  `program`'s `:fixed` handles excepted from the first."
   [program labeled classification]
   (let [forced   (remove (:fixed program) (:true classification))
         missing  (remove labeled forced)
@@ -457,23 +310,9 @@
                        :classification classification})))))
 
 (defn- solved-defeat
-  "The assumptions one optimal answer set of `program` gives up — the labeling solver's
-  defeat set.  `label-dilemmas` reads it for the clusters `classify-local` does not
-  enumerate.
-
-  **Sourced from the solve, not from the TMS**, which is the opposite of
-  `label-context` below and for a reason that is the same principle either way:
-  report what actually decided it.  A dilemma `settle` declined was decided by nobody —
-  **both sides are IN** — so reading current belief would copy both halves of the
-  contradiction into the labeling and recreate the dilemma one level down.  Here the
-  solve is the only thing that decides.
-
-  So a solve that decided nothing is refused rather than read.  `edge-solver` hands an
-  interrupted or failed solve back as `{:defeat #{} … :error e}` instead of degrading or
-  throwing, and an empty defeat set is otherwise a perfectly good answer — *keep
-  everything* — which is precisely the reading that would materialize both halves of a
-  dilemma into one world.  `:error` is the bit that tells the two apart, and raising it
-  here is what makes an imperative refuse with `:solver-failed`."
+  "The assumptions one optimal answer set of `program` gives up, from `labeling-solver`;
+  `label-dilemmas` reads it for the clusters `classify-local` does not enumerate.  A solve
+  that decided nothing returns an `:error`, which this throws."
   [kb program]
   (let [{:keys [defeat error]} (solve-types/solve (labeling-solver kb) program)]
     (when error (throw error))
@@ -519,52 +358,17 @@
                       :false       (into #{} (:false grouped))}}))
 
 (defn label-dilemmas
-  "Classify the dilemmas `kb` currently holds, then materialize one optimal labeling
-  of them into `ctx` — both read off `local-labeling`, so a defeat's cascade through the
-  dependency graph is in each.  Returns
-  `{:context ctx :handles [h ...] :classification {...} :program p}`; the handles are
-  empty when the KB holds no dilemma.
-
-  The four steps run in an order this fixes so a caller cannot get it wrong — in
-  particular **classification is taken before materialization**, because materializing
-  entrenches.  What it writes are ordinary assertions, and an assertion is evidence:
-  the recorded side lands in a second nogood against its rival, so a tie that
-  classifies `:supportable` on both sides classifies `:true`/`:false` once labeled.
-  That is what recording a choice means, not a bug — but it means the classification
-  has to be read first, and making one call do both is how that stops being something
-  to remember.
-
-  The Program is recorded in `kb`'s `:program` slot with the classification on it, so
-  `last-program` and `classify` answer about this labeling afterwards.  `settle` never writes that slot for a
-  dilemma (it builds no Program for one), so nothing is being overwritten.
-
-  **`ctx` sees `base`, and the labeling is recorded by strengthening.**  Each kept
-  assumption is re-asserted inside `ctx` at `:monotonic`, so `ctx` is a real world: the
-  uncontested background is inherited through `genlCx` (reachable with `ask` / `lookup`
-  at level 3 and above — note `sentexes-matching` is context-exact and will not show
-  it), and the contested atoms are decided within it.  Nothing needs to be said about
-  the side that lost: the strengthened copy out-ranks it, and `decide/verdict` defeats
-  the strictly weaker member.
-
-  **This commits, and the commitment is scoped to `ctx`.**  The strengthened copy and
-  the losing side form a nogood whose vantage is `ctx`, so the losing side is defeated at
-  `ctx` and below and nowhere else (docs/nmtms.md, \"A defeat is scoped to its
-  vantage\").  The base keeps believing both sides and reporting its dilemma.  The
-  engine's refusal to arbitrate holds: it still refuses *on its own*, and commits inside
-  `ctx` only when a caller writes the imperative (docs/labeling.md).
-
-  So rival labelings stand **side by side**, as sibling contexts: each labeling decides
-  the dilemma in its own context, and retracting the returned handles revives the
-  dilemma inside that context.
-
-  Additive, so no `!`: this creates a context and asserts into it, and retracting the
-  returned handles undoes it — including the commitment."
+  "`do/labeling`: classify the dilemmas `kb` holds and commit one optimal labeling of them
+  inside `ctx`, both read off `local-labeling`.  Records the program, carrying the
+  classification, in `kb`'s `:program` slot; writes `(genlCx ctx base)` and a `:monotonic`
+  copy in `ctx` of each kept assumption, in content order.  Throws
+  `:labeling-inconsistent` when the two disagree.  Returns `{:context ctx :handles [h ...]
+  :classification {...} :program p}`, the handles empty and nothing written when the KB
+  holds no dilemma.  See docs/labeling.md, \"`(do/labeling Ctx)`\"."
   [kb ctx base]
   (if-let [ds (seq (clashes/ranked (clashes/contradictions-of kb)))]
     (let [program (dilemmas-program ds)
           {keep-set :keep classification :classification} (local-labeling kb ds program)]
-      ;; the labeling and its classification came from separate reads; refuse to commit
-      ;; if they disagree
       (check-agrees program keep-set classification)
       (reset! (reasoning/program kb) (assoc program :classification classification))
       (wiring/assert-sentence kb (list 'genlCx ctx base) base {:strength :monotonic})
@@ -573,61 +377,22 @@
        :classification classification
        :handles (into [] (keep (fn [h]
                                  (when-let [s (p/get-sentex (:records kb) h)]
-                                   ;; :monotonic is the whole mechanism — a copy at
-                                   ;; :default would merely tie with the side it is
-                                   ;; supposed to beat, and report a second dilemma
-                                   ;; instead of deciding the first
                                    (wiring/assert-sentence kb (:sentence s) ctx {:strength :monotonic})
                                    (kb/find-sentex-handle kb (:sentence s) ctx))))
-                      ;; sorted by content, never by handle: handles are allocated in
-                      ;; assertion order, so iterating them would make *which* copy is
-                      ;; created first depend on the order the knowledge arrived — the
-                      ;; content-key built once per member, not per comparison
+                      ;; content order, never handle order
                       (nm/sort-by-content-key #(solve/content-key program %) compare keep-set))})
-    ;; nothing contested: no program, no context, nothing to record.  Minting an empty
-    ;; labeling context would assert that a choice was made where none was.
     {:context ctx :program nil :handles []
      :classification {:true #{} :supportable #{} :false #{}}}))
 
 (defn label-context
-  "Mint `ctx` as a specialization of `base` holding the labeling the engine committed
-  to, and return `ctx`.
-
-  The labeling is read from the TMS — the contested assumptions it currently believes
-  — not from a fresh solve, so the context is guaranteed to say what the engine
-  actually decided rather than what a second solve might have chosen.
-
-  `ctx` sees `base` through `genlCx`, so it inherits the whole KB; what it adds
-  is an explicit, queryable record of one arbitration. Two labelings of the same tie
-  can therefore be built as sibling contexts and compared.
-
-  **This entrenches the labeling, so classify before you label.** What it writes are
-  ordinary assertions, and an assertion is evidence: the recorded side now sits in a
-  second nogood against its rival, which makes defeating the rival strictly cheaper
-  than defeating the record. A tie that classified as `:supportable` on both sides
-  will classify as `:true`/`:false` afterwards. Belief does not move — the losing
-  side was already OUT — but it stops *looking* arbitrary, because it no longer is:
-  something now asserts the choice. Retracting the returned handles restores the
-  open tie.
-
-  **The context is minted whether or not there was a tie**, and `label-dilemmas` is
-  deliberately the other way round. With no recorded `Program` — a KB the engine never
-  arbitrated in, or a dilemma it declined — the `genlCx` edge is written and `:handles`
-  comes back empty: a specialization that sees its base and records nothing is what \"the
-  engine committed to nothing\" materializes as, and it gives a caller that asked to see
-  one arbitration an empty answer rather than an invented one. `label-dilemmas` *makes* a
-  choice rather than reporting one, so minting a context for a choice it did not make
-  would assert that one happened.
-
-  Additive, so no `!`: this creates a context and asserts into it. The labeling is
-  undone by retracting the returned handles; the `genlCx` edge is a premise of its own
-  and is retracted as one."
+  "Write `(genlCx ctx base)` and, in `ctx`, a copy of each assumption of the recorded
+  `Program` the TMS believes, in content order.  Returns `{:context ctx :handles [h ...]}`,
+  the handles empty with no recorded program; the edge is written either way.  See
+  docs/asp.md, \"Labeling contexts\"."
   [kb ctx base]
   (let [tms (reasoning/tms kb)
         program @(reasoning/program kb)
-        ;; content order, as `label-dilemmas` orders the same set: `:assumptions` is
-        ;; a handle set, and hash iteration would mint the copies — and return the
-        ;; `:handles` a caller retracts — in an order that tracks assertion order
+        ;; content order, never the handle set's hash order
         believed (nm/sort-by-content-key #(solve/content-key program %) compare
                                          (filter #(jtms/in? tms %) (:assumptions program)))]
     (wiring/assert-sentence kb (list 'genlCx ctx base) base {:strength :monotonic})

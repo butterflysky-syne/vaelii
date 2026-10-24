@@ -5,6 +5,7 @@
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.impl.sentex :as sx]
             [vaelii.impl.skolem :as skolem]
             [vaelii.test-util :as tu]))
@@ -36,7 +37,7 @@
       (testing "a different antecedent binding gets a distinct witness"
         (v/assert kb (list pP A2) C {:strength :monotonic})
         (let [k2 (witness kb (list qQ A2 '?w) 2)]
-          (is (nat/reified-nat-symbol? k2))
+          (is (nat-read/reified-nat-symbol? k2))
           (is (not= k1 k2)))))))
 
 (tu/deftest-kb each-existential-variable-gets-its-own-witness
@@ -55,7 +56,7 @@
                    (list 'exists '?y (list 'and (list qQ '?x '?y) (list rR '?y))) C {:direction :forward})
     (v/assert kb (list pP A) C {:strength :monotonic})
     (let [k-q (witness kb (list qQ A '?w) 2)]
-      (is (nat/reified-nat-symbol? k-q))
+      (is (nat-read/reified-nat-symbol? k-q))
       (is (= k-q (witness kb (list rR '?w) 1))))))
 
 (tu/deftest-kb an-aggregate-output-is-not-part-of-the-frontier

@@ -7,7 +7,7 @@
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.host.core-context :as core-context]
-            [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.test-util :as tu]
             [vaelii.world :as world]))
 
@@ -24,7 +24,7 @@
 
 (defn- arg-derivation-expected
   "What `arg-derived` answers for a membership an argument declaration types."
-  [] (if checks/*assertive-arg-types?* #{'arg} #{}))
+  [] (if argument/*assertive-arg-types?* #{'arg} #{}))
 
 ;; ---- connected conjunctive antecedents in the starter -------------------
 

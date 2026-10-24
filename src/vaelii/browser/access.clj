@@ -116,6 +116,9 @@
   ;; never sends it
   term-expression
   violations chain-stats terms term-count sentex-count find-terms
+  ;; the filed ledger alone, which `/stats` counts and lists on a page load; `violations`
+  ;; also fetches every held sentex and convicted firing, so it is read in a job
+  filed-violations
   ;; the per-rule funnel behind chain-stats — placed / refused / silent, for the page that
   ;; answers "which of my rules actually do anything"
   chain-report

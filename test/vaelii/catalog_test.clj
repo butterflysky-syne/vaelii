@@ -1130,7 +1130,7 @@
         (swap! @#'cat/state assoc-in [:entries "mine" :params] {})
         (v/assert kb retired-note 'CxUniverse)
         (jobs/wait (cat/sync-entry! "mine") 120000)
-        (is (= {:added 0 :removed 1 :refused []} (:sync (cat/entry "mine"))))
+        (is (= {:added 0 :removed 1 :forwarded 0 :refused []} (:sync (cat/entry "mine"))))
         (is (not (retired))))
       (is (= :unknown-source (:type (ex-data (try (cat/sync-entry! "nobody")
                                                   (catch clojure.lang.ExceptionInfo e e))))))
@@ -1155,7 +1155,7 @@
         (let [e      (cat/entry key)
               loaded (:kb e)]
           (is (= :done (:status (#'cat/with-job e))))
-          (is (= {:added 0 :removed 1 :refused []} (:sync e)))
+          (is (= {:added 0 :removed 1 :forwarded 0 :refused []} (:sync e)))
           (is (nil? (v/handle-of loaded retired-note 'CxUniverse)))
           (cat/unload! key)))
       (finally

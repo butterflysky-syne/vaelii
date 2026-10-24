@@ -42,6 +42,7 @@
             [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.profile :as prof]
             [vaelii.impl.rules :as rules]
             [vaelii.test-util :as tu]))
@@ -270,7 +271,7 @@
   ;; makes: with one mint in the family, it must not grow with the members.
   (tu/with-shipped-config
     (let [probe (fn [population prune?]
-                  (binding [checks/*assertive-arg-types?* true
+                  (binding [argument/*assertive-arg-types?* true
                             checks/*prune-subsumed-mints?* prune?]
                     (let [kb (fresh)]
                       (v/assert kb '(genlCx CxPerf CxUniverse) 'CxUniverse)
@@ -328,7 +329,7 @@
   ;; subtree under it.  The walk reads index counts, not records, so both are summed.
   (tu/with-shipped-config
     (let [probe (fn [depth edges prune?]
-                  (binding [checks/*assertive-arg-types?* true
+                  (binding [argument/*assertive-arg-types?* true
                             checks/*prune-subsumed-mints?* prune?]
                     (let [dir (str (java.nio.file.Files/createTempDirectory
                                     "rf-recover" (make-array java.nio.file.attribute.FileAttribute 0)))
@@ -388,7 +389,7 @@
   ;; mints the whole question when fewer are stored than the region holds.  What is priced
   ;; is the difference one stored mint makes, and it must not grow with the facts beside it.
   (tu/with-shipped-config
-    (binding [checks/*assertive-arg-types?* true
+    (binding [argument/*assertive-arg-types?* true
               checks/*prune-subsumed-mints?* true]
       (let [probe (fn [population mint?]
                     (let [kb (fresh)]

@@ -1,30 +1,11 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.context-scoping-test
-  "**No context is affected by sentexes in contexts it does not inherit.**
-
-  The closure reads are scoped (`taxonomy_scoped_test`), the checks are scoped
-  (`disjoint_test`), and a clash only a descendant can see is reported rather than
-  refused (`exposure_test`).  This namespace is about the *consumers*: every place the
-  engine reaches for a taxonomy edge, a rule, an equality, or a metadata mark on
-  behalf of some context, and could reach past what that context can see.
-
-  Each mechanism gets a **pair** — the leak and its control — because a scoping test
-  that only checks the negative passes just as well when the feature is broken
-  outright.  The lattice throughout is two siblings under CxUniverse, neither
-  seeing the other, which is the sharpest shape: whatever A knows, B must not, and B
-  is a perfectly ordinary context that inherits the whole shipped ontology.
-
-  Two of these are **order-independence** tests wearing a visibility coat.  A rule
-  that fires by subsumption rests on the `genl` edge it subsumed through as much as on
-  its antecedents, so that edge has to be visible from the placement *and* has to
-  re-trigger the firing when it arrives late.  Get either wrong and the same three
-  sentences derive different things in different orders, which is the one thing belief
-  may not depend on (docs/nmtms.md).
-
-  The deliberately-global reads are asserted here too, at the end — a reader finding
-  `genl?` refusing a cycle across invisible contexts should find it *stated* rather
-  than have to decide whether it is a bug."
+  "No context is affected by sentexes in contexts it does not inherit, at each consumer
+  that reads a taxonomy edge, a rule, an equality or a metadata mark on a context's behalf
+  (docs/contexts.md, \"The consumers\").  Each mechanism gets a pair, the leak and its
+  control, over two sibling contexts under CxUniverse.  The reads that are global by
+  design are asserted at the end."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.walk :as walk]
             [vaelii.core :as v]
@@ -281,10 +262,8 @@
         "A has been told")))
 
 (tu/deftest-kb a-functional-equality-is-derived-though-an-invisible-merge-exists
-  ;; The functional-clash derivation skips a pair its idempotence guard finds already
-  ;; merged.  Read globally, a merge in a sibling context suppressed a derivation the
-  ;; reader is owed — so a context could hold two functional fillers for one argument
-  ;; and merge neither, because some *other* context happened to merge them.
+  ;; the derivation's idempotence guard reads the merge from CxA, which does not see
+  ;; the sibling's
   (tu/with-terms [fp13 X13 V1 V2 CxA CxB]
     (siblings! kb CxA CxB)
     (v/assert kb (list 'functional fp13) 'CxUniverse)
@@ -299,14 +278,8 @@
       (is (v/same-class? kb V1 V2 CxB)))))
 
 (tu/deftest-kb a-functional-equality-is-derived-across-two-genlcx-edges-from-below
-  ;; The literal shape from GitHub issue #43's own repro: two contexts blind to each
-  ;; other, each holding one of two clashing `functional` fillers, and a third context
-  ;; wired under **both** -- not one edge widening a single existing ancestor set (the
-  ;; order-independence suite covers that shape), but two separate edges whose union is
-  ;; what first makes the pair jointly visible.  `special/equate-under-context-edge`'s
-  ;; `readers` binding has to fold the contribution of both edges together: after only
-  ;; one, the joining context still sees exactly one filler, and there is nothing yet to
-  ;; merge.
+  ;; two edges whose union first makes the pair jointly visible: after one, the joining
+  ;; context sees one filler (`special/equate-under-context-edge`)
   (tu/with-terms [fbP FbTom FbV1 FbV2 CxFbA CxFbB CxFbBelow]
     (siblings! kb CxFbA CxFbB)
     (v/assert kb (list 'functional fbP) 'CxUniverse)
@@ -325,17 +298,10 @@
         (is (some? (v/handle-of kb (list 'equals lo hi) CxFbBelow)))))))
 
 (tu/deftest-kb an-unmergeable-genlcx-clash-is-still-only-weighed-not-thrown-or-silent
-  ;; This arm's job stops at the mergeable case (docs/equality.md, `mergeable-values?`) —
-  ;; two *numbers* under a `functional` slot are the hard clash no equality can resolve,
-  ;; and issue #43 leaves what happens there a deliberate open design question, not a
-  ;; bug.  This test asserts only that adding `equate-under-context-edge` did not change
-  ;; that path: a genlCx edge completing an unmergeable clash still neither throws nor
-  ;; does nothing — CxUbBelow is the vantage and weighs the pair, and two `:default`
-  ;; numbers tie, so both stand and `contradictions` names them.
-  ;;
-  ;; The KB is the namespace's and the violation ledger accumulates across tests
-  ;; (`v/violations`), so the check is on the entries this test adds.  An earlier test's
-  ;; `:no-placement` entry stays in the ledger after the fixture retracts its terms.
+  ;; two numbers under a `functional` slot are not mergeable (docs/equality.md): CxUbBelow
+  ;; is the vantage, and two `:default` numbers tie, so both stand.  The violation ledger
+  ;; accumulates across this namespace's tests, so the check reads the entries this test
+  ;; adds.
   (tu/with-terms [ubP UbTom CxUbA CxUbB CxUbBelow]
     (siblings! kb CxUbA CxUbB)
     (let [filed-before (set (v/violations kb))]
@@ -639,11 +605,6 @@
          does not vary by reader")))
 
 (tu/deftest-kb an-open-context-query-requires-one-reader-to-see-the-whole-join
-  ;; A **variable** context is the joint reading: the answer must hold from some one
-  ;; vantage, and that vantage is unified into the variable the caller named.  So a
-  ;; conjunctive read does *not* join literals no single context sees — an answer no reader
-  ;; of the KB actually has.  The union is spelled `CxEverything`, the reading that asks
-  ;; about the store rather than about what any reader holds (docs/contexts.md).
   (tu/with-terms [leftP17 rightP17 Item CxA CxB]
     (siblings! kb CxA CxB)
     (v/assert kb (list leftP17 Item) CxA)
@@ -664,14 +625,6 @@
                                              '?ctx))))))))
 
 ;; ---- (ist Ctx S) as a read ----------------------------------------------
-;;
-;; `ist` names the context a sentence is about, and a read resolves it exactly as
-;; `assert` does — the named context winning over the argument.  The scoping question
-;; this raises answers itself: the form grants **no** visibility a context argument did
-;; not already grant, because naming A is what `(sentexes-matching kb S 'CxA)` has
-;; always done.  That is what separates a read from a rule antecedent, where the same
-;; shape is refused (`sentex/ist-rule-problem`): a caller asking about A has said so,
-;; while a rule reading A on the sly decides belief from a context its own cannot see.
 
 (tu/deftest-kb an-ist-read-is-a-spelling-of-the-context-argument
   (tu/with-terms [heldP18 Item CxA CxB]
@@ -692,8 +645,6 @@
         (is (empty? (v/sentexes-matching kb goal CxB)))))))
 
 (tu/deftest-kb every-read-taking-a-sentence-and-a-context-takes-an-ist
-  ;; The rule is the whole surface, so the test is the whole surface: a reader should
-  ;; not have to learn which entry point happens to have been wired.
   (tu/with-terms [litP19 Item CxA CxB]
     (siblings! kb CxA CxB)
     (v/assert kb (list litP19 Item) CxA)
@@ -722,10 +673,6 @@
           (is (= CxA (:context r))))))))
 
 (tu/deftest-kb an-ist-read-answers-at-each-entry-points-own-notion-of-a-context
-  ;; The two families disagree, and the disagreement is theirs rather than ist's:
-  ;; `sentexes-matching` is an exact-context retrieval, while the reasoning entry points answer
-  ;; from everything the context inherits.  `(ist A S)` means "in A" under both readings
-  ;; — a fact A inherits *is* true in A — so the difference is asserted rather than reconciled.
   (tu/with-terms [seenP20 Near Far CxA CxB]
     (siblings! kb CxA CxB)
     (v/assert kb (list seenP20 Near) CxA)
@@ -736,8 +683,23 @@
       (is (= #{Near Far} (into #{} (map '?x) (v/ask kb ist CxB)))
           "the registry answers what A inherits as well"))))
 
+(tu/deftest-kb a-forced-predicate-s-fact-is-looked-up-where-assert-stores-it
+  ;; CxA has no genlCx edge, so it does not see CxUniverse: only the storage context
+  ;; finds the edge, and why-not's inherited lookup cannot stand in for it
+  (tu/with-terms [CxA CxD]
+    (let [edge (list 'genlCx CxD 'CxUniverse)
+          ist  (list 'ist CxA edge)
+          h    (v/assert kb ist CxA)]
+      (is (= 'CxUniverse (:context (v/sentex kb h))))
+      (doseq [[label read ss] [["handle-of" #(v/handle-of kb % CxA)
+                                [edge ist (list 'set/monotonic edge)]]
+                               ["sentexes-matching" #(first (map :id (v/sentexes-matching kb % CxA)))
+                                [edge ist]]
+                               ["why-not" #(:handle (v/why-not kb % CxA)) [edge ist]]]
+              s ss]
+        (is (= h (read s)) (str label " of " (pr-str s) " at " CxA))))))
+
 (tu/deftest-kb the-two-ist-read-shapes-that-are-refused-rather-than-answered-empty
-  ;; Both would otherwise report nothing, which reads exactly like a true negative.
   (tu/with-terms [shapeP21 Item CxA]
     (v/assert kb (list shapeP21 Item) CxA)
     (testing "a wrong arity is assert's own :shape, on every read entry point"

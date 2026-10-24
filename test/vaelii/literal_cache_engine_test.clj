@@ -8,7 +8,7 @@
   Entry-count claims are made against `matches-visible` directly, because that is the
   unit cached; a whole `ask` also fills the cache with the metadata probes its provers
   issue, which are real entries and not the ones under test."
-  (:require [clojure.test :refer [is testing use-fixtures]]
+  (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.literal-cache :as lc]
             [vaelii.impl.resolution :as res]
@@ -158,6 +158,46 @@
     (testing "and a chaining run's own conclusions are what a fresh query reads"
       (v/forward-chain kb)
       (is (v/ask? kb (list animal Rex) CxFarm)))))
+
+;; ---- the rename back --------------------------------------------------
+
+(defn- ask-both
+  "`[cached uncached]`: `ask`'s answers to `goal` at `ctx`, read through the literal cache
+  and past it, the cache cleared before each."
+  [kb goal ctx]
+  [(do (fresh-cache! kb) (binding [lc/*enabled* true] (vec (v/ask kb goal ctx))))
+   (do (fresh-cache! kb) (binding [lc/*enabled* false] (vec (v/ask kb goal ctx))))])
+
+(tu/deftest-kb a-goal-sharing-a-stored-formulas-variable-names-answers-as-uncached
+  ;; the goal's ?x is canonicalized to ?0, unify binds ?0 to the stored formula's own ?x,
+  ;; and the rename back maps ?0 to ?x again: the cached answer must be the one `unify`
+  ;; gives the goal and the stored formula directly, not the cyclic {?x ?x}
+  (tu/with-terms [bachelor unmarried adult likes CxFarm]
+    (let [necessary  (list 'defnNecessary bachelor (list unmarried '?x))
+          sufficient (list 'defnSufficient bachelor (list 'and (list unmarried '?x) (list adult '?x)))
+          two-vars   (list 'defnNecessary bachelor (list 'and (list unmarried '?x) (list likes '?x '?y)))]
+      (doseq [s [necessary sufficient two-vars]] (v/assert kb s CxFarm))
+      (testing "the goal is the stored sentence itself"
+        (doseq [s [necessary sufficient]]
+          (is (= [[{}] [{}]] (ask-both kb s CxFarm)) (pr-str s))))
+      (testing "swapped variables: the rename back gives a 2-cycle, unify gives no answer"
+        (let [swapped (list 'defnNecessary bachelor (list 'and (list unmarried '?y) (list likes '?y '?x)))
+              [cached uncached] (ask-both kb swapped CxFarm)]
+          (is (= uncached cached)))))))
+
+(deftest ^:slow every-starter-sentence-answers-alike-cached-and-uncached
+  ;; the differential twin of the test above: every sentence the starter stores, asked at
+  ;; every context.  Built on the isolated space, since the fixture's KB holds the scratch one.
+  (let [kb (doto (tu/isolated-fresh) (tu/load-starter!))]
+    (try
+      (let [ctxs   (sort (v/contexts kb))
+            sents  (distinct (for [c ctxs, sx (v/sentexes-in-context kb c)] (v/sentence-of sx)))
+            differ (vec (for [c ctxs, s sents
+                              :let [[cached uncached] (ask-both kb s c)]
+                              :when (not= (set cached) (set uncached))]
+                          [c s cached uncached]))]
+        (is (empty? differ) (pr-str (take 5 differ))))
+      (finally (tu/clear-kb! kb)))))
 
 ;; ---- the toggle ----------------------------------------------------------
 

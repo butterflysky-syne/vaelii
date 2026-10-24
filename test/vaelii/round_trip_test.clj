@@ -511,7 +511,7 @@
   ;; the dump already holds is the one row where the paths differ: the belief paths
   ;; collapse it onto the first handle at the stronger strength, and `{:belief? false}`
   ;; stores one record per frame (docs/naming.md).
-  (tu/with-terms [dog cat Fido Tom Rex physical_object CxStory]
+  (tu/with-terms [dog cat Fido Tom Rex physical_object bornIn linkedTo CxStory]
     (let [rows [{:row "an open literal" :sentence (list dog '?x) :context CxStory
                  :refused :not-ground}
                 {:row "a rule whose antecedent functor is a variable"
@@ -528,6 +528,13 @@
                 {:row "a rule whose thereExists binder is a constant"
                  :sentence (list 'implies (list 'and (list dog '?x)
                                                 (list 'unknown (list 'thereExists Rex (list cat Rex))))
+                                 (list cat '?x))
+                 :context CxStory :refused :not-well-formed}
+                {:row "a rule with a negated universal antecedent"
+                 :sentence (list 'implies (list 'and (list dog '?x)
+                                                (list 'not (list 'forall '?y
+                                                                 (list 'implies (list bornIn '?x '?y)
+                                                                       (list cat '?y)))))
                                  (list cat '?x))
                  :context CxStory :refused :not-well-formed}
                 {:row "a rule with a bare variable as an antecedent conjunct"
@@ -564,6 +571,31 @@
                  :context CxStory :refused :not-well-formed}
                 {:row "a top-level and" :sentence (list 'and (list dog Fido) (list cat Tom))
                  :context CxStory :refused :not-well-formed}
+                {:row "a top-level or" :sentence (list 'or (list dog Fido) (list cat Tom))
+                 :context CxStory :refused :not-well-formed}
+                {:row "a not over an or"
+                 :sentence (list 'not (list 'or (list dog Fido) (list cat Tom)))
+                 :context CxStory :refused :not-well-formed}
+                {:row "an individual as a genl type" :sentence (list 'genl Fido dog)
+                 :context CxStory :refused :not-well-formed}
+                {:row "a genl of itself" :sentence (list 'genl dog dog)
+                 :context CxStory :refused :not-well-formed}
+                {:row "a genlCx to a type" :sentence (list 'genlCx CxStory dog)
+                 :context CxStory :refused :not-well-formed}
+                {:row "a disjoint of itself" :sentence (list 'disjoint dog dog)
+                 :context CxStory :refused :not-well-formed}
+                {:row "an arg at a position that is not an integer"
+                 :sentence (list 'arg bornIn 'x dog) :context CxStory :refused :not-well-formed}
+                {:row "a non-finite measure magnitude"
+                 :sentence (list bornIn Fido (list 'QuantityFn ##Inf 'Kilogram))
+                 :context CxStory :refused :not-well-formed}
+                {:row "an unknown stated as a fact" :sentence (list 'unknown (list dog Fido))
+                 :context CxStory :refused :not-well-formed}
+                {:row "an exceptWhen over a fact"
+                 :sentence (list 'exceptWhen (list cat '?x) (list dog Fido))
+                 :context CxStory :refused :not-well-formed}
+                {:row "a preservation along a relation no frame declares transitive, which a later frame can"
+                 :sentence (list 'transitiveInArg bornIn 1 linkedTo) :context CxStory :stored true}
                 {:row "an ist wrapper" :sentence (list 'ist CxStory (list cat Tom))
                  :context 'CxUniverse :stored [(list cat Tom) CxStory]}
                 {:row "a frame repeating a stored frame's content, stronger"

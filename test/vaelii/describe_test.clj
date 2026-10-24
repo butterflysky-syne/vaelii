@@ -60,14 +60,15 @@
 
 (tu/deftest-kb a-relation-that-is-a-genl-node-is-described-by-its-stored-arity
   ;; A `genl` edge between two relations makes each a node of the `genl` hierarchy.  The
-  ;; stored arity decides the role, and the snake_case temporaries show the spelling
+  ;; stored arity decides the role, and the snake_case temporaries, bound under `:naming
+  ;; :off` since `:strict` refuses a snake_case relation's length, show the spelling
   ;; decides nothing.
   (doseq [r '[orthogonal siblingDisjointException performedBy doneBy]]
     (is (= [:predicate 2] ((juxt :role :arity) (v/describe kb r))) (str r)))
   (is (contains? (:props (v/describe kb 'orthogonal)) :symmetric))
   (tu/with-terms [near_rel close_rel unary_kind]
     (v/assert kb (list 'symmetric near_rel) 'CxUniverse {:strength :monotonic})
-    (v/assert kb (list 'binary_predicate close_rel) 'CxUniverse)
+    (v/assert (assoc kb :naming :off) (list 'binary_predicate close_rel) 'CxUniverse)
     (v/assert kb (list 'genl near_rel close_rel) 'CxUniverse)
     (v/assert kb (list 'unary_predicate unary_kind) 'CxUniverse)
     (v/assert kb (list 'genl unary_kind 'thing) 'CxUniverse)

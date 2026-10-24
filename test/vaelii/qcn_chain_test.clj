@@ -1,17 +1,8 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.qcn-chain-test
-  "Forward chaining on a relation nobody stored.
-
-  A forward rule's antecedents are matched against stored facts, and an *entailed*
-  qualitative relation has no handle to match — so on its own it fires nothing, and a
-  justification with no antecedent would be a conclusion nothing can withdraw.  Support
-  closes that: an entailment names the stored facts it rests on, and those become the
-  firing's antecedents.
-
-  So these tests are about three things and not really about deriving at all: that the
-  conclusion *arrives*, that `why` names the facts behind it, and that retracting any one
-  of them takes it away again."
+  "Forward chaining on an entailed qualitative relation: the conclusion arrives, `why`
+  names the facts the entailment rests on, and retracting one of them withdraws it."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.chain :as chain]
@@ -43,7 +34,7 @@
           (v/assert kb (list 'nonTangentialProperPart a b) ctx {:strength :monotonic}))
         (partition 2 1 regions)))
 
-;; ---- the thing that could not happen before -----------------------------
+;; ---- an entailment fires a rule ------------------------------------------
 
 (tu/deftest-kb an-entailed-relation-fires-a-forward-rule
   (tu/with-terms [RegA RegB RegC contained CxChainSpace]
@@ -230,22 +221,12 @@
         (is (seq (v/sentexes-matching kb (list contained a) '?ctx)) "the arrival fires")))))
 
 ;; ---- residency, counted -------------------------------------------------
-;;
-;; docs/qcn.md's first claim about the load's cost is that **the read is not the pass**: a
-;; consulting call reads the network out of the KB's `:qcn` atom and rebuilds it only when
-;; the change clock has moved, which takes seventeen thousand reads against thirty-nine
-;; asserts down to seventy-eight.  That is a count the engine computes rather than a
-;; duration, so it is asked here as one: exact, bit-identical across machines, and blind to
-;; a loaded box.  `lein perf`'s `qcn-network-residency` holds the *cost* side of the same
-;; claim; neither subsumes the other.
+;; The count side of docs/qcn.md's residency claim; `lein perf`'s `qcn-network-residency`
+;; holds the cost side.
 
 (defn- networks-built
-  "How many networks `f` made the resident read actually build — the miss half of
-  `qcn-kb/read-network`.
-
-  Counted by wrapping the builder rather than by reading a counter, because the build is
-  a plain private fn and the var is what `observe/cached`'s thunk calls: a `with-redefs`
-  on it sees every miss and no hit."
+  "How many networks `f` made the resident read build: a `with-redefs` on the private
+  builder sees every miss and no hit."
   [f]
   (let [n (atom 0), orig @#'qkb/build-network]
     (with-redefs-fn {#'qkb/build-network (fn [& args] (swap! n inc) (apply orig args))}

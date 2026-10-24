@@ -1,14 +1,15 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.web-lists-test
-  "The lists (`/lists`): whole-KB lists of the defeats, the contradictions and the unary
-  predicates with no genl but `thing`, each run as a read job from its button, and its
-  rows paged."
+  "The lists (`/lists`): whole-KB lists of the defeats, the contradictions, the unary
+  predicates with no genl but `thing` and the held facts and rules, each run as a read job
+  from its button, and its rows paged."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.browser.catalog :as catalog]
             [vaelii.browser.jobs :as jobs]
             [vaelii.browser.web :as web]
             [vaelii.core :as v]
+            [vaelii.impl.checks :as checks]
             [vaelii.test-util :as tu]))
 
 (def ^:dynamic *app* nil)
@@ -138,3 +139,39 @@
                               :headers {"origin" "http://evil.example"
                                         "host" "localhost"}}))))
   (is (empty? (jobs/jobs))))
+
+;; ---- the held facts and rules, which /stats offers and does not read ------------
+
+(deftest a-stats-page-load-reads-no-held-sentex
+  ;; `violations` fetches every held sentex and convicted firing from the record store and
+  ;; sorts them by content: minutes on a corpus, on every load.  The page counts and lists
+  ;; the filed ledger and offers the rest as a job.
+  (let [scan! (fn [& _] (throw (ex-info "a /stats load read the held entries" {})))]
+    (with-redefs [checks/held-argument-entries     scan!
+                  checks/forced-conclusion-entries scan!]
+      (let [r (GET "/stats")]
+        (is (= 200 (:status r)))
+        (is (re-find #"Scan for held facts and rules" (:body r)))
+        (is (re-find #"action=\"/lists/run\"" (:body r)))
+        (is (re-find #"value=\"held\"" (:body r)))
+        (is (= 200 (:status (GET "/stats/rows" "section=violations&offset=0"))))
+        (is (empty? (jobs/jobs)) "no job ran")))))
+
+(deftest the-held-scan-is-a-read-job-listing-what-the-stats-page-does-not
+  (tu/without-entailing
+   (tu/with-terms [person_t rock_t parentOf Rock Mary]
+     (let [kb   tu/*kb*
+           fact (list parentOf Rock Mary)]
+       (doseq [s [(list 'genl person_t 'thing) (list 'genl rock_t 'thing)
+                  (list 'disjoint person_t rock_t) (list rock_t Rock) (list person_t Mary)
+                  fact (list 'arg parentOf 1 person_t)]]
+         (v/assert kb s 'CxUniverse))
+       (is (not (re-find #"inert-argument" (:body (GET "/stats"))))
+           "the page load lists no held fact")
+       (let [r (run-list "held")
+             j (first (jobs/jobs))]
+         (is (= 200 (:status r)))
+         (is (= [:list "held" :done] [(:kind j) (:list j) (:status j)]))
+         (is (false? (:writes? j)) "it claims no writer")
+         (is (= [fact] (mapv :sentence (:rows (meta (:summary j))))))
+         (is (re-find #"inert-argument" (:body r))))))))

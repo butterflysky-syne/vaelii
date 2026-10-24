@@ -60,7 +60,7 @@
                        (in! (list 'disjoint (t "da") (t "db")) cx mono)
                        (in! (list (t "da") (i "D")))
                        (in! (list (t "db") (i "D")) cx mono))
-      ;; a declaration whose type is bound to two arguments waits as a `:mint` entry
+      ;; a declaration whose type is bound to two arguments, which mints nothing
       :mint        (do (in! (list 'binary_predicate (sym "pad%dfloating" k)) 'CxUniverse mono)
                        (in! (list (r "MintRel") (i "Ma") (i "Mb")))
                        (in! (list 'arg (r "MintRel") 1 (sym "pad%dfloating" k))))
@@ -333,7 +333,7 @@
   (into #{} (mapcat :sites) (:reads (run-world kinds n ops known-padding-reads))))
 
 (deftest every-known-padding-read-fires-on-its-world
-  ;; forces the entailing reading: under constraints only nothing mints, so `released-mints` has no world
+  ;; forces the entailing reading: under constraints only nothing mints, so the mint rows have no world
   (tu/with-shipped-config
     (tu/with-entailing
       (doseq [[row {{:keys [pad ops]} :world}] (sort-by key known-padding-reads)]
@@ -365,11 +365,11 @@
          finding)))
 
 (deftest no-write-reads-padding-outside-a-known-site
-  ;; forces the entailing reading: under constraints only nothing mints, and the stream reaches no `released-mints`
+  ;; forces the entailing reading: under constraints only nothing mints, and the stream reaches no mint
   (tu/with-shipped-config
     (tu/with-entailing (is (= [] (stream-findings [1 2 3] 30 [2]))))))
 
 (deftest ^:slow no-write-reads-padding-outside-a-known-site-wide
-  ;; forces the entailing reading: under constraints only nothing mints, and the stream reaches no `released-mints`
+  ;; forces the entailing reading: under constraints only nothing mints, and the stream reaches no mint
   (tu/with-shipped-config
     (tu/with-entailing (is (= [] (stream-findings (range 4 16) 60 [1 3]))))))

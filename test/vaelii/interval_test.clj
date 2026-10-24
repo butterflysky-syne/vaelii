@@ -1,20 +1,10 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.interval-test
-  "Allen's interval algebra (`vaelii.impl.interval`): the thirteen base relations and the
-  seven derived ones, answered by entailment over the path-consistent constraint network
-  of everything asserted in a context.
-
-  Two halves.  The first tests the **algebra alone** — no KB, no context, no belief.  It
-  is the larger half, because unlike the cardinal directions the 169-entry composition
-  table is *transcribed* rather than computed, and a single mistyped entry would be a
-  quietly wrong answer forever after.  So the table is derived here a second time, from
-  the endpoint inequalities that *define* the relations, by enumerating every way three
-  intervals can be laid out — and the two must agree entry for entry.  The second half
-  tests the prover over a KB, where what is really being checked is that a relation
-  nobody stored comes out."
-  (:require [clojure.set :as set]
-            [clojure.test :refer [deftest is testing use-fixtures]]
+  "Allen's interval algebra (`vaelii.impl.interval`): the algebra alone, its table and
+  converse derived a second time from the endpoint inequalities, then the prover over a
+  KB.  The laws every algebra holds are `qcn_algebra_test`'s (docs/time.md)."
+  (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.interval :as iv]
             [vaelii.impl.naming :as nm]
@@ -23,11 +13,7 @@
             [vaelii.impl.qcn-kb :as qkb]
             [vaelii.test-util :as tu]))
 
-;; A fresh KB per test: the upper layer, whose time.txt states the interval relations, and
-;; the prover registered.  The vocabulary is upper-layer content (it is *about* time, so
-;; it is nobody else's business); the prover is opt-in, so
-;; registering it is what turns stored interval facts into a network.  The algebra tests
-;; below need none of it.
+;; A fresh KB per test, with the opt-in prover registered; the algebra tests need none.
 (use-fixtures :each (tu/neutral-fresh
                      #(doto (tu/fresh)
                         (tu/load-core!)
@@ -38,10 +24,8 @@
 ;; ---- the algebra, derived from endpoints --------------------------------
 
 (def ^:private by-endpoints
-  "Each base relation as the inequalities over the four endpoints that *define* it, an
-  interval being `[start end]` with `start < end`.  This is the independent second
-  statement of the algebra: everything below is derived from here and compared against
-  the transcribed table, so the two can only agree by both being right."
+  "Each base relation as the inequalities over the four endpoints that define it, an
+  interval being `[start end]` with `start < end`."
   {:before        (fn [_as ae bs _be] (< ae bs))
    :meets         (fn [_as ae bs _be] (= ae bs))
    :overlaps      (fn [as ae bs be] (and (< as bs) (< bs ae) (< ae be)))
@@ -81,8 +65,7 @@
   (is (= 13 (count iv/all-relations)))
   (is (= iv/all-relations (set (keys by-endpoints)))
       "the transcribed universe and the endpoint definitions name the same relations")
-  (testing "exactly one holds of any two intervals — that is what makes a network of them
-            a constraint network at all"
+  (testing "exactly one holds of any two intervals"
     (doseq [a intervals b intervals]
       (is (= 1 (count (holding a b)))
           (str a " and " b " stand in " (holding a b)))))
@@ -91,9 +74,6 @@
            (set (for [a intervals b intervals] (relation-of a b)))))))
 
 (deftest the-composition-table-matches-the-endpoint-definitions
-  ;; The guard on the whole port.  A mis-transcribed entry is not a crash and not an empty
-  ;; answer — it is a wrong entailment, reported with full confidence, about a pair nobody
-  ;; asserted anything for.  Nothing downstream could catch it, so it is caught here.
   (let [derived @derived-composition]
     (testing "every pair of relations composes to something, and to the same something"
       (doseq [r1 iv/all-relations r2 iv/all-relations]
@@ -110,27 +90,9 @@
                       :when (= rels iv/all-relations)]
                   [r1 r2]))))))
 
-(deftest coincidence-is-the-identity-element
-  (doseq [r iv/all-relations]
-    (is (= #{r} (iv/compose #{:equal} #{r})))
-    (is (= #{r} (iv/compose #{r} #{:equal})))))
-
-(deftest the-converse-pairs-off-and-reverses-composition
-  (is (= #{:after} (iv/converse-set #{:before})))
-  (is (= #{:contains} (iv/converse-set #{:during})))
-  (is (= #{:equal} (iv/converse-set #{:equal})) "equality is its own converse")
-  (testing "it is an involution over the whole universe"
-    (is (= iv/all-relations (iv/converse-set (iv/converse-set iv/all-relations)))))
-  (testing "and it reverses composition, as a relation algebra requires"
-    (doseq [a iv/all-relations b iv/all-relations]
-      (is (= (iv/converse-set (iv/compose #{a} #{b}))
-             (iv/compose (iv/converse-set #{b}) (iv/converse-set #{a})))
-          (str "converse(" a " ∘ " b ")")))))
-
-(deftest composition-of-sets-is-the-union-over-their-members
-  (is (= (set/union (iv/compose #{:before} #{:during}) (iv/compose #{:meets} #{:during}))
-         (iv/compose #{:before :meets} #{:during}))
-      "a disjunction on either side admits every combination"))
+(deftest the-converse-matches-the-endpoint-definitions
+  (is (= (into {} (for [a intervals b intervals] [(relation-of a b) (relation-of b a)]))
+         (into {} (for [r iv/all-relations] [r (first (iv/converse-set #{r}))])))))
 
 (deftest the-algebra-drives-the-engine-with-no-kb-in-sight
   (let [net '{[A B] #{:before} [B A] #{:after}
@@ -279,6 +241,52 @@
       (is (v/ask? kb (list 'properSubintervalOf T1 T2) C))
       (is (contains? (answers kb (list 'subintervalOf '?x T2) '?x) T1))
       (is (= #{T2} (answers kb (list 'properSubintervalOf T1 '?y) '?y))))))
+
+(defn- orderings
+  "Every ordering of `coll`."
+  [coll]
+  (if (empty? coll)
+    [[]]
+    (mapcat (fn [x] (map #(vec (cons x %)) (orderings (remove #{x} coll)))) coll)))
+
+(tu/deftest-kb a-membership-moves-a-typed-containment-for-its-readers-in-every-order
+  ;; `(time_point P1)` keeps `(subintervalOf P1 P2)` from holding, and no support handle
+  ;; names the membership, so its arrival and departure have to reach the forward rule
+  ;; and the exception reading the containment.  Each order asserts every sentence, reads
+  ;; whether `(sub P1)` is believed, retracts `gone` and reads again.
+  (doseq [[label gone expected sentences]
+          [["a forward rule, the membership retracted" :point [false true]
+            (fn [P1 P2 sub _ _]
+              {:rule   [(list 'implies (list 'subintervalOf '?x '?y) (list sub '?x)) {:direction :forward}]
+               :during [(list 'during P1 P2)]
+               :point  [(list 'time_point P1)]})]
+           ["a forward rule, the genl edge under the membership retracted" :edge [false true]
+            (fn [P1 P2 sub _ moment]
+              {:rule   [(list 'implies (list 'subintervalOf '?x '?y) (list sub '?x)) {:direction :forward}]
+               :during [(list 'during P1 P2)]
+               :point  [(list moment P1)]
+               :edge   [(list 'genl moment 'time_point)]})]
+           ["an exception on the containment, the membership retracted" :point [true false]
+            (fn [P1 P2 sub mark _]
+              {:rule   [(list 'exceptWhen (list 'subintervalOf '?x P2)
+                              (list 'set/defaultRule
+                                    (list 'set/forwardRule (list 'implies (list mark '?x) (list sub '?x)))))]
+               :mark   [(list mark P1)]
+               :during [(list 'during P1 P2)]
+               :point  [(list 'time_point P1)]})]]]
+    (let [orders  (orderings (keys (sentences 'P1 'P2 'sub 'mark 'moment)))
+          beliefs (frequencies
+                   (for [order orders]
+                     (tu/with-terms [P1 P2 sub mark moment]
+                       (let [m    (sentences P1 P2 sub mark moment)
+                             hs   (into {} (for [k order :let [[s o] (m k)]] [k (v/assert kb s C (or o {}))]))
+                             read #(boolean (seq (v/sentexes-matching kb (list sub P1) C)))
+                             a    (read)
+                             _    (v/retract! kb (hs gone))
+                             b    (read)]
+                         (doseq [k (reverse order) :when (not= k gone)] (v/retract! kb (hs k)))
+                         [a b]))))]
+      (is (= {expected (count orders)} beliefs) label))))
 
 (tu/deftest-kb an-entailed-containment-answers-generic-parthood
   ;; subintervalOf is below partOf and properSubintervalOf below properPartOf, so a

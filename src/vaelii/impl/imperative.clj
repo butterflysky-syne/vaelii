@@ -1,18 +1,10 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.imperative
-  "The `do/` imperatives — the one shape given to `assert` that is neither a fact nor
-  a rule but an *instruction*: run a labeling / classification and return its result,
-  storing nothing.  `assert` dispatches a `do/` form here (`run`) before any naming or
-  well-formedness check, since those expect a sentence.
-
-  This is not part of the assertion write-path — it is a separate feature (answer-set
-  labeling, docs/labeling.md) routed through `assert` for one entry point — so it lives
-  outside `vaelii.core`.  The backing functions live under `vaelii.impl.asp.*` and are
-  resolved by symbol on first use, so loading `vaelii.core` does not load the ASP
-  namespaces; `vaelii.core`'s reasoner and solver tables defer the same way.  No `asp`
-  namespace requires this one, so the deferral breaks no require cycle.  The clingo or
-  clasp choice is made inside the resolved fn (`vaelii.impl.asp.solver`)."
+  "The `do/` imperatives: an instruction given to `assert`, which dispatches it here
+  (`run`) before any naming or well-formedness check.  The form is never stored.  Each
+  backing fn is resolved by symbol on first use, so loading `vaelii.core` loads no
+  `vaelii.impl.asp.*` namespace.  See docs/labeling.md, \"The `do/` channel\"."
   (:require [clojure.string :as str]))
 
 (defn- imperative-fn
@@ -31,19 +23,10 @@
                       {:type :not-assertible :form functor :known (set (keys known))})))))
 
 (defn run
-  "Run a `do/` imperative and return **its result**, not a handle.
-
-  `assert` returns a handle because asserting stores something; an imperative stores
-  nothing, so there is no handle to return and the useful answer is what it did.  A
-  `do/` form is already outside the assertion contract — like `ist`, it is a form given
-  to `assert` that is not a fact — so this is the third shape `assert` can return, and
-  the one a caller asked for by writing an imperative.
-
-  `(do/labeling Ctx)` classifies the dilemmas the KB currently holds and commits to one
-  optimal labeling of them inside `Ctx` (docs/labeling.md).  `(do/label Base Into)`
-  grounds the `assumptionRules` visible from `Base` and materializes one **inert**
-  labeling context per optimal answer set; `(do/classify Into)` gathers brave/cautious
-  over those labelings (docs/solving.md)."
+  "Run a `do/` imperative and return its result map, not a handle:
+  `(do/labeling Ctx [Base])` → `label/label-dilemmas`, `(do/label Base Into [mode])` →
+  `solve-context/label`, `(do/classify Into)` → `solve-context/classify`.  Throws
+  `:not-assertible` for an unknown imperative or ill-shaped arguments."
   [kb sentence context]
   (let [[functor & args] sentence
         f (imperative-fn functor)

@@ -21,8 +21,9 @@
   recovered on open, so a fact asserted in one invocation is there in the next.  A `--dir`
   whose parent does not exist is refused (`open-kb-from`) rather than created.
   `upgrade` opens a store, brings its reasoning image and index image up to this build, and
-  closes it (`upgrade!`); `--verify` recovers anyway and compares the two images, and
-  `--trust` keeps an image written under other engine source.
+  closes it (`upgrade!`); `--verify` recovers anyway and compares the two images,
+  `--trust` keeps an image written under other engine source, and `--sync` brings the
+  shipped contexts to what this engine ships.
   With no `--dir` the KB is
   in-memory and lives only for the process — useful for `repl` or a single compound
   session, pointless across one-shot commands.  `--starter` loads the shipped schema
@@ -50,6 +51,7 @@
             [taoensso.trove :as trove]
             [vaelii.core :as v]
             [vaelii.host.starter :as starter]
+            [vaelii.host.sync :as sync]
             [vaelii.impl.naming :as nm]
             [vaelii.impl.reasoning-image :as ri])
   (:import [java.io File PushbackReader StringReader]))
@@ -68,7 +70,7 @@
 
 (def ^:private bare-flags
   "Every flag spelling the driver binds to `true`, taking no value."
-  #{"--help" "--memory" "--starter" "--verify" "--trust"})
+  #{"--help" "--memory" "--starter" "--verify" "--trust" "--sync"})
 
 (defn parse-opts
   "Split raw args into `[positionals opts]`.  `--k v` becomes `{:k v}`, a bare flag
@@ -238,7 +240,7 @@
    "export"      #{:variant :compression :format}
    "describe"    #{:context}
    "why-not"     #{:nearest}
-   "upgrade"     #{:verify :trust}})
+   "upgrade"     #{:verify :trust :sync}})
 
 (defn- flag-names [ks] (str/join ", " (map #(str "--" (name %)) (sort ks))))
 
@@ -369,7 +371,8 @@
          "  --verify              upgrade: recover anyway, and report whether belief changed\n"
          "  --trust               upgrade: keep an image written under other engine source,\n"
          "                        and rebuild only images the records moved behind\n"
-         "  (repl takes all six — its options are fixed at start and each line reuses them)\n")))
+         "  --sync                upgrade: then bring the shipped contexts to what this engine\n"
+         "                        ships, one change at a time (writes the store)\n"         "  (repl takes all six — its options are fixed at start and each line reuses them)\n")))
 
 (defn- in-content-order
   "An answer **set**, in a printed content order.
@@ -522,6 +525,13 @@
     (when starter (starter/load-into kb))
     kb))
 
+(defn- sync-line
+  "One change of `upgrade --sync`'s step-by-step sync as a progress line on stderr."
+  [{:keys [done total op]}]
+  (binding [*out* *err*]
+    (println (str "sync " done "/" total
+                  (when op (str " " (name (:op op)) " " (pr-str (:form op)) " in " (:context op)))))))
+
 (defn upgrade!
   "Bring the store in `dir` up to this build, and report what that took.  Opens the store
   under the backend its files were written by, with `:recover? :auto`: a reasoning image this
@@ -534,14 +544,15 @@
      :reasoning :current | :rebuilt | :written | :no-image
      :image  {:format :network :written-at :source}   ; the manifest now on disk, :source cut to 12
      :index  :current | :rewritten | :no-image
-     :verify …}                                       ; with :verify only
+     :verify …                                        ; with :verify only
+     :sync   {:added :removed :forwarded :refused}}   ; with :sync only
 
-  `:current` is an image the open installed and left as it was; `:rebuilt` is one the open
-  declined and replaced; `:written` is the first image of a store that held none;
-  `:no-image` is a backend that keeps none (`:disk-log`, `:disk-columnar`).  The records
-  are read and never rewritten.
+  `:reasoning` is what the open did: `:current` is an image it installed; `:rebuilt` is one
+  it declined and replaced; `:written` is the first image of a store that held none;
+  `:no-image` is a backend that keeps none (`:disk-log`, `:disk-columnar`).  Without
+  `:sync` the records are read and never rewritten.
 
-  Two options change what happens to an image written under other engine source:
+  Three options:
 
   - `:verify` moves the image to `reasoning.prev/` before the open, so the open recovers from
     the records and writes a new image.  Then it compares the two
@@ -552,11 +563,16 @@
   - `:trust` opens with `:recover? :trust`, as the browser does: the image is installed and
     kept, `:current`, and belief is recovered only when the records moved behind the
     images.  It refuses `:verify` (`:unknown-option`), which asks for the recover.
+  - `:sync` brings the shipped contexts to what this engine ships (`sync/sync-each!`, one
+    change at a time, a progress line per change on stderr) after the open and after the
+    `:verify` comparison.  It writes records, so the close writes a new image and `:image`
+    is that one.  A KB whose `v/write-hazards` is not empty is not synced, and `:sync` is
+    `{:skipped [hazard …]}`.
 
   A directory holding no store is refused (`:unknown-source`) rather than creating an empty
   one there.  `!` because the image it replaces cannot be read back."
   ([dir] (upgrade! dir {}))
-  ([dir {:keys [verify trust]}]
+  ([dir {:keys [verify trust] sync? :sync}]
    (let [backend   (or (v/store-backend dir)
                        (throw (ex-info (str "no store at " dir " — upgrade opens an existing"
                                             " store and creates none")
@@ -580,31 +596,44 @@
        ;; a `reasoning.prev/` left by an interrupted --verify holds an image this build declined
        (ri/delete-image! prev)
        (ri/move-image! bdir prev))
-     (v/close! (v/open-kb {:backend backend :dir (str dir) :recover? (if trust :trust :auto)}))
-     (let [i1       (mtime index)
-           fresh    (ri/read-manifest bdir)
-           verified (when verify
-                      (let [r (cond
-                                (nil? old)   :no-previous-image
-                                (nil? fresh) :no-image
+     (let [kb       (v/open-kb {:backend backend :dir (str dir) :recover? (if trust :trust :auto)})
+           [opened verified synced]
+           (try
+             ;; the open's image is read before the sync moves the records the close then
+             ;; writes a new image for, so `:reasoning` and `:verify` describe the open
+             (let [opened   (ri/read-manifest bdir)
+                   verified (when verify
+                              (cond
+                                (nil? old)    :no-previous-image
+                                (nil? opened) :no-image
                                 (not= (select-keys old [:format :network])
-                                      (select-keys fresh [:format :network])) :layout-changed
-                                (not= (:records old) (:records fresh))    :records-moved
+                                      (select-keys opened [:format :network])) :layout-changed
+                                (not= (:records old) (:records opened))    :records-moved
                                 :else (assoc (ri/compare-images prev bdir)
-                                             :against (short (:source old))))]
-                        (if fresh (ri/delete-image! prev) (ri/move-image! prev bdir))
-                        r))]
+                                             :against (short (:source old)))))
+                   synced   (when sync?
+                              (if-let [hz (not-empty (v/write-hazards kb))]
+                                {:skipped (vec (sort (keys hz)))}
+                                (sync/sync-each! kb sync-line)))]
+               [opened verified synced])
+             (finally (v/close! kb)))
+           i1       (mtime index)
+           fresh    (ri/read-manifest bdir)
+           opened   (or opened fresh)]
+       (when verify
+         (if fresh (ri/delete-image! prev) (ri/move-image! prev bdir)))
        (cond-> {:dir     (str dir)
                 :backend backend
-                :reasoning (cond (nil? fresh)    :no-image
-                                 (not had?)      :written
-                                 (= old fresh)   :current
-                                 :else           :rebuilt)
+                :reasoning (cond (nil? opened)    :no-image
+                                 (not had?)       :written
+                                 (= old opened)   :current
+                                 :else            :rebuilt)
                 :image   (some-> fresh
                                  (select-keys [:format :network :written-at])
                                  (assoc :source (short (:source fresh))))
                 :index   (cond (nil? i1) :no-image (= i0 i1) :current :else :rewritten)}
-         verify (assoc :verify verified))))))
+         verify (assoc :verify verified)
+         sync?  (assoc :sync synced))))))
 
 ;; ---- the shell -----------------------------------------------------------
 
@@ -692,7 +721,7 @@
     ;; pressure as the heap fills, and the closure cache evicts to the lowered bound on its
     ;; next store, so no list of KBs is needed for the guard to reach it
     :else (do (v/install-memory-guard! {:kbs (constantly nil)})
-              (upgrade! (:dir opts) (select-keys opts [:verify :trust])))))
+              (upgrade! (:dir opts) (select-keys opts [:verify :trust :sync])))))
 
 (def ^:private without-a-kb
   "The commands `run` answers without opening the run's KB, each with the fn that answers

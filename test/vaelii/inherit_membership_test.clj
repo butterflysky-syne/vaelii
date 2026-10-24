@@ -3,16 +3,10 @@
 (ns vaelii.inherit-membership-test
   "A claim read off the extent tests a term's reach for membership and builds no closure.
 
-  The claims bearing on a goal lie in the product of its preserved arguments' reaches.
-  Reading the extent keeps the stored tuples in the product, one membership test per
-  preserved argument, and weighing the extent against the product needs the product's
-  size only up to the extent.  So a `genl` reach, scoped or not, is walked only up to a
-  bound and held as a set, past which a membership is a reachability walk and the size a count
-  that stops at a limit (`inherit/reaches?`, `inherit/reach-size`), and no closure is
-  built through the closure cache.  The settle's discovery pass asks
-  this of every stored claim of a preserving predicate, where a closure per argument term
-  overran the closure cache on a large KB.  Every answer must be the one the whole reach
-  gives."
+  A `genl` reach, scoped or not, is walked up to a bound and held as a set; past the
+  bound a membership is a reachability walk and the size a count that stops at a limit
+  (`inherit/reaches?`, `inherit/reach-size`; docs/inherit.md, \"What one question
+  costs\").  Every answer must be the one the whole reach gives."
   (:require [clojure.test :refer [deftest is]]
             [vaelii.core :as v]
             [vaelii.impl.inherit :as inherit]

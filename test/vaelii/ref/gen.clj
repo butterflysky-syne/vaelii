@@ -8,7 +8,7 @@
   shrinker and the failure report.
 
   A **world** is `{:contexts #{C ...} :writes [{:sentence S :context C :strength k} ...]}`
-  (the belief reference design note).  An **order** is a vector holding each write of a
+  (`vaelii.ref.world`).  An **order** is a vector holding each write of a
   world once, so an order stays meaningful after the shrinker drops a write: dropping it
   from every order is `filterv`.
 
@@ -16,12 +16,10 @@
   `check-world`'s judges map as `:reference`, a function `world -> {C {:believed #{S}
   :out #{S} :inherited #{S} :nogoods [...]}}`.
 
-  **The reference judges every write offered** (decision D8).  A write the engine refuses
-  is not dropped from the reference's world: the run records the refusal as a divergence
-  of kind `:engine-refused-other` (`refusal-kind`), and the belief differences of that
-  run are reported under that divergence and never as belief disagreements.  Every belief
-  disagreement of a run with no refusal is shrunk to a minimal world and given a `:kind`
-  by `classify`.
+  The reference judges every write offered (docs/reference.md, \"What the engine has to
+  equal\"): a run's refusal is a divergence of kind `:engine-refused-other`
+  (`refusal-kind`), and every belief disagreement of a run with no refusal is shrunk to a
+  minimal world and given a `:kind` by `classify`.
 
   Every KB this namespace opens is an in-RAM KB on a space of its own
   (`[::ref n]`, `n` from a process counter).  `run-order` and every caller of it
@@ -127,8 +125,8 @@
 ;; ---- the generator -----------------------------------------------------
 
 (def default-sizes
-  "The v1 sizes from the design note, each an inclusive `[lo hi]` range.  `:writes`
-  counts every write, rules included."
+  "The v1 sizes, each an inclusive `[lo hi]` range.  `:writes` counts every write, rules
+  included."
   {:contexts    [2 4]
    :types       [3 6]
    :individuals [2 4]
@@ -250,10 +248,7 @@
   "One non-rule write drawn from the menu: a `genlCx` edge, a `genl` edge or its denial, a
   membership or its denial, a tuple or its denial, a declaration, a denial of a forced-monotonic
   write (one among `acc`, the writes drawn before it, when there is one), or a
-  `violation` of a mark among `acc`.  Every write takes a random strength: the reference
-  and the engine both read a write of `vaelii.ref.world/forced-monotonic` as never a
-  loser and a `genlCx` write as `:monotonic`, and both defeat a denial of one beside it
-  at either strength."
+  `violation` of a mark among `acc`.  Every write takes a random strength."
   [rng {:keys [contexts types individuals predicates] :as pools} acc]
   (let [ctx   #(pick rng contexts)
         kind  (weighted rng (cond-> [[2 :genl] [1 :genl-denial] [5 :member] [2 :member-denial]
@@ -361,9 +356,8 @@
   `(ta ?x) ⇒ (tb ?x)`, placed in `k`, and an individual `I`: a `:monotonic` `(ta I)` in
   `k`, and either a `:default` `(not (tb I))` in `k` or a `:monotonic` `(disjoint tb tc)`
   and a `:default` `(tc I)` in `k`, `tc` a type that is neither `ta`, the guard's type,
-  nor above or below `tb` over `type-edges`.  The engine confers the conclusion
-  `:monotonic` and takes the `:default` member OUT; the reference confers it `:default`
-  and reads a dilemma."
+  nor above or below `tb` over `type-edges`.  The conclusion is `:default`, so the clash
+  is a dilemma."
   [rng {:keys [types individuals]} facts rules]
   (when-let [[k [ta tb tu]] (first (keep #(when-let [p (guarded-parts (:sentence %))]
                                             [(:context %) p])
@@ -523,10 +517,7 @@
   `guarded-clash`, a quarter of the worlds the writes of `release-below`, a third the
   writes of `collision`, and a third of the worlds holding a guarded rule the writes of
   `blocker-below`, and a quarter of the worlds the writes of `declared-below`, each less
-  any `[sentence context]` pair already drawn.  Every write of
-  `vaelii.ref.world/forced-monotonic` is never a loser, a `genlCx` write is read
-  `:monotonic`, and a denial of one loses its negation nogood at either strength.
-  `:contexts` holds every generated context plus `CxUniverse` when an edge names it."
+  any `[sentence context]` pair already drawn.  `:contexts` holds every generated context plus `CxUniverse` when an edge names it."
   [seed opts]
   (let [rng    (Random. (long seed))
         sizes  (merge default-sizes opts)
@@ -583,9 +574,7 @@
 (defonce ^:private space-counter (atom 0))
 
 (defn engine-form
-  "The sentence `assert` receives for a world write.  A bare `implies` is backward-only
-  (docs/inference.md), so a rule is wrapped `set/forwardRule`, inside its `exceptWhen`
-  when it has one; every other write is asserted as written."
+  "The sentence `assert` receives for the world write `s`: `s` under `forward`."
   [s]
   (forward s))
 
@@ -793,8 +782,6 @@
   "The inherited claims the reference result `ref-c` (one context's map) derives, which
   the engine answers through `ask?` (decision D5)."
   [ref-c]
-  ;; `believe`'s per-context map carries `:inherited #{S}`; before it
-  ;; lands the key is absent and this is empty
   (set (:inherited ref-c)))
 
 (defn- merge-at?
@@ -802,8 +789,6 @@
   all-monotonic symbol-filler functional or anti-symmetric pair, whose belief comparison
   is skipped and counted."
   [ref-c]
-  ;; `decide` gives such a nogood the verdict :merge; before it lands no
-  ;; nogood carries it and nothing is skipped
   (boolean (some #(= :merge (:verdict %)) (:nogoods ref-c))))
 
 (defn- ref-in? [ref-c s]

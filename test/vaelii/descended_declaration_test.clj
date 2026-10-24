@@ -26,6 +26,7 @@
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.rules :as vr]
             [vaelii.test-util :as tu]))
 
@@ -118,7 +119,7 @@
   ;; `entail-under-edge` on the same path, and the same three ingredients in the same
   ;; order: the fact and the `arg` declaration first, the edge concluded last.
   (tu/with-terms [person parentOf fatherOf relates Ann Mary]
-    (binding [checks/*assertive-arg-types?* true]
+    (binding [argument/*assertive-arg-types?* true]
       (v/assert kb (list 'genl person 'thing) 'CxUniverse)
       (v/assert kb (list 'arg parentOf 1 person) 'CxUniverse)
       (v/assert kb (list fatherOf Ann Mary) 'CxUniverse)

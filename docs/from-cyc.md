@@ -45,7 +45,7 @@ own declaration — over `(eats Fern Kibble)` derives `(animal Fern)`, a justifi
 sentex that retracts like any conclusion, and refuses nothing on what `Fern` is already
 known to be. Where `Fern` is a `plant`, which `(separating organism animal plant)`
 separates from `animal`, the derived membership and the stated one are a placed clash, as
-two stated memberships are. That is the default, behind `checks/*assertive-arg-types?*`
+two stated memberships are. That is the default, behind `argument/*assertive-arg-types?*`
 ([argtypes.md](argtypes.md)).
 
 A **literal** is still refused: its EDN kind is knowable from the value itself and those
@@ -115,7 +115,7 @@ Cyc's three modes, and what each maps to:
 |---|---|---|
 | strict | constraints must be provable | no equivalent |
 | lenient | constraints must not be disjoint | what `VAELII_ASSERTIVE_ARG_TYPES=0` leaves: a demonstrated conflict is refused, and an argument with no place in the hierarchy is excused |
-| assertive | that, plus eagerly concluding tighter `isa`s | **the default** (`checks/*assertive-arg-types?*`): the argument is concluded a member of the declared type, and a concluded type disjoint from one it holds is a placed clash, not a refusal |
+| assertive | that, plus eagerly concluding tighter `isa`s | **the default** (`argument/*assertive-arg-types?*`): the argument is concluded a member of the declared type, and a concluded type disjoint from one it holds is a placed clash, not a refusal |
 
 The assertive reading holds for a declaration stated in the asserting context and for one
 the context inherits from an ancestor. A concluded membership is stored at each maximal
@@ -143,23 +143,11 @@ is one: **there is no everything-context to assert into**, and asserting into ei
 refused, as is any `genlCx` edge naming one. Scope is a property of the read, and these
 are names for readings rather than places to stand.
 
-A **variable** context — `?ctx`, the default of every short arity, or any name you
-choose — is the joint reading too, so `?ctx` and `CxInference` are one reading with two
-spellings, differing only in where the witness lands:
-
-| you pass | belief | whose view must hold the answer | where the witness goes |
-|---|---|---|---|
-| `CxEverything` | **ignored** | — *(the store, not a context's view)* | — |
-| `?var` (incl. the default `?ctx`) | followed | every literal in **one** context's view | unified into that variable |
-| `CxInference` | followed | every literal in **one** context's view | `:context`, beside the bindings |
-| a real `Cx…` | followed | every literal in **this** context's view | — |
-| `CxNothing` | followed (vacuously) | the empty view — the provers alone | — |
-
-Two axes, not a ladder. `CxEverything` is the odd one out and not by a degree: it is a
-named opt-out of the fourth invariant, so its answers are not belief claims and say a
-derivation is *spelled* in the store rather than held. Everything else asks what the KB
-holds, and differs only in whose view has to hold it. That is the row Cyc has no equivalent
-of, because an `Mt` there is always somewhere to stand.
+A **variable** context (`?ctx`, the default of every short arity, or any name you choose)
+is the same reading as `CxInference`, with the witness unified into the variable. The
+table of the five readings, and why `CxEverything` alone ignores belief, is in
+[contexts.md](contexts.md#the-query-contexts-reading-modes-wearing-a-contexts-spelling).
+An `Mt` in Cyc is always somewhere to stand, so Cyc has no equivalent of these readings.
 
 **Not naming a context does not mean the union.** A conjunctive read will not join a fact
 in `CxA` to a fact in `CxB` when no context sees both, because that is an answer no reader

@@ -907,7 +907,8 @@
 
 (defn- check-descriptor
   "`d`, or a throw naming the first slot outside its closed set."
-  [{:keys [id label kind holds-content? keyed-by reads retired-by computed imaged? at value]
+  [{:keys [id label kind holds-content? keyed-by reads retired-by computed imaged? at value
+           covered-by]
     :as d}]
   (cond
     (not (keyword? id))                     (refuse-descriptor id "no keyword :id")
@@ -924,6 +925,10 @@
     (refuse-descriptor id (str "retired-by " retired-by))
     (not (or (= :pass kind) value (seq at)))
     (refuse-descriptor id "neither :at nor :value, so nothing can read it")
+    (not (or (nil? covered-by)
+             (and (map? covered-by) (every? #{:perf :perf-ab} (keys covered-by))
+                  (every? #(and (vector? %) (every? keyword? %)) (vals covered-by)))))
+    (refuse-descriptor id (str "covered-by " covered-by))
     :else d))
 
 (defn register-derived
@@ -946,6 +951,9 @@
     :cache         the `register-cache` id it is registered under as well, where it is one
     :bound         its bound, as a phrase, where `:cache` gives none
     :value         `(fn [kb])` -> its current value, where `:at` does not reach it
+    :covered-by    `{:perf [check …] :perf-ab [probe …]}`: the measurements that fail
+                   when the row is replaced by a recompute at its read; `lein lint`'s
+                   `derived` check requires it of the files it lists
     :live          `(fn [kb])` -> how many of its entries are current, for a row whose
                    retired entries stay held until a read replaces them; `start-tally!`
                    counts a retirement of such a row as a fall in this number

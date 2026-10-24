@@ -31,8 +31,9 @@
   pass, so `ensure-quasiquote-functions` (or the marks it asserts) precedes the
   constructions it reduces."
   (:require [vaelii.impl.kb :as kb]
-            [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.impl.provers :as provers]
+            [vaelii.impl.resolution :as res]
             [vaelii.impl.sentex :as sx]
             [vaelii.impl.taxonomy :as tax]
             [vaelii.impl.types.reasoning :as reasoning]
@@ -55,7 +56,7 @@
 
 (defn any-quasiquote?
   "Presence check: is quasiquotation enabled — `(unreifiable_function Quasiquote)` declared?  False ⇒
-  the reducer short-circuits, one prop read.  Mirrors `nat/any-reifiable-functions?`.
+  the reducer short-circuits, one prop read.  Mirrors `nat-read/any-reifiable-functions?`.
 
   The mark is read unscoped: the check asks whether the KB stores it."
   [kb]
@@ -74,11 +75,11 @@
   [kb]
   (let [tax (reasoning/taxonomy kb)]
     (doseq [s (cond-> []
-                (not (nat/reifiable-function? kb quote-function))
+                (not (nat-read/reifiable-function? kb quote-function))
                 (conj (list 'reifiable_function quote-function))
                 (not (tax/has-prop? tax :unreifiable quasiquote-function))
                 (conj (list 'unreifiable_function quasiquote-function)))]
-      (wiring/assert-sentence kb s nat/universal-context {:strength :monotonic :chain? false}))))
+      (wiring/assert-sentence kb s nat-read/universal-context {:strength :monotonic :chain? false}))))
 
 (defn- unquote-form? [x]
   (and (seq? x) (= unquote-marker (first x)) (= 2 (count x))))
@@ -116,7 +117,7 @@
     ;; over `E` and reduce a nested construction the write already fixed, leaving it stored
     ;; one way and queried (top level only) another.
     (and (seq? term)
-         (or (contains? nat/nat-quoting-predicates (first term))
+         (or (contains? res/nat-quoting-predicates (first term))
              (sx/quoting-functor? (first term))))
     term
     (vector? term) (mapv #(reduce-term kb % reify-fn) term)
@@ -139,7 +140,10 @@
   "Bring a `prove` / `query` / `ask` goal (a formula, or a vector of them = a conjunction)
   into the form the stored content is in, so a lookup can meet it: **reify** ground
   NATs to their existing constants, then **rewrite** terms to their equality-class
-  representatives and schematic normal forms (`kb/rewrite-goal`).
+  representatives and schematic normal forms (`kb/rewrite-goal`).  A never-minted NAT reads
+  as `nat/no-match`, except in a positive equation (`res/equation?`), which keeps it as
+  written (`nat-read/reify-existing`) so the equality closure compares it by identity and
+  congruence.
 
   This is the parity every read path holds to, and the backward chainers need it as
   much as the rest: without the rewrite step a goal naming a merged spelling — or one
@@ -159,12 +163,36 @@
 
   Rewritten by the merges `context` sees, since that is where the goal is asked.  It lives
   here, beside `maybe-reduce`, because it composes the two read-time reductions
-  (`maybe-reduce` and `nat/maybe-reify-for-read`) with the equality rewrite, and both
+  (`maybe-reduce` and `nat-read/maybe-reify-for-read`) with the equality rewrite, and both
   `vaelii.core`'s read entry points and `vaelii.impl.predall`'s audit prepare a goal the
   same way through this one function."
   [kb goal context]
-  (letfn [(prep [g] (kb/rewrite-goal kb (nat/maybe-reify-for-read kb (maybe-reduce kb g) context) context))]
+  (letfn [(read-nats [g] (if (res/equation? g)
+                           (binding [nat-read/*withheld* (nat-read/withheld-at kb context)]
+                             (nat-read/reify-existing kb g context))
+                           (nat-read/maybe-reify-for-read kb g context)))
+          (prep [g] (kb/rewrite-goal kb (read-nats (maybe-reduce kb g)) context))]
     (if (vector? goal) (mapv prep goal) (prep goal))))
+
+(defn goal-alternatives
+  "`goal` as the conjunctions a backward reader answers and merges (a sentence is a
+  conjunction of one), each read through the believed correspondences
+  (`res/goal-alternatives`, docs/nat.md, The corresponding predicate)."
+  [kb goal]
+  (res/goal-alternatives kb (if (vector? goal) goal [goal]) nat-read/no-match))
+
+(defn prepare-conjunction-for-read
+  "`goal` as the one conjunction a reader that merges no answers takes
+  (`goal-alternatives`), each goal prepared as `prepare-goal-for-read` prepares it.
+  Throws a `:shape` refusal when the goal reads through several declaration shapes."
+  [kb goal context]
+  (let [alts (goal-alternatives kb goal)]
+    (when (< 1 (count alts))
+      (throw (ex-info (str "the goal's function applications read through " (count alts)
+                           " correspondence declaration shapes, and this entry point merges no"
+                           " answers; prove or query it: " (pr-str goal))
+                      {:type :shape :goal goal :alternatives alts})))
+    (prepare-goal-for-read kb (first alts) context)))
 
 (defn ask-prepared
   "Answer `goal` through the prover registry in the one context `ctx`, the goal prepared

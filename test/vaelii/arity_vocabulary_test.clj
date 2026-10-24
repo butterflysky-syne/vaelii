@@ -1418,13 +1418,16 @@
         (run! #(v/retract! kb (hs %)) (reverse order))))))
 
 (tu/deftest-kb an-engine-term-s-binding-holds-none-of-its-tuples-inert
-  ;; `genl`'s length is its shape, so a third-length binding stored for it moves nothing
-  (tu/with-terms [low_kind high_kind]
-    (let [b (v/assert kb '(arity genl 3) 'CxUniverse)
+  ;; `genl`'s length is its shape, so a third-length binding the settle stores for it off a
+  ;; `:monotonic` metatype route moves nothing; `assert` refuses `(arity genl 3)`
+  (tu/with-terms [low_kind high_kind kindrel]
+    (let [m {:strength :monotonic}
+          k (v/assert kb (list kindrel 'genl) 'CxUniverse m)
+          r (v/assert kb (list 'genl kindrel 'ternary_predicate) 'CxUniverse m)
           e (v/assert kb (list 'genl low_kind high_kind) 'CxUniverse)]
+      (is (some? (v/handle-of kb '(ternary_predicate genl) 'CxUniverse)))
       (is (v/believed? kb e 'CxUniverse))
-      (v/retract! kb e)
-      (v/retract! kb b))))
+      (run! #(v/retract! kb %) [e r k]))))
 
 (def ^:private unseen-binding-rows
   "`[binding-strength order]`: the binding's strength and the arrival order of the three
@@ -1498,3 +1501,40 @@
           (v/retract! kb three)
           (is (= [false false] [(v/believed? kb t 'CxUniverse) (v/believed? kb t CxR)])))
         (v/retract! kb two)))))
+
+(tu/deftest-kb a-binding-the-sentence-alone-shows-is-wrong-is-refused
+  ;; `try-assert` refuses as `assert` does, and the spelling half follows the `:naming`
+  ;; policy, so a KB with its own spelling conventions stores it
+  ;; `with-terms` lowercases a base, so the camelCase relation is spelled here; no row
+  ;; stores it
+  (tu/with-terms [warm_t rel]
+    ;; [binding refused-type]: what `assert` and `check` answer for a binding the
+    ;; sentence alone decides, against an engine term's shape and against the bound
+    ;; relation's spelling; nil where the binding agrees
+    (doseq [[s refused] (let [likesRel (symbol (str rel "Of"))]
+                          [[(list 'arity 'genl 3)              :length-against-shape]
+                           [(list 'arity 'arg 2)               :length-against-shape]
+                           [(list 'arity 'partition 3)         :length-against-shape]
+                           [(list 'arityMin 'partition 4)      :length-against-shape]
+                           [(list 'ternary_predicate 'genl)    :length-against-shape]
+                           [(list 'variable_arity 'partition)  nil]
+                           [(list 'arityMin 'partition 2)      nil]
+                           [(list 'arity 'genl 2)              nil]
+                           [(list 'binary_predicate warm_t)    :length-against-spelling]
+                           [(list 'arityMin warm_t 2)          :length-against-spelling]
+                           [(list 'arity likesRel 1)           :length-against-spelling]
+                           [(list 'unary_predicate likesRel)   :length-against-spelling]
+                           [(list 'arity warm_t 1)             nil]
+                           [(list 'arityMin likesRel 1)        nil]
+                           [(list 'variable_arity warm_t)      nil]])
+            :let [thrown (fn [write k] (try (write k s 'CxUniverse) nil
+                                            (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]]
+      (testing (pr-str s)
+        (is (= refused (:type (first (v/check kb s 'CxUniverse)))) "check reports it")
+        (when refused
+          (is (= [refused refused] [(thrown v/assert kb) (thrown v/try-assert kb)]))
+          (is (nil? (v/handle-of kb s 'CxUniverse)) "nothing stored")
+          (is (= (when (= refused :length-against-shape) [refused])
+                 (some->> (v/check (assoc kb :naming :off) s 'CxUniverse) seq (mapv :type)))
+              "the spelling half reads the naming policy"))))))
+

@@ -54,32 +54,11 @@
       (`vaelii.impl.decide`); the network records no defeat, and nothing forces a datum
       OUT.
 
-    * superseded — a *map* `datum -> reason` of datums displaced by an equality
-      merge: the stale spelling of a fact whose terms have been rewritten to their
-      class representative (docs/equality.md).  Three things make it its own state
-      rather than a reuse of `blocked`:
-
-      - `blocked` names *justifications*, and a directly asserted `(bornIn Dep
-        Chicago)` is a **premise with no justification at all** — `region-fixpoint`
-        seeds every premise IN unconditionally, so there is nothing for a block to
-        invalidate.  Superseding has to act on the datum.
-      - A superseded spelling lost no argument; it was restated, and `why-not` must be
-        able to say so — hence the map carries the displacing representative rather than
-        being a bare set.
-      - It is **not** a forced OUT inside the fixpoint.  A superseded datum stays in
-        `:in` for the purposes of `valid?`, because its rewritten twin is justified
-        *by it*: forcing it OUT structurally would invalidate the twin's own
-        justification and the merge would believe neither spelling.  What
-        supersession removes is *reported* belief — `in?` and `in-datums` subtract
-        it — so the stale spelling stops matching and stops answering queries, while
-        everything derived from it stands.  The nogood families detect over the IN
-        label (`network-in?`), so a nogood with a superseded member keeps its
-        placement, and the clash reports leave it out (docs/nmtms.md).
-
-      Retention is the point: the spelling is the **caller's premise**, so unlike an
-      excepted conclusion it is never swept, and dropping the equality gives it back.
-      Like `blocked` the map is *derived* — core recomputes it each
-      settle from the equality closure — so belief stays order independent.
+    * superseded — a *map* `datum -> {displaced-term representative}` of the spellings
+      an equality merge displaced (docs/equality.md, \"What a merge does\").  A
+      superseded datum keeps its IN label, so `valid?` and the nogood families read it
+      (`network-in?`); `in?` and `in-datums` subtract it.  The map is derived state,
+      reconciled by `special/refresh-supersessions`.
 
     * forced — three sets the forced-monotonic set writes (docs/nmtms.md, \"The
       forced-monotonic set\"): `:mono`, premises whose class is `:monotonic` whatever
@@ -1206,15 +1185,9 @@
   [tms datum] (get (-superseded tms) datum))
 
 (defn supersede
-  "**Replace** the superseded map with `m` (`{datum reason}`).
-
-  Replace, not accumulate, for the same reason `set-blocked` replaces: the caller
-  recomputes the whole answer from the current equality closure each settle, so a
-  supersession cannot outlive the merge that caused it and belief cannot depend on
-  the order the merges arrived in.
-
-  No relabel: supersession does not enter the fixpoint (see the namespace docstring),
-  it only subtracts from what `in?` reports, so there is no region to recompute."
+  "**Replace** the superseded map with `m` (`{datum reason}`), as `set-blocked` replaces:
+  the caller reconciles the whole answer (`special/refresh-supersessions`).  No relabel:
+  supersession only subtracts from what `in?` reports."
   [tms m] (moving (-supersede tms m)) tms)
 
 (defn supports

@@ -21,6 +21,7 @@
             [vaelii.core :as v]
             [vaelii.host.core-context :as core-context]
             [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.impl.sentex :as sx]
             [vaelii.test-util :as tu]))
 
@@ -69,7 +70,7 @@
   or of the `(Quote S)` that a reified constant stands for in a KB that declares `Quote`
   reifiable.  nil when `q` quotes nothing."
   [kb q]
-  (let [form (if (nat/reified-nat-symbol? q) (nat/nat-expression kb q) q)]
+  (let [form (if (nat-read/reified-nat-symbol? q) (nat/nat-expression kb q) q)]
     (when (sx/quote-form? form) (second form))))
 
 (defn- examples-of
@@ -304,7 +305,7 @@
       (v/assert kb (list parentOf Abe Homer) ctx)
       (v/assert kb (list 'positiveExample parentOf (quote-of (list parentOf Abe Homer))) ctx)
       (v/assert kb (list 'positiveExample parentOf (quote-of (list parentOf Homer Abe))) ctx)
-      (is (every? #(nat/reified-nat-symbol? (nth (:sentence %) 2))
+      (is (every? #(nat-read/reified-nat-symbol? (nth (:sentence %) 2))
                   (examples-of kb 'positiveExample ctx))
           "both quoted sentences are reified")
       (is (= [:not-provable] (map first (example-violations kb ctx)))

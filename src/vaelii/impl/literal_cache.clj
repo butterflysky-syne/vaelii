@@ -127,27 +127,27 @@
 
 (defn rename-bindings
   "A canonical-space solution binding map translated back into the caller's variable
-  names.  Identity when `rename` is empty (a ground literal).
-
-  **Values as well as keys.**  A solution can bind one goal variable to another — a
-  literal whose two variables unify carries `?1` in the value slot — so a rename that
-  touched only the keys would let a `?0` escape into an answer.  Nothing downstream
-  ever sees a canonical name."
-  [rename bindings]
+  names, or nil when the translated bindings do not unify.  Identity when `rename` is
+  empty (a ground literal).  Each binding is renamed in its key and its value and added
+  through `unify` (`res/unify`, passed in because this namespace cannot require it), so a
+  stored formula that carries the caller's own variable names answers as it does
+  uncached.  See docs/inference.md, \"The literal cache\"."
+  [unify rename bindings]
   (if (empty? rename)
     bindings
-    (persistent!
-     (reduce-kv (fn [m k v] (assoc! m (get rename k k) (rename-term rename v)))
-                (transient {}) bindings))))
+    (reduce-kv (fn [acc k v]
+                 (or (unify (get rename k k) (rename-term rename v) acc) (reduced nil)))
+               {} bindings)))
 
 (defn rename-matches
-  "A seq of `matches-visible` results translated out of canonical space.  A result is
+  "A seq of `matches-visible` results translated out of canonical space by
+  `rename-bindings`, dropping a result whose bindings do not unify.  A result is
   `[handle bindings …]` — some carry a third slot — so only slot 1 is touched and the
   rest is passed through.  Lazy: a consumer taking one match renames one."
-  [rename ms]
+  [unify rename ms]
   (if (empty? rename)
     ms
-    (map (fn [m] (assoc m 1 (rename-bindings rename (nth m 1)))) ms)))
+    (keep (fn [m] (some->> (rename-bindings unify rename (nth m 1)) (assoc m 1))) ms)))
 
 ;; ---- the cache -----------------------------------------------------------
 

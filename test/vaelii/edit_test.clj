@@ -12,6 +12,8 @@
   entry that trips it, and the batch is then taken back at the handles it wrote."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
+            [vaelii.impl.protocols :as p]
+            [vaelii.impl.sentex :as sx]
             [vaelii.test-util :as tu]))
 
 (deftest edit-adds-before-removing-so-a-rederivable-conclusion-survives
@@ -223,3 +225,167 @@
                                         [(list 'genl cat dog) CxThe]]})))
         (testing "the class the batch raised is back where the KB had it"
           (is (= :default (v/defeat-class kb h))))))))
+
+;; ---- edit-records! and settle-record-edits! --------------------------------------
+
+(defn- believed
+  "Every believed record of `kb` as `[sentence context]`, handles resolved."
+  [kb]
+  (into #{}
+        (comp (filter #(v/in? kb %))
+              (map #(let [s (p/get-sentex (:records kb) %)]
+                      (tu/handle-free kb [(sx/sentence-of s) (:context s)]))))
+        (tu/sentex-ids kb)))
+
+(defn- edit-both-ways
+  "The believed records after `scenario` through `edit!` (each direction change a
+  retraction and a re-assertion) and through `edit-records!` on a reopened KB without
+  belief followed by `settle-record-edits!` with `settle-opts`, on two sequential fresh
+  KBs.  `scenario` is `{:build (fn [kb]) :remove [[s ctx]] :direction [[[s ctx] bare d]]}`;
+  its `:keeps`, read by the caller, are records `edit!` must leave believed."
+  [{:keys [build remove direction]} settle-opts]
+  (let [handles (fn [kb] (mapv (fn [[s c]] (v/handle-of kb s c)) remove))]
+    [(tu/with-cleared-kb [kb tu/fresh]
+       (build kb)
+       (v/edit! kb {:remove (handles kb)})
+       (doseq [[[s c] bare d] direction]
+         (v/retract! kb (v/handle-of kb s c))
+         (v/assert kb bare c {:direction d}))
+       (believed kb))
+     (tu/with-cleared-kb [kb tu/fresh]
+       (build kb)
+       (let [hs  (handles kb)
+             ds  (into {} (map (fn [[[s c] _ d]] [(v/handle-of kb s c) d])) direction)
+             kb2 (tu/test-kb)
+             r   (v/edit-records! kb2 {:remove hs :direction ds})]
+         (v/settle-record-edits! kb2 (assoc settle-opts :seeds (:seeds r)))
+         (believed kb2)))]))
+
+(deftest edit-records-then-settle-believes-what-edit-believes
+  (tu/with-terms [p q r s t u w bird flies travels blocked parentOf animal dog needs wanted relativeOf childOf kinOf person A B Tweety Fido Rex Fred Mary CxThe CxWorld CxDogs]
+    (let [rule (fn [ante conseq] (list 'implies ante conseq))
+          ;; `(animal Fred)` is minted off `(parentOf Fred Mary)` and withheld while
+          ;; `(dog Fred)` says it more specifically (docs/argtypes.md)
+          withheld (fn [kb]
+                     (doseq [c [CxWorld CxDogs]]
+                       (v/assert kb (list 'genlCx c 'CxUniverse) 'CxUniverse))
+                     (v/assert kb (list 'genlCx CxWorld CxDogs) 'CxUniverse)
+                     (v/assert kb (list 'genl animal 'thing) 'CxUniverse)
+                     (v/assert kb (list 'genl dog animal) 'CxUniverse)
+                     (v/assert kb (list 'arg parentOf 1 animal) CxWorld)
+                     (v/assert kb (list dog Fred) CxDogs)
+                     (v/assert kb (list parentOf Fred Mary) CxWorld))
+          rows
+          {"a removed premise takes its forward chain with it"
+           {:build (fn [kb]
+                     (v/assert-rule kb [(list p '?x)] (list q '?x) CxThe {:direction :forward})
+                     (v/assert-rule kb [(list q '?x)] (list r '?x) CxThe {:direction :forward})
+                     (v/assert kb (list p A) CxThe)
+                     (v/assert kb (list p B) CxThe))
+            :remove [[(list p A) CxThe]]}
+
+           "a removed defeater lets a default and what it fires come back"
+           {:build (fn [kb]
+                     (v/assert kb (list 'set/defaultRule (rule (list bird '?x) (list flies '?x))) CxThe)
+                     (v/assert-rule kb [(list flies '?x)] (list travels '?x) CxThe {:direction :forward})
+                     (v/assert kb (list bird Tweety) CxThe)
+                     (v/assert kb (list 'not (list flies Tweety)) CxThe {:strength :monotonic}))
+            :remove [[(list 'not (list flies Tweety)) CxThe]]}
+
+           "a removed fact a negation-as-failure antecedent read releases the firing"
+           {:build (fn [kb]
+                     (v/assert-rule kb [(list p '?x) (list 'unknown (list blocked '?x))] (list u '?x)
+                                    CxThe {:direction :forward})
+                     (v/assert kb (list p A) CxThe)
+                     (v/assert kb (list blocked A) CxThe))
+            :remove [[(list blocked A) CxThe]]}
+
+           "a removed declaration releases a held fact, and the firing it holds back"
+           {:build (fn [kb]
+                     (v/assert kb (list 'genl dog 'thing) 'CxUniverse)
+                     (v/assert kb (list 'unary_predicate needs) 'CxUniverse)
+                     (v/assert-rule kb [(list needs '?x)] (list wanted '?x) CxThe {:direction :forward})
+                     (v/assert kb (list needs 5) CxThe)
+                     (v/assert kb (list 'arg needs 1 dog) 'CxUniverse))
+            :remove [[(list 'arg needs 1 dog) 'CxUniverse]]}
+
+           "a fact defeated on arrival is chained once the removal revives it"
+           {:build (fn [kb]
+                     (v/assert-rule kb [(list q '?x)] (list w '?x) CxThe {:direction :forward})
+                     (v/assert kb (list 'not (list q A)) CxThe {:strength :monotonic})
+                     (v/assert kb (list q A) CxThe))
+            :remove [[(list 'not (list q A)) CxThe]]}
+
+           "a removed membership releases the general mint it withheld"
+           {:build withheld :remove [[(list dog Fred) CxDogs]]}
+
+           "a removed genl edge releases the general mint the membership withheld"
+           {:build withheld :remove [[(list 'genl dog animal) 'CxUniverse]]}
+
+           "a removed genl route leaves the mint another route derives"
+           {:build (fn [kb]
+                     (v/assert kb (list 'arg relativeOf 1 person) 'CxUniverse)
+                     (v/assert kb (list 'genl childOf relativeOf) 'CxUniverse)
+                     (v/assert kb (list 'genl childOf kinOf) 'CxUniverse)
+                     (v/assert kb (list 'genl kinOf relativeOf) 'CxUniverse)
+                     (v/assert kb (list childOf Fido Rex) 'CxUniverse))
+            :remove [[(list 'genl childOf relativeOf) 'CxUniverse]]
+            :keeps  [[(list person Fido) 'CxUniverse]]}
+
+           "a removed premise that a firing also concludes stays, derived"
+           {:build (fn [kb]
+                     (v/assert-rule kb [(list p '?x)] (list q '?x) CxThe {:direction :forward})
+                     (v/assert kb (list p A) CxThe)
+                     (v/assert kb (list q A) CxThe))
+            :remove [[(list q A) CxThe]]}
+
+           "a removed argument declaration takes its type mint with it"
+           {:build (fn [kb]
+                     (v/assert kb (list 'arg parentOf 1 animal) CxThe)
+                     (v/assert kb (list parentOf Fido Rex) CxThe))
+            :remove [[(list 'arg parentOf 1 animal) CxThe]]}
+
+           "a rule taken off forward takes its firings with it"
+           {:build (fn [kb]
+                     (v/assert-rule kb [(list p '?x)] (list s '?x) CxThe {:direction :forward})
+                     (v/assert kb (list p A) CxThe))
+            :direction [[[(rule (list p '?x) (list s '?x)) CxThe] (rule (list p '?x) (list s '?x)) :backward]]}
+
+           "a rule put on forward fires over the stored facts"
+           {:build (fn [kb]
+                     (v/assert-rule kb [(list p '?x)] (list t '?x) CxThe {:direction :backward})
+                     (v/assert kb (list p A) CxThe))
+            :direction [[[(rule (list p '?x) (list t '?x)) CxThe] (rule (list p '?x) (list t '?x)) :forward]]}}]
+      (doseq [[label row] rows]
+        (testing label
+          ;; a row's `:keeps` names an argument-type mint, which only the entailing reading makes
+          (let [[via-edit via-records] (if (:keeps row)
+                                         (tu/with-entailing (edit-both-ways row {}))
+                                         (edit-both-ways row {}))]
+            (doseq [k (:keeps row)]
+              (is (contains? via-edit k) (str "the row exercises " (pr-str k))))
+            (is (= via-edit via-records)
+                (pr-str {:only-edit (remove via-records via-edit)
+                         :only-records (remove via-edit via-records)}))))))))
+
+(deftest edit-records-refuses-before-writing
+  (tu/with-terms [p q A CxThe]
+    (let [ex-type (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+      (tu/with-cleared-kb [kb tu/fresh]
+        (let [fa (v/assert kb (list p A) CxThe)
+              fq (v/assert kb (list q A) CxThe)
+              ex (v/assert kb (list 'except (list 'sentexHandle fq)) CxThe)]
+          (testing "a KB with belief"
+            (is (= :belief-built (ex-type #(v/edit-records! kb {:remove [fa]})))))
+          (let [kb2 (tu/test-kb)]
+            (testing "an except removal, and the batch's other removal stays unwritten"
+              (is (= :record-edit-unsupported (ex-type #(v/edit-records! kb2 {:remove [fa ex]}))))
+              (is (some? (p/get-sentex (:records kb2) fa))))
+            (testing "a direction on a fact, a bad direction, an absent handle"
+              (is (= :unknown-option (ex-type #(v/edit-records! kb2 {:direction {fa :forward}}))))
+              (is (= :unknown-option (ex-type #(v/edit-records! kb2 {:direction {fa :sideways}}))))
+              (is (= :unknown-handle (ex-type #(v/edit-records! kb2 {:direction {99999 :forward}})))))
+            (testing "the same batch run again completes it and counts what is gone"
+              (is (= 1 (:removed (v/edit-records! kb2 {:remove [fa]}))))
+              (is (= {:removed 0 :absent 1}
+                     (select-keys (v/edit-records! kb2 {:remove [fa]}) [:removed :absent]))))))))))

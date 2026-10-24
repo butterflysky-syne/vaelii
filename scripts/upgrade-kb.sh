@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/upgrade-kb.sh [--verify] [KB-DIR...] — bring each on-disk KB up to this checkout's engine,
+# scripts/upgrade-kb.sh [--verify|--trust] [--sync] [KB-DIR...] — bring each on-disk KB up to this checkout's engine,
 # so the next open installs its belief instead of recovering it.
 #
 # Per directory this runs `lein cli upgrade --dir KB-DIR` (docs/operations.md): open the
@@ -18,10 +18,11 @@
 # --verify goes to every `upgrade` run (docs/operations.md): it recovers anyway and
 # reports whether belief changed. --trust keeps an image written under other engine
 # source, as the browser's open does, and recovers only a KB whose records moved behind
-# its images.
+# its images. --sync then brings the KB's shipped contexts to what this engine ships,
+# which writes records.
 #
-# The records are read, never rewritten: a change to the record format is a migration
-# this script does not perform.
+# Without --sync the records are read, never rewritten: a change to the record format is
+# a migration this script does not perform.
 { # one brace group, read whole before it runs: scripts/lint-shellcheck.sh says why
 set -euo pipefail
 

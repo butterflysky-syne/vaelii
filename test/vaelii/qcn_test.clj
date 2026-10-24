@@ -1,22 +1,18 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.qcn-test
-  "The generic qualitative-constraint-network engine (`vaelii.impl.qcn`), tested
-  against a **hand-built** algebra and network — no KB, no context, no belief.  That
-  is the point of the namespace: path consistency is data in, data out, and the
-  relation algebra is a parameter, so an algebra invented for a test exercises the
-  engine exactly as RCC-8 does.
+  "`vaelii.impl.qcn` against a hand-built algebra and network, with no KB.
 
-  The toy algebra here is the order relation on points — `#{:lt :eq :gt}` — whose
-  composition table is small enough to read: `lt∘lt = lt`, `lt∘gt` is unconstrained,
-  `eq` is the identity."
+  The toy algebra here is the order relation on points, `#{:lt :eq :gt}`:
+  `lt∘lt = lt`, `lt∘gt` is unconstrained, `eq` is the identity.  `qcn_queue_test` and
+  `qcn_support_test` run it too."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.impl.projection :as proj]
             [vaelii.impl.qcn :as qcn]))
 
 ;; ---- a toy point algebra ------------------------------------------------
 
-(def ^:private universe #{:lt :eq :gt})
+(def universe #{:lt :eq :gt})
 
 (def ^:private converse-rel {:lt :gt, :eq :eq, :gt :lt})
 
@@ -30,9 +26,9 @@
 (defn- compose-sets [s1 s2]
   (into #{} (mapcat (fn [a] (mapcat (fn [b] (get-in composition [a b])) s2))) s1))
 
-(defn- converse-set [rels] (into #{} (map converse-rel) rels))
+(defn converse-set [rels] (into #{} (map converse-rel) rels))
 
-(def ^:private point-algebra
+(def point-algebra
   {:universe universe
    :identity #{:eq}
    :compose  compose-sets
@@ -96,10 +92,6 @@
           "A<E is four compositions away, so only iterating to a fixpoint finds it"))))
 
 (deftest the-result-does-not-depend-on-the-order-of-the-nodes
-  ;; the engine's share of the KB-wide order-independence invariant.  Tightening only
-  ;; narrows and composition is monotone, so the loop lands on the unique greatest
-  ;; fixpoint below the network it was handed; node order decides how many passes that
-  ;; takes and nothing else.
   (let [n       (net ['A 'B #{:lt}] ['B 'C #{:lt :eq}] ['C 'D #{:lt}])
         results (set (for [order (permutations '[A B C D])]
                        (qcn/path-consistent n order point-algebra)))]
@@ -111,10 +103,6 @@
                   (permutations '[A B C]))))))
 
 (deftest only-the-nodes-it-is-given-are-tightened-through
-  ;; `nodes` is where the triples come from, so a node the network mentions but the
-  ;; caller leaves out is a composition left unmade.  Both algebras therefore pass the
-  ;; network's own nodes plus whatever the goal names; this is the contract that makes
-  ;; that mandatory rather than habitual.
   (let [n (net ['A 'B #{:lt}] ['B 'C #{:lt}])]
     (is (= #{:lt} (qcn/constraint (qcn/path-consistent n '[A B C] point-algebra)
                                   point-algebra 'A 'C))
@@ -139,9 +127,6 @@
     (let [n (net ['A 'B #{:lt}] ['B 'C #{:lt}] ['C 'A #{:lt}])]
       (is (= :inconsistent (qcn/path-consistent n '[A B C] point-algebra)))))
   (testing "a constraint handed in already empty is inconsistent on its own"
-    ;; the reader intersects two facts about one pair into #{} before the pass runs;
-    ;; nothing can tighten it further, so only the up-front check reports it — and it
-    ;; must report it whether or not a third node happens to route through the pair
     (let [two (assoc (net ['A 'B #{:lt}]) [:x :y] #{} [:y :x] #{})]
       (is (= :inconsistent (qcn/path-consistent two '[:x :y] point-algebra))
           "two nodes generate no triple at all"))
@@ -149,18 +134,11 @@
       (is (= :inconsistent (qcn/path-consistent many '[A B C :x :y] point-algebra))))))
 
 (deftest an-empty-constraint-is-caught-whatever-nodes-are-passed
-  ;; the emptiness scan reads the network, not the node list — an unsatisfiable pair is
-  ;; unsatisfiable whether or not the caller asked about it
   (let [n (assoc (net ['A 'B #{:lt}]) [:x :y] #{} [:y :x] #{})]
     (is (= :inconsistent (qcn/path-consistent n '[A B] point-algebra))
         ":x and :y are not in the node list, and it still reports the contradiction")))
 
 (deftest a-diagonal-claim-that-excludes-the-identity-is-inconsistent
-  ;; no triple ever visits a diagonal (every triple has i ≠ k) and `constraint` answers
-  ;; the identity there whatever is recorded, so a self-assertion the algebra forbids
-  ;; would be silently dropped rather than reported.  A reader produces one whenever an
-  ;; asserted (P a a) survives intersection with its own converse — which is exactly when
-  ;; P is symmetric, e.g. RCC-8's DC: no region is disconnected from itself.
   (testing "a node cannot stand to itself in a relation the identity excludes"
     (is (= :inconsistent (qcn/path-consistent {['A 'A] #{:lt}} '[A] point-algebra)))
     (is (= :inconsistent (qcn/path-consistent {['A 'A] #{:lt :gt}} '[A] point-algebra))))
@@ -185,14 +163,7 @@
           pc (qcn/path-consistent n '[A B C] point-algebra)]
       (is (= #{:lt} (qcn/constraint pc point-algebra 'A 'C))))))
 
-;; ---- an algebra derived from two axes rather than written out -----------
-;;
-;; The algebra above is a parameter, and `vaelii.impl.projection/algebra` is the other
-;; way to obtain one: give it each relation's `[x y]` projection onto two independent
-;; point axes and it derives the composition and converse a nine-relation table would
-;; otherwise state in 81 cells.  The derivation is total only while the projection is a
-;; **bijection** onto the nine pairs, so that is checked where the algebra is built —
-;; the engine here would otherwise store a composed `nil` as though it were a relation.
+;; ---- an algebra derived from two axes (`vaelii.impl.projection`) ---------
 
 (deftest a-projection-that-is-not-a-bijection-is-refused-where-the-algebra-is-built
   (let [relations [:r1 :r2 :r3 :r4 :r5 :r6 :r7 :r8 :r9]

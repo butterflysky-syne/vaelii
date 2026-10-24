@@ -1,19 +1,10 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.constraint-solve-test
-  "Constraint rules (`set/hardConstraint` / `set/softConstraint`) and the single-labeling
-  `do/label … :one` mode — the grounding-rule → integrity-constraint path that lets a
-  solve express a nogood over two *different* individuals (graph adjacency), which the
-  direct-clash detectors (always one shared individual) cannot.
-
-  The worked example is graph 3-coloring: a choice of colour per node
-  (`assumptionRule`), at-most-one-colour (`functional`), and no-monochrome-edge (a hard
-  constraint whose body joins the edge facts against the colour choices).  A single
-  `:label` solve keeps a colour for every node (the keep-belief objective) capped at one
-  (functional) with no adjacent clash (the hard constraint) — a valid proper colouring.
-
-  Enumeration/solving needs an ASP backend, so the end-to-end tests are guarded on
-  `asp?`; the wrapper/record unit tests are not."
+  "Constraint rules (`set/hardConstraint` / `set/softConstraint`) and `do/label`'s `:one`
+  and `:sat` modes: a nogood over two different individuals, on graph 3-colouring and on a
+  traveling-salesman tour.  The solving tests are guarded on `asp?`; the wrapper and record
+  tests run without a backend."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
             [vaelii.impl.asp.solver :as solver]
@@ -54,8 +45,6 @@
           (is (= hard (v/assert kb (list 'set/hardConstraint body) 'CxUniverse))))))))
 
 (deftest a-constraint-rule-derives-no-marker
-  ;; The defining behaviour: the head is a contradiction *marker*, not a truth — the
-  ;; rule never fires, so no `(monochrome …)` is ever derived, even with facts present.
   (tu/with-neutral-kb [kb tu/fresh]
     (tu/with-terms [colored benchEdge A B]
       (v/assert kb (list 'set/hardConstraint
@@ -138,9 +127,8 @@
             (is (not= (coloring a) (coloring b)) (str a "-" b))))))))
 
 (deftest a-clique-of-four-is-not-3-colorable
-  ;; K4: four mutually-adjacent nodes cannot be 3-colored.  The hard constraints make
-  ;; the program UNSAT, so no valid total colouring exists — the solve leaves at least
-  ;; one node uncoloured rather than manufacturing a monochrome edge.
+  ;; K4 has no proper 3-colouring; with no hard at-least-one the program is satisfiable,
+  ;; and the keep-belief optimum leaves a node uncoloured
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [colored]
@@ -234,16 +222,8 @@
             (is (= 3 (count (set (map coloring '[N1 N2 N3])))))))))))
 
 (deftest a-negated-choice-literal-binds-its-own-variables
-  ;; The at-least-one idiom with nothing else in the body: `?k` is bound by the negated
-  ;; choice literal and by nothing else.  Negated literals come out of the body before
-  ;; the positive join, so nothing else can bind them — a bare substitution would find
-  ;; no head for an unbound `?k`, drop the binding, and leave the constraint
-  ;; contributing no nogood at all, which is a solve returning worlds it forbids.  The
-  ;; join is what grounds `?k` over every colour and forbids each one's absence.
-  ;;
-  ;; `functional` makes the two colours a *soft* clash, so both-true is a legal model
-  ;; that merely costs — which is what makes the hard constraint's effect visible:
-  ;; without it there are two optima (one colour each), with it exactly one (both).
+  ;; `?k` is bound by the negated literal alone.  `functional` makes two colours a soft
+  ;; clash, so without the hard constraint there are two optima and with it one (both).
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [colored cand Item]
@@ -271,15 +251,8 @@
             (is (empty? (:false l)) "the first model found still satisfies the constraint")))))))
 
 (deftest an-unsatisfiable-program-reports-no-labeling-rather-than-an-empty-one
-  ;; K4 under the all-hard encoding admits no model: at-least-one plus at-most-one
-  ;; plus no-monochrome-edge over four mutually adjacent nodes needs a fourth colour.
-  ;;
-  ;; `:one` / `:sat` read a single answer set, and an infeasible program keeps nothing
-  ;; — which has the same shape as the one perfectly ordinary world in which every
-  ;; choice happened to be false.  For *this* program that world violates both hard
-  ;; constraints it was built from, so reporting it as the labeling is reporting a
-  ;; world the solve just proved impossible.  `:all` gets this right by enumerating
-  ;; nothing, and the three modes have to agree.
+  ;; K4 under the all-hard encoding admits no model, so `:one` / `:sat` report
+  ;; `:unsatisfiable` and `:all` enumerates nothing
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [colored]
@@ -309,3 +282,119 @@
         (let [r (v/assert kb (list 'do/label 'CxUniverse 'CxTimePlan :one) 'CxUniverse)]
           (is (every? number? [(:ground-ms r) (:translate-ms r) (:solve-ms r)])
               "grounding / translate / solve are timed separately for a profiling caller"))))))
+
+;; ---- traveling salesman: a permutation under hard constraints -------------
+;; One tour position per city (`tourStop`), at most one city per position, at least one
+;; position per city, and no step between two cities with no road (`notRoad` joined
+;; against two consecutive positions).  With as many cities as positions the choices are
+;; a bijection, so one `:sat` solve returns a Hamiltonian tour or reports none.
+;; Five cities at five cyclic positions; roads are unordered pairs `#{a b}`.
+
+(def ^:private cities    '[A B C D E])
+(def ^:private positions '[P1 P2 P3 P4 P5])
+
+;; A road graph that admits several Hamiltonian tours (the 5-cycle plus two chords).
+(def ^:private roads
+  #{#{'A 'B} #{'B 'C} #{'C 'D} #{'D 'E} #{'A 'E}   ; the outer 5-cycle
+    #{'A 'C} #{'B 'D}})                             ; two chords → more than one tour
+
+;; A 5-vertex path: a Hamiltonian *path* but no Hamiltonian *cycle* (no edge closes it).
+(def ^:private path-roads
+  #{#{'A 'B} #{'B 'C} #{'C 'D} #{'D 'E}})
+
+;; ---- installing the program ----------------------------------------------
+
+(defn- unordered-pairs [xs]
+  (let [v (vec xs)]
+    (for [i (range (count v)), j (range (inc i) (count v))] #{(v i) (v j)})))
+
+(defn- cyclic-steps
+  "Consecutive (Pa Pb) position pairs around the tour, wrapping the last back to the
+  first — the slots the tour steps between."
+  [positions]
+  (map vector positions (concat (rest positions) [(first positions)])))
+
+(defn- install-tsp!
+  "The choice + permutation + no-illegal-step program over `cities` at `positions`
+  (in cyclic order) for a `roads` graph, all in `ctx`."
+  [kb ctx cities positions roads]
+  (doseq [c cities] (v/assert kb (list 'city c) ctx {:strength :monotonic}))
+  (doseq [p positions] (v/assert kb (list 'position p) ctx {:strength :monotonic}))
+  (doseq [[a b] (cyclic-steps positions)]
+    (v/assert kb (list 'nextPos a b) ctx {:strength :monotonic}))
+  ;; the road complement, both directions — a step between them is forbidden
+  (let [rset (set roads)]
+    (doseq [pr (unordered-pairs cities)
+            :when (not (rset pr))
+            :let [[a b] (vec pr)]]
+      (v/assert kb (list 'notRoad a b) ctx {:strength :monotonic})
+      (v/assert kb (list 'notRoad b a) ctx {:strength :monotonic})))
+  ;; choice: a tour position for each city (grounds |positions| × |cities| heads)
+  (v/assert kb (list 'set/assumptionRule
+                     (list 'implies (list 'and (list 'position '?p) (list 'city '?c))
+                           (list 'tourStop '?p '?c)))
+            ctx)
+  ;; hard at-most-one city per position — one constraint per fixed city pair
+  (doseq [pr (unordered-pairs cities) :let [[ca cb] (vec pr)]]
+    (v/assert kb (list 'set/hardConstraint
+                       (list 'implies (list 'and (list 'tourStop '?p ca) (list 'tourStop '?p cb))
+                             (list 'two_cities_at '?p)))
+              ctx))
+  ;; hard at-least-one position per city — a negated-choice constraint over all positions
+  (v/assert kb (list 'set/hardConstraint
+                     (list 'implies
+                           (apply list 'and (list 'city '?c)
+                                  (map (fn [p] (list 'not (list 'tourStop p '?c))) positions))
+                           (list 'unplaced '?c)))
+            ctx)
+  ;; hard no-illegal-step — consecutive tour slots must hold cities joined by a road
+  (v/assert kb (list 'set/hardConstraint
+                     (list 'implies
+                           (list 'and (list 'nextPos '?pa '?pb) (list 'notRoad '?x '?y)
+                                 (list 'tourStop '?pa '?x) (list 'tourStop '?pb '?y))
+                           (list 'badStep '?x '?y)))
+            ctx))
+
+(defn- tour-of
+  "position -> city, read from a `:sat` labeling's chosen-true `(tourStop pos city)` heads."
+  [labeling]
+  (into {} (map (fn [s] [(nth s 1) (nth s 2)])) (:true labeling)))
+
+;; ---- a graph with a tour -------------------------------------------------
+
+(deftest finds-a-hamiltonian-tour
+  (when asp?
+    (tu/with-cleared-kb [kb tu/fresh]
+      (install-tsp! kb 'CxTsp cities positions roads)
+      (let [r    (v/assert kb (list 'do/label 'CxTsp 'CxTspPlan :sat) 'CxTsp)
+            lab  (first (:labelings r))
+            tour (tour-of lab)]
+        (testing ":sat returns one labeling and persists nothing"
+          (is (= 1 (:count r)))
+          (is (nil? (:context lab)))
+          (is (not (contains? (set (v/contexts kb)) 'CxTsp1))))
+        (testing "the tour is a permutation: each position once, each city once"
+          (is (= (set positions) (set (keys tour))))
+          (is (= (set cities) (set (vals tour))) "every city visited exactly once")
+          (is (= (count cities) (count (:true lab)))))
+        (testing "every consecutive step of the tour follows a road"
+          (doseq [[pa pb] (cyclic-steps positions)]
+            (is (contains? roads #{(tour pa) (tour pb)})
+                (str (tour pa) " -> " (tour pb) " must be a road"))))
+        (testing "base belief is untouched — no tour position is believed"
+          (is (empty? (v/sentexes-matching kb (list 'tourStop 'P1 'A) 'CxTsp)))
+          (is (zero? (count (v/contradictions kb)))))))))
+
+;; ---- a graph with no tour ------------------------------------------------
+
+(deftest a-path-graph-has-no-tour
+  ;; a path has no Hamiltonian cycle, so the program is unsatisfiable and no labeling
+  ;; places a city
+  (when asp?
+    (tu/with-cleared-kb [kb tu/fresh]
+      (install-tsp! kb 'CxNoTour cities positions path-roads)
+      (let [r    (v/assert kb (list 'do/label 'CxNoTour 'CxNoTourPlan :sat) 'CxNoTour)
+            tour (tour-of (first (:labelings r)))]
+        (testing "no full permutation tour exists, and the all-hard UNSAT keeps nothing"
+          (is (< (count tour) (count cities)))
+          (is (empty? tour)))))))

@@ -165,7 +165,6 @@
          (ng/covering (view-of '[(covering w p1 p2) (w X) (not (p1 X)) (not (p2 X))])))))
 
 (deftest a-denial-of-a-supertype-of-a-part-denies-the-part
-  ;; the review's scenario d
   (is (= [{:kind    :covering
            :members #{'(w X) '(not (q X)) '(not (p2 X))}
            :ground  #{'(covering w p1 p2) '(genl p1 q)}}]
@@ -216,11 +215,17 @@
 
 ;; ---- inherited (transitiveInArgInverse) --------------------------------------------
 
-(def ^:private scenario-e
-  "The review's scenario e, with `carriesLoad` for `P`."
+(def ^:private two-claims-world
+  "A denial below two known-true claims of `carriesLoad`, one through each of two edges."
   '[(transitiveInArgInverse carriesLoad 1 genl) (genl hauler animal) (genl vehicle animal)
     (genl cart hauler) (genl cart vehicle) (carriesLoad vehicle Bone1)
     (carriesLoad hauler Bone1) (not (carriesLoad cart Bone1))])
+
+(def ^:private known-reasons
+  "The declarations and `genl` edges the inherited rows read, each `:monotonic`."
+  '{(transitiveInArgInverse carriesLoad 1 genl) :monotonic (transitiveInArgInverse down 1 genl) :monotonic
+    (genl cart hauler) :monotonic (genl cart vehicle) :monotonic (genl hauler animal) :monotonic
+    (genl cart animal) :monotonic (genl lower upper) :monotonic})
 
 (deftest a-denial-below-two-known-true-claims-clashes-with-each-inherited-claim
   ;; one nogood per general claim: the denial, the claim, the declaration and the one
@@ -233,16 +238,27 @@
            :members #{'(not (carriesLoad cart Bone1)) '(carriesLoad vehicle Bone1)
                       '(transitiveInArgInverse carriesLoad 1 genl) '(genl cart vehicle)}
            :ground  #{}}]
-         (ng/inherited (view-of scenario-e
-                                '{(carriesLoad vehicle Bone1) :monotonic
-                                  (carriesLoad hauler Bone1)  :monotonic})))))
+         (ng/inherited (view-of two-claims-world
+                                (merge known-reasons
+                                       '{(carriesLoad vehicle Bone1) :monotonic
+                                         (carriesLoad hauler Bone1)  :monotonic}))))))
 
-(deftest a-default-general-claim-is-undercut-and-forms-no-nogood
+(deftest a-reading-through-a-default-claim-declaration-or-edge-is-undercut-and-forms-no-nogood
   (is (= #{#{'(not (carriesLoad cart Bone1)) '(carriesLoad vehicle Bone1)
              '(transitiveInArgInverse carriesLoad 1 genl) '(genl cart vehicle)}}
-         (member-sets (ng/inherited (view-of scenario-e
-                                             '{(carriesLoad vehicle Bone1) :monotonic})))))
-  (is (= [] (ng/inherited (view-of scenario-e)))))
+         (member-sets (ng/inherited (view-of two-claims-world
+                                             (merge known-reasons
+                                                    '{(carriesLoad vehicle Bone1) :monotonic}))))
+         (member-sets (ng/inherited (view-of two-claims-world
+                                             (merge known-reasons
+                                                    '{(carriesLoad vehicle Bone1) :monotonic
+                                                      (carriesLoad hauler Bone1)  :monotonic
+                                                      (genl cart hauler)          :default}))))))
+  (is (= [] (ng/inherited (view-of two-claims-world known-reasons))))
+  (is (= [] (ng/inherited (view-of two-claims-world
+                                   (merge known-reasons
+                                          '{(carriesLoad vehicle Bone1) :monotonic
+                                            (transitiveInArgInverse carriesLoad 1 genl) :default}))))))
 
 (deftest an-inherited-clash-names-every-edge-of-a-two-hop-route
   (is (= #{#{'(not (carriesLoad cart Bone1)) '(carriesLoad animal Bone1)
@@ -251,7 +267,8 @@
                                                (genl cart hauler) (genl hauler animal)
                                                (carriesLoad animal Bone1)
                                                (not (carriesLoad cart Bone1))]
-                                             '{(carriesLoad animal Bone1) :monotonic}))))))
+                                             (merge known-reasons
+                                                    '{(carriesLoad animal Bone1) :monotonic})))))))
 
 (deftest two-routes-to-one-general-claim-form-one-nogood-each
   (is (= #{#{'(not (carriesLoad cart Bone1)) '(carriesLoad animal Bone1)
@@ -262,11 +279,13 @@
                                                (genl cart hauler) (genl hauler animal)
                                                (genl cart animal) (carriesLoad animal Bone1)
                                                (not (carriesLoad cart Bone1))]
-                                             '{(carriesLoad animal Bone1) :monotonic}))))))
+                                             (merge known-reasons
+                                                    '{(carriesLoad animal Bone1) :monotonic})))))))
 
 (deftest an-inherited-clash-needs-the-declaration-a-strict-supertype-and-matching-positions
-  (let [known '{(carriesLoad hauler Bone1) :monotonic (carriesLoad hauler Bone2) :monotonic
-                (carriesLoad cart Bone1) :monotonic}]
+  (let [known (merge known-reasons
+                     '{(carriesLoad hauler Bone1) :monotonic (carriesLoad hauler Bone2) :monotonic
+                       (carriesLoad cart Bone1) :monotonic})]
     (is (= [[] [] []]
            [(ng/inherited (view-of '[(genl cart hauler) (carriesLoad hauler Bone1)
                                      (not (carriesLoad cart Bone1))]
@@ -286,14 +305,14 @@
          (ng/inherited (view-of '[(transitiveInArgInverse down 1 genl) (genl lower upper)
                                   (genl down top) (disjoint top plain)
                                   (down upper) (plain lower)]
-                                '{(down upper) :monotonic})))))
+                                (merge known-reasons '{(down upper) :monotonic}))))))
 
 (deftest a-membership-of-a-type-no-separation-names-or-beside-a-default-claim-is-no-clash
   (let [view '[(transitiveInArgInverse down 1 genl) (genl lower upper) (down upper)
                (plain lower)]]
     (is (= [[] []]
-           [(ng/inherited (view-of view '{(down upper) :monotonic}))
-            (ng/inherited (view-of (conj view '(disjoint down plain))))]))))
+           [(ng/inherited (view-of view (merge known-reasons '{(down upper) :monotonic})))
+            (ng/inherited (view-of (conj view '(disjoint down plain)) known-reasons))]))))
 
 ;; ---- supertype --------------------------------------------------------------
 
@@ -378,7 +397,7 @@
 ;; ---- order independence -----------------------------------------------------
 
 (deftest every-family-answers-the-same-for-the-same-content-in-any-order
-  (let [content (concat scenario-e
+  (let [content (concat two-claims-world
                         '[(disjoint animal plant) (tree Bone1) (animal Bone1)
                           (functional ageOf) (ageOf Bob 5) (ageOf Bob 6)
                           (asymmetric largerThan) (largerThan Rex Tom) (largerThan Tom Rex)
@@ -389,8 +408,9 @@
                           (covering w p1 p2) (w X) (not (p1 X)) (not (p2 X))
                           (genl dog mammal) (dog Rex) (not (mammal Rex))
                           (negates admires scorns) (admires Eve Fay) (scorns Eve Fay)])
-        classes '{(carriesLoad vehicle Bone1) :monotonic (carriesLoad hauler Bone1) :monotonic
-                  (genl dog mammal) :monotonic}
+        classes (merge known-reasons
+                       '{(carriesLoad vehicle Bone1) :monotonic (carriesLoad hauler Bone1) :monotonic
+                         (genl dog mammal) :monotonic})
         answer  (fn [sentences]
                   (let [v (view-of sentences classes)]
                     (mapv #(% v) ng/families)))

@@ -11,7 +11,7 @@
   is re-indexed into a fresh in-memory KB, and `postings/survey-index` runs the identical
   composition + four-encoding density measurement.
 
-  **Caveat:** a sample of N out of the corpus's ~15M facts has *less
+  **Caveat:** a sample of N out of the corpus's facts has *less
   term reuse* than the whole, so its big postings (a hot predicate/context) are smaller
   than at full scale — the survey therefore *under*-represents the large-posting tail and,
   if anything, understates Roaring's tier.  What it faithfully reproduces is the fact

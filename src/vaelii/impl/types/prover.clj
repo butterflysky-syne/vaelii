@@ -57,7 +57,9 @@
   Two obligations on an implementer, and both are what makes the protocol sound:
 
   * **`solve-with-support` answers exactly what `solve` answers.**  The bindings are the
-    same solutions in the same order; only the support rides alongside.  A prover whose
+    same solutions in the same order; only the support rides alongside.  A binding several
+    derivations give may appear once per derivation, each with its own support
+    (`ArgTypeProver`), and its first appearance keeps `solve`'s order.  A prover whose
     two methods disagreed would make a rule fire differently forward and backward.
   * **The support is enough to have produced the answer on its own.**  It may
     over-approximate — a reading taken over a set of declarations names all of them — but

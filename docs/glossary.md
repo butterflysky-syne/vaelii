@@ -76,7 +76,9 @@ a type whose genl closure reaches `type`. Open-world and context-scoped. See
 [taxonomy.md](taxonomy.md). `interArg` is the **conditional** form —
 `(interArg pred n T m U)` requires argument *m* to be a `U` only when argument *n* is
 a `T` — and it reads open-world in *both* directions at once: an unestablished trigger
-leaves it dormant, an unreachable target convicts. See [argtypes.md](argtypes.md).
+leaves it dormant, an unreachable target convicts. `(interArgEqual pred n v m U)` conditions argument *m*
+on argument *n* being the value `v`, a number, string, keyword, boolean or character.
+See [argtypes.md](argtypes.md).
 
 **Arity vocabulary** ![kb](../.github/badges/cat-kb.svg): `fixed_arity` and
 `variable_arity` partition `relation` into two argument policies. Unsuffixed `unary`,
@@ -207,8 +209,8 @@ ancestor set, so it is a policy of the theory that closes the extent; a closed
 **`closedExtentForArg`** ![kb](../.github/badges/cat-kb.svg): The
 `closed_extent_predicate` grant narrowed to one argument value:
 `(closedExtentForArg P n v)` closes `P`'s believed extent for the goals whose argument
-`n` is `v`. `closedExtentForArg1`, `closedExtentForArg2` and `closedExtentForArg3` are
-its binary spellings. See [naf.md](naf.md#a-closed-extent-for-one-argument-value).
+`n` is `v`. `closedExtentForArg1` through `closedExtentForArg5` are its binary
+spellings. See [naf.md](naf.md#a-closed-extent-for-one-argument-value).
 
 **`comment`** ![kb](../.github/badges/cat-kb.svg): A documentation sentex —
 `(comment <term> "…")` — that lets the shipped vocabulary document itself in
@@ -390,10 +392,10 @@ disjoint by being consulted, not by storing the clique. Belief-following. See
 
 ## E
 
-**Edge solver** ![asp](../.github/badges/cat-asp.svg): The pluggable `Solver`
-that arbitrates only the contested *edges* of a soft contradiction; known-true
-content is the fixed background and is never sent. Deterministic stub by default,
-ASP backend opt-in. See [solving.md](solving.md).
+**Edge solver** ![asp](../.github/badges/cat-asp.svg): A `Solver` that decides a
+`Program`'s contested assumptions, the defeasible members of its nogoods; known-true
+content is fixed background and gets no atom. `local-solver` is the deterministic greedy
+stub, and `edge-solver` the ASP backend. See [asp.md](asp.md).
 
 **Effect** ![kb](../.github/badges/cat-kb.svg): What a rule's head is, the
 `RuleSentex` field its head wrapper sets: `:derive` for a truth the rule concludes,
@@ -486,9 +488,8 @@ region cannot answer. See [feed.md](feed.md).
 
 **Fluent** ![kb](../.github/badges/cat-kb.svg): A state of affairs that holds
 over some stretches of time and not others — a cat asleep, a tortoise ahead. A fluent
-is a **term** rather than a sentence: a reified NAT like `(AsleepFn Whiskers)`, one
-constant per subject, so `holdsAt` stays an ordinary binary predicate over two terms.
-An event `initiates` one and `terminates` another. See [time.md](time.md).
+is a **term**, a reified NAT like `(AsleepFn Whiskers)`, one constant per subject. An
+event `initiates` one and `terminates` another. See [time.md](time.md).
 
 **`forall`** ![inference](../.github/badges/cat-inference.svg): The universal, and
 sugar rather than a mechanism: `(forall ?y (implies Body Head))` is ¬∃?y (Body ∧ ¬Head),
@@ -533,13 +534,10 @@ both facts and the declaration. Two non-symbols are a nogood the settle decides.
 [equality.md](equality.md).
 
 **`functional_at_instant`** ![kb](../.github/badges/cat-kb.svg): `(functional_at_instant F)`
-— the per-instant counterpart of `functional` for a value carried as a fluent. `functional`
-enforces at-most-one-value over a predicate's bare literals; a value under `initiates` is no
-bare literal, so that closure never sees it. This states that `F` has at most one value for
-one subject at any single instant, and `vaelii.core/functional-at-instant-violations` reports
-a moment where two hold — a merge for two symbols, a contradiction for two numbers — rather
-than merging, because the overlap follows from the clipping closure and is read on demand.
-See [time.md](time.md) and [equality.md](equality.md).
+— the fluent function `F` has at most one value for one subject at any single instant, the
+per-instant counterpart of `functional` for a value carried as a fluent.
+`vaelii.core/functional-at-instant-violations` reports a moment where two hold. See
+[time.md](time.md#functionality-at-an-instant).
 
 **`functionalInArg`** ![kb](../.github/badges/cat-kb.svg): `(functionalInArg P n)` —
 `functional` generalized off its fixed argument 2: every argument of `P` except `n`,
@@ -688,10 +686,11 @@ and never entailed. See [argtypes.md](argtypes.md).
 
 ## L
 
-**Labeling** ![asp](../.github/badges/cat-asp.svg): Materializing one optimal
-answer set as belief — every datum in the settled tie assigned `:true`,
-`:supportable` or `:false`, checked against the brave/cautious classification of the
-same tie. See [labeling.md](labeling.md).
+**Labeling** ![asp](../.github/badges/cat-asp.svg): One optimal answer set of a
+`Program`, written into a context: `do/labeling` commits one inside `Ctx` as `:monotonic`
+copies, checked against the brave/cautious classification of the same dilemmas, and
+`do/label` writes each as an inert context. See [labeling.md](labeling.md) and
+[solving.md](solving.md).
 
 **Lane** ![kb](../.github/badges/cat-kb.svg): A consumer of a declaration that is wired
 per spelling and **fails silently** when a spelling is left out of it — the unit a Facet
@@ -763,8 +762,9 @@ re-canonicalized rather than textually substituted. See [equality.md](equality.m
 ## N
 
 **Naming invariants** ![kb](../.github/badges/cat-kb.svg): The role conventions —
-predicates camelCase, individuals CapitalCamelCase, types snake_case (unary
-predicates), contexts `Cx`-prefixed CapitalCamelCase. `assert` rejects a bad name. See
+predicates camelCase at arity 2 and above, individuals CapitalCamelCase, types snake_case
+(unary predicates) and senses, contexts `Cx`-prefixed CapitalCamelCase, lexemes in the
+`lex` namespace. `assert` rejects a bad name under the `:strict` policy. See
 [naming.md](naming.md).
 
 **NAT** ![kb](../.github/badges/cat-kb.svg): A non-atomic term `(F a…)` — a
@@ -876,12 +876,12 @@ A placed nogood and a guard defeat take the same placement over what they read, 
 placement reads a `defeat`. See [contexts.md](contexts.md).
 
 **Plan (conjunctive query planning)** ![inference](../.github/badges/cat-inference.svg):
-Ordering a conjunction's literals cheapest-first, each estimated under the
-variables bound by the time it runs (sideways information passing), with the
-cartesian factors (those sharing no variable with the rest, and matching more than
-once, so they multiply it) held to the back on structure rather than on an
-estimate. The cost model is the count-aware trie
-itself. See [inference.md](inference.md).
+The order a conjunction's literals run in. The generators split into blocks of
+literals connected by shared variables; each block is ordered on the expected join size
+under the bindings in hand (sideways information passing), and the blocks are ranked by
+the transposition law, `s/(n−1)` descending. Deferred, waiting and recursive literals
+are placed by readiness rather than by cost. The cost model reads the count-aware trie.
+See [inference.md](inference.md#conjunctive-query-planning-vaeliiimplplan).
 
 **Polarity** ![kb](../.github/badges/cat-kb.svg): Which of the two literals a
 predication makes — positive, or negative under a `not`. Read off the head `not` of
@@ -913,11 +913,12 @@ See [predicates.md](predicates.md).
 quantify one argument position of a binary predicate and fix the other, in three
 classes. The *Instance* pair (`predAllInstance` / `predInstanceAll`) is a rule generator
 and produces inference. The *Exists* four are inert records beside a sanctioned
-placeholder functor. The *Specified* pair (`predAllSpecified` / `predSpecifiedAll`) is an
-on-demand integrity audit reporting the instances with no determinate filler — binary,
-the filler's required type derived from the predicate's own slot contract rather than
-restated, and a predicate with no visible slot typing reported as an explicit
-declaration-contract gap. See [predall.md](predall.md).
+placeholder functor, audited on demand for the members with no filler. The *Specified*
+pair (`predAllSpecified` / `predSpecifiedAll`) is an on-demand integrity audit reporting
+the instances with no determinate filler — binary, the filler's required type derived
+from the predicate's own slot contract rather than restated, and a predicate with no
+visible slot typing reported as an explicit declaration-contract gap. See
+[predall.md](predall.md).
 
 **Predicate extent** ![backend](../.github/badges/cat-backend.svg): The count trie
 `[:predicate-extent … [pred ctx]]` — every fact by functor, any arity, either polarity,
@@ -939,7 +940,7 @@ conclusion resting on a justification. Carries an assumption strength. See
 
 **`properPartOf`** ![kb](../.github/badges/cat-kb.svg): `(properPartOf ?part ?whole)` says that one thing is a part of another and the other is not a part of it. Irreflexive, transitive, `thing` in both positions and below `partOf`. `properTangiblePartOf`, `properSubSituationOf`, `properPartOfRegion` and `properSubintervalOf` are below it. See [taxonomy.md](taxonomy.md).
 
-**`properSubSituationOf`** ![kb](../.github/badges/cat-kb.svg): `(properSubSituationOf ?part ?whole)` says that one situation is a part of another and the other is not a part of it. Irreflexive, transitive, and below `subSituationOf` and `properPartOf`. See [time.md](time.md).
+**`properSubSituationOf`** ![kb](../.github/badges/cat-kb.svg): `(properSubSituationOf ?part ?whole)` says that one situation is a part of another and the other is not a part of it. Irreflexive, transitive, and below `subSituationOf` and `properPartOf`.
 
 **`properTangiblePartOf`** ![kb](../.github/badges/cat-kb.svg): `(properTangiblePartOf ?part ?whole)` says that one tangible is a component of another and the other is not a component of it. Irreflexive, transitive, and below `tangiblePartOf` and `properPartOf`. See [inherit.md](inherit.md).
 
@@ -975,17 +976,9 @@ different question and returns sentexes. See [api.md](api.md),
 
 **Query context** ![kb](../.github/badges/cat-kb.svg): One of `CxEverything`,
 `CxInference` and `CxNothing` — a `Cx…` symbol naming a **way of reading** rather than a
-place. Resolved at the read entry point and never reaching the engine; refused at
-`assert` and in
-the `genlCx` slots, so nothing is stored in one and nothing wires one into the lattice.
-`CxEverything` reads the store as spelled, belief ignored; `CxInference` keeps only what
-one reader's `genlCx` ancestor set sees over the whole derivation and reports that
-reader as
-`:context`;
-`CxNothing` sees no fact at all, leaving the provers. A **variable** context (`?ctx`, the
-default of every short arity, or any name) is the same reading as `CxInference`, the witness
-being unified into that variable rather than arriving as `:context`. See
-[contexts.md](contexts.md), [from-cyc.md](from-cyc.md).
+place, resolved at the read entry point and refused at `assert` and in the `genlCx`
+slots. A variable context is the same reading as `CxInference`. See
+[contexts.md](contexts.md#the-query-contexts-reading-modes-wearing-a-contexts-spelling).
 
 **`quotedArg`** ![kb](../.github/badges/cat-kb.svg): An argument-type declaration on the
 argument **as a term** — its EDN kind (`string`, `number` with `integer` below it,
@@ -1007,6 +1000,12 @@ of 8 base topological relations between two regions — disconnected, externally
 connected, partially overlapping, equal, and the two proper-part relations with
 their converses. `vaelii.impl.space`, registered as `:rcc8`. See
 [space.md](space.md).
+
+**Reach** ![inference](../.github/badges/cat-inference.svg): The terms a preserved
+argument position licenses a claim for: the closure of the goal's term at that position
+under the union of the relations its `transitiveInArg` / `transitiveInArgInverse`
+declarations name. A stored claim bears on a ground goal when its argument tuple lies in
+the product of the reaches. See [inherit.md](inherit.md).
 
 **Read walk** ![tms](../.github/badges/cat-tms.svg): What a belief-filtered read at a
 context runs (`exc/defeat-hidden-fn`): over the asked handle's justification
@@ -1055,6 +1054,16 @@ held fixed as a boundary. See [nmtms.md](nmtms.md).
 **Region (spatial)** ![qr](../.github/badges/cat-qr.svg): A region of space — what
 RCC-8's eight base relations hold between. A declared collision with the JTMS one, and
 nothing else. See [space.md](space.md).
+
+**Reified constant** ![kb](../.github/badges/cat-kb.svg): The opaque symbol a
+ground **NAT** is minted as, `nat/a…` in argument position and `cx/a…` in a context slot,
+named by a hash of its expression. Its **bookkeeping** is its `natFormula` map plus what
+the mint wrote about it: the materialized result types, the `genlResult` edges and the
+correspondence projection.
+A **placeholder** is a constant minted for an application whose corresponding predicate
+names no value yet. A constant is an **orphan** when every stored sentex naming it is its
+own bookkeeping or a record the argument-type entailment derives off that bookkeeping
+alone, and the orphan sweep then retracts it. See [nat.md](nat.md).
 
 **`reindex`** ![backend](../.github/badges/cat-backend.svg): Rebuild the index store
 (the trie, secondary roots, rule index, exception re-check index, and term index)
@@ -1229,7 +1238,7 @@ premise / the class a justification confers — exactly two, `:monotonic` >
 `:default`. It propagates from the antecedents: a conclusion is never stronger
 than what it rests on. See [nmtms.md](nmtms.md).
 
-**`subSituationOf`** ![kb](../.github/badges/cat-kb.svg): `(subSituationOf ?part ?whole)` says that one situation is a part of another. `subSituationOf` is transitive, reflexive and below `partOf`, and its proper reading is `properSubSituationOf`. A part's time is within its whole's time, and two situations sharing a time are not thereby parts of one another. See [time.md](time.md).
+**`subSituationOf`** ![kb](../.github/badges/cat-kb.svg): `(subSituationOf ?part ?whole)` says that one situation is a part of another. `subSituationOf` is transitive, reflexive and below `partOf`, and its proper reading is `properSubSituationOf`. A part's time is within its whole's time, and two situations sharing a time are not thereby parts of one another.
 
 **Subsumption (rules)** ![inference](../.github/badges/cat-inference.svg): One rule
 covering another — a substitution σ making the covering rule's antecedents a subset of the
@@ -1353,6 +1362,15 @@ See [sign.md](sign.md).
 **`typeGenl`** ![kb](../.github/badges/cat-kb.svg): Higher-order `genl` — `(typeGenl ?classifier ?genl)` says every instance of `?classifier` is a `genl` of `?genl`. Inert — declared, read by no inference path. See [taxonomy.md](taxonomy.md).
 
 ## U
+
+**Undercutting** ![inference](../.github/badges/cat-inference.svg): A rule or a
+licence does not conclude for one binding, and nothing is arbitrated. An `exceptWhen`
+query or an `unknown` antecedent that holds places a guard defeat on the firing, whose
+conclusion stays stored and is not believed. A more specific stated claim undercuts an
+inherited `:default` one: the prover reads nothing from the general claim for that
+binding, and a forward firing over it is stored with a guard defeat. Contrast **`defeat`**,
+which takes a sentex that holds out of belief. See [exceptions.md](exceptions.md) and
+[inherit.md](inherit.md).
 
 **`underlying-body`** ![kb](../.github/badges/cat-kb.svg): The body a sentence's
 `not` wrappers enclose, whatever its polarity — the *content* question, where

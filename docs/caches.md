@@ -207,6 +207,9 @@ A row declares:
   that no store holds: a refused firing, a pending mint or lift. Such a row breaks
   [nmtms.md](nmtms.md#3-separated-state)'s third invariant, and the column `content` below
   marks it.
+- **`:covered-by`** — `{:perf [check …] :perf-ab [probe …]}`: the `lein perf` checks
+  and perf-ab probes that fail when the row is replaced by a recompute at its read. A row
+  no measurement needs costs a retirement path and serves no read faster.
 - **`:imaged?`** — which section of a reasoning image carries it. The image's list of
   carried atoms (`reasoning-image/state-atoms`) is read off the register, so the image and
   the register cannot disagree.
@@ -232,7 +235,9 @@ does not declare true fails as well, so the list only shrinks. A row of kind `:i
 `:cache`, computed at the write or the settle, whose `:reads` do not reach M1 and whose
 namespace does not implement `IndexStore`, keeps a belief-free index outside the
 IndexStore; the check fails it unless its `OUTSIDE_INDEX` list names it, under the same
-shrink-only rule.
+shrink-only rule. A row owned by `decide.arity` with no `:covered-by` fails unless the
+check's `COVERAGE_OWED` list names it, under the same shrink-only rule, and so does a
+`:covered-by` naming a check or probe that `bench/` does not define.
 
 Two `Reasoning` fields hold the entries of several rows, told apart by key: `:taxonomy`
 and `:nogood-candidates`. A row locates its entries in one of them by key, as

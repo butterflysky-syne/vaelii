@@ -1,17 +1,9 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.point-test
-  "The point algebra over instants (`vaelii.impl.point`): three base relations and three
-  derived ones, answered by entailment over the path-consistent constraint network of
-  everything asserted in a context.
-
-  Two halves, the same shape `interval_test` uses.  The first tests the **algebra alone** —
-  no KB, no context, no belief — and derives the whole composition table a second time,
-  from numeric instants: lay out three points every way three points can be laid out, read
-  off the three relations, and record what the outer pair may be.  The transcribed table
-  and the derivation share nothing, so they can only agree by both being right.  The second
-  half tests the prover over a KB, where what is really being checked is that a relation
-  nobody stored comes out."
+  "The point algebra over instants (`vaelii.impl.point`): the algebra alone, its table and
+  converse derived a second time from numeric instants, then the prover over a KB.  The
+  laws every algebra holds are `qcn_algebra_test`'s (docs/time.md)."
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
@@ -21,9 +13,7 @@
             [vaelii.impl.qcn-kb :as qkb]
             [vaelii.test-util :as tu]))
 
-;; A fresh KB per test: the upper layer, whose time.txt states the instant relations, and
-;; the prover registered.  The prover is opt-in, so registering it is what turns stored
-;; instant facts into a network.  The algebra tests below need none of it.
+;; A fresh KB per test, with the opt-in prover registered; the algebra tests need none.
 (use-fixtures :each (tu/neutral-fresh
                      #(doto (tu/fresh)
                         (tu/load-core!)
@@ -34,9 +24,7 @@
 ;; ---- the algebra, derived from numeric instants -------------------------
 
 (def ^:private by-value
-  "Each base relation as the comparison over two numeric instants that *defines* it.  This
-  is the independent second statement of the algebra: everything below is derived from here
-  and compared against the transcribed table."
+  "Each base relation as the comparison over two numeric instants that defines it."
   {:before (fn [a b] (< a b))
    :equal  (fn [a b] (= a b))
    :after  (fn [a b] (> a b))})
@@ -65,8 +53,7 @@
   (is (= 3 (count pt/all-relations)))
   (is (= pt/all-relations (set (keys by-value)))
       "the transcribed universe and the numeric definitions name the same relations")
-  (testing "exactly one holds of any two instants — that is what makes a network of them a
-            constraint network at all"
+  (testing "exactly one holds of any two instants"
     (doseq [a points b points]
       (is (= 1 (count (holding a b))) (str a " and " b " stand in " (holding a b)))))
   (testing "and every one of the three is realized, so none is vacuous"
@@ -89,29 +76,9 @@
                       :when (= rels pt/all-relations)]
                   [r1 r2]))))))
 
-(deftest coincidence-is-the-identity-element
-  (doseq [r pt/all-relations]
-    (is (= #{r} (pt/compose #{:equal} #{r})))
-    (is (= #{r} (pt/compose #{r} #{:equal})))))
-
-(deftest the-converse-pairs-off-and-reverses-composition
-  (is (= #{:after} (pt/converse-set #{:before})))
-  (is (= #{:before} (pt/converse-set #{:after})))
-  (is (= #{:equal} (pt/converse-set #{:equal})) "coincidence is its own converse")
-  (testing "it is an involution over the whole universe"
-    (is (= pt/all-relations (pt/converse-set (pt/converse-set pt/all-relations))))
-    (doseq [r pt/all-relations]
-      (is (= #{r} (pt/converse-set (pt/converse-set #{r}))))))
-  (testing "and it reverses composition, as a relation algebra requires"
-    (doseq [a pt/all-relations b pt/all-relations]
-      (is (= (pt/converse-set (pt/compose #{a} #{b}))
-             (pt/compose (pt/converse-set #{b}) (pt/converse-set #{a})))
-          (str "converse(" a " ∘ " b ")")))))
-
-(deftest composition-of-sets-is-the-union-over-their-members
-  (is (= (set/union (pt/compose #{:before} #{:after}) (pt/compose #{:equal} #{:after}))
-         (pt/compose #{:before :equal} #{:after}))
-      "a disjunction on either side admits every combination"))
+(deftest the-converse-matches-the-numeric-definitions
+  (is (= (into {} (for [a points b points] [(relation-of a b) (relation-of b a)]))
+         (into {} (for [r pt/all-relations] [r (first (pt/converse-set #{r}))])))))
 
 (deftest the-derived-predicates-are-the-complements-of-the-base-ones
   (doseq [[derived base] '{instantNotBefore instantBefore

@@ -11,12 +11,8 @@
                      + depth-sign × depth-weight × Σ dᵢ       rewriting allowance left
                      + tree-sign  × tree-weight  × tree-depth search-tree level
 
-  **The base term is the KB's own cost model, not a second one.**  It is
-  `plan/explain`'s per-literal estimate summed — the count-aware trie model with sideways
-  information passing that already orders every join in the engine, so a conjunction is
-  costed here exactly as `core/query-plan` reports it.  One model, two readers; a node
-  ordering that disagreed with the plan it is about to run would be a cost model arguing
-  with itself.
+  The base term is `plan/explain`'s per-literal estimate summed, the numbers
+  `core/query-plan` prints for the same conjunction.
 
   **The signs are the whole personality of the search.**  Σ dᵢ is what a node is still
   *permitted* to rewrite, so a negative depth sign prefers the node with the most room
@@ -265,8 +261,7 @@
   from rather than only its total.  The four terms and the total are `estimate`'s own,
   recomputed the same way; the per-literal costs are `plan/explain`'s, in the order the
   join will run them, so they are the numbers `core/query-plan` prints for the same
-  conjunction.  One model, two readers — a per-literal cost here that disagreed with the
-  plan would be the cost model arguing with itself.
+  conjunction.
 
   The per-literal `:cost` is the clamped index estimate (`:est-matches`, ≤ `literal-ceiling`).
   With `:estimate-backchain?` set, `:base` costs an allowance-carrying literal through its

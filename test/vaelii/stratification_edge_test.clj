@@ -194,7 +194,7 @@
   (let [n    (atom 0)
         orig @#'checks/stored-rule-node]
     (with-redefs-fn {#'checks/stored-rule-node
-                     (fn [kb h] (swap! n inc) (orig kb h))}
+                     (fn [& args] (swap! n inc) (apply orig args))}
       f)
     @n))
 
@@ -217,6 +217,25 @@
           (is (tax/genl?-global (reasoning/taxonomy kb) sub hub)))
         (testing "seven stored rules, seven nodes, against 42 edges into them"
           (is (= 7 n)))))))
+
+(tu/deftest-kb a-pass-shares-the-stored-graph-and-sees-a-rule-stored-in-it
+  ;; Under one `rules/*stratification-memo*`, as a settle binds it: a second check builds
+  ;; no node, and the rule closing the cycle, stored between two checks, reaches the
+  ;; second.  R1 and a rule concluding `penguin` keep the first check walking.
+  (tu/with-terms [base p flightless penguin CxPass]
+    (v/assert kb (except-rule (list flightless '?x) [(list base '?x)] (list p '?x)) CxPass)
+    (concluded! kb penguin CxPass)
+    (binding [vr/*stratification-memo* (volatile! nil)]
+      (let [edge  (list 'genl penguin flightless)
+            check #(checks/edge-stratification-violation kb edge)]
+        (testing "with R2 not stored, the edge closes nothing"
+          (is (nil? (check))))
+        (testing "a second check of the pass builds no node"
+          (is (zero? (node-builds check))))
+        (v/assert kb (vr/rule-sentence [(list p '?x)] (list penguin '?x)) CxPass
+                  {:direction :forward})
+        (testing "R2, stored in the pass, closes the cycle the next check finds"
+          (is (= :not-stratified (:violation (check)))))))))
 
 (tu/deftest-kb a-genl-edge-check-builds-no-excepted-rule-the-edge-does-not-reach
   ;; Four rules read `top` and conclude predicates nothing reads; the excepted rules read
@@ -345,7 +364,7 @@
   [kb cycle a b]
   (let [tx      (reasoning/taxonomy kb)
         [_ h]   (re-matches #"rule#(\d+)" (nth cycle (- (count cycle) 3)))
-        node    (@#'checks/stored-rule-node kb (parse-long h))
+        node    (@#'checks/stored-rule-node kb (parse-long h) (java.util.HashMap.))
         spec    (second (re-matches #"\S+ (.+)" (nth cycle (- (count cycle) 2))))
         above   (set (map str (tax/genls-global tx b)))]
     (and (contains? (set (map str (tax/specs-global tx a))) spec)

@@ -6,6 +6,7 @@
   per-prover estimates."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.plan :as plan]
             [vaelii.impl.provers :as provers]
             [vaelii.impl.taxonomy :as tax]
@@ -258,6 +259,61 @@
     (solve        [_ _ _ _] [{}]))
   (v/add-prover kb (->AlwaysProver))
   (is (v/ask? kb '(magic Anything) 'CxUniverse)))
+
+(tu/deftest-kb a-prover-built-from-fns-answers-with-the-readings-it-was-given
+  (tu/with-terms [nearTo]
+    (let [goal? (fn [_ goal _] (and (seq? goal) (= nearTo (first goal))))]
+      (v/add-prover kb (v/prover {:applicable?  goal?
+                                  :solve        (fn [_ [_ a b] _] (if (= a b) [{}] []))
+                                  :est-bindings (fn [_ goal _] (if (some symbol? (rest goal)) 64 1))
+                                  :cost         :lookup
+                                  :completeness 100}))
+      (is (v/ask? kb (list nearTo 1 1) 'CxUniverse))
+      (is (not (v/ask? kb (list nearTo 1 2) 'CxUniverse)))
+      (is (= [{:est-bindings 1 :cost :lookup :completeness 100}]
+             (map #(select-keys % [:est-bindings :cost :completeness])
+                  (filter #(= "FnProver" (:prover %))
+                          (v/query-plan kb (list nearTo 1 2) 'CxUniverse))))))
+    (testing "the defaults: compute, partial, one answer for a ground goal"
+      (let [pr (v/prover {:applicable? (constantly true) :solve (constantly [])})]
+        (is (= [1 :compute 50]
+               ((juxt prover-types/est-bindings prover-types/cost prover-types/completeness)
+                pr kb (list nearTo 1 2) 'CxUniverse)))))))
+
+(deftest prover-refuses-a-spec-it-cannot-read
+  (let [f        (fn [_ _ _] [])
+        mismatch #(try (v/prover %) nil
+                       (catch clojure.lang.ExceptionInfo e
+                         ((juxt :type :mismatch) (ex-data e))))]
+    (doseq [[spec want] [[{:solve f}                                     :missing-value]
+                         [{:applicable? f}                               :missing-value]
+                         [{:applicable? f :solve f :solve-with-support f} :conflict]
+                         [{:applicable? f :solve-with-support f}          :missing-companion]
+                         [{:applicable? f :solve-with-support f :support-functors '#{p}}
+                          :missing-companion]
+                         [{:applicable? f :solve f :support-sources '#{p}} :missing-companion]
+                         [{:applicable? f :solve f :slove f}              :unknown-key]
+                         [{:applicable? :p :solve f}                      :bad-value]
+                         [{:applicable? f :solve f :cost :cheap}          :bad-value]
+                         [{:applicable? f :solve f :completeness 101}     :bad-value]
+                         [{:applicable? f :solve f :est-bindings -1}      :bad-value]
+                         [{:applicable? f :solve-with-support f :support-functors #{}
+                           :support-sources #{}}                          :bad-value]
+                         [{:applicable? f :solve-with-support f :support-functors '[p]
+                           :support-sources #{}}                          :bad-value]]]
+      (is (= [:unknown-option want] (mismatch spec)) (pr-str spec)))))
+
+(tu/deftest-kb a-prover-built-from-fns-refuses-an-answer-it-cannot-read
+  (tu/with-terms [nearTo farFrom]
+    (let [on      (fn [p] (fn [_ goal _] (and (seq? goal) (= p (first goal)))))
+          refused #(try (doall (v/ask kb (list % 1 2) 'CxUniverse)) nil
+                        (catch clojure.lang.ExceptionInfo e (:option (ex-data e))))]
+      (v/add-prover kb (v/prover {:applicable? (on nearTo) :support-functors #{nearTo}
+                                  :support-sources #{}
+                                  :solve-with-support (fn [_ _ _] [[{} [{:id 1}]]])}))
+      (v/add-prover kb (v/prover {:applicable? (on farFrom) :solve (fn [_ _ _] [[]])}))
+      (is (= :solve-with-support (refused nearTo)) "a sentex map where a handle belongs")
+      (is (= :solve (refused farFrom)) "a vector where a binding map belongs"))))
 
 ;; ---- declared-transitive predicates --------------------------------------
 ;; `(transitive P)` is *metadata*, not a cached relation: nothing about P lives in the
@@ -544,3 +600,90 @@
         "and the one that cannot see the usage infers nothing from it")
     (is (v/ask? kb (list food_t Bone1) '?ctx)
         "the any-context read is unscoped, as every other scoped read here is")))
+
+;; ---- an open argument-typed membership -----------------------------------
+
+(defn- permutations [coll]
+  (if (empty? coll)
+    [[]]
+    (for [i (range (count coll))
+          p (permutations (concat (take i coll) (drop (inc i) coll)))]
+      (cons (nth coll i) p))))
+
+(def ^:private argument-typed-conjunctions
+  "`[label facts goals want]` per row, each a fn of the row's temporaries.  Every fact is
+  stated in `CxA`; `want` is the conjunction's answer set under either reading."
+  [["a declaration types the join variable"
+    (fn [{:syms [p1 t1 X Y]}]
+      [[(list 'arg p1 1 t1) (list p1 X Y)]
+       [(list p1 '?a '?b) (list t1 '?a)]
+       #{{'?a X '?b Y}}])]
+   ["three conjuncts, one member stored under a spec through genl"
+    (fn [{:syms [p1 p2 t0 t1 X Y Z Q]}]
+      [[(list 'arg p1 1 t1) (list 'genl t0 t1) (list t0 Z) (list p1 X Y) (list p1 Z Y)
+        (list p2 Y Q)]
+       [(list t1 '?a) (list p1 '?a '?b) (list p2 '?b '?c)]
+       #{{'?a X '?b Y '?c Q} {'?a Z '?b Y '?c Q}}])]
+   ["two declared types and no other binder"
+    (fn [{:syms [p1 p3 t1 t2 X Y Q R]}]
+      [[(list 'arg p1 1 t1) (list 'arg p3 1 t2) (list p1 X Y) (list p3 Q R) (list t2 X)]
+       [(list t1 '?a) (list t2 '?a)]
+       #{{'?a X}}])]
+   ["a thing-typed position, which mints nothing"
+    (fn [{:syms [p4 W V]}]
+      [[(list 'arg p4 1 'thing) (list p4 W V)]
+       [(list p4 '?a '?b) (list 'thing '?a)]
+       #{{'?a W '?b V}}])]
+   ["a declared type an arity statement binds to two"
+    (fn [{:syms [p6 t6 M N]}]
+      [[(list 'arg p6 1 t6) (list 'arity t6 2) (list p6 M N)]
+       [(list p6 '?a '?b) (list t6 '?a)]
+       #{{'?a M '?b N}}])]
+   ["no member of the type fills the other conjunct"
+    (fn [{:syms [p1 p2 t1 X Y Q R]}]
+      [[(list 'arg p1 1 t1) (list p1 X Y) (list p2 Q R)]
+       [(list t1 '?a) (list p2 '?a '?b)]
+       #{}])]])
+
+(tu/deftest-kb an-argument-typed-conjunction-answers-alike-in-every-conjunct-order
+  ;; each reading asserts its own copy, since the entailing one mints at the write
+  (doseq [[reading entailing?] [["constraint-only" false] ["entailing" true]]
+          [label row] argument-typed-conjunctions]
+    (binding [argument/*assertive-arg-types?* entailing?]
+      (tu/with-terms [CxA p1 p2 p3 p4 p6 t0 t1 t2 t6 X Y Z Q R W V M N]
+        (let [[facts goals want] (row {'p1 p1 'p2 p2 'p3 p3 'p4 p4 'p6 p6 't0 t0 't1 t1
+                                       't2 t2 't6 t6 'X X 'Y Y 'Z Z 'Q Q 'R R 'W W 'V V
+                                       'M M 'N N})]
+          (v/assert kb (list 'genlCx CxA 'CxUniverse) 'CxUniverse)
+          (doseq [f facts] (v/assert kb f CxA))
+          (doseq [planned? [true false]
+                  order    (permutations goals)]
+            (is (= want (set (binding [plan/*enabled* planned?] (v/query kb (vec order) CxA))))
+                (str reading ", " label ", planned " planned? ", " (vec order)))))))))
+
+(tu/deftest-kb stored-memberships-and-the-open-arm-answer-what-the-ground-arm-accepts
+  ;; The entailing reading mints a membership in a type `arity/mintable-type?` admits, so
+  ;; `ArgTypeProver` answers an open goal only for the others; together they answer the
+  ;; individuals the ground arm types.  `t5` is declared in CxA and used in CxB, so only
+  ;; CxC, which sees both, types `M`.
+  (tu/with-entailing
+    (tu/with-terms [CxA CxB CxC p1 p4 p5 p6 t1 t5 t6 X Y W V M N K L]
+      (v/assert kb (list 'genlCx CxA 'CxUniverse) 'CxUniverse)
+      (v/assert kb (list 'genlCx CxB 'CxUniverse) 'CxUniverse)
+      (v/assert kb (list 'genlCx CxC CxA) 'CxUniverse)
+      (v/assert kb (list 'genlCx CxC CxB) 'CxUniverse)
+      (doseq [f [(list 'arg p1 1 t1) (list p1 X Y)
+                 (list 'arg p4 1 'thing) (list p4 W V)
+                 (list 'arg p6 1 t6) (list 'arity t6 2) (list p6 K L)
+                 (list 'arg p5 1 t5)]]
+        (v/assert kb f CxA))
+      (v/assert kb (list p5 M N) CxB)
+      (let [individuals [X Y W V M N K L]
+            answers     (fn [pv t ctx]
+                          (set (keep #(get % '?a) (provers/solve-goal-with kb [pv] (list t '?a) ctx))))]
+        (doseq [t [t1 'thing t6 t5] ctx [CxA CxB CxC]]
+          (is (= (set (filter #(seq (prover-types/solve (provers/->ArgTypeProver) kb (list t %) ctx))
+                              individuals))
+                 (into (answers (provers/->FactProver) t ctx)
+                       (answers (provers/->ArgTypeProver) t ctx)))
+              (str t " at " ctx)))))))

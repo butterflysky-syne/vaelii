@@ -26,7 +26,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
             [vaelii.host.core-context :as core-context]
-            [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.taxonomy :as tax]
             [vaelii.impl.types.reasoning :as reasoning]
@@ -96,7 +96,7 @@
         direct (doto (v/open-kb (space :direct)) (tu/clear-kb!) (build))
         dumped (doto (v/open-kb (space :dumped)) (tu/clear-kb!))]
     (try
-      (binding [checks/*assertive-arg-types?* (not checks/*assertive-arg-types?*)]
+      (binding [argument/*assertive-arg-types?* (not argument/*assertive-arg-types?*)]
         (tu/load-dumped! dumped ::dump-reading build))
       (is (= (content direct) (content dumped)))
       (finally
@@ -116,11 +116,11 @@
         direct  (doto (v/open-kb (space :direct)) (tu/clear-kb!) (build))
         altered (doto (v/open-kb (space :altered)) (tu/clear-kb!))
         dumped  (doto (v/open-kb (space :dumped)) (tu/clear-kb!))
-        root    (.getRawRoot #'checks/*assertive-arg-types?*)]
+        root    (.getRawRoot #'argument/*assertive-arg-types?*)]
     (try
-      (alter-var-root #'checks/*assertive-arg-types?* not)
+      (alter-var-root #'argument/*assertive-arg-types?* not)
       (try (tu/load-dumped! altered ::root-reading build)
-           (finally (alter-var-root #'checks/*assertive-arg-types?* (constantly root))))
+           (finally (alter-var-root #'argument/*assertive-arg-types?* (constantly root))))
       (tu/load-dumped! dumped ::root-reading build)
       (is (= (content direct) (content dumped)))
       (finally

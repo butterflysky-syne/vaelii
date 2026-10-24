@@ -24,6 +24,7 @@
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.rules :as vr]
             [vaelii.test-util :as tu]))
 
@@ -215,7 +216,7 @@
   ;; Under `*assertive-arg-types?*` the constraint is read as an entailment as well, exactly
   ;; as strong as `arg`'s and drawn under the same condition it convicts on — so a
   ;; dormant declaration entails nothing.
-  (binding [checks/*assertive-arg-types?* true]
+  (binding [argument/*assertive-arg-types?* true]
     (let [{:keys [carnivore meat eats]} (eats-world kb)]
       (tu/with-terms [Rex Chunk Nobody Other]
         (v/assert kb (list carnivore Rex) 'CxUniverse)
@@ -241,7 +242,7 @@
   ;; sentences derive a type in one order and not the other (docs/argtypes.md opens on
   ;; exactly this).  The *constraint* half deliberately does not reach back; the
   ;; entailment half does, and the two are not the same claim.
-  (binding [checks/*assertive-arg-types?* true]
+  (binding [argument/*assertive-arg-types?* true]
     (tu/with-terms [carnivore_t meat_t eatsOf Rex Chunk]
       (doseq [s [(list 'genl carnivore_t 'thing) (list 'genl meat_t 'thing)
                  (list carnivore_t Rex)
@@ -257,7 +258,7 @@
   ;; The entailment is justified by [the fact, the declaration], so it is not a fact of
   ;; its own — dropping either antecedent must withdraw it.  Asserted rather than argued,
   ;; because a derived type that outlived its support would be a type nothing licenses.
-  (binding [checks/*assertive-arg-types?* true]
+  (binding [argument/*assertive-arg-types?* true]
     (tu/with-terms [carnivore_t meat_t eatsOf Rex Chunk]
       (doseq [s [(list 'genl carnivore_t 'thing) (list 'genl meat_t 'thing)
                  (list carnivore_t Rex)

@@ -30,6 +30,7 @@
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.naming :as nm]
+            [vaelii.impl.nat :as nat]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.resolution :as res]
             [vaelii.impl.rules :as rules]
@@ -162,7 +163,10 @@
       (let [s' (assoc stored :engines engines :defeasible def?)]
         (when moved? (p/unindex-sentex! (:index kb) stored h))
         (p/put-sentex (:records kb) s')
-        (when moved? (p/index-sentex (:index kb) s' h))
+        (when moved?
+          (p/index-sentex (:index kb) s' h)
+          ;; the engines decide whether a `(?p …)` consequent concludes any predicate
+          (rules/forget-stratification))
         (when (not= (boolean def?) (boolean (:defeasible stored)))
           (special/restrength-firings! kb h)
           ;; a rule's defeasibility decides whether it is a forced-monotonic rule
@@ -173,6 +177,18 @@
                    (not (rules/forward-sentex? stored)))
           (chain/chain-all kb [h] opts))
         (settle/settle-write kb (:chain? opts true))))))
+
+(defn- note-rule-spelling!
+  "Record on rule row `h`, stored as `s`, the spelling `sentence` has with its open
+  applications as written (`res/*as-written*`), when the respell stored it under a
+  corresponding predicate: the spelling the row's piece returns to when the
+  correspondence leaves (docs/nat.md, The corresponding predicate).  `prior` is
+  `integrate/note-premise-spelling!`'s."
+  [kb h s sentence context strength prior]
+  (when (or (nat/names-open-application? kb sentence) (seq (:premise (integrate/spellings kb h))))
+    (let [stored  (sx/sentence-of s)
+          written (binding [res/*as-written* true] (kb/canonical-sentence kb sentence context))]
+      (integrate/note-premise-spelling! kb h stored written strength prior))))
 
 (defn- assert-rule-sentence
   "Assert a rule **as written** — any `set/*Rule` wrapper included, since the sentex
@@ -214,6 +230,7 @@
         (checks/hold-rule-conviction! kb s)
         (checks/force-sentex! kb s)
         (mark-premise kb h strength)
+        (note-rule-spelling! kb h s sentence context strength nil)
         (special/index-rule-sentex kb h s)
         ;; A rule naming a predicate or type the closure has **already** merged is
         ;; restated on arrival, exactly as one stored before the merge is restated by it
@@ -222,8 +239,11 @@
         ;; carries the inference.  Without it the same rule, fact and merge fire under the
         ;; representative in the orders that state the rule first and under a retired
         ;; spelling in the rest (docs/equality.md, "Merging predicates and types").  An
-        ;; individual-only merge holds a rule back, which `kb/rewritable-sentex?` decides.
-        (let [mig (when (kb/rewritable-sentex? kb s) (special/migrate-sentex kb s))]
+        ;; individual constant a merge displaces restates the rule the same way
+        ;; (`kb/rewritable-sentex?`).
+        (let [mig  (when (kb/rewritable-sentex? kb s) (special/migrate-sentex kb s))
+              ;; the spellings the other believed correspondences read, beside the row
+              alts (chain/sync-rule-respellings! kb h)]
           (when (seq (:superseded mig))
             (special/refresh-supersessions kb (:superseded mig)))
           ;; defeasible or not, a forward-capable rule seeds the one agenda: `chain`
@@ -236,6 +256,7 @@
             ;; transitive side sees the stored links only, since its closure is answered
             ;; rather than stored and an open goal on it has no record to lead from
             (chain/chain-all kb (-> (into [h] (:new mig))
+                                    (into alts)
                                     (into (special/transitive-rule-seeds kb s)))
                              opts))
           (violations/report kb (:violations mig)))
@@ -259,6 +280,11 @@
         ;; Narrowing one is `retract!` and re-assert, as it is for the other two.  A
         ;; record with no class yet — nil, so not a premise — ranks 0 and takes the
         ;; incoming class.
+        (note-rule-spelling! kb h s sentence context strength
+                             (jtms/premise-strength (reasoning/tms kb) h))
+        (when-let [alts (seq (chain/sync-rule-respellings! kb h))]
+          (when (and (:chain? opts true) (rules/forward-sentex? s)) (chain/chain-all kb (vec alts) opts))
+          (settle/settle-write kb (:chain? opts true)))
         (let [resolved (strength/max (:strength s) strength)]
           (when (not= resolved (:strength s))
             (checks/force-sentex! kb s)
@@ -306,18 +332,12 @@
     (sx/check-exception-closed (vec (vals author-vm)) exc)
     (let [aligned (aligned-exception exc author-vm)
           meta-s  (sx/exceptWhen-meta aligned rule-handle)]
-      ;; Each conjunct is held to the naming invariants, like every other literal a
-      ;; rule carries.  `check-rule-sentence` runs `nm/check!` on `rules/inner-rule`,
-      ;; which has already peeled the query off, and nothing else reached it — so
-      ;; `nm/literals`' `:exception` role and the "exceptWhen exception" wording in
-      ;; `literal-roles` existed with nothing on the assert path calling them, and
-      ;; `(exceptWhen (lives_in ?x cold_place) …)` stored the snake_case-arity-2
-      ;; literal `docs/naming.md` says is refused.  The store holding what the front
-      ;; entry point refuses is the structure of corruption these checks exist to stop.
+      ;; each conjunct is held to the naming invariants here: `check-rule-sentence`
+      ;; checks `rules/inner-rule`, which has the query peeled off
       (run! #(nm/check! (:naming kb) % context) aligned)
       (checks/check-no-imperative meta-s)
       (checks/check-no-defeat meta-s)
-      (checks/check-exceptWhen-stratified kb rule-handle (rules/watched-predicates aligned) context)
+      (checks/check-exceptWhen-stratified kb rule-handle aligned context)
       (let [strength   (get opts :strength :default)
             [h s new?] (kb/find-or-create-sentex kb meta-s context strength)]
         (when new?
@@ -332,13 +352,8 @@
 
 (defn ist-parts
   "The `[context sentence]` an `(ist Ctx S)` names, or nil when the form is not one — a
-  bare `(ist Ctx)` included.
-
-  `assert` and `check` both read the form here, so a malformed `ist` is one refusal on
-  both paths.  Reaching into it positionally is how the two would disagree: `check`
-  taking a default and reporting `:shape` while `assert` takes none and throws a bare
-  `IndexOutOfBoundsException`, which carries no `:type` for a caller to discriminate on
-  and names nothing a writer can act on."
+  bare `(ist Ctx)` included.  `assert`, `check` and the reads all read the form here, so a
+  malformed `ist` is one `:shape` refusal on every path (`ist-shape-problem`)."
   [sentence]
   (when (and (sequential? sentence)
              (= sx/ist-functor (first sentence))
@@ -354,12 +369,10 @@
 
 (defn storage-context
   "The context a fact whose functor is `pred` is stored in when asserted in `context`:
-  CxUniverse for a `forced_decontextualized_predicate`, `context` otherwise.  Reads the
-  **global** property on purpose: this decides where the sentex is stored, storage does
-  not vary by the writer's visibility, and scoping the placement by what can see the
-  declaration would be circular.  `assert-one` places with it, and `vaelii.core`'s
-  `fact-problems` and `check-reified-inputs!` read with it, so a check reads the fact
-  from the context the store would hold it in."
+  CxUniverse for a `forced_decontextualized_predicate`, `context` otherwise, read from the
+  global property.  `assert-one` stores with it, `vaelii.core`'s `fact-problems` and
+  `check-reified-inputs!` check from it, and its `stored-context` looks a sentence up in
+  it for `handle-of`, `sentexes-matching` and `why-not`."
   [kb pred context]
   (if (and pred (tax/has-prop? (reasoning/taxonomy kb) :forced-decontextualized pred))
     special/universal-context
@@ -435,6 +448,7 @@
       (let [{ents :entailments held :conviction}
             (when-not bulk?
               (nm/check! (:naming kb) sentence context)
+              (checks/check-length-binding (:naming kb) sentence context)
               (checks/check-ground kb sentence context)
               (when-let [ps (seq (special/wff-problems (reasoning/taxonomy kb) sentence context))]
                 (throw (ex-info (str "not well-formed: " (str/join "; " ps))
@@ -450,7 +464,7 @@
               ;; arriving underneath rules that read the predicate negatively, which
               ;; is what turns those reads into negation as failure (docs/naf.md)
               (checks/check-closed-extent-stratified kb sentence context)
-              (checks/constraint-checks kb sentence context))
+              (checks/constraint-checks kb sentence context strength))
             ;; Bulk load skips the dedup trie-walk: a distinct corpus never hits an
             ;; existing sentex, so `create-sentex` directly is the same result the
             ;; `find-or-create` miss branch would take.

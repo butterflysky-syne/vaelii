@@ -176,10 +176,10 @@ them (`tax/relations-match?`, which compares the edges out of each lower end mov
 the restored entries recorded under the generations of the batch's start take the
 generations now (`special/advance-refusal-generations!`). The next write therefore
 re-asks what it would have re-asked with no preview before it. An entry already owed a
-re-ask when the batch started keeps its generations. A `:mint` entry records the rebuild
-epoch alone (`special/mint-generations`), which no edge moves, so a previewed edge leaves
-it settled
-(`preview_test/a-rolled-back-preview-leaves-the-next-write-no-mint-refusal-to-re-ask`).
+re-ask when the batch started keeps its generations. A declaration waiting on a type bound
+to another length is read only when that type's own bindings move, which no edge does, so
+a previewed edge reads none
+(`preview_test/a-rolled-back-preview-reads-no-declaration-waiting-on-a-length`).
 
 The violations ledger keeps an entry filed on **another thread** while the batch ran. The
 qualitative, metric and sign calculi file an inconsistency from inside a read, so a

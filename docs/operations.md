@@ -71,6 +71,7 @@ a `:disk-locked` refusal names a process that is still running.
   | `[:unusable [:config op]]` | a prover, evaluatable, reasoner or solver was registered | nothing; a KB that registers one cannot be sealed, so each crash of it rebuilds |
   | `[:unusable [:seal op]]` | the crash came inside `import!`, `clear!`, `recover`, `reindex` or `load-text!`, before its seal | check what that operation stored, and run it again if it did not finish |
   | `[:unusable [:unfreezable op cls]]`, `[:unusable [:listener-write op]]`, `[:unusable [:unlogged-write kind]]` | a write the log could not record ran | nothing; writes from a change-feed listener are the usual source |
+  | `[:unusable [:vm-error op cls]]` | a write ran out of heap or stack after its frame was written, and was rolled back | raise `-Xmx` (or `-Xss` for `StackOverflowError`) |
   | `[:unusable [:damaged-frame offset]]` | a frame inside the log does not decode | check the disk; the records are intact |
   | `[:index r]`, `[:reasoning r]` | the crash came inside a seal, or an image was changed | nothing |
   | `[:diverged …]`, `:extra-records` | a replayed write differs from the record stored at its handle, or a record has no frame | under `:tick` after a machine crash, nothing; otherwise report it, with the directory |
@@ -114,7 +115,7 @@ lein cli repl --starter                                                    # int
   policies, recovers belief from the records and writes a new image; closing the store
   then writes the index image a rebuilt index leaves due. It prints whether the image was
   `:current`, `:rebuilt` or `:written`, and refuses a directory holding no store
-  (`:unknown-source`). The records are read and never rewritten.
+  (`:unknown-source`). Without `--sync` the records are read and never rewritten.
   `scripts/upgrade-kb.sh [KB-DIR...]` runs it once per directory, defaulting to
   `checkouts/kb`, with the heap from `VAELII_HEAP`, and under `+with-postgres` for a
   directory whose records live on a postgres server (`index/records.edn`), as the start
@@ -126,8 +127,16 @@ lein cli repl --starter                                                    # int
   for byte. **`--trust`** opens as the browser does (`:recover? :trust`): an image written
   under other engine source is kept and reported `:current`, and belief is recovered only
   when the records moved behind the images, as a writer killed before its close leaves
-  them. `--trust` with `--verify` is refused. The script passes either flag to every
-  directory.
+  them. `--trust` with `--verify` is refused. **`--sync`** then brings the shipped
+  contexts to what this engine ships, one change at a time (`vaelii.host.sync/sync-each!`,
+  [catalog.md](catalog.md#a-loaded-kb-states-this-engines-shipped-contexts)), with a
+  progress line per change on stderr, and reports `:sync {:added :removed :forwarded
+  :refused}`. It runs after `--verify`'s comparison, so the comparison reads the open's
+  image, and `:reasoning` still says what the open did; the close writes a new image for
+  the records the sync moved. A store whose belief is still being rebuilt is not synced
+  (`:sync {:skipped [...]}`). The sync reads what ships off a scratch load of the whole
+  starter, so `--sync` costs a starter load even on a store already in sync. The script
+  passes each flag to every directory.
 - **`describe <term>`** prints everything the KB holds about one term, shaped by the
   term's role ([api.md](api.md)) — the shell spelling of "what can I ask about this?".
   **`--context <CxName>`** is the vantage: the argument declarations, the grants and the
@@ -583,6 +592,7 @@ VAELII_API_TOKEN=… lein serve 4200 /var/lib/vaelii --listen 0.0.0.0   # off-ma
   | `clear-violations!`, `reset-settle-stats!` | 3 | Each empties a diagnostic record every caller reads (`:violations`, `:settle-stats`), and nothing rebuilds either one |
   | `record-arg-types` | 2, 4 | It completes a store its opener loaded around `assert`, once, after the load; a daemon serves a KB already loaded. It reads every stored fact of every functor an argument declaration reaches, with no bound a request can set |
   | `release-withheld!` | 2, 4 | It drains what an open or a bulk load left owed, once, at the opener's choice of time. It re-derives the facts naming every term an owed row releases, with no bound a request can set. `:owed-releases` reads the count |
+  | `edit-records!`, `settle-record-edits!` | 2, 3 | They edit and then rebuild a KB opened without belief, which a daemon does not serve. `edit-records!` writes with no check, no dependency sweep and no settle; `settle-record-edits!` is the `recover` (and `reindex`) above with a sweep after it ([storage.md](storage.md#editing-the-records-of-a-kb-without-belief)) |
   | `remove-unsupported!`, `mark-inert!` | 2 | Each repairs a record a failed write left, which the open reported, on evidence the opener holds: the handles its own record of its writes marks failed. `:unsupported` reads the report |
   | `disjointness-audit` | 4 | It runs a subsumption read for every pair of the n types, n(n−1)/2 of them, with no bound a request can set. `:subsumption-status` answers one pair |
   | `ist` | — | It is `assert` with its arguments reordered: `:assert` of `(ist Ctx S)` stores the same sentex |

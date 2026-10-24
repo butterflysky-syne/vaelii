@@ -15,45 +15,24 @@
 
   A family returns a vector of nogoods `{:kind :members :ground}`. `:members` is the set
   of believed sentences that cannot all hold. `:ground` is the set of believed
-  declarations and `genl` edges the conviction is read through. Members and `:ground` are
-  disjoint for every definitional family (docs/nmtms.md, \"What qualifies as a nogood\":
-  the separations and marks are read through and never members). The inherited family
-  puts its reasons in `:members`, and its `:ground` holds only the separation a membership
-  denies through (docs/inherit.md, \"A contrary claim against a known-true one is a
-  contradiction, and is reported\").
+  declarations and `genl` edges the conviction is read through, disjoint from `:members`
+  for every definitional family (docs/nmtms.md, \"What qualifies as a nogood\"). The
+  inherited family puts its reasons in `:members`, and its `:ground` holds only the
+  separation a membership denies through.
 
   Each family collects its nogoods by member set, so one set of members convicted by two
-  declarations is one nogood whose `:ground` holds both. The vector is sorted on a
-  printed content key. No function here picks the first element of a set, so the output
-  is a function of the view's content and not of the order a set iterates in.
+  declarations is one nogood whose `:ground` holds both, and sorts them on a printed
+  content key.
 
-  A `genl` edge in `:ground` or in `:members` is a believed `(genl u v)` sentence lying on
-  a route between the two terms the conviction relates: `u` is in the lower term's
-  closure and the upper term is in `v`'s. An edge the view's `:genl` answers but no
-  believed `genl` sentence states, such as the part edges a believed `covering` installs
-  (docs/taxonomy.md, \"A cover states the specialization it rests on\"), convicts through
+  A `genl` edge in `:ground` or in `:members` is a believed `(genl u v)` sentence on a
+  route between the two terms the conviction relates. An edge the view's `:genl` answers
+  but no believed `genl` sentence states, such as a `covering` part edge, convicts through
   the closure and is absent from `:ground`.
 
-  **The reach of a relation mark** (decision D7 of docs/reference.md). A mark on `P`
-  (`functional`, `functionalInArg`, `asymmetric`, `irreflexive`, `anti_symmetric`,
-  `anti_transitive`) constrains a tuple `(Q ...)` when `P` is in `((:genl view) Q)`. The
-  view's `:genl` is the closure over the `genl` sentences believed at C, whatever their
-  class. So an edge OUT at C does not carry the mark to C, and a `:default` edge carries
-  it exactly as a `:monotonic` edge does. The route edges go in `:ground`, and the
-  decision never weighs `:ground`, so an edge's class never changes a verdict. No family
-  reads the class of a mark: the marks are forced `:monotonic`, and `vaelii.ref.believe`
-  enforces that.
-
-  A nogood may have one member: an `irreflexive` self tuple is convicted alone, and the
-  decision weighs a one-member nogood like any other (a `:default` member is OUT, a
-  `:monotonic` one is a hard clash). Each family states its own minimum member count;
-  `collect` drops no set for its size.
-
-  `families` is the vector `vaelii.ref.believe` decides. No clash is refused (decision
-  D8): every conviction here is a nogood.
-
-  `negates` reads two tuples of one argument list the way a mark reads its tuples, its
-  sides read down the `genl` closure.
+  A mark on `P` constrains a tuple `(Q ...)` when `P` is in `((:genl view) Q)`, whatever
+  the class of the believed edges between them (docs/reference.md, invariant 2). A nogood
+  may have one member, and `collect` drops no set for its size. No clash is refused
+  (docs/reference.md, invariant 3): every conviction here is a nogood.
 
   Left out, and for the world extraction to refuse rather than for this namespace to
   read: `disjoint_metatype`, `sibling_disjoint`, `separating`, `partition`,
@@ -171,20 +150,16 @@
   types. Any term is separated, not only an individual, so a predicate holding two
   separated types is convicted the same way.
 
-  The explicit arm reads no genl-relatedness guard (docs/taxonomy.md): `(disjoint dog
-  animal)` with `(genl dog animal)` convicts `(dog Fido)` beside `(animal Fido)`. The
-  write entry point refuses such a declaration when the edge is visible first, and admits
-  it when the edge arrives after it.
+  The explicit arm reads no genl-relatedness guard: `(disjoint dog animal)` with `(genl
+  dog animal)` convicts `(dog Fido)` beside `(animal Fido)`.
 
   `(disjoint a b)` and `(disjoint b a)` both believed make one nogood per pair of
   memberships, with both declarations in `:ground`.
 
   A declaration over two types one of which is in the other's closure is a one-member
-  nogood of the declaration itself, `:ground` the edges of the routes between them
-  (decision 8; the ruling on settle prompt 54, item 3). The declaration is forced
-  `:monotonic`, so the nogood is a hard clash and moves no belief. One membership whose own
-  closure holds both separated types convicts nothing: `(disjoint dog animal)`, `(genl dog
-  animal)` and `(dog Fido)` leave `(dog Fido)` believed."
+  nogood of the declaration itself, `:ground` the edges of the routes between them: a
+  hard clash, since the declaration is forced-monotonic (docs/reference.md, invariant 3).
+  One membership whose own closure holds both separated types convicts nothing."
   [view]
   (let [decls  (filterv (fn [[_ t1 t2]] (not= t1 t2)) (declarations view 'disjoint 2))
         edges  (genl-edges view)
@@ -237,13 +212,9 @@
   but `n` and differing at `n`, form a nogood. Members: the two tuples. `:ground`: the
   marks and the predicate `genl` edges from each tuple's functor up to `P`.
 
-  The fillers may be of any kind, symbols included (decision D6 of docs/reference.md). A
-  collision is an ordinary nogood: the unique `:default` tuple loses, and two tied
-  `:default` tuples are a dilemma. Two symbol fillers with every member `:monotonic` are
-  the one case the engine merges through a derived `(equals V1 V2)`. This family returns
-  that pair as a nogood too, and `vaelii.ref.believe/decide` gives it the verdict
-  `:merge`, which takes nobody OUT. No collision is refused (decision D8): two
-  `:monotonic` non-symbol fillers are a hard clash.
+  The fillers may be of any kind, symbols included (docs/reference.md, decision 6). A
+  pair of two `:monotonic` symbol fillers is returned too, and
+  `vaelii.ref.believe/decide` gives it the verdict `:merge`.
 
   A pair convicted under both spellings is one nogood of kind `:functional`."
   [view]
@@ -415,14 +386,11 @@
   `Pi` over `:monotonic` edges denies `Pi` as well (`separation-deniers`), and is the member
   for that part, its declaration and edges in `:ground`. A part with no such denier leaves
   the cover unrefuted: the cover is conditional on explicit negation and never on absence.
-
-  The declaration is not a member, for `disjoint`'s reason (docs/taxonomy.md): a nogood
-  that defeated the cover would find no violation on the next pass and revive it.
+  The declaration is a ground, not a member.
 
   A cover naming a part that a believed `(disjoint P W)` or `(disjoint W P)` separates from
-  its whole is a two-member nogood of the cover and the `disjoint`, with an empty `:ground`
-  (the ruling on settle prompt 54, item 3). Both are forced `:monotonic`, so it is a hard
-  clash and moves no belief."
+  its whole is a two-member nogood of the cover and the `disjoint`, with an empty `:ground`:
+  a hard clash, since both are forced-monotonic (docs/reference.md, invariant 3)."
   [view]
   (let [edges   (genl-edges view)
         covers  (filterv #(and (tuple? %) (= 'covering (first %)) (<= 4 (count %)))
@@ -465,7 +433,7 @@
   A believed membership `(s X)` is refuted by a believed denial `(not (q X))` with `q` in
   `s`'s closure over the `holding-edges` and distinct from `s`: `(dog Rex)`, a `:monotonic`
   `(genl dog animal)` and `(not (animal Rex))` cannot all hold. A `:default` edge does
-  not contrapose, so over `(genl dog animal)` at `:default` the denial stands (issue #188).
+  not contrapose, so over `(genl dog animal)` at `:default` the denial stands.
   Members: the membership and the denial. `:ground`: the holding `genl` edges on the
   routes from `s` up to `q`. With `q` equal to `s` the pair is a
   negation nogood, which belongs to no family here."
@@ -485,6 +453,13 @@
 
 ;; ---- inherited (transitiveInArgInverse) -------------------------------------
 
+(defn- monotonic-reading?
+  "Is every sentence of `reading`, a general claim, its declaration and the edges of one
+  route, `:monotonic` at the view? A reading takes the weakest class among them
+  (docs/reference.md, item 6)."
+  [view reading]
+  (every? #(= :monotonic ((:class view) %)) reading))
+
 (defn- separated-inherited
   "The arm of `inherited` whose denying side is a membership of a separated type."
   [view]
@@ -500,9 +475,9 @@
                                 (and (contains? up-p t2) (contains? up-s t1)) [t2 t1])]
           :when  (and tp (not= t1 t2))
           [_ sup :as claim] (filter membership? believed)
-          :when  (and (= p (first claim)) (not= sup sub)
-                      (= :monotonic ((:class view) claim)))
-          route  (simple-routes edges sub sup)]
+          :when  (and (= p (first claim)) (not= sup sub))
+          route  (simple-routes edges sub sup)
+          :when  (monotonic-reading? view (conj route claim d))]
       {:kind    :inherited
        :members (into #{m claim d} route)
        :ground  (into #{sep} (concat (route-edges view edges p tp)
@@ -523,10 +498,10 @@
   sentence of its own for a defeat to take out. The family forms one nogood per general
   claim and per acyclic route.
 
-  A general claim whose class at the view's context is `:default` is undercut: it does
-  not reach the denied tuple and forms no nogood. The diagonal is excluded: a claim at the
-  denied tuple itself pairs with the denial as a negation nogood, which belongs to no
-  family here.
+  A reading takes the weakest class of the general claim, the declaration and the edges
+  of its route, and a `:default` reading is undercut: it does not reach the denied tuple and forms no
+  nogood. The diagonal is excluded: a claim at the denied tuple itself pairs with the
+  denial as a negation nogood, which belongs to no family here.
 
   A believed membership `(S sub)` denies the reached `(P sub)` of a unary `P` when a
   believed `(disjoint t1 t2)` separates the two types, `t1` in `P`'s closure and `t2` in
@@ -537,16 +512,7 @@
   Left out: `transitiveInArg`; a relation other than `genl` (a `(transitive R)`
   relation, `genlCx`); a claim reached by moving two positions at once, as two
   declarations on one predicate license; a general claim spelled at a sub-predicate of
-  `P`; the symmetric mirror, and an `asymmetric` converse as the denying side.
-
-  TODO(spec): the engine names one reading per denial, the reading of highest class and
-  the first in content order among equal ones (docs/inherit.md, \"A claim read over
-  several routes opposes at its strongest reading\"); this family forms one nogood per
-  reading. Smallest view where the two differ, every sentence `:monotonic` except the
-  three edges: `(transitiveInArgInverse P 1 genl)`, `(P sup X)`, `(not (P sub X))`, and `(genl
-  sub mid)`, `(genl mid sup)`, `(genl sub sup)` each `:default`. The two-edge reading is
-  a dilemma and the one-edge reading defeats `(genl sub sup)`. The engine defeats the edge
-  only when the one-edge reading comes first in content order."
+  `P`; the symmetric mirror, and an `asymmetric` converse as the denying side."
   [view]
   (let [edges    (genl-edges view)
         believed (:believed view)]
@@ -564,9 +530,9 @@
                         (= (count claim) (count lit))
                         (not= sub (nth claim k))
                         (every? #(= (nth claim %) (nth lit %))
-                                (remove #{k} (range 1 (count lit))))
-                        (= :monotonic ((:class view) claim)))
-            route  (simple-routes edges sub (nth claim k))]
+                                (remove #{k} (range 1 (count lit)))))
+            route  (simple-routes edges sub (nth claim k))
+            :when  (monotonic-reading? view (conj route claim d))]
         {:kind :inherited :members (into #{den claim d} route) :ground #{}})
       (separated-inherited view)))))
 
@@ -574,7 +540,7 @@
 
 (defn irreflexive
   "The `:irreflexive` nogoods at the view's context. docs/taxonomy.md, \"Predicate
-  metadata\" (the `irreflexive` entry); decision D7 of docs/reference.md.
+  metadata\" (the `irreflexive` entry); docs/reference.md, decision 7.
 
   A believed `(irreflexive P)` convicts each believed binary self tuple `(Q a a)` with `P`
   in `Q`'s `genl` closure. Members: the self tuple alone, a one-member nogood. `:ground`:
@@ -590,15 +556,14 @@
 
 (defn anti-symmetric
   "The `:anti-symmetric` nogoods at the view's context. docs/taxonomy.md, \"Predicate
-  metadata\" (the `anti_symmetric` entry); decisions D6 and D7 of docs/reference.md.
+  metadata\" (the `anti_symmetric` entry); docs/reference.md, decisions 6 and 7.
 
   A believed `(anti_symmetric P)` convicts two believed binary tuples `(Q1 a b)` and `(Q2
   b a)` with `a` distinct from `b` and `P` in both functors' `genl` closures, whatever the
   arguments are. Members: the two tuples. `:ground`: the mark and the predicate edges up
   to `P`. A self tuple `(P a a)` is its own converse and convicts nothing. A symbol pair
-  is returned like any other pair. `vaelii.ref.believe/decide` gives the verdict `:merge`
-  to a symbol pair whose two members are `:monotonic`, since the engine derives `(equals
-  a b)` from such a pair."
+  is returned like any other pair, and `vaelii.ref.believe/decide` gives the verdict
+  `:merge` to one whose two members are `:monotonic`."
   [view]
   (let [edges (genl-edges view)]
     (collect
@@ -640,7 +605,6 @@
 
 (def families
   "The nogood families `vaelii.ref.believe` decides, each a function of a view, in the
-  order of their names. `vaelii.ref.believe` sorts the nogoods it decides on content, so
-  this order changes no answer."
+  order of their names."
   [anti-symmetric anti-transitive asymmetric covering disjoint functional inherited
    irreflexive negates supertype])

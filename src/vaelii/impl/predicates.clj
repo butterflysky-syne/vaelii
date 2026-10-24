@@ -41,6 +41,11 @@
     :family   the family whose spellings must move together, or nil.  `functional` and
               `functionalInArg` are one family written two ways; the four argument
               constraints are another.  `mark-families` below.
+    :clash-checks  direction -> keyword: the check `try-assert` asks of a write the
+              declaration constrains, `:fact` for a fact after the declaration and
+              `:declaration` for the declaration after facts, each the `:violation` of a
+              check the layer above resolves (`checks/fact-clash-checks`,
+              `checks/declaration-clash-checks`).
     :stops-short  facet -> prose: an implication of `facet-contract` this term does not
               satisfy, and the reason.  Checked against the set that is actually owed, in
               both directions, so the record can neither be missing nor go stale once the
@@ -243,14 +248,15 @@
 
   Every mark but `decontextualized_predicate` carries it; that one's reason for
   withholding it is on its own entry."
-  [kind & {:keys [facets arg derived? checked? notes]
+  [kind & {:keys [facets arg derived? checked? notes clash-checks]
            :or   {facets #{} arg :predicate derived? true checked? true}}]
   (cond-> {:shape   {:args [arg]}
            :storage [:prop kind]
            :checked checked?
            :facets  (cond-> (conj facets :cached) derived? (conj :derived))
            :family  nil}
-    notes  (assoc :notes notes)))
+    clash-checks (assoc :clash-checks clash-checks)
+    notes        (assoc :notes notes)))
 
 (defn- mark
   "A one-term mark into a table of its own — `(F T)` — cached, but not a `tax/props`
@@ -315,9 +321,10 @@
 (defn- collection
   "A core.txt term that is never a sentence functor — a type, read by name by some check.
   It has no shape: a membership's shape is not per-term data."
-  [& {:keys [facets notes] :or {facets #{}}}]
+  [& {:keys [facets notes clash-checks] :or {facets #{}}}]
   (cond-> {:shape nil :storage [:none] :checked false :facets facets :family nil}
-    notes (assoc :notes notes)))
+    clash-checks (assoc :clash-checks clash-checks)
+    notes        (assoc :notes notes)))
 
 (defn- structural
   "A term the *canonicalizer* reads, not the table: it becomes a slot of the record and
@@ -357,6 +364,12 @@
   [spec why]
   (assoc spec :facets #{:inert} :inert why))
 
+(def ^:private length-clash-checks
+  "The `:clash-checks` of every length binding: a fact after the binding is asked
+  `checks/fact-clash-checks`' `:arity`, and the binding after facts
+  `checks/declaration-clash-checks`' `:arity`."
+  {:fact :arity :declaration :arity})
+
 (def ^:private arity-note
   "The clause every exact-arity class's note ends with — fifteen classes say one thing,
   and a sentence written fifteen times is a sentence that drifts in fourteen of them."
@@ -388,7 +401,8 @@
     ;; in besides, which is what a scoped read (`has-prop?`, `disjoint?`) answers from.
     [['genl (enforced (assoc (pair :genl :type
                                    :facets #{:reach :convicts :answers :retriggers})
-                             :storage [:edge :genl])
+                             :storage [:edge :genl]
+                             :clash-checks {:declaration :arity})
                       "taxonomy/add-genl — the cached closure every membership, match and placement reads")]
      ['genlCx (enforced (assoc (pair :genlCx :context
                                      :facets #{:reach :convicts :answers :retriggers})
@@ -530,6 +544,7 @@
                              (str "checks/functional-problems, and special/derive-functional-equalities"
                                   " on two symbols; also a binary_predicate type"))]
      ['irreflexive (enforced (prop :irreflexive :facets #{:reach :convicts}
+                                   :clash-checks {:fact :irreflexive :declaration :irreflexive}
                                    :notes (str "convicts a *self* tuple (P a a), a one-member nogood"
                                                " no settle weighs, so it is not :arbitrable:"
                                                " the settle places it"
@@ -538,6 +553,7 @@
                              (str "chain/place-tuples! — a stored self tuple under the mark is placed"
                                   " as a nogood; also a binary_predicate type"))]
      ['anti_symmetric (enforced (prop :anti-symmetric :facets #{:reach :convicts}
+                                      :clash-checks {:fact :anti-symmetric}
                                       :notes (str "derives (equals a b) from a believed converse of"
                                                   " two symbols rather than convicting either — so it"
                                                   " merges where the other pairwise marks separate,"
@@ -573,6 +589,7 @@
                         :checked false
                         :facets  #{:cached :derived :reach :convicts}
                         :family  nil
+                        :clash-checks length-clash-checks
                         :notes   (str "binds a relation's length, read as storage beside the"
                                       " exact-arity classes: a tuple breaking it is held inert in"
                                       " the :out forced set, and two related predicates whose"
@@ -582,7 +599,7 @@
                             " in the :out forced set"))]
      ['arityMin
       (enforced {:shape {:args [:relation :integer]} :storage [:none] :checked false
-                 :family nil :facets #{:reach :convicts}
+                 :family nil :facets #{:reach :convicts} :clash-checks length-clash-checks
                  :notes (str "floors a variable_arity relation: a shorter tuple is held inert in"
                              " the :out forced set. Ordinary core.txt rules"
                              " also derive the at_least_binary through at_least_quinary classifications.")}
@@ -732,8 +749,9 @@
                                       "taxonomy prop :abducible — the check on what abduce may hypothesize")]
      ['closed_extent_predicate
       (enforced (prop :closed-extent :facets #{:answers :retriggers}
-                      :notes (str "its arms re-index the rules the grant newly governs, from both"
-                                  " arrival orders — a rule asserted before the grant carries no"
+                      :notes (str "its re-check trigger (special/recheck-on-sentence) re-indexes"
+                                  " the rules the grant governs when the grant arrives, leaves or"
+                                  " moves in belief — a rule asserted before the grant carries no"
                                   " posting for P, so nothing on P would ever bring its firings"
                                   " back."))
                 (str "taxonomy prop :closed-extent — ClosedExtentProver answers (not (P …))"
@@ -830,7 +848,7 @@
                                               " special/entail-existing, a third sweep mechanism"
                                               " beside settle's clash reach and its arity report,"
                                               " and the only one conditional on a dynamic var"
-                                              " (checks/*assertive-arg-types?*)."))
+                                              " (argument/*assertive-arg-types?*)."))
                            "checks/args-problem — refuses on the way in, and entails under *assertive-arg-types?*")]
      ['genlArg   (enforced (assoc (prop :declares-arg-genl :arg :relation
                                         :facets #{:reach :convicts :answers})
@@ -941,11 +959,29 @@
                                               " reads each declaration as arg rows per"
                                               " sentence, so the conviction, the entailment"
                                               " and entail-existing are arg's own.  A fact"
-                                              " whose named type is not mintable yet waits"
-                                              " on its own handle"
-                                              " (special/note-unmintable-fact!)."))
+                                              " whose named type is not mintable yet mints"
+                                              " once it is"
+                                              " (special/mints-on-lengths)."))
                            (str "checks/args-problem and checks/constraint-entailments over"
                                 " checks/arg-arg-rows — arg with a per-sentence type"))]
+     ['interArgEqual (enforced (assoc (prop :declares-inter-arg-equal :arg :relation
+                                            :facets #{:reach :convicts :answers})
+                                      :shape  {:args [:relation :position :term :position :type]}
+                                      :family :argument-constraint
+                                      :stops-short
+                                      {:retriggers
+                                       (str "genlArg's reason: the inference it licenses is a"
+                                            " stored membership, which reaches an exception"
+                                            " through that membership's own fact trigger.")}
+                                      :notes (str "arg on the sentences whose argument ?position1"
+                                                  " is ?thing: checks/inter-arg-equal-rows"
+                                                  " reads each declaration as arg rows per"
+                                                  " sentence, so the conviction, the entailment"
+                                                  " and entail-existing are arg's own.  ?thing"
+                                                  " is an unrepresented_term, compared by =,"
+                                                  " which no equality merge holds."))
+                               (str "checks/args-problem and checks/constraint-entailments over"
+                                    " checks/inter-arg-equal-rows — arg conditioned on an argument value"))]
 
      ;; ---- the homogeneity constraints: interArg over a whole suffix ------
      ;; `interArgs` / `interArgAndRest` demand of every argument in a suffix a type one
@@ -1309,65 +1345,65 @@
      ['quantifier            (inert (collection :notes "ontology, not grammar: a relation that binds variables in a formula. No shipped term is one; the engine reads forall and thereExists by name.")
                                     "ontology, not grammar: a relation that binds variables in a formula. No shipped term is one; the engine reads forall and thereExists by name.")]
 
-     ['unary   (enforced (collection :facets #{:convicts :reach}
+     ['unary   (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                                      :notes (str "the relation-wide exact-one-argument type, and"
                                                  " the membership spelling of an arity"
                                                  arity-note))
                          "tax/exact-arity-classes — the relation-wide membership spelling of an arity")]
-     ['binary  (enforced (collection :facets #{:convicts :reach}
+     ['binary  (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                                      :notes (str "the same, at two" arity-note))
                          "tax/exact-arity-classes — the relation-wide membership spelling of an arity")]
-     ['ternary (enforced (collection :facets #{:convicts :reach}
+     ['ternary (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                                      :notes (str "the same, at three" arity-note))
                          "tax/exact-arity-classes — the relation-wide membership spelling of an arity")]
-     ['quaternary (enforced (collection :facets #{:convicts :reach}
+     ['quaternary (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                                         :notes (str "the same, at four" arity-note))
                             "tax/exact-arity-classes — the relation-wide membership spelling of an arity")]
-     ['quinary (enforced (collection :facets #{:convicts :reach}
+     ['quinary (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                                      :notes (str "the same, at five" arity-note))
                          "tax/exact-arity-classes — the relation-wide membership spelling of an arity")]
 
      ;; ---- the predicate types --------------------------------------------
-     ['unary_predicate   (enforced (collection :facets #{:convicts :reach}
+     ['unary_predicate   (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                                                :notes (str "a predicate's membership spelling of an"
                                                            " arity" arity-note))
                                    (str "tax/exact-arity-classes — a predicate's membership spelling of"
                                         " an arity"))]
-     ['binary_predicate  (enforced (collection :facets #{:convicts :reach}
+     ['binary_predicate  (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                                                :notes (str "the same, at two" arity-note))
                                    (str "tax/exact-arity-classes — a predicate's membership spelling of"
                                         " an arity"))]
-     ['ternary_predicate (enforced (collection :facets #{:convicts :reach}
+     ['ternary_predicate (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                                                :notes (str "the same, at three" arity-note))
                                    (str "tax/exact-arity-classes — a predicate's membership spelling of"
                                         " an arity"))]
-     ['quaternary_predicate (enforced (collection :facets #{:convicts :reach}
+     ['quaternary_predicate (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                                                   :notes (str "the same, at four" arity-note))
                                       (str "tax/exact-arity-classes — a predicate's membership spelling of"
                                            " an arity"))]
-     ['quinary_predicate (enforced (collection :facets #{:convicts :reach}
+     ['quinary_predicate (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                                                :notes (str "the same, at five" arity-note))
                                    (str "tax/exact-arity-classes — a predicate's membership spelling of"
                                         " an arity"))]
      ['unary_function
-      (enforced (collection :facets #{:convicts :reach}
+      (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                             :notes (str "the function specialization of unary, and a"
                                         " function's spelling of an arity" arity-note))
                 "tax/exact-arity-classes — a function's membership spelling of an arity")]
      ['binary_function
-      (enforced (collection :facets #{:convicts :reach}
+      (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                             :notes (str "the same, at two" arity-note))
                 "tax/exact-arity-classes — a function's membership spelling of an arity")]
      ['ternary_function
-      (enforced (collection :facets #{:convicts :reach}
+      (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                             :notes (str "the same, at three" arity-note))
                 "tax/exact-arity-classes — a function's membership spelling of an arity")]
      ['quaternary_function
-      (enforced (collection :facets #{:convicts :reach}
+      (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                             :notes (str "the same, at four" arity-note))
                 "tax/exact-arity-classes — a function's membership spelling of an arity")]
      ['quinary_function
-      (enforced (collection :facets #{:convicts :reach}
+      (enforced (collection :facets #{:convicts :reach} :clash-checks length-clash-checks
                             :notes (str "the same, at five" arity-note))
                 "tax/exact-arity-classes — a function's membership spelling of an arity")]
      ['fixed_arity       (enforced (collection
@@ -1382,6 +1418,7 @@
       (enforced (collection :notes "the function specialization of fixed_arity.")
                 "generic taxonomy classification under fixed_arity and function")]
      ['variable_arity    (enforced (collection
+                                    :clash-checks {:declaration :arity}
                                     :notes (str "the one *exemption* from an exact length — it"
                                                 " un-convicts, which is why it carries no facet at"
                                                 " all: every lane in this vocabulary names something"
@@ -1390,11 +1427,13 @@
                                    "arity/relation-length — the one exemption from an exact length")]
      ['variable_arity_predicate
       (enforced (collection
+                 :clash-checks {:declaration :arity}
                  :notes (str "the predicate specialization of variable_arity; the inert-tuple"
                              " test reads it as a variable_arity membership."))
                 "arity/relation-length — the variable_arity exemption, spelled for a predicate")]
      ['variable_arity_function
       (enforced (collection
+                 :clash-checks {:declaration :arity}
                  :notes (str "the function specialization of variable_arity; it shares the"
                              " relation-wide taxonomy. No function WFF reader consumes it."))
                 "generic taxonomy classification under variable_arity and function")]
@@ -1677,14 +1716,13 @@
                      " of the classifier under the whole and separates the members; coverage"
                      " pends the engine reading it from the classifier's members"))]
      ['argN
-      (inert {:shape {:args [:term :integer :sentence]} :storage [:none] :checked false
-              :family nil :facets #{}
-              :notes (str "a position inside a written formula, 0 the relation or operator."
-                          " Nothing derives it, and its (quotedArg argN 3 formula) checks"
-                          " nothing, since no reader classifies a compound by its shape.")}
-             (str "a statement that a term is argument n of a written formula, position 0"
-                  " being the relation or operator. Nothing derives or reads it, and no reader"
-                  " classifies a compound by its shape yet."))]
+      (enforced {:shape {:args [:term :integer :sentence]} :storage [:none] :checked false
+                 :family nil :facets #{:answers}
+                 :notes (str "a position inside a written formula, 0 the relation or operator."
+                             " The answer is read off the formula as written and never stored.")}
+                (str "provers/ArgPositionProver — reads (argN term n formula) off the formula"
+                     " as written, binding the term and the position; a forward join takes"
+                     " the answer with no support of its own"))]
      ['termsRelated
       (inert {:shape {:args [:term :term] :variadic :term} :storage [:none] :checked false
               :family nil :facets #{}
@@ -1776,12 +1814,13 @@
 
      ;; ---- the predAll / predExists / predSpecified matrix ------------------
      ;;
-     ;; Quantifier-family declarations (docs/predall.md).  The
-     ;; *Instance* and *Exists* relations are each declared beside a core.txt **rule
-     ;; generator** — a rule whose consequent is a rule — so their enforcement is generic
-     ;; forward chaining, keyed on nothing; like `equivalence_relation`, no arm reads the
-     ;; functor.  The *Specified* pair is an on-demand integrity audit reached through
-     ;; `vaelii.core/specified-violations`.
+     ;; Quantifier-family declarations (docs/predall.md).  The *Instance* relations are
+     ;; each declared beside a core.txt **rule generator** — a rule whose consequent is a
+     ;; rule — so their enforcement is generic forward chaining, keyed on nothing; like
+     ;; `equivalence_relation`, no arm reads the functor.  The *Exists* relations derive
+     ;; nothing.  The *Specified* pair and the *Exists* four are on-demand integrity audits
+     ;; reached through `vaelii.core/specified-violations` and
+     ;; `vaelii.core/exists-violations`.
      ['predAllInstance
       (enforced {:shape {:args [:predicate :type :term]} :storage [:none] :checked false
                  :family nil :facets #{}
@@ -1798,38 +1837,39 @@
                 (str "generic rule generator: the core.txt generator generates (implies (?dep ?y)"
                      " (?pred ?fixed ?y)), the argument-swapped twin"))]
      ['predAllExists
-      (inert {:shape {:args [:predicate :type :type]} :storage [:none] :checked false
-              :family nil :facets #{}
-              :notes (str "the whole Exists class is inferentially inert by ruling —"
-                          " a stored record plus a sanctioned per-cell placeholder"
-                          " functor for authors, nothing derived.")}
-             (str "an inert record: every ?indep member bears ?pred to some ?dep member,"
-                  " stated and stored, inferred from by nothing. (PredAllExistsFn ?pred"
-                  " ?indep ?dep ?subject) is the sanctioned placeholder an author may use"
-                  " for the filler the member ?subject bears ?pred to."))]
+      (enforced {:shape {:args [:predicate :type :type]} :storage [:none] :checked false
+                 :family nil :facets #{}
+                 :notes (str "the whole Exists class derives nothing by ruling — a stored"
+                             " record plus a sanctioned per-cell placeholder functor for"
+                             " authors, read by an on-demand audit.")}
+                (str "vaelii.core/exists-violations — the on-demand audit returns the ?indep"
+                     " members with no believed ?pred tuple to a ?dep member; generates no"
+                     " rule. (PredAllExistsFn ?pred ?indep ?dep ?subject) is the sanctioned"
+                     " placeholder an author may use for the filler the member ?subject"
+                     " bears ?pred to."))]
      ['predExistsAll
-      (inert {:shape {:args [:predicate :type :type]} :storage [:none] :checked false
-              :family nil :facets #{}
-              :notes "the argument-swapped twin of predAllExists, inert like the class."}
-             (str "an inert record, the argument-swapped twin: every ?indep member has some"
-                  " ?dep member bearing ?pred to it. (PredExistsAllFn ?pred ?dep ?indep"
-                  " ?subject) is the sanctioned placeholder an author may use for the filler"
-                  " that bears ?pred to the member ?subject."))]
+      (enforced {:shape {:args [:predicate :type :type]} :storage [:none] :checked false
+                 :family nil :facets #{}
+                 :notes "the argument-swapped twin of predAllExists, audited like the class."}
+                (str "vaelii.core/exists-violations — the argument-swapped twin: the ?indep"
+                     " members no ?dep member bears ?pred to. (PredExistsAllFn ?pred ?dep"
+                     " ?indep ?subject) is the sanctioned placeholder an author may use for"
+                     " the filler that bears ?pred to the member ?subject."))]
      ['predExistsInstance
-      (inert {:shape {:args [:predicate :type :term]} :storage [:none] :checked false
-              :family nil :facets #{}
-              :notes (str "a pure existential — no universal to range over — expressible"
-                          " precisely because the class generates nothing.")}
-             (str "an inert record: some ?indep member bears ?pred to the fixed filler."
-                  " (PredExistsInstanceFn ?pred ?indep ?fixed) is its sanctioned"
-                  " placeholder."))]
+      (enforced {:shape {:args [:predicate :type :term]} :storage [:none] :checked false
+                 :family nil :facets #{}
+                 :notes (str "a pure existential — no universal to range over — expressible"
+                             " precisely because the class generates nothing.")}
+                (str "vaelii.core/exists-violations — the fixed filler, when no ?indep member"
+                     " bears ?pred to it. (PredExistsInstanceFn ?pred ?indep ?fixed) is its"
+                     " sanctioned placeholder."))]
      ['predInstanceExists
-      (inert {:shape {:args [:predicate :term :type]} :storage [:none] :checked false
-              :family nil :facets #{}
-              :notes "the argument-swapped twin of predExistsInstance."}
-             (str "an inert record: the fixed subject bears ?pred to some ?dep member."
-                  " (PredInstanceExistsFn ?pred ?fixed ?dep) is its sanctioned"
-                  " placeholder."))]
+      (enforced {:shape {:args [:predicate :term :type]} :storage [:none] :checked false
+                 :family nil :facets #{}
+                 :notes "the argument-swapped twin of predExistsInstance."}
+                (str "vaelii.core/exists-violations — the fixed subject, when it bears ?pred"
+                     " to no ?dep member. (PredInstanceExistsFn ?pred ?fixed ?dep) is its"
+                     " sanctioned placeholder."))]
      ['predAllSpecified
       (enforced {:shape {:args [:predicate :type]} :storage [:none] :checked false
                  :family nil :facets #{}
@@ -1972,8 +2012,10 @@
     path (`special/declaration-subjects`) rather than from an arm of their own.
   * `:family-lists` — `family -> {list-name functors}`, the lists that read a mark
     family **as a family**.  Each must enumerate exactly that family.
+  * `:clash-checks` — `direction -> #{violation}`, the `try-assert` checks the layer
+    above resolves (`checks/fact-clash-checks`, `checks/declaration-clash-checks`).
 
-  Six rules, nine `:mismatch` values:
+  Seven rules, ten `:mismatch` values:
 
   * a field value outside its closed vocabulary — a facet, a storage kind, a family, an
     argument kind.
@@ -1995,6 +2037,8 @@
     `provers/meta-constraint-shape` had no row for it, so one declaration meant one thing
     to `assert` and another to `ask`.  The lane rule below caught that and offered a
     record; a record is the wrong answer to two lists disagreeing.
+  * a `:clash-checks` entry naming a direction or a check `:clash-checks` does not hold
+    (`:clash-check`).
   * a facet the entry is **committed to** and does not carry, by one of three rules —
     `:implication` (`facet-contract`), `:family-lane` (a sibling spelling carries it) or
     `:recheck` (it answers goals about a predicate and posts no re-check) — unless the
@@ -2013,7 +2057,7 @@
 
   O(declarations), no KB, no I/O, no reflection: `check-entries` is the budget.  Returns
   `entries` unchanged so it can wrap a def."
-  [entries {:keys [recheck-subjects family-lists]}]
+  [entries {:keys [recheck-subjects family-lists clash-checks]}]
   (let [refuse (fn [mismatch msg data]
                  (throw (ex-info msg (merge {:type :bad-table-entry :mismatch mismatch}
                                             data))))]
@@ -2056,6 +2100,13 @@
                        " — the facet and the storage kind say the same thing and cannot"
                        " disagree")
                   {:functor term :facets fs :storage (:storage spec)}))
+
+        (doseq [[dir check] (sort-by key (:clash-checks spec))
+                :when       (not (contains? (get clash-checks dir) check))]
+          (refuse :clash-check
+                  (str term "'s :clash-checks names " (pr-str check) " for a " (pr-str dir)
+                       " write, and no check the layer above holds answers it")
+                  {:functor term :direction dir :check check}))
 
         (when (and (contains? fs :arbitrable) (not (:opposing-read spec)))
           (refuse :arbitrable
@@ -2113,6 +2164,11 @@
   ordinary domain predicate is simply not a term this question is asked about."
   [term]
   (get table term))
+
+(defn clash-checks
+  "`{term {direction violation}}` for every entry carrying `:clash-checks`."
+  []
+  (into {} (keep (fn [[t spec]] (when-let [c (:clash-checks spec)] [t c]))) entries))
 
 (defn shape-of
   "`term`'s sentence shape, or nil for a term never written as a sentence functor."

@@ -62,7 +62,7 @@
     (not= 3 (count s))     (conj "genl takes two arguments")
     :always                (into (type-problems "genl relates types" [sub super]))
     (= sub super)          (conj (str sub " genl itself"))
-    (and (not= sub super) (tax/genl?-global tax super sub))
+    (and tax (not= sub super) (tax/genl?-global tax super sub))
     (conj (str "genl " sub " " super " creates a cycle (" super
                " is already a subtype of " sub ")"))))
 
@@ -74,12 +74,7 @@
     (not= 3 (count s))        (conj "genlCx takes two arguments")
     (not (nm/context? sub))   (conj (str sub " is not a context (must start with Cx)"))
     (not (nm/context? super)) (conj (str super " is not a context (must start with Cx)"))
-    ;; A **query context** spells like a context and is not one: it names a way of
-    ;; reading, is resolved at the read entry point and never reaches the engine
-    ;; (`nm/query-contexts`).  An edge naming one would be the only way to give it a
-    ;; place in the lattice, which is exactly what must not exist — `CxNothing` sees
-    ;; nothing *because* nothing wires it, and `CxEverything` / `CxInference` would
-    ;; start inheriting facts they are supposed to read past rather than from.
+    ;; a query context names a way of reading, so no edge gives it a place in the lattice
     (nm/query-context? sub)   (conj (str sub " is a query context, not a place in the "
                                          "hierarchy — nothing may genlCx it"))
     (nm/query-context? super) (conj (str super " is a query context, not a place in the "
@@ -88,7 +83,7 @@
     ;; the edge was already true before it arrived.  A longer cycle is refused too, so
     ;; the context hierarchy is a partial order — the note above gives the reasoning.
     (= sub super)             (conj (str sub " genlCx itself"))
-    (and (not= sub super) (tax/genlCx?-global tax super sub))
+    (and tax (not= sub super) (tax/genlCx?-global tax super sub))
     (conj (str "genlCx " sub " " super " creates a cycle (" super
                " already sees " sub ")"))))
 
@@ -130,7 +125,7 @@
     (some #(= % whole) parts)
     (conj (str whole " is named as a part of itself"))
 
-    (some #(and (not= % whole) (tax/genl?-global tax whole %)) parts)
+    (and tax (some #(and (not= % whole) (tax/genl?-global tax whole %)) parts))
     (conj (str (first (filter #(and (not= % whole) (tax/genl?-global tax whole %)) parts))
                " is already a supertype of " whole ", so it cannot be a part of it"))))
 
@@ -210,6 +205,27 @@
     (conj (str f " target position must be a positive integer"))
     :always (into (type-problems (str f " expects a type") [type utype]))))
 
+(defn inter-arg-equal-constraint-problems
+  "`interArgEqual` — a relation, a trigger position, the value that triggers it, and a
+  target position and type: `(interArgEqual closedExtentForArg 2 3 1 at_least_ternary)`.
+  The latitude on the constrained relation `arg-constraint-problems` argues for, both
+  positions checked and the type checked.  The value is an `unrepresented_term` — a
+  number, string, keyword, boolean or character, compared by `=` (docs/argtypes.md)."
+  [_ [f pred n v m utype :as s] _context]
+  (cond-> []
+    (not= 6 (count s))    (conj (str f " takes five arguments"))
+    (not (or (symbol? pred) (sequential? pred)))
+    (conj (str f " constrains a relation, which is named by a symbol or denoted by a"
+               " non-atomic term; " (pr-str pred) " is neither"))
+    (not (and (integer? n) (pos? n)))
+    (conj (str f " trigger position must be a positive integer"))
+    (not (or (number? v) (string? v) (keyword? v) (boolean? v) (char? v)))
+    (conj (str f " trigger value must be a number, string, keyword, boolean or character,"
+               " which no equality merge holds; " (pr-str v) " is none of those"))
+    (not (and (integer? m) (pos? m)))
+    (conj (str f " target position must be a positive integer"))
+    :always (into (type-problems (str f " expects a type") [utype]))))
+
 (defn arg-arg-constraint-problems
   "`argArg` — a relation, the position it constrains, and the position whose argument
   names the type: `(argArg holdsOf 1 2)`.  The latitude on the constrained relation
@@ -257,14 +273,9 @@
   constraints' shape, plus the one restriction that is the whole point of the
   declaration: **the relation must be transitive.**
 
-  `vaelii.impl.inherit` walks the named relation to a fixpoint, so a declaration over
-  a relation nobody said composes gets transitivity manufactured for it — two hops of
-  `begat` licensing a claim that only one hop was ever evidence for.  An `arg` on
-  argument 3 cannot express that: arg is open-world, so it bites only for a
-  relation that happens to carry some *other* type and waves through the one that
-  carries none, which is the common authoring order (name the relation, type it
-  later).  So it is refused here, where the other special predicates' structural
-  rules live, and refused identically either way.
+  `vaelii.impl.inherit` walks the named relation to a fixpoint, so the refusal keeps a
+  declaration from manufacturing transitivity (docs/inherit.md, \"The transitivity has
+  to have been declared\"; docs/defenses.md for why it is not an `arg`).
 
   The fix for a refusal is to declare `(transitive R)` first — or to name one of the
   two hierarchies the engine closes itself (`inherit/virtual-relations`).
@@ -287,12 +298,8 @@
     (not (and (integer? n) (pos? n))) (conj (str f " position must be a positive integer"))
     (not (symbol? rel))   (conj (str f " preserves an argument along a relation named by"
                                      " a symbol; " (pr-str rel) " is not one"))
-    ;; unscoped on purpose: the structural check asks whether the relation is
-    ;; *declared* transitive anywhere, so a declaration whose transitivity lives in a
-    ;; context this writer cannot see is still admitted.  What that writer may do with
-    ;; it is decided at read time, where `inherit/positions` re-asks from the asking
-    ;; context and drops a licence it cannot see.
-    (and (symbol? rel) (not (inherit/usable-relation? tax rel nil)))
+    ;; unscoped on purpose (docs/inherit.md, "From whose vantage")
+    (and tax (symbol? rel) (not (inherit/usable-relation? tax rel nil)))
     (conj (str rel " is not transitive, and " f " walks the relation it names to a"
                " fixpoint — declare (transitive " rel ") before the preservation, or"
                " name one of " (str/join " / " (sort inherit/virtual-relations))))))
@@ -405,29 +412,14 @@
           :else        (recur (conj seen n) (into (pop stack) (get out n #{}))))))))
 
 (defn- rewrite-role
-  "The syntactic role of a `rewriteOf` argument, for the same-role check.  A merge
-  across incompatible roles is a likely import bug, so it is refused:
+  "The role of a `rewriteOf` argument for the same-role check (docs/equality.md,
+  \"Merging predicates and types\"):
 
     :individual   CapitalCamelCase (Muffet, Tom)
-    :predicate    interior uppercase ⇒ camelCase (bornIn, parentOf)
-    :type         underscore ⇒ snake_case (physical_object)
-    :either       a bare lowercase word (dog, canine) — a type *or* a predicate,
-                  ambiguous by syntax alone, so compatible with both
-    :opaque       a **namespaced** symbol — an identity the engine minted rather than
-                  a name anybody wrote, so it has no spelling to read a role off
-
-  `:either` accepts either non-individual partner; the guard that bites is
-  individual-with-non-individual (merging `Muffet` into `dog`) and clearly-camelCase
-  predicate with clearly-snake_case type (`parentOf` into `physical_object`).  The
-  predicate/type split reads off `naming`: a camelCase predicate is not a valid
-  snake_case type (the interior uppercase), and vice versa; a bare lowercase word
-  satisfies both, so it is `:either`.
-
-  `:opaque` clashes with nothing, and has to: the naming invariants are conventions
-  over names a person chose, and a reified NAT constant (docs/nat.md) is minted.  What
-  it denotes is settled by the result types materialized on it, so merging one into the
-  real term its function's corresponding predicate names is the intended move, not the
-  import bug this check exists to catch."
+    :predicate    camelCase, not a valid type (bornIn, parentOf)
+    :type         snake_case, not a valid predicate (physical_object)
+    :either       a bare lowercase word (dog, canine), compatible with any non-individual
+    :opaque       a namespaced symbol, an identity the engine minted; clashes with nothing"
   [x]
   (cond
     (namespace x)                                   :opaque
@@ -498,36 +490,13 @@
     (conj (str f "'s argument position must be a positive integer"))))
 
 (defn equality-problems
-  "`rewriteOf` / `sameAs` / `equals` relate **symbols**: the closure is a partition
-  over terms, so a compound argument is refused — with two carve-outs, one for each
-  kind of compound equality that *does* reduce to machinery that exists.
-
-  * `(rewriteOf T E)` with a **compound** `E` is not term equality at all — it is a
-    NAT reify-to-term declaration (docs/nat.md), whose second argument is a quoted NAT
-    expression, not a term to merge.  Waved through (only the target `T` need be a
-    symbol) and skipped by the equality integrate arm.
-
-  * `(equals L R)` with a **variable-bearing** compound side is a **schematic
-    equational rule** — an oriented rewrite `fatherOf∘fatherOf → grandfather_of`, not a
-    merge (docs/equality.md, symbolic equational reasoning).  Its sides are compounds
-    by design, so the compound refusal is waived; instead it must be **orientable**
-    into a terminating rewrite (`rewrite/orient`), or it is refused here before
-    anything is stored.  A ground `(equals (F a) (F b))` is *not* schematic — it
-    reifies to symbols first (docs/nat.md) — and a compound that reifies to no symbol
-    (a structural NAT measure) still hits the refusal below.
-
-  `rewriteOf` carries two further restrictions.  It is directional, so a self-edge
-  (the degenerate cycle, and what a sloppy import pipeline actually emits) and a
-  longer cycle both leave the class with no head and are refused like a `genl`
-  cycle.  And **both sides must be the same role** — predicate-with-predicate,
-  type-with-type, individual-with-individual (`roles-clash?`): rewriting a term of
-  one kind into another is meaningless (merging `Muffet` into `dog`) and a likely
-  import bug.  A predicate or a type *is* a legal `rewriteOf`
-  target — the merge moves its trie keys, predicate extent, rule-index postings and
-  `genl` closure with it (docs/equality.md).  `sameAs` / `equals` stay
-  individuals-only (OWL); `rewriteOf` is the spelling relation, so it is the one
-  that carries vocabulary alignment across predicates and types.  `(sameAs A A)` is
-  fine — OWL makes `sameAs` reflexive."
+  "The well-formedness problems of a `rewriteOf` / `sameAs` / `equals` sentence.  The
+  arguments are symbols, with two exceptions: `(rewriteOf T E)` with a compound `E` is a
+  NAT reify-to-term declaration (docs/nat.md), whose target `T` must be a symbol, and a
+  schematic `(equals L R)` must orient into a terminating rewrite (`rewrite/orient`,
+  docs/equational.md).  A `rewriteOf` is refused as a self-edge, as an edge closing a
+  cycle over the active preferences, and across roles (`rewrite-role`, `roles-clash?`).
+  `(sameAs A A)` is accepted."
   [tax [f a b :as s] _context]
   (cond
     (and (= f 'rewriteOf) (sequential? b))
@@ -554,16 +523,13 @@
       (conj (str "rewriteOf " a " " b " crosses roles (" (name (rewrite-role a)) " vs "
                  (name (rewrite-role b)) "); it merges same-role terms — predicate with"
                  " predicate, type with type, individual with individual"))
-      (and (= f 'rewriteOf) (not= a b) (rewrite-reaches? (tax/equality-prefs tax) b a))
+      (and tax (= f 'rewriteOf) (not= a b) (rewrite-reaches? (tax/equality-prefs tax) b a))
       (conj (str "rewriteOf " a " " b " creates a cycle (" a
                  " is already rewritten away from " b ")")))))
 
 (defn different-problems
-  "`different` is **not assertible**.  It is negation as failure over the equality
-  closure, answered by a prover and never stored: an assertible one would be OWL's
-  `differentFrom`, a positive commitment that a later `sameAs` would contradict, and
-  docs/equality.md deliberately does not build it.  Stored as a premise it would also
-  be silently ignored, since the prover is authoritative and never reads facts."
+  "`different` is **not assertible**: it is answered from the equality closure and never
+  stored (docs/equality.md, \"The unique-name assumption survives\")."
   [_ [_ & args] _context]
   [(str "different is not assertible: it is answered from the equality closure"
         " (a positive commitment that two terms differ would be OWL's differentFrom,"
@@ -771,6 +737,17 @@
                          (fn [node negative?] (and negative? (= (:id rule) (:id node)))))
           forward-path))
 
+(defn negation-starts
+  "The starts of `genl-negation-cycle`'s walk for an edge whose upper end has the upward
+  closure `above`: each rule `readers` answers under a predicate of `above`, once, in
+  content order, paired with whether it excepts on a predicate of `above`."
+  [readers above]
+  ;; each reader once; stored rules' contents are distinct, so the order is content's
+  (->> (into {} (for [g above, r (readers g)] [(:id r) r]))
+       vals
+       (nm/sort-by-content-key :content)
+       (mapv (fn [r] [r (boolean (some above (:exception-preds r)))]))))
+
 (defn genl-negation-cycle
   "The cycle through negation the edge `(genl sub super)` closes, described as
   `negation-cycle` describes one, or nil.  `tax` holds the edge already; `readers` is the
@@ -784,25 +761,26 @@
   start is negative.  It reads only the rules those starts reach, and finds only cycles
   through the new edge, so a cycle already stored refuses no edge that does not reach it.
 
-  A `genlCx` edge needs no walk: the graph's edges read the `genl` closure alone."
-  [tax readers sub super]
-  (let [above  (tax/genls-global tax super)
-        ;; each reader once; stored rules' contents are distinct, so the order is content's
-        starts (->> (into {} (for [g above, r (readers g)] [(:id r) r]))
-                    vals
-                    (nm/sort-by-content-key :content)
-                    (mapv (fn [r] [r (boolean (some above (:exception-preds r)))])))
-        below? (fn [node]
-                 (or (:concludes-any? node)
-                     (some-> (:consequent-pred node) (->> (tax/genls-global tax)) (contains? sub))))]
-    (when-let [chain (negation-walk tax readers starts
-                                    (fn [node negative?] (and negative? (below? node))))]
-      (let [[start] chain
-            closing (if (= 1 (count chain)) start (peek (peek chain)))
-            edge    (if (some above (:exception-preds start)) :excepts-on :depends-on)]
-        (conj (forward-path chain)
-              (str (name edge) " " (if (:concludes-any? closing) sub (:consequent-pred closing)))
-              (:label closing))))))
+  A `genlCx` edge needs no walk: the graph's edges read the `genl` closure alone.
+
+  `starts-of` maps `genls-global(super)` to the walk's starts (`negation-starts`), for a
+  caller that holds them across the edges of one pass."
+  ([tax readers sub super]
+   (genl-negation-cycle tax readers #(negation-starts readers %) sub super))
+  ([tax readers starts-of sub super]
+   (let [above  (tax/genls-global tax super)
+         starts (starts-of above)
+         below? (fn [node]
+                  (or (:concludes-any? node)
+                      (some-> (:consequent-pred node) (->> (tax/genls-global tax)) (contains? sub))))]
+     (when-let [chain (negation-walk tax readers starts
+                                     (fn [node negative?] (and negative? (below? node))))]
+       (let [[start] chain
+             closing (if (= 1 (count chain)) start (peek (peek chain)))
+             edge    (if (some above (:exception-preds start)) :excepts-on :depends-on)]
+         (conj (forward-path chain)
+               (str (name edge) " " (if (:concludes-any? closing) sub (:consequent-pred closing)))
+               (:label closing)))))))
 
 (defn cycle-description
   "Render a `negation-cycle` path as one line, for an error message."

@@ -70,9 +70,6 @@
      :quaker  (v/handle-of kb (list quaker nixon)  'CxUniverse)}))
 
 (deftest brave-cautious-separates-forced-from-arbitrary
-  ;; In a Nixon diamond both sides are IN and neither is forced; an ordinary `ask` cannot
-  ;; tell them apart, and the brave/cautious read can — each side holds in some optimum
-  ;; (brave) but not in every one (cautious).
   (when asp?
     (tu/with-neutral-kb [kb tu/fresh]
       (v/add-reasoner kb :brave-cautious)
@@ -96,8 +93,6 @@
           (is (nil? (v/last-program kb))))))))
 
 (deftest an-uncontested-fact-is-both-brave-and-cautious
-  ;; A datum in no dilemma is in every optimum, so brave and cautious both reduce to
-  ;; ordinary belief — the prover answers there rather than reporting nothing.
   (when asp?
     (tu/with-neutral-kb [kb tu/fresh]
       (v/add-reasoner kb :brave-cautious)
@@ -107,8 +102,6 @@
         (is (v/ask? kb (list 'bravely fact)    'CxUniverse))))))
 
 (deftest bravely-and-cautiously-are-not-assertible
-  ;; A read on the dilemmas is not a fact: storing one would be a computed value with no
-  ;; way to keep it current, the reason the aggregates and `unknown` are refused too.
   (tu/with-neutral-kb [kb tu/fresh]
     (doseq [f '[bravely cautiously]]
       (testing (str f " is refused as an assertion")
@@ -119,8 +112,6 @@
           (is (str/includes? (ex-message e) (str f " is not assertible"))))))))
 
 (deftest a-brave-cautious-antecedent-derives-nothing
-  ;; The prover is not a SupportingProver, so a rule resting on its answer carries no
-  ;; support and the forward join drops it: a read, not something belief is built on.
   (when asp?
     (tu/with-neutral-kb [kb tu/fresh]
       (v/add-reasoner kb :brave-cautious)
@@ -132,8 +123,6 @@
         (is (not (v/ask? kb (list 'suspected_pacifist nixon) 'CxUniverse)))))))
 
 (deftest the-reader-is-opt-in
-  ;; Without the reasoner registered, no prover answers a brave/cautious goal — the ASP
-  ;; stack stays off a KB's path until a caller asks.
   (when asp?
     (tu/with-neutral-kb [kb tu/fresh]
       (let [{:keys [pacifist nixon]} (nixon-diamond kb)]
@@ -187,14 +176,10 @@
         (is (modal? kb m (list 'not (list glad Pat)) CxChild) (str m " denial in the child"))))))
 
 ;; ---- the solve-free bracket (no backend needed) --------------------------
-;; The `grounded-in-region` read and the bracket's scaling are pure JTMS — no ASP —
-;; so they live in `grounded_in_region_test`.  These exercise the classifier and prover.
+;; the JTMS read and the bracket's scaling are `grounded_in_region_test`'s
 
 (deftest classify-local-brackets-the-dilemma
-  ;; The solve-free classifier, read directly.  A conclusion drawn from BOTH sides of the
-  ;; one dilemma holds under every resolution, so classify-local places it in
-  ;; `:true`; a one-sided conclusion and the dilemma members themselves are `:supportable`;
-  ;; the monotonic background is in neither (the prover reads it off belief).
+  ;; the monotonic background is in no class; the prover reads it off belief
   (tu/with-neutral-kb [kb tu/fresh]
     (let [{:keys [pos neg ethical opposes quaker]} (extended-nixon kb)
           cls (label/classify-local kb)]
@@ -237,8 +222,6 @@
         (is (v/ask? kb (list 'cautiously quaker-form) 'CxUniverse))))))
 
 (deftest solve-free-brave-cautious
-  ;; Forcing the no-backend path (`with-redefs`), the prover reads the solve-free bracket:
-  ;; brave/cautious hold without enumerating optima.
   (with-redefs [solver/available? (constantly false)]
     (extended-nixon-reads)))
 
@@ -249,11 +232,7 @@
     (extended-nixon-reads)))
 
 (deftest the-backend-classifies-the-asked-datums-component-once-per-write
-  ;; The backend refines a member only past the bracket's member cap, lowered here so a
-  ;; Nixon diamond is past it.  One program over independent dilemmas has the product of
-  ;; their optima, so the backend classifies only the member component the asked datum is
-  ;; in, and a second ask with no write between reads the first one's answer
-  ;; (docs/labeling.md).
+  ;; the member cap is lowered so a Nixon diamond is past it
   (when asp?
     (with-redefs [config/classify-max-cluster-members (constantly 1)]
       (tu/with-neutral-kb [kb tu/fresh]
@@ -287,11 +266,7 @@
           (is (= 2 @runs) "a write moves the change clock"))))))
 
 (deftest a-both-sided-conclusion-is-an-ordinary-believed-sentex
-  ;; The practical query, without the modal: a conclusion drawn from both sides of a
-  ;; dilemma is believed and explained like any other. `ask` returns it, and `why` gives a
-  ;; proof tree deriving it from *each* side — the same fact `(cautiously …)` reports as
-  ;; skeptical, read here as an ordinary justification rather than a modal. No reasoner and
-  ;; no backend are needed.
+  ;; `why` derives the both-sided conclusion from each side, with no reasoner and no backend
   (tu/with-neutral-kb [kb tu/fresh]
     (let [{:keys [ethical ethical-form pos neg]} (extended-nixon kb)]
       (testing "it answers an ordinary query"
@@ -306,15 +281,8 @@
           (is (contains? antes neg) "derived from the non-pacifist side"))))))
 
 ;; ---- excluded conclusions and multiple dilemmas --------------------------
-;; classify-local classifies over the dilemmas' optimal resolutions, so it reaches the two
-;; cases the earlier per-dilemma reading could not: a conclusion that holds in NO resolution
-;; (`:false`), and a member that a coupled cluster keeps or drops in every resolution.
 
 (deftest classify-local-excludes-a-conclusion-drawn-from-both-sides
-  ;; A conclusion derived from both sides of one dilemma AT ONCE — `(and (pac N) (not (pac
-  ;; N)))` — is believed only because base belief holds both sides together, which no single
-  ;; resolution does. Every resolution drops one side, so it holds in none: `:false`, not
-  ;; `:supportable`. The prover reports neither brave nor cautious.
   (with-redefs [solver/available? (constantly false)]
     (tu/with-neutral-kb [kb tu/fresh]
       (v/add-reasoner kb :brave-cautious)
@@ -354,9 +322,6 @@
      :c (v/handle-of kb (list pc x) 'CxUniverse)}))
 
 (deftest classify-local-resolves-coupled-dilemmas
-  ;; Two coupled dilemmas (`b` rebuts both `a` and `c`). The optimum defeats `b` alone, so
-  ;; `a` and `c` are `:true` and `b` is `:false` — where the earlier per-dilemma reading,
-  ;; treating dropping `a` as a resolution of a's own dilemma, called `a` `:supportable`.
   (with-redefs [solver/available? (constantly false)]
     (tu/with-neutral-kb [kb tu/fresh]
       (v/add-reasoner kb :brave-cautious)
@@ -373,9 +338,7 @@
           (is (v/ask? kb (list 'cautiously c-form) 'CxUniverse)))))))
 
 (deftest the-backend-answers-coupled-dilemmas-as-the-bracket-does
-  ;; A `Program` encodes no derivation between members, so over `three-way-rebuttal` the
-  ;; backend's optima defeat one member per dilemma and call all six `:supportable`.  The
-  ;; prover reads the bracket with a backend too, and answers as it does without one.
+  ;; the backend's optima over `three-way-rebuttal` call all six members `:supportable`
   (when asp?
     (tu/with-neutral-kb [kb tu/fresh]
       (v/add-reasoner kb :brave-cautious)
@@ -385,8 +348,6 @@
         (is (not (v/ask? kb (list 'bravely b-form) 'CxUniverse)))))))
 
 (deftest a-member-is-refinable-only-past-the-cap-and-uncoupled
-  ;; `:refinable` names the members a backend may classify: those in a cluster the bracket
-  ;; did not enumerate whose members move none of each other, where a `Program` is exact.
   (tu/with-neutral-kb [kb tu/fresh]
     (let [{:keys [pos neg]} (nixon-diamond kb)
           {:keys [a b c]}   (three-way-rebuttal kb)]
@@ -401,9 +362,6 @@
             (is (not-any? refinable [a b c]))))))))
 
 (deftest classify-local-classifies-independent-dilemmas-apart
-  ;; Two Nixon diamonds on disjoint terms are separate clusters, so each both-sided
-  ;; conclusion is skeptical on its own and each member stays credulous-only — the two
-  ;; dilemmas do not smear into each other's classification.
   (with-redefs [solver/available? (constantly false)]
     (tu/with-neutral-kb [kb tu/fresh]
       (v/add-reasoner kb :brave-cautious)
@@ -429,16 +387,8 @@
           (is (contains? (:supportable cls) (:p d2))))))))
 
 (deftest classify-local-agrees-with-the-backend-on-dilemma-members
-  ;; The prover refines a `:refinable` member with the backend's `classify-program`, so on
-  ;; dilemmas whose members derive from none of the others the two must classify each member
-  ;; the same way.  `classify-program` classifies the members a `Program` holds; the
-  ;; comparison covers every one of those that `classify-local` also classifies.
-  ;;
-  ;; The fixtures are dilemmas whose members derive from none of the other members.
-  ;; `dilemma-program` encodes each member as an independent choice with no derivation
-  ;; between members, so on `three-way-rebuttal` the backend counts defeating `b` and the
-  ;; `¬a`/`¬c` it derives as three defeats and reports all six members `:supportable`, while
-  ;; `classify-local` reads the cascade and resolves the cluster by defeating `b` alone.
+  ;; the fixtures' members derive from none of each other, where a `Program` is exact;
+  ;; `three-way-rebuttal` is left out, since its members derive from one another
   (when (solver/available?)
     (doseq [[title build] [["one diamond" extended-nixon]
                            ["two independent diamonds" #(do (extended-nixon %) (extended-nixon %))]]]

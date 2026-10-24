@@ -1,12 +1,8 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.naf-test
-  "Negation as failure: `(unknown S)` and `(thereExists ?x S)`.
-
-  `unknown` is closed-world negation — it holds exactly while `S` is not derivable —
-  and `thereExists` existentially closes a variable off, so `(unknown (thereExists ?x
-  S))` says 'there is no x such that S'.  Both are answered by a prover at level 6 (no
-  backchaining), are ground/closed only, and store nothing.  See docs/naf.md."
+  "Negation as failure: `unknown`, `thereExists`, `forall` and closed extents.  See
+  docs/naf.md."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.sentex :as sx]
@@ -69,10 +65,7 @@
         (is (v/ask? kb (list 'unknown (list flies Tweety))))))))
 
 (tu/deftest-kb unknown-refuses-an-open-goal
-  ;; "must be fully bound to evaluate": an open `(unknown (flies ?x))` is not a test
-  ;; but a search over the whole domain's complement, so the NAF prover refuses it —
-  ;; exactly the refusal `different` makes (FactProver is always listed, but it
-  ;; finds no stored `(unknown ...)` fact, so nothing answers).
+  ;; FactProver is listed too, and finds no stored `(unknown …)` fact
   (let [applicable (fn [goal] (set (map :prover (v/query-plan kb goal '?ctx))))]
     (testing "the NAF prover claims a *closed* unknown"
       (is (contains? (applicable '(unknown (flies Tweety))) "UnknownProver")))
@@ -111,6 +104,26 @@
       (is (thrown? clojure.lang.ExceptionInfo
                    (v/assert kb (list 'thereExists '?x (list flies '?x)) 'CxWell))))))
 
+(tu/deftest-kb a-not-over-a-query-operator-is-refused-as-the-operator-is
+  (tu/with-terms [flies sings Tweety Opus CxBirds]
+    (doseq [[f q] [['unknown     (list 'unknown (list flies Tweety))]
+                   ['unknown     (list 'unknown (list 'or (list flies Tweety) (list sings Tweety)))]
+                   ['thereExists (list 'thereExists '?x (list flies '?x))]
+                   ['forall      (list 'forall '?y (list 'implies (list flies '?y) (list sings '?y)))]
+                   ['bravely     (list 'bravely (list flies Tweety))]
+                   ['cautiously  (list 'cautiously (list flies Tweety))]
+                   ['agg/count   (list 'agg/count 1 Tweety (list flies Tweety))]
+                   ['different   (list 'different Tweety Opus)]]
+            s [(list 'not q)
+               (list 'not (list 'not (list 'not q)))
+               (list 'ist CxBirds (list 'not q))]]
+      (testing (pr-str s)
+        (let [e (try (v/assert kb s 'CxWell) nil
+                     (catch clojure.lang.ExceptionInfo e e))]
+          (is (= :not-well-formed (:type (ex-data e))))
+          (is (re-find (re-pattern (str f " is not assertible")) (str (ex-message e)))))
+        (is (= [:not-well-formed] (mapv :type (v/check kb s 'CxWell))))))))
+
 ;; ---- unknown in a rule antecedent: derive-time blocking -----------------
 
 (tu/deftest-kb unknown-antecedent-fires-and-blocks-at-derive-time
@@ -145,8 +158,8 @@
         (is (v/ask? kb (list rr Aa) 'CxWell))))))
 
 (tu/deftest-kb a-guarded-firing-over-monotonic-facts-confers-default
-  ;; docs/reference.md D14.  Every write is :monotonic and nothing blocks the guard; the
-  ;; rows run the fact before the rule and the rule before the fact.
+  ;; decision 14 of docs/reference.md.  Every write is :monotonic and nothing blocks the
+  ;; guard; the rows run the fact before the rule and the rule before the fact.
   (tu/with-terms [pp qq rr Aa]
     (let [M      {:strength :monotonic}
           bare   (list 'set/forwardRule (list 'implies (list pp '?x) (list rr '?x)))
@@ -173,11 +186,6 @@
           (run! #(v/retract! kb %) [hf hr]))))))
 
 (tu/deftest-kb unknown-is-order-independent-when-a-merge-is-what-arrives
-  ;; A merge is the other way `S` becomes derivable, and it is not a fact arriving: the
-  ;; inner query is answered under the term's **representative**, so `(unknown (qq Kept))`
-  ;; is false for a firing that bound `?x` to a spelling the merge retired — with nothing
-  ;; on `qq` having moved, so no predicate-keyed trigger can see it.
-  ;;
   ;; `rewriteOf` rather than `sameAs` because the direction is the point: `sameAs` elects
   ;; by content, and if the `qq` fact's own term lost the election it would migrate, and
   ;; the migration would post an ordinary trigger that hides the channel under test.
@@ -200,11 +208,8 @@
         (is (v/ask? kb (list rr Retired) 'CxWell))))))
 
 (tu/deftest-kb a-merge-can-complete-a-conjunction-through-the-conjunct-that-was-short
-  ;; The conjunctive reading of the merge channel: `qq` holds of one spelling and `rr` of
-  ;; the other, so under the firing's own binding the conjunction is one conjunct short
-  ;; and the rule concludes.  Merging the two makes *both* answerable under one
-  ;; representative — with nothing on either predicate arriving or leaving, so no
-  ;; predicate-keyed trigger sees it and `recheck-equality-edge` is the whole channel.
+  ;; `qq` holds of one spelling and `rr` of the other, so the conjunction is one conjunct
+  ;; short until the merge, and nothing on either predicate arrives or leaves.
   (tu/with-terms [pp qq rr ss Kept Retired]
     (v/assert kb (list 'implies (list 'and (list pp '?x)
                                       (list 'unknown (list 'and (list qq '?x) (list rr '?x))))
@@ -225,33 +230,23 @@
       (testing "and splitting the class again revives it"
         (is (v/ask? kb (list ss Retired) 'CxWell))))))
 
-(tu/deftest-kb a-conjunction-reaches-the-same-belief-when-the-merge-arrives-first
-  ;; The oracle for the test above.  Merged first, the firing is refused at derive time
-  ;; and no trigger is involved at all, so the two orders must agree.
-  (tu/with-terms [pp qq rr ss Kept Retired]
-    (v/assert kb (list 'rewriteOf Kept Retired) 'CxWell)
-    (v/assert kb (list 'implies (list 'and (list pp '?x)
-                                      (list 'unknown (list 'and (list qq '?x) (list rr '?x))))
-                       (list ss '?x))
-              'CxWell {:direction :forward})
-    (v/assert kb (list qq Kept) 'CxWell)
-    (v/assert kb (list rr Retired) 'CxWell)
-    (v/assert kb (list pp Retired) 'CxWell)
-    (is (empty? (v/sentexes-matching kb (list ss '?x) 'CxWell))
-        "merged first, the rule never concludes")))
-
 (tu/deftest-kb an-unknown-reaches-the-same-belief-when-the-merge-arrives-first
-  ;; the oracle for the test above: merged first, the firing is refused at derive time
-  ;; and no trigger is involved at all, so the two orders must agree.
-  (tu/with-terms [pp qq rr Kept Retired]
-    (v/assert kb (list 'rewriteOf Kept Retired) 'CxWell)
-    (v/assert kb (list 'implies (list 'and (list pp '?x) (list 'unknown (list qq '?x)))
-                       (list rr '?x))
-              'CxWell {:direction :forward})
-    (v/assert kb (list qq Kept) 'CxWell)
-    (v/assert kb (list pp Retired) 'CxWell)
-    (is (empty? (v/sentexes-matching kb (list rr '?x) 'CxWell))
-        "merged first, the rule never concludes")))
+  ;; The oracle for the two merge tests above: merged first, the guard holds when the
+  ;; firing is made, and no trigger is involved.
+  (doseq [conjunctive? [false true]]
+    (tu/with-terms [pp qq rr ss Kept Retired]
+      (v/assert kb (list 'rewriteOf Kept Retired) 'CxWell)
+      (v/assert kb (list 'implies (list 'and (list pp '?x)
+                                        (list 'unknown (if conjunctive?
+                                                         (list 'and (list qq '?x) (list rr '?x))
+                                                         (list qq '?x))))
+                         (list ss '?x))
+                'CxWell {:direction :forward})
+      (v/assert kb (list qq Kept) 'CxWell)
+      (when conjunctive? (v/assert kb (list rr Retired) 'CxWell))
+      (v/assert kb (list pp Retired) 'CxWell)
+      (is (empty? (v/sentexes-matching kb (list ss '?x) 'CxWell))
+          (str "merged first, the rule never concludes" (when conjunctive? ": conjunctive"))))))
 
 (tu/deftest-kb unknown-with-there-exists-in-a-rule
   (tu/with-terms [person owns ownerless Zed]
@@ -286,10 +281,6 @@
       (is (not (v/ask? kb (list a_parent Childless) 'CxWell))))))
 
 ;; ---- a conjunctive NAF query --------------------------------------------
-;; `(unknown (and A B))` is `exceptWhen`'s conjunction inlined per literal: closure
-;; leaves every conjunct ground, so they share nothing after substitution and each is an
-;; independent existence check — block if **all** hold.  One evaluator answers both
-;; (`provers/exception-holds?`), so the two cannot drift.
 
 (tu/deftest-kb unknown-over-a-conjunction-blocks-only-when-every-conjunct-holds
   (tu/with-terms [pp qq rr ss Both One Neither]
@@ -308,9 +299,6 @@
       (is (v/ask? kb (list ss Neither) 'CxWell)))))
 
 (tu/deftest-kb every-conjunct-of-a-NAF-query-is-watched
-  ;; The re-check index is keyed per predicate, and a conjunction blocks on the *last*
-  ;; of its conjuncts to arrive — so a rule posted under the first predicate alone would
-  ;; never be re-checked for the second, and belief would depend on arrival order.
   (tu/with-terms [pp qq rr ss Aa]
     (v/assert kb (list 'implies (list 'and (list pp '?x)
                                       (list 'unknown (list 'and (list qq '?x) (list rr '?x))))
@@ -330,9 +318,6 @@
         (is (v/ask? kb (list ss Aa) 'CxWell))))))
 
 (tu/deftest-kb a-conjunctive-NAF-goal-agrees-with-the-rule-antecedent
-  ;; The backward reading of the same query: `UnknownProver` answers a conjunction the
-  ;; way `exception-holds?` does, or `ask` and forward chaining would disagree about one
-  ;; rule.
   (tu/with-terms [qq rr Both One]
     (v/assert kb (list qq Both) 'CxWell)
     (v/assert kb (list rr Both) 'CxWell)
@@ -343,10 +328,6 @@
         "one conjunct short — the conjunction is not derivable")))
 
 (tu/deftest-kb a-nested-NAF-conjunction-is-flattened-not-left-as-a-goal
-  ;; A nested `and` is not a goal any prover claims, so left as one conjunct it would come
-  ;; back unanswerable and read as *not derivable* — the conjunction never holding, the
-  ;; antecedent guarding nothing.  Conjunction is associative, so flattening is the
-  ;; reading; the canonical form is flat, which is what makes the two spellings one rule.
   (tu/with-terms [pp qq rr tt ss All]
     (let [nested (list 'implies (list 'and (list pp '?x)
                                       (list 'unknown (list 'and (list qq '?x)
@@ -365,10 +346,6 @@
           "every conjunct of the flattened query holds, so the firing is blocked"))))
 
 (tu/deftest-kb a-thereExists-conjunct-is-watched-by-what-it-quantifies
-  ;; A conjunct may itself be an existential — legal, because the binder is local to that
-  ;; one conjunct, so the conjuncts still share nothing.  The re-check key has to be the
-  ;; predicate *inside* the quantifier (`watched-query` per conjunct): keyed on
-  ;; `thereExists`, which no fact carries, the arrival that completes the query is invisible.
   (tu/with-terms [person kidOf adult lonely Ppp Qqq]
     (v/assert kb (list 'implies (list 'and (list person '?x)
                                       (list 'unknown
@@ -388,8 +365,8 @@
         (is (v/ask? kb (list lonely Ppp) 'CxWell))))))
 
 (tu/deftest-kb a-conjunctive-NAF-antecedent-is-honoured-by-a-backward-only-rule
-  ;; The companion of the single-literal case below: a backward-only rule is never
-  ;; pre-materialized, so whoever expands it evaluates the conjunction itself.
+  ;; A backward-only rule is never pre-materialized, so whoever expands it evaluates the
+  ;; conjunction itself.
   (tu/with-terms [pp qq rr ss Both One]
     (v/assert kb (list 'set/backwardRule
                        (list 'implies (list 'and (list pp '?x)
@@ -407,10 +384,7 @@
         "one conjunct short — it does")))
 
 (tu/deftest-kb a-negated-conjunct-is-watched-and-blocks-when-it-arrives
-  ;; `not` is the one frame the watched-predicate walk leaves alone, because the trigger
-  ;; side keys an arriving `(not S)` under `not` as well — coarse, one bucket for every
-  ;; negated condition, but the two agree, and peeling one side alone is what would break
-  ;; it.  The claim is the arrival, so this is the test that would catch a peel.
+  ;; The arrival is the claim, so this test reddens if either side peels the `not` frame.
   (tu/with-terms [bb ff aa oo Ned]
     (v/assert kb (list 'implies (list 'and (list bb '?x)
                                       (list 'unknown (list 'and (list 'not (list ff '?x))
@@ -425,10 +399,21 @@
     (is (not (v/ask? kb (list oo Ned) 'CxWell))
         "and its arrival completes the query, so the conclusion is swept")))
 
+(tu/deftest-kb a-negated-conjunct-a-separation-answers-blocks-in-every-arrival-order
+  (doseq [order (oi/permutations [:separation :membership :rule])]
+    (tu/with-terms [cat_t dog_t pet_t maybe_cat Rex]
+      (v/assert kb (list pet_t Rex) 'CxWell)
+      (doseq [step order]
+        (case step
+          :separation (v/assert kb (list 'disjoint cat_t dog_t) 'CxUniverse {:strength :monotonic})
+          :membership (v/assert kb (list dog_t Rex) 'CxWell {:strength :monotonic})
+          :rule       (v/assert kb (list 'implies (list 'and (list pet_t '?x)
+                                                        (list 'unknown (list 'not (list cat_t '?x))))
+                                         (list maybe_cat '?x))
+                                'CxWell {:direction :forward})))
+      (is (not (v/ask? kb (list maybe_cat Rex) 'CxWell)) (pr-str order)))))
+
 (tu/deftest-kb an-aggregate-conjunct-is-watched-by-its-census-body
-  ;; An aggregate's own functor is a predicate no fact carries, so the key has to be what
-  ;; its body counts — the per-conjunct case of what `naf-predicates` has always done for
-  ;; a bare aggregate query.
   (tu/with-terms [person kidOf adult gg Moe K1 K2]
     (v/assert kb (list 'implies (list 'and (list person '?x)
                                       (list 'unknown
@@ -446,8 +431,6 @@
         "the count reaching 2 completes the query, on a predicate the aggregate frames")))
 
 (tu/deftest-kb conjunct-order-is-not-a-NAF-rule-s-identity
-  ;; The claim `sort-conjuncts` makes for an exceptWhen exception, and for the same
-  ;; reason: independent ground checks, so their written order is not their identity.
   (tu/with-terms [pp qq rr ss]
     (let [h1 (v/assert kb (list 'implies (list 'and (list pp '?x)
                                                (list 'unknown (list 'and (list qq '?x) (list rr '?x))))
@@ -479,9 +462,6 @@
 ;; ---- well-formedness of NAF rule antecedents ----------------------------
 
 (tu/deftest-kb an-aggregate-refuses-a-reduction-variable-no-census-conjunct-produces
-  ;; A census body is joined like a NAF query, so its conjuncts share `?v` — but the join
-  ;; runs generators first, so a `?v` only a *computed* conjunct reads is a count over a
-  ;; variable nothing in the body can bind.  The same hole an `unknown` is refused for.
   (tu/with-terms [person childOf sick counted]
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo #"which no conjunct of it binds"
@@ -505,8 +485,8 @@
 ;; ---- the joined NAF query: conjuncts sharing a quantifier's variable ----
 
 (tu/deftest-kb a-quantified-conjunction-takes-one-witness-for-all-its-conjuncts
-  ;; The whole point of the join: "has no sick child" must not hold of a parent whose
-  ;; child is well merely because *some other* individual is sick.
+  ;; "has no sick child" must not hold of a parent whose child is well while some other
+  ;; individual is sick.
   (tu/with-terms [childOf sick Tom Kid Stranger]
     (v/assert kb (list childOf Tom Kid) 'CxWell)
     (v/assert kb (list sick Stranger) 'CxWell)
@@ -558,8 +538,7 @@
         "the rule never fires, which is the answer the other arrival order settles on")))
 
 (tu/deftest-kb every-conjunct-of-a-quantified-query-is-a-negative-edge
-  ;; Stratification reads the conjuncts through the quantifier, so a cycle through the
-  ;; *second* one is refused as readily as one through the first.
+  ;; The second rule closes a cycle through the second conjunct under the quantifier.
   (tu/with-terms [person childOf sick unworried]
     (v/assert kb (list 'implies
                        (list 'and (list person '?x)
@@ -573,8 +552,6 @@
          (v/assert kb (list 'implies (list unworried '?y) (list sick '?y)) 'CxWell {:direction :forward})))))
 
 (tu/deftest-kb a-standalone-existential-over-a-conjunction-is-the-join-written-out
-  ;; A *positive* standalone `thereExists` needs no NAF machinery: its conjunction is
-  ;; spliced in as that many antecedents, which is the join a reader would have written.
   (tu/with-terms [parentOf sick worried Ann Kid]
     (let [h1 (v/assert kb (list 'implies
                                 (list 'and (list 'thereExists '?c
@@ -667,30 +644,84 @@
     (is (v/ask? kb (list not_a_month Smarch) CxCalendar)
         "a stored negative answers the antecedent as it always did")))
 
-(tu/deftest-kb a-closed-extent-cycle-through-negation-is-refused
-  (tu/with-terms [month_of_year candidate CxCalendar]
-    (v/assert kb (list 'genlCx CxCalendar 'CxUniverse) 'CxUniverse)
-    (v/assert kb (list 'closed_extent_predicate month_of_year) CxCalendar)
-    (testing "a rule concluding P whose body reads (not (P …)) under the grant"
-      (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo #"not stratified"
-           (v/assert kb (list 'implies (list 'and (list candidate '?m)
-                                             (list 'not (list month_of_year '?m)))
-                              (list month_of_year '?m))
-                     CxCalendar {:direction :forward}))))))
+(tu/deftest-kb a-closed-extent-negative-conjunct-runs-after-its-binder
+  ;; Bob's one child is not asleep, and nothing negative is stored.  Each row puts the
+  ;; negative conjunct where canonical order or the written order runs it first, while
+  ;; `?y` is open and `ClosedExtentProver` declines it.
+  (tu/with-terms [childOf asleep fed awake calm person Bob Kid1 CxS]
+    (v/assert kb (list 'genlCx CxS 'CxUniverse) 'CxUniverse)
+    (v/assert kb (list 'closed_extent_predicate asleep) CxS)
+    (v/assert kb (list childOf Bob Kid1) CxS)
+    (v/assert kb (list person Bob) CxS)
+    (v/assert kb (list 'implies (list 'and (list childOf '?x '?y) (list 'not (list asleep '?y)))
+                       (list awake '?x))
+              CxS)
+    (v/assert kb (list 'implies (list 'and (list person '?x)
+                                      (list 'unknown (list 'thereExists '?y
+                                                           (list 'and (list childOf '?x '?y)
+                                                                 (list 'not (list asleep '?y))))))
+                       (list calm '?x))
+              CxS {:direction :forward})
+    (let [awake-kid (list 'and (list 'not (list asleep '?y)) (list childOf Bob '?y))
+          conj-goal [(list 'not (list asleep '?y)) (list childOf Bob '?y)]]
+      (doseq [[label answer expected]
+              [["a thereExists goal" #(v/ask? kb (list 'thereExists '?y awake-kid) CxS) true]
+               ["an unknown goal" #(v/ask? kb (list 'unknown (list 'thereExists '?y awake-kid)) CxS)
+                false]
+               ["a forall goal's body"
+                #(v/ask? kb (list 'forall '?y (list 'implies awake-kid (list fed '?y))) CxS) false]
+               ["a prove conjunction" #(count (v/prove kb conj-goal CxS)) 1]
+               ["a node-engine conjunction" #(count (v/query kb conj-goal CxS {:max-depth 2})) 1]
+               ["a backward rule's antecedents" #(v/provable? kb (list awake Bob) CxS) true]
+               ["an unknown antecedent of a forward rule" #(v/ask? kb (list calm Bob) CxS) false]]]
+        (is (= expected (answer)) label)))))
 
-(tu/deftest-kb a-grant-that-would-close-a-cycle-is-refused
-  ;; The other arrival order: the rule is stored first, and the grant is what would add
-  ;; the negative edge.
-  (tu/with-terms [month_of_year candidate CxCalendar]
-    (v/assert kb (list 'genlCx CxCalendar 'CxUniverse) 'CxUniverse)
-    (v/assert kb (list 'implies (list 'and (list candidate '?m)
-                                      (list 'not (list month_of_year '?m)))
-                       (list month_of_year '?m))
-              CxCalendar {:direction :forward})
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"not stratified"
-         (v/assert kb (list 'closed_extent_predicate month_of_year) CxCalendar)))))
+(defn- refusal-type
+  "The `:type` `f` throws, or `:stored`."
+  [f]
+  (try (f) :stored (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+
+(tu/deftest-kb a-closed-extent-cycle-through-negation-is-refused-in-both-arrival-orders
+  ;; Rules concluding P that read `(not (P …))` under the grant: as an antecedent, inside
+  ;; an `unknown`, inside a `thereExists` under one, inside an aggregate's census body, in
+  ;; an `exceptWhen` query written with the rule or naming its handle, and through a second
+  ;; rule.  Whichever of the grant and the rules arrives second is refused; with the grant
+  ;; retracted, the rules are stored.
+  (doseq [shape [:antecedent :unknown :exists :aggregate :except :except-handle :two-rule]
+          order [[:grant :rule] [:rule :grant] [:grant :retract :rule]]]
+    (tu/with-terms [month_of_year candidate calendar_term followsOn CxCalendar]
+      (v/assert kb (list 'genlCx CxCalendar 'CxUniverse) 'CxUniverse)
+      (let [neg   (list 'not (list month_of_year '?m))
+            fwd   #(v/assert kb % CxCalendar {:direction :forward})
+            base  (list 'implies (list candidate '?m) (list month_of_year '?m))
+            rule  (fn [concl ante]
+                    (list 'implies (list 'and (list candidate '?m) ante) (list concl '?m)))
+            grant (volatile! nil)
+            op    {:grant   #(vreset! grant (v/assert kb (list 'closed_extent_predicate month_of_year)
+                                                      CxCalendar))
+                   :retract #(v/retract! kb @grant)
+                   :rule    #(case shape
+                               :antecedent    (fwd (rule month_of_year neg))
+                               :unknown       (fwd (rule month_of_year (list 'unknown neg)))
+                               :exists        (fwd (rule month_of_year
+                                                         (list 'unknown
+                                                               (list 'thereExists '?n
+                                                                     (list 'and (list followsOn '?m '?n)
+                                                                           (list 'not (list month_of_year '?n)))))))
+                               :aggregate     (fwd (rule month_of_year
+                                                         (list 'agg/count 1 '?n
+                                                               (list 'and (list candidate '?n)
+                                                                     (list 'not (list month_of_year '?n))))))
+                               :except        (v/assert kb (list 'exceptWhen neg (list 'set/forwardRule base))
+                                                        CxCalendar)
+                               :except-handle (v/assert kb (list 'exceptWhen neg (list 'sentexHandle (fwd base)))
+                                                        CxCalendar)
+                               :two-rule      (do (fwd (list 'implies (list calendar_term '?m)
+                                                             (list month_of_year '?m)))
+                                                  (fwd (rule calendar_term (list 'unknown neg)))))}]
+        (is (= (if (= :retract (second order)) [:stored :stored :stored] [:stored :not-stratified])
+               (mapv #(refusal-type (op %)) order))
+            (pr-str shape order))))))
 
 (tu/deftest-kb why-not-says-the-extent-is-closed
   (tu/with-terms [month_of_year Smarch CxCalendar]
@@ -777,6 +808,50 @@
     (is (empty? (v/ask kb (list 'not (list accountOn Alice '?host)) CxHosts))
         "an open argument 2 is a search over the complement, which the grant does not license")))
 
+(tu/deftest-kb a-per-argument-grant-past-the-goal-s-arity-closes-nothing
+  (tu/with-terms [accountOn Carol HostA CxHosts]
+    (v/assert kb (list 'genlCx CxHosts 'CxUniverse) 'CxUniverse)
+    (v/assert kb (list 'closedExtentForArg accountOn 5 HostA) CxHosts)
+    (is (not (v/ask? kb (list 'not (list accountOn Carol HostA)) CxHosts)))
+    (v/assert kb (list 'closedExtentForArg accountOn 2 HostA) CxHosts)
+    (is (v/ask? kb (list 'not (list accountOn Carol HostA)) CxHosts)
+        "the same goal under a grant at position 2")))
+
+;; core.txt's `interArgEqual` rows: a grant at argument N types its predicate an
+;; `at_least_…` floor, which the floor's disjointness with the exact class below it
+;; separates from a binary predicate.  Per reading, row and order of {arity, grant}: what
+;; `try-assert` of the later write answers, whether `assert` leaves the grant believed, and
+;; whether the derived floor `(at_least_ternary P)` is reported in `conflicts`: the floor
+;; and the class are forced-monotonic, so neither is defeated.
+(tu/deftest-kb a-per-argument-grant-past-its-predicate-s-arity-clashes
+  (doseq [entail?              [true false]
+          [row pos arity?]     [[:past 3 true] [:within 2 true] [:untyped 3 false]]
+          arity-first?         (if arity? [true false] [false])]
+    ((if entail? #(tu/with-entailing (%)) #(tu/without-entailing (%)))
+     (fn []
+       (tu/with-terms [accountOn HostA]
+         (let [arity (list 'binary_predicate accountOn)
+               grant (list 'closedExtentForArg accountOn pos HostA)
+               ws    (cond (not arity?) [grant] arity-first? [arity grant] :else [grant arity])
+               hs    (mapv #(v/assert kb % 'CxUniverse) (butlast ws))
+               later (last ws)
+               tried (try (v/try-assert kb later 'CxUniverse) :stored
+                          (catch clojure.lang.ExceptionInfo e [(:type (ex-data e)) (:violation (ex-data e))]))
+               lh    (or (v/handle-of kb later 'CxUniverse) (v/assert kb later 'CxUniverse))
+               gh    (v/handle-of kb grant 'CxUniverse)
+               fh    (v/handle-of kb (list 'at_least_ternary accountOn) 'CxUniverse)]
+           (is (= (case [row entail? arity-first?]
+                    [:past true true]   [[:definitional-clash :arg-type] true true]
+                    [:past true false]  [[:definitional-clash :disjoint] true true]
+                    [:past false true]  [[:definitional-clash :arg-type] false false]
+                    [:past false false] [:stored false false]
+                    [:stored true false])
+                  [tried
+                   (boolean (v/believed? kb gh 'CxUniverse))
+                   (boolean (and fh (some #(contains? (set (:nogood %)) fh) (v/conflicts kb))))])
+               (pr-str [row entail? arity-first?]))
+           (doseq [h (rseq (conj hs lh))] (v/retract! kb h))))))))
+
 (tu/deftest-kb a-per-argument-closed-extent-rule-antecedent-is-negation-as-failure
   (tu/with-terms [accountOn candidate unknown_on_host Carol HostA CxHosts]
     (v/assert kb (list 'genlCx CxHosts 'CxUniverse) 'CxUniverse)
@@ -846,6 +921,102 @@
     (is (= :closed-extent (:reason (v/why-not kb (list accountOn Carol HostA) CxHosts))))
     (is (= :not-stored (:reason (v/why-not kb (list accountOn Carol HostB) CxHosts)))
         "another value of the argument is simply not stored")))
+
+;; ---- a closed-extent negative, re-checked in every arrival order ---------
+
+(defn- closed-extent-reading
+  "Whether `(concl K)` is believed after `(kid K)`, the `steps` in order and the
+  retraction of the step `gone` (nil for none), for a rule reading `(not (asleep ?y))`
+  where `shape` says, under a `:whole` or `:per-arg` grant.  The `:aggregate` rule
+  counts the kids not asleep and concludes when the count is 1, `K` alone.  `:defeat` is
+  the grant's monotonic denial, which defeats it."
+  [kb shape grant steps gone]
+  (tu/with-terms [kid asleep concl K CxS]
+    (v/assert kb (list 'genlCx CxS 'CxUniverse) 'CxUniverse)
+    (v/assert kb (list kid K) CxS)
+    (let [neg  (list 'not (list asleep '?y))
+          rule (fn [antes] (list 'implies (cons 'and (cons (list kid '?y) antes)) (list concl '?y)))
+          gs   (case grant
+                 :whole   (list 'closed_extent_predicate asleep)
+                 :per-arg (list 'closedExtentForArg asleep 1 K))
+          op   {:grant  #(v/assert kb gs CxS)
+                :defeat #(v/assert kb (list 'not gs) CxS {:strength :monotonic})
+                :member #(v/assert kb (list asleep K) CxS)
+                :rule   #(case shape
+                           :unknown    (v/assert kb (rule [(list 'unknown neg)]) CxS {:direction :forward})
+                           :antecedent (v/assert kb (rule [neg]) CxS {:direction :forward})
+                           :aggregate  (v/assert kb (rule [(list 'agg/count 1 '?c
+                                                                 (list 'and (list kid '?c)
+                                                                       (list 'not (list asleep '?c))))])
+                                                 CxS {:direction :forward})
+                           :except     (v/assert kb (list 'exceptWhen neg
+                                                          (list 'set/forwardRule
+                                                                (list 'implies (list kid '?y) (list concl '?y))))
+                                                 CxS))}
+          hs   (into {} (map (fn [s] [s ((op s))])) steps)]
+      (when gone (v/retract! kb (hs gone)))
+      (v/ask? kb (list concl K) CxS))))
+
+(defn- closed-extent-expected
+  "Belief in `(concl K)` with the steps `present` stored, as `ask?` reads the rule's
+  literal: `(not (asleep K))` holds exactly while the grant stands undefeated and
+  `(asleep K)` is absent.  The `:antecedent` and `:aggregate` rules conclude on it, and
+  the `unknown` and `exceptWhen` rules on its failure."
+  [shape present]
+  (let [neg? (boolean (and (present :grant) (not (present :defeat)) (not (present :member))))]
+    (if (#{:antecedent :aggregate} shape) neg? (not neg?))))
+
+(defn- closed-extent-rechecks!
+  "For each `[shape grant]` of `rows` and each of `orders` of steps of
+  `closed-extent-reading`, assert that belief after the order, and after retracting each
+  step but the rule, equals `closed-extent-expected` and a fresh load of the final state
+  with the rule asserted last."
+  [kb rows orders]
+  (doseq [[shape grant] rows
+          :let  [fresh (memoize #(closed-extent-reading kb shape grant
+                                                        (filterv % [:grant :defeat :member :rule]) nil))]
+          order orders
+          gone  (cons nil (remove #{:rule} order))
+          :let  [final (disj (set order) gone)]]
+    (is (= (closed-extent-expected shape final) (fresh final)
+           (closed-extent-reading kb shape grant order gone))
+        (pr-str shape grant order gone))))
+
+(tu/deftest-kb a-closed-extent-negative-is-re-checked-in-sampled-arrival-orders
+  ;; the `:default` twin of the walk below: the whole-predicate grant, and the rule
+  ;; asserted last, between the grant and the member, and first; then the grant's
+  ;; defeat after the rule, and before the grant
+  (closed-extent-rechecks! kb [[:unknown :whole] [:except :whole] [:antecedent :whole]
+                               [:aggregate :whole]]
+                           [[:grant :member :rule] [:grant :rule :member] [:rule :member :grant]
+                            [:grant :rule :defeat] [:defeat :grant :rule]]))
+
+(tu/deftest-kb ^:slow a-closed-extent-negative-is-re-checked-in-every-arrival-order
+  (closed-extent-rechecks! kb (for [shape [:unknown :except :antecedent :aggregate]
+                                    grant [:whole :per-arg]]
+                                [shape grant])
+                           (concat (oi/permutations [:grant :member :rule])
+                                   (oi/permutations [:grant :defeat :rule]))))
+
+(tu/deftest-kb an-unknown-closed-extent-guard-follows-the-grant-at-each-reader
+  ;; The grant and the rule in CxA, the grant's defeat in CxB below it, and in CxC below
+  ;; CxA a stored `(not (asleep K))` beside a second defeat: the firing is believed where
+  ;; the grant alone answers the literal and is defeated, as `ask?` reads the literal
+  (tu/with-terms [kid asleep concl K CxA CxB CxC]
+    (v/assert kb (list 'genlCx CxA 'CxUniverse) 'CxUniverse)
+    (v/assert kb (list 'genlCx CxB CxA) 'CxUniverse)
+    (v/assert kb (list 'genlCx CxC CxA) 'CxUniverse)
+    (v/assert kb (list kid K) CxA)
+    (v/assert kb (list 'closed_extent_predicate asleep) CxA)
+    (v/assert kb (list 'implies (list 'and (list kid '?y) (list 'unknown (list 'not (list asleep '?y))))
+                       (list concl '?y))
+              CxA {:direction :forward})
+    (doseq [c [CxB CxC]]
+      (v/assert kb (list 'not (list 'closed_extent_predicate asleep)) c {:strength :monotonic}))
+    (v/assert kb (list 'not (list asleep K)) CxC)
+    (is (= [false true false]
+           (mapv #(v/ask? kb (list concl K) %) [CxA CxB CxC])
+           (mapv #(v/ask? kb (list 'unknown (list 'not (list asleep K))) %) [CxA CxB CxC])))))
 
 ;; ---- forall: sugar for the nested NAF ----------------------------------
 
@@ -934,6 +1105,36 @@
     (is (v/ask? kb (list all_kids_asleep Bob) 'CxWell)
         "and the same knowledge in either order settles the same way")))
 
+(tu/deftest-kb a-forall-is-released-by-a-genlCx-edge-and-by-a-merge
+  ;; Each channel makes `(asleep Kid)` visible from CxKids: the genlCx edge through CxNap,
+  ;; the merge through `(rewriteOf Alias Kid)`. Retracting the channel's sentex hides the
+  ;; fact again.
+  (doseq [channel [:genlCx :merge]]
+    (tu/with-terms [person childOf asleep all_kids_asleep Bob Kid Alias CxKids CxNap]
+      (v/assert kb (list 'genlCx CxKids 'CxUniverse) 'CxUniverse)
+      (v/assert kb (list 'genlCx CxNap 'CxUniverse) 'CxUniverse)
+      (v/assert kb (list 'implies
+                         (list 'and (list person '?x)
+                               (list 'forall '?y (list 'implies (list childOf '?x '?y)
+                                                       (list asleep '?y))))
+                         (list all_kids_asleep '?x))
+                CxKids {:direction :forward})
+      (v/assert kb (list person Bob) CxKids)
+      (v/assert kb (list childOf Bob Kid) CxKids)
+      (if (= channel :genlCx)
+        (v/assert kb (list asleep Kid) CxNap)
+        (v/assert kb (list asleep Alias) CxKids))
+      (testing (str channel " before the edge")
+        (is (not (v/ask? kb (list all_kids_asleep Bob) CxKids))))
+      (let [h (if (= channel :genlCx)
+                (v/assert kb (list 'genlCx CxKids CxNap) 'CxUniverse)
+                (v/assert kb (list 'rewriteOf Alias Kid) CxKids))]
+        (testing (str channel " releases the counterexample")
+          (is (v/ask? kb (list all_kids_asleep Bob) CxKids)))
+        (v/retract! kb h)
+        (testing (str channel " retracted restores it")
+          (is (not (v/ask? kb (list all_kids_asleep Bob) CxKids))))))))
+
 (tu/deftest-kb a-forall-over-what-the-rule-concludes-is-a-cycle-through-negation
   ;; Both halves of the desugar are negative edges: the body's predicate and the head's.
   (tu/with-terms [person childOf asleep all_kids_asleep]
@@ -952,6 +1153,18 @@
            clojure.lang.ExceptionInfo #"not stratified"
            (v/assert kb (list 'implies (list all_kids_asleep '?z) (list childOf '?z '?z))
                      'CxWell {:direction :forward}))))))
+
+(tu/deftest-kb a-constant-in-a-quantifier-binder-is-refused
+  (tu/with-terms [person owns childOf asleep lonely Kid]
+    (doseq [q [(list 'unknown (list 'thereExists Kid (list owns '?x Kid)))
+               (list 'forall Kid (list 'implies (list childOf '?x Kid) (list asleep Kid)))]]
+      (let [e (try (v/assert kb (list 'implies (list 'and (list person '?x) q) (list lonely '?x))
+                             'CxWell {:direction :forward})
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+        (testing (pr-str q)
+          (is (= :not-well-formed (:type (ex-data e))))
+          (is (re-find #"which is not a variable or a list of variables" (str (ex-message e)))))))))
 
 (tu/deftest-kb a-forall-binder-that-escapes-is-refused
   (tu/with-terms [person childOf asleep flagged]
@@ -1047,11 +1260,6 @@
                      'CxWell {:direction :forward}))))))
 
 (tu/deftest-kb a-cycle-through-any-conjunct-of-a-NAF-conjunction-is-refused
-  ;; Every conjunct is a negative dependency, not just the first: the negative edges are
-  ;; drawn from `rules/naf-predicates`, which reads the whole conjunction, so a rule
-  ;; concluding *any* conjunct's predicate closes a cycle through negation.  Keyed on the
-  ;; conjunction's own functor instead, the check would see one predicate — `and`, which
-  ;; nothing concludes — and refuse nothing at all.
   (tu/with-terms [gg aa bb cc]
     (is (v/assert kb (list 'implies (list 'and (list gg '?x)
                                           (list 'unknown (list 'and (list aa '?x) (list bb '?x))))
@@ -1068,10 +1276,8 @@
            (v/assert kb (list 'implies (list cc '?x) (list bb '?x)) 'CxWell {:direction :forward}))))))
 
 ;; ---- backward agreement: a NAF antecedent under rule expansion ----------
-;; A backward-only rule cannot be pre-materialized by forward chaining, so whoever
-;; expands it has to evaluate the `unknown` itself.  Both backward chainers do, and this
-;; is the analogue of the `different`-in-a-backward-rule case: the invariant is that no
-;; two readers of one rule disagree about it, forward chaining included.
+;; A backward-only rule forces the backward path: forward chaining cannot
+;; pre-materialize it.
 
 (tu/deftest-kb every-backward-chainer-evaluates-unknown-in-a-backward-only-rule
   (tu/with-terms [pp qq rr Aa Bb]
@@ -1093,11 +1299,7 @@
       (is (= 1 (count (v/prove kb (list rr Aa) 'CxWell))))
       (is (= 0 (count (v/prove kb (list rr Bb) 'CxWell)))))))
 
-;; ---- prove/backward now evaluate a deferred antecedent ------------------
-;; The gap that was: the recursive chainer discharged an antecedent by fact
-;; matching + rule expansion only, so a rule with a DEFERRED antecedent (different /
-;; evaluate / unknown) proved nothing there — while `ask` and forward chaining honoured
-;; it.  A backward-ONLY rule forces the backward path (forward cannot pre-materialize).
+;; ---- prove and backward evaluate every deferred antecedent ---------------
 
 (tu/deftest-kb prove-and-backward-honour-every-deferred-antecedent
   (tu/with-terms [rel distinctPair age nextAge Ann Bob Tom]
@@ -1125,9 +1327,6 @@
       (is (= [41] (map #(get % '?a) (v/prove kb (list nextAge Tom '?a) 'CxWell)))))))
 
 ;; ---- belief-sensitivity: unknown reads belief, not mere storage ---------
-;; `(unknown S)` holds of an `S` that is stored but currently OUT (a defeated
-;; default), because a level-6 match is belief-filtered.  Closed-world negation is
-;; about what is *believed*, not what happens to sit in the store.
 
 (tu/deftest-kb unknown-holds-of-a-defeated-default
   (tu/with-terms [happy Zed]
@@ -1146,11 +1345,8 @@
 
 (tu/deftest-kb a-defeat-that-releases-an-unknown-antecedent-is-order-independent
   ;; `(pp ?x) & (unknown (happy ?x)) => (rr ?x)`, over a default `(happy Zed)` that a
-  ;; monotonic `(not (happy Zed))` defeats.  With the defeat in place the NAF query holds
-  ;; (`unknown-holds-of-a-defeated-default`), so the rule derives `(rr Zed)` in every
-  ;; assertion order.  When the negation arrives last, the firing was refused while
-  ;; `(happy Zed)` was believed, and the defeat that releases the query moves `(happy Zed)`
-  ;; OUT without removing it from the store — so no re-check re-evaluates the firing.
+  ;; monotonic `(not (happy Zed))` defeats.  When the negation arrives last, the defeat
+  ;; moves `(happy Zed)` OUT without removing it from the store.
   (tu/with-terms [pp happy rr Zed]
     (let [rule     (list 'implies (list 'and (list pp '?x) (list 'unknown (list happy '?x)))
                          (list rr '?x))
@@ -1170,10 +1366,10 @@
       (assert-a rule {:direction :forward})
       (assert-a (list pp Zed) {})
       (assert-a (list happy Zed) {:strength :default})
-      (testing "while the default is believed the firing is refused"
+      (testing "while the default is believed a guard defeat hides the firing"
         (is (not (v/ask? kb (list rr Zed) 'CxWell))))
       (assert-a (list 'not (list happy Zed)) {:strength :monotonic})
-      (testing "the defeat arrives after the refused firing: the NAF query now holds"
+      (testing "the defeat arrives after the guarded firing: the NAF query now holds"
         (is (not (v/ask? kb (list happy Zed) 'CxWell)) "the default is defeated")
         (is (v/ask? kb (list 'unknown (list happy Zed)) 'CxWell)))
       (testing "so the rule reading the same query derives the conclusion, as in the other order"
@@ -1181,8 +1377,6 @@
           (is derived? "(rr Zed) is derived once the defeat releases (unknown (happy Zed))"))))))
 
 ;; ---- block-if-any across several unknown antecedents --------------------
-;; Each `(unknown S)` is an INDEPENDENT block condition (unlike an exception's
-;; conjuncts, which block only when all hold): any one derivable inner blocks.
 
 (tu/deftest-kb multiple-unknowns-block-if-any-holds
   (tu/with-terms [pp qq ss rr Aa]
@@ -1202,9 +1396,6 @@
         (is (v/ask? kb (list rr Aa) 'CxWell))))))
 
 ;; ---- subtype fan-out: the NAF query and its trigger follow genl ---------
-;; `(unknown (super ?x))` must be blocked by a `(sub ?x)` fact — the level-6 query
-;; fans the functor over its spec closure — and a *later* `sub` fact must trigger a
-;; re-check of a rule that only ever mentions `super`.
 
 (tu/deftest-kb unknown-follows-the-subtype-closure
   ;; bound (gensym'd) types/predicates throughout, so `genl`, the rule's NAF query,
@@ -1226,10 +1417,6 @@
         (is (v/ask? kb (list rr Aa) 'CxWell))))))
 
 ;; ---- context scoping: a fact the conclusion cannot see does not block ---
-;; The `unknown` is evaluated in the conclusion's PLACEMENT context, so a fact in a
-;; sibling context — one the placement context does not see via genlCx — cannot
-;; make its inner derivable.  This is why it is a derive-time check, not a global
-;; `?ctx` join filter.
 
 (tu/deftest-kb unknown-respects-the-placement-context
   (tu/with-terms [pp qq rr Aa CxPar CxSubA CxSubB]
@@ -1256,9 +1443,6 @@
       (v/retract! kb h))))
 
 ;; ---- asked again at every reader below the placement --------------------
-;; A reader below the placement context asks the question again against what it sees,
-;; and reads the firing as withdrawn where the query holds (docs/naf.md, "Evaluated in
-;; the placement context, not the join").  The placement keeps its firing.
 
 (tu/deftest-kb an-unknown-is-asked-again-at-a-reader-below-the-placement
   ;; CxA: pp & unknown(qq) => rr, (pp Aa).  CxB sees CxA: (ss Aa) and rr & ss => tt.

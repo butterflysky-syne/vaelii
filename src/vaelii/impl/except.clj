@@ -186,7 +186,7 @@
 (def guard-informant
   "The informant of every justification a guard defeat stores
   (`chain/place-guard-defeats!`): a firing's `exceptWhen` or `unknown` that holds below its
-  placement."
+  placement, or its `different` that fails there."
   'guard)
 
 (defn belief-only-antecedent
@@ -852,8 +852,9 @@
                           (some (partial reads/stores-opposed-between? idx)
                                 (decide/forced-predicates tax :forced-between-predicates)))))))
 
-(defn- build-reader-state
-  "What the walk reads at `ctx`, with the one-read memo, or nil when `ctx` is a variable,
+(defn- reader-frame
+  "What the walk reads at `ctx` that only a move `frames-hold?` reads can change: the
+  reader state without its one-read memo and `:yielding?`, or nil when `ctx` is a variable,
   the read takes the network reading (`tax/*network-belief*`), or no defeat is stored, no
   except is in force at `ctx` and no placement can be exempt at `ctx` (`exempting-at?`).
   `:closable?` is true when only a defeat stated in a context `ctx` sees can hide a
@@ -879,29 +880,216 @@
            :exempting? exempting?
            :forced forced
            :closable? (not (or excepted? exempting? hides?))
-           :yielding? (yielding-reads? kb tax)
-           :conflicts? (pos? (reads/stored-count-with-functor (:index kb) 'contradicts))
-           :memo (volatile! {})})))))
+           :conflicts? (pos? (reads/stored-count-with-functor (:index kb) 'contradicts))})))))
 
-(def ^:dynamic *reader-states*
-  "A volatile a pass that reads many handles binds (`checks/refresh-argument-holds!`), holding
-  `reader-state` by context for one value of `observe/change-clock`, or nil."
+(defn- with-read-memo
+  "`frame` as one stretch of the change clock reads it, with `yielding-reads?`' answer
+  `yielding?` and a fresh one-read memo."
+  [frame yielding?]
+  (when frame
+    (assoc frame :yielding? yielding? :memo (volatile! {}))))
+
+(defn- build-reader-state
+  "What the walk reads at `ctx`, with the one-read memo, or nil (`reader-frame`)."
+  [kb ctx]
+  (when-let [fr (reader-frame kb ctx)]
+    (with-read-memo fr (yielding-reads? kb (:tax fr)))))
+
+;; ---- a pass's reader states ----------------------------------------------------------
+;;
+;; What a frame reads and what retires it: docs/nmtms.md, "A pass's reader states".
+
+(def ^:private declaration-functors
+  "The functors of the forced-monotonic declarations (`decide/declared`)."
+  ['forced_monotonic_predicate 'forced_monotonic_between_predicates])
+
+(def ^:private frame-functors
+  "The functors whose stored facts, either polarity, a reader frame reads by storage."
+  (into #{sx/defeat-functor sx/except-functor 'contradicts 'siblingDisjointException}
+        (concat declaration-functors rewrite/equality-relations)))
+
+(defonce ^:private ^java.util.concurrent.atomic.AtomicLong frame-writes
+  (java.util.concurrent.atomic.AtomicLong.))
+
+(defonce ^:private ^java.util.concurrent.atomic.AtomicLong yield-writes
+  (java.util.concurrent.atomic.AtomicLong.))
+
+(defonce ^:private yield-stores
+  ;; `{:base n :fs [f …]}`: the functors of the forced-monotonic facts stored, `fs`'s i-th
+  ;; the (base + i + 1)-th such store; the oldest 128 are dropped past 256
+  (atom {:base 0 :fs []}))
+
+(defn- forced-functor?
+  "Is `f` forced-monotonic over every reader as either kind `yielding-reads?` reads."
+  [tax f]
+  (and (symbol? f)
+       (or (decide/forced-monotonic? tax :forced-monotonic f)
+           (decide/forced-monotonic? tax :forced-between-predicates f))))
+
+(defn note-stored!
+  "Count `sx` entering (`stored?`) or leaving the index of `kb` when a reader frame reads
+  it by storage (a rule, or a fact whose functor, under one `not`, is in
+  `frame-functors`).  A fact whose functor is forced-monotonic (`forced-functor?`) is
+  counted leaving and logged by functor entering, which `held-yield` reads.  `kb` is nil
+  for a write with no KB at hand, which counts every fact as leaving.  Called at each
+  index write of a record: `kb/create-sentex`, `kb/respell-sentex!`,
+  `integrate/sentex-removed!`, `reindex/index-one!` and `reindex/unindex-one!`."
+  [kb sx stored?]
+  (let [s (:sentence sx)
+        f (when s (nm/functor (if (sx/negation? s) (second s) s)))]
+    (when (or (some? (:antecedent sx)) (contains? frame-functors f))
+      (.incrementAndGet frame-writes))
+    (when (nil? (:antecedent sx))
+      (cond
+        (nil? kb)                                      (.incrementAndGet yield-writes)
+        (not (forced-functor? (reasoning/taxonomy kb) f)) nil
+        (not stored?)                                  (.incrementAndGet yield-writes)
+        :else (swap! yield-stores
+                     (fn [{:keys [base fs]}]
+                       (if (< (count fs) 256)
+                         {:base base :fs (conj fs f)}
+                         {:base (+ (long base) 128) :fs (conj (subvec fs 128) f)}))))))
   nil)
 
+(defn- frame-inputs
+  "What a reader frame reads off the store and the taxonomy, as one value to compare.
+  KB-wide: the frame at every context reads a part of each."
+  [kb]
+  (let [tax (reasoning/taxonomy kb)]
+    [(:index kb) (.get frame-writes)
+     (tax/relation-epoch tax) (tax/relation-gen tax :genlCx)
+     (tax/props tax :forced-monotonic) (tax/props tax :forced-between-predicates)
+     (tax/sib-exceptions? tax) (boolean (seq (tax/equality-edges tax)))]))
+
+(defn- touch-mark
+  "`jtms/touch-mark` of `tms`, or nil for the network before a write (`kb/prior-kb`), which
+  records no touches: its frames are kept by reading every watched label."
+  [tms]
+  (try (jtms/touch-mark tms)
+       (catch UnsupportedOperationException _ nil)))
+
+(defn- frame-watch
+  "What the frames a pass builds from now on are kept under: `frame-inputs`, the stored
+  excepts and declarations with the set of those IN, a mark of the touched sets taken
+  before their labels are read (`jtms/touch-mark`), and `:declaration-defeated?` when a stored `defeat`
+  in any context names a declaration: the frames of every context are kept together."
+  [kb]
+  (let [idx   (:index kb)
+        tms   (reasoning/tms kb)
+        mark  (touch-mark tms)
+        decls (into [] (mapcat #(reads/as-stored-with-functor idx %)) declaration-functors)
+        hs    (into (set decls) (reads/as-stored-with-functor idx sx/except-functor))]
+    {:inputs   (frame-inputs kb)
+     :watched hs
+     :in      (into #{} (filter #(jtms/in? tms %)) hs)
+     :mark    mark
+     :declaration-defeated? (boolean (and (reads/stores-any? idx sx/defeat-functor)
+                                          (some #(reads/stored-naming? idx sx/defeat-functor %)
+                                                decls)))}))
+
+(defn- frames-hold?
+  "`w` (`frame-watch`) with a fresh mark when every frame kept under it reads now as it did
+  when built, else nil: nothing in `frame-inputs` moved, no watched handle went IN or OUT,
+  and no defeat names a declaration.  The labels read are those of the watched handles the
+  touched sets recorded since `w`'s mark (`jtms/touched-since`), or of every watched handle
+  when a reset outdated the mark.  A thread reading held belief keeps none."
+  [kb w]
+  (when (and w
+             (not (:declaration-defeated? w))
+             (not (observe/held-reader?))
+             (= (:inputs w) (frame-inputs kb)))
+    (let [tms    (reasoning/tms kb)
+          [g]    (:mark w)
+          mark   (touch-mark tms)
+          in     (:in w)
+          seen   (:watched w)
+          labels (if (and g (= g (first mark)))
+                   (filter #(contains? seen %) (jtms/touched-since tms (:mark w)))
+                   seen)]
+      (when (every? #(= (contains? in %) (jtms/in? tms %)) labels)
+        (assoc w :mark mark)))))
+
+(defn- held-yield
+  "`yielding-reads?` at `kb` as `{:at :seen :yielding?}`, from `prev`, the one a pass last
+  read under the watch `w`, when no forced-monotonic fact left and nothing in
+  `frame-inputs` moved since: a store leaves true as it was, and a false is read again only
+  for the functors stored since (`yield-stores`).  Read whole otherwise."
+  [kb tax w prev]
+  (let [at              [(.get yield-writes) (:inputs w)]
+        {:keys [base fs]} @yield-stores
+        top             (+ (long base) (count fs))
+        since           (when (and prev (= at (:at prev)) (>= (long (:seen prev)) (long base)))
+                          (subvec fs (- (long (:seen prev)) (long base))))
+        idx             (:index kb)
+        opposed?        (fn [f]
+                          (or (and (decide/forced-monotonic? tax :forced-monotonic f)
+                                   (reads/stores-opposed-with-functor? idx f))
+                              (and (decide/forced-monotonic? tax :forced-between-predicates f)
+                                   (reads/stores-opposed-between? idx f))))]
+    {:at at :seen top
+     :yielding? (cond
+                  (nil? since)        (yielding-reads? kb tax)
+                  (:yielding? prev)   true
+                  :else               (boolean (some opposed? (distinct since))))}))
+
+(def ^:dynamic *reader-states*
+  "A volatile a pass that reads many handles binds (`with-reader-states`), holding per KB
+  each context's reader frame while `frames-hold?` and its reader state for one value of
+  `observe/change-clock`, or nil."
+  nil)
+
+(defmacro with-reader-states
+  "Run `body` with a `*reader-states*` memo, the one already bound if there is one."
+  [& body]
+  `(binding [*reader-states* (or *reader-states* (volatile! nil))] ~@body))
+
+(def ^:private kept-kbs
+  "How many KBs one `*reader-states*` memo keeps states for: a pass reads its KB and, for
+  the feed, the KB before its write (`kb/prior-kb`)."
+  4)
+
+(defn- kb-states
+  "The states `*reader-states*` value `slots` keeps for `kb`, told apart by the identity of
+  its reasoning volatile: a rebuild KB shares the index and a prior KB the configuration."
+  [slots kb]
+  (let [r (:reasoning kb)]
+    (some #(when (identical? r (nth % 0)) (nth % 1)) slots)))
+
+(defn- keep-kb-states
+  "`slots` with `v` as `kb`'s states, the oldest other KB's dropped past `kept-kbs`."
+  [slots kb v]
+  (let [r  (:reasoning kb)
+        vs (conj (filterv #(not (identical? r (nth % 0))) slots) [r v])]
+    (if (> (count vs) kept-kbs) (subvec vs (- (count vs) kept-kbs)) vs)))
+
 (defn- reader-state
-  "`build-reader-state` at `ctx`, kept in `*reader-states*` while the change clock stands.
-  The network reading builds none, and the key holds `tax/*search*`."
+  "`build-reader-state` at `ctx`, kept in `*reader-states*`: the state while the change
+  clock stands, and its frame while `frames-hold?`.  The network reading builds none, and
+  the key holds `tax/*search*`."
   [kb ctx]
   (if-let [m (when-not tax/*network-belief* *reader-states*)]
-    (let [now  (observe/change-clock)
-          held (when (== now (long (:clock @m -1))) (:states @m))
-          k    [ctx tax/*search*]
-          v    (get held k ::absent)]
-      (if (identical? ::absent v)
-        (let [v (build-reader-state kb ctx)]
-          (vreset! m {:clock now :states (assoc held k v)})
-          v)
-        v))
+    (let [now (observe/change-clock)
+          v0  (kb-states @m kb)
+          v   (if (and v0 (== now (long (:clock v0 -1))))
+                v0
+                (if-let [w (and v0 (frames-hold? kb (:watch v0)))]
+                  (assoc v0 :watch w :clock now :states {})
+                  (assoc (select-keys v0 [:yield]) :clock now :watch nil :frames {} :states {})))
+          k   [ctx tax/*search*]]
+      (if-let [e (find (:states v) k)]
+        (do (when-not (identical? v v0) (vswap! m keep-kb-states kb v))
+            (val e))
+        (let [w  (or (:watch v) (frame-watch kb))
+              fe (find (:frames v) k)
+              fr (if fe (val fe) (reader-frame kb ctx))
+              y  (when fr (held-yield kb (:tax fr) w (:yield v)))
+              st (with-read-memo fr (:yielding? y))]
+          (vswap! m keep-kb-states kb
+                  (cond-> (-> (assoc v :watch w)
+                              (assoc-in [:frames k] fr)
+                              (assoc-in [:states k] st))
+                    fr (assoc :yield y)))
+          st)))
     (build-reader-state kb ctx)))
 
 (defn- sees-defeat?
@@ -1423,7 +1611,8 @@
 
     :supports        valid there: every handle it rests on is believed there
     :antecedent-out  a handle it rests on is not believed there
-    :blocked         its rule's `exceptWhen` holds in the network (`jtms/blocked`)
+    :blocked         the network blocks it (`jtms/blocked`): a condition its rule
+                     carries, or an `except` hiding an antecedent
     :void            the network, or `ctx`'s forced-monotonic reading, holds it void
     :guard           a guard defeat in force at `ctx` covers it (docs/naf.md)
     :exempt          a `nogood` justification of a placement `ctx` exempts

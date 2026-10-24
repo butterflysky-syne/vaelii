@@ -8,19 +8,15 @@
   The implementations are primitive loops over `long[]` tables and call no vaelii
   namespace, so their methods stay inline.")
 
-;; The two table-driven operations, over masks.  A protocol rather than a pair of
-;; closures so the calls in the tightening step are **primitive**: a Clojure function
-;; taking and returning a long boxes both ways through `IFn.invoke`, which at one
-;; composition per triple is the largest allocation left in a cubic loop — precisely what
-;; masks are here to retire.
+;; Primitive rather than a pair of closures: docs/defenses.md, "Composition runs through
+;; `IRelationOps`; the triple walk is a closure".
 (definterface IRelationOps
   (^long compose [^long m1 ^long m2])
   (^long converse [^long m]))
 
 (deftype DenseOps [^longs comp-tbl ^longs conv-tbl ^long size]
   IRelationOps
-  ;; `comp-tbl` holds the composition of a single relation with any mask, so composing two
-  ;; is one read per relation set on the left, and a converse is one read flat.
+  ;; `comp-tbl` row i: relation i composed with every mask
   (compose [_ m1 m2]
     (loop [a m1, acc 0]
       (if (zero? a)
@@ -43,8 +39,7 @@
 
 (deftype SparseOps [^longs comp-base ^longs conv-base ^long k]
   IRelationOps
-  ;; the fallback for an algebra too wide to hold a whole-mask table: the same unions, read
-  ;; one base pair at a time rather than one row at a time.  Still no allocation.
+  ;; an algebra past the dense-table limit: the same unions, one base pair at a time
   (compose [_ m1 m2]
     (loop [a m1, acc 0]
       (if (zero? a)

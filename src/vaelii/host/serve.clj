@@ -420,6 +420,9 @@
     :last-program (op v/last-program)
     :contradictions (op v/contradictions)
     :violations   (op v/violations)
+    ;; the ledger alone, a deref, without the entries `violations` reads off the stored
+    ;; firings and held sentexes
+    :filed-violations (op v/filed-violations)
     ;; the *standing* disjointness question, as against the arising one `settle` files
     ;; into `violations` above.  Computed on demand and not filed, so it is asked for
     ;; rather than accumulated — the read an imported KB needs, since a load rebuilds
@@ -431,6 +434,7 @@
     ;; audited collection, which is the caller's to spend (docs/predall.md)
     :specified-violations     (op v/specified-violations)
     :all-specified-violations (op v/all-specified-violations)
+    :exists-violations        (op v/exists-violations)
     ;; the fluent-lane twin: per-instant clashes of a `functional_at_instant` function,
     ;; one declaration or every visible one.  Reported rather than filed, and a sweep
     ;; over every believed `time_point`, like the pair above (docs/time.md)

@@ -4,20 +4,14 @@
   "Pure ASPIF text emitter. No vaelii deps, no I/O.
 
    ASPIF is the Potassco Answer Set Programming Intermediate Format, the
-   ground-program protocol between gringo and clasp.
-
-   **This emits what the engine's programs are built from**, and no more:
-   the rule line (type 1) as facts, choice atoms, normal rules and
-   integrity constraints, weight-body rules and constraints (the
-   cardinality bound a `asp/atMost` / `asp/atLeast` translates to), plus
-   minimize (2) and output (4).
-
-   The rest of the format — projection (3), externals (5), assumptions
-   (6), heuristics (7), acyclicity edges (8), and type 1's disjunctive
-   and multi-head choice heads — has no encoder here. An encoder nobody
-   executes is not coverage of a format; it is unverified text generation
-   claiming to be. What the engine needs, it emits and its tests
-   exercise, and nothing else is written here.
+   ground-program protocol between gringo and clasp.  This emits the
+   statements the engine's programs use: the rule line (type 1) as facts,
+   choice atoms, normal rules, integrity constraints, and weight-body rules
+   and constraints; minimize (2); and output (4).  Projection (3),
+   externals (5), assumptions (6), heuristics (7), acyclicity edges (8) and
+   type 1's disjunctive and multi-head choice heads have no encoder
+   (docs/defenses.md, \"The ASPIF emitter encodes only what a program
+   uses\").
 
    Wire format of what is emitted (line-oriented, space-separated):
      Line 1: `asp 1 0 0`
@@ -37,20 +31,11 @@
      Output:   4 <str_len> <str> <n_conditions> <atoms...>
      End:      0
 
-   Atom ids are positive integers; 0 is the terminator and must not
-   appear as an atom. String lengths in show statements count bytes
-   (equal to character count for ASCII); non-ASCII names need UTF-8
-   byte counting which we do not currently handle.
+   Atom ids are positive integers; 0 is the terminator.  A show
+   statement's length counts characters, so its text must be ASCII.
 
-   The public API has two halves:
-
-     (1) Statement constructors (`fact`, `choice`, `rule`, `constraint`,
-         `minimize`, `show`) that return plain data maps. Data form is
-         inspectable, easy to assemble programmatically, and trivial to
-         unit-test.
-
-     (2) `render` turns a sequence of statements into the full ASPIF
-         text with header and terminator."
+   The statement constructors return data maps, and `render` turns a
+   sequence of them into the ASPIF text."
   (:require
    [clojure.string :as str]))
 

@@ -235,7 +235,7 @@ walks the `:derived?` subset (`special/integrate-transitive`) plus what
 | `arity` `inverse` | the arity and inverse caches | `:derived?` |
 | `transitive` `symmetric` `asymmetric` `reflexive` `functional` `forced_decontextualized_predicate` `abducible_predicate` `closed_extent_predicate` `reifiable_function` `unreifiable_function` | the predicate-metadata marks | `:derived?` |
 | `rewriteOf` `sameAs` `equals` | the equality partition, and migration | by name — the arm's return value is the twins and the violations, which `:derived?` would discard ([equality.md](equality.md)) |
-| `arg` `genlArg` `interArg` | the `:props` set of predicates some declaration of that kind names (`:declares-arg-isa` / `:declares-arg-genl` / `:declares-inter-arg-isa`), and the declarations themselves read back through the index per query | `:derived?` — the `:props` set is what lets the descension ask *whose* declarations bind a tuple without an index probe per super-predicate |
+| `arg` `genlArg` `interArg` `interArgEqual` | the `:props` set of predicates some declaration of that kind names (`:declares-arg-isa` / `:declares-arg-genl` / `:declares-inter-arg-isa` / `:declares-inter-arg-equal`), and the declarations themselves read back through the index per query | `:derived?` — the `:props` set is what lets the descension ask *whose* declarations bind a tuple without an index probe per super-predicate |
 | `transitiveInArg` `transitiveInArgInverse` `functionCorrespondingPredicate` | none — read back through the index per query | nothing to reach |
 | `different` `unknown` `thereExists`, the five aggregates | none — never stored | nothing to reach: `wff` refuses the conclusion on the derivation path exactly as it refuses the assertion |
 
@@ -562,12 +562,12 @@ E17 too. What is on it:
 | Caller class | Why it must not be scoped |
 |---|---|
 | `vaelii.core`'s own short arity of `genls` / `specs` / `genl?` / `disjoint?` / `has-prop?` / `inverse-of` | the public API offers both readings, and this arity **is** the KB-wide one |
-| a stored key, storage context or store census (`res/kb-sentex`, `checks/stored-spelling`, `nat/reifiable-function?`, `special/deduce-lifts`, `decide/forced-monotonic?`) | the argument-order fold, a reified spelling and a lift's context are stored once for every reader; the read walk hides the spelling a reader's belief rules out ([canonicalization.md](canonicalization.md)) |
+| a stored key, storage context or store census (`res/kb-sentex`, `checks/stored-spelling`, `nat-read/reifiable-function?`, `special/deduce-lifts`, `decide/forced-monotonic?`) | the argument-order fold, a reified spelling and a lift's context are stored once for every reader; the read walk hides the spelling a reader's belief rules out ([canonicalization.md](canonicalization.md)) |
 | assert-time refusals (`wff/genl-problems`, `wff/genlCx-problems`, `checks`) | a refusal is a claim about the KB: a cycle refused when asked from one context and allowed from another is a coin toss, not a rule |
 | the forward join and the trigger keys (`rules/trigger-keys`, `chain`, `inherit/moved-predicates`, `vantage`) | a firing is placed in a context the join decides, so the candidate fan cannot be scoped by one — the narrowing happens at placement |
 | the exception re-check triggers (`special`) | a trigger over-approximates in the direction the answer is: a declaration this edge cannot see still qualifies a rule in some context that can, and a missed trigger is a wrong belief where a spare one is a query |
 | settle's candidate discovery, and the nogood candidates the settle places (`membership/term-nogoods`, the `decide/tuple` rows) | an over-approximated candidate merely checks and yields nothing; the placement that follows reads the contexts that see a route |
-| a candidate filter in front of a scoped read (`checks/unmintable-named-types`, `special/offered-mark-over?`, `inherit/stated-claims`) | the filter answers a superset, and the read behind it takes the reader's context |
+| a candidate filter in front of a scoped read (`special/offered-mark-over?`, `inherit/stated-claims`) | the filter answers a superset, and the read behind it takes the reader's context |
 | `except`'s exception index and `except-hidden-fn`, and the read walk (`exc/defeat-hidden-fn`) | the visibility filter cannot be scoped by the filter it is itself derived from |
 | `quality/taxonomy-coverage` | a report on the whole taxonomy has no vantage to read from |
 | `quality/clash-partners` | a rule pair is decided from a common descendant of the two rules' contexts, a vantage belonging to neither, so the candidate fan cannot be scoped by either |
@@ -1112,7 +1112,17 @@ partition parts. A cut is built from the parents' cuts and held in the closure c
 beside the closures, keyed by the separation inputs. Most types sit under few separable
 types or none, so the membership sync that frames every type of a large KB after a
 recover costs the edges and a small set per type. Only the sibling arm reads a whole
-closure, for the chain under a marked parent.
+closure, for the chain under a marked parent. `separation-routes`, which names the routes
+of a membership nogood over two separated types, reads the supertypes of each type cut to
+the separable types, and the whole closure only for the sibling arm.
+`membership/cover-routes` reads the covers above a held type through the covered wholes
+among its supertypes (`covers-over-global-fn`), not through the type's closure. A
+placement pass over the membership nogoods of many types therefore builds no held type's
+closure for these two reads (`lein perf`'s `recover-placement-braided-leaves`). Three
+reads still build a whole closure: `term-nogoods` builds each held type's closure when a
+denied type has more specializations than the term has types, the cover arms of
+`term-nogoods` and `cover-routes` build each cover part's closure, and the sibling arm
+builds the closures of both types.
 
 Scoped, the cut is the same set built through the edges the reader sees
 (`separable-genls-at`). Read from an ancestor set, which carries no belief callback, it is
@@ -1657,7 +1667,11 @@ forced-monotonic and is weighed as a member of an inherited nogood.
   the cache key folds to the one-element set it names. **A partner declared on a
   sub-predicate answers the super-predicate's goal**, since a sub-predicate's tuples are
   the super's: `tax/inverses-under` is that set, and it consults the spec closure only
-  where some inverse exists at all, so a KB declaring none pays one lookup.
+  where some inverse exists at all, so a KB declaring none pays one lookup. **A denial
+  takes the other direction**: `(not (Q y x))` answers `(not (P x y))` and the denial of
+  every predicate below `P`, through `tax/inverses-over`, which reads only a declaration
+  and the `genl` edges the reader holds at `:monotonic`, since a `:default` one does not
+  contrapose ([inference.md](inference.md), "Under a negation the fan reverses").
 - `(negates P Q)` — a *constraint* over two relations: no argument list satisfies both.
   The declaration is symmetric, context-scoped and forced-monotonic, and it is read down
   `genl` on both sides, so `(negates scorns admires)` with `(genl sneersAt scorns)` and
@@ -1813,7 +1827,7 @@ super-predicates' where the predicate binds nothing of its own. And `inverse` ha
 | `anti-symmetric` | yes | a `fatherOf` pair both ways is a `parentOf` pair both ways, merged under the super's mark |
 | `anti-transitive` | yes | a `fatherOf` chain is a `parentOf` chain, and the steps may be spelled one at each level |
 | `transitive`, `symmetric`, `reflexive`, `transitiveInArg` | **no** | a licence generates tuples, and generating them under a predicate nobody declared preserving is manufacturing knowledge |
-| `inverse` | the other direction — a partner on a **sub**-predicate answers the super's goal (`tax/inverses-under`) | a hop recorded either way round is a hop |
+| `inverse` | the other direction — a partner on a **sub**-predicate answers the super's goal (`tax/inverses-under`), and a partner on a **super**-predicate answers a denial (`tax/inverses-over`) | a hop recorded either way round is a hop |
 
 Each of the three convicted on the exact functor while the machinery it convicts *with*
 already fanned down the hierarchy — `matches-visible` finds the converse and the rival
@@ -2005,7 +2019,13 @@ membership stated in any context as the release, which `admitsArgnum` and the
 undeclared-arity pass read beside the length. An engine grammar term's length is its `:shape`
 (`vaelii.impl.predicates`): its argument count, or a floor at it for a shape with an
 optional or variadic tail, and no KB binding moves it. The `arity` or `arityMin` `core.txt`
-ships for an engine term states the same length. A relation's length is the same
+ships for an engine term states the same length. `assert` refuses a binding of an engine
+term that does not admit every length its shape admits (`arity/admits-shape?`), as
+`:length-against-shape`: `(arity genl 3)`, `(arity partition 3)` and `(arityMin partition
+4)` are refused, and `(arityMin partition 2)` and `(variable_arity partition)` are stored.
+A binding of any other term is held to the term's spelling
+([naming.md](naming.md#a-length-binding-is-held-to-the-spelling)). Both read the written
+sentence alone, so arrival order cannot move either refusal. A relation's length is the same
 at every context, an exception to context scoping: the rule reads the bindings stated in
 any context and the `genl` edges above the relation over the unscoped closure. A reader
 therefore binds a length through an edge or a binding its ancestor set does not see.
@@ -2021,9 +2041,13 @@ OUT. `why-not` answers `:inert` with `:binding`, `{:length n :via p :grounds [h 
 `:min m` for a floor): the bindings stating the length and, for a length inherited from
 `p`, the supporters of one path of `genl` edges from the functor to `p`. `conflicts`
 reports one `:arity` conflict per inert tuple, the tuple as its member and those handles
-as its grounds. Nothing refuses a wrong-length tuple, at `assert` or at `try-assert`, so
-the stored set is the same whichever of the tuple, the binding and the edges arrived
-first, and a recover rebuilds the same `:out` members (`arity/drain!`). `core.txt`
+as its grounds. `assert` stores a wrong-length tuple, so the stored set is the same
+whichever of the tuple, the binding and the edges arrived first, and a recover rebuilds
+the same `:out` members (`arity/drain!`). `try-assert` refuses a tuple that breaks a
+binding already stored, as `:violation :arity`. It also refuses a binding, a `genl` edge,
+or a `:monotonic` metatype membership or edge that would break the length of tuples
+already stored (`arity/write-breaks`), and an `except` of a binding
+([api.md](api.md#refusing-a-clash)). `core.txt`
 declares the fourteen binding functors `decontextualized_predicate`, so every binding has
 a copy in CxUniverse ([contexts.md](contexts.md#what-the-shipped-ontology-declares-it-of)).
 The length is read off the bindings of every context and the `genl` edges of every
@@ -2266,7 +2290,7 @@ clash at the contexts that see it whole ([nmtms.md](nmtms.md#the-nogood-families
 | `asymmetric` | same | same | the converse is the second side |
 | `irreflexive`, and `anti_symmetric` over a converse that does not merge | stores the tuple; a nogood | same — the next settle places it, and a `genl` edge below the marked predicate or a `genlCx` edge into the tuple's sight does the same | the tuple's own arguments find the nogood |
 | an arity binding: `arity`, an exact-arity class, `variable_arity`, `arityMin` | stores the tuple; a nogood | same — and a `genl` edge that binds a sub-predicate's length, or a `genlCx` edge that brings a binding into a tuple's sight, does the same | the tuple's own length finds the nogood |
-| `arg` / `genlArg` / `interArg`, the covering `args` / `argAndRest` and the homogeneity `interArgs` / `interArgAndRest`, over a symbol, under the entailing reading | stores the fact and derives the type | same — the derivation reaches back, and a conditional form's trigger type arriving last derives through the settle | a derived type disjoint from a held one is a clash, weighed at settle, which `try-assert` refuses ([argtypes.md](argtypes.md)) |
+| `arg` / `genlArg` / `interArg` / `interArgEqual`, the covering `args` / `argAndRest` and the homogeneity `interArgs` / `interArgAndRest`, over a symbol, under the entailing reading | stores the fact and derives the type | same — the derivation reaches back, and a conditional form's trigger type arriving last derives through the settle | a derived type disjoint from a held one is a clash, weighed at settle, which `try-assert` refuses ([argtypes.md](argtypes.md)) |
 | the same under the constraint-only reading, and a value in either reading | `assert` stores the fact and holds it inert; `try-assert` refuses it under either reading | same — the settle holds the stored fact inert, for the conditional forms whichever of the declaration, the trigger's type or the target's type arrives last. `try-assert` of the declaration refuses it over the stored tuples it breaks | convicted by a separation, read off the stored state ([argtypes.md](argtypes.md#an-argument-that-fails-its-declared-type-is-held-inert)) |
 | `quotedArg` | holds the fact inert | same | convicted by the absence of a path over the syntactic lattice |
 | a predicate-level `genl` edge, under an *argument* constraint above it | the entailing reading stores what follows; the constraint-only reading holds it inert | same — the derivation and the hold both reach back | one ingredient further out |

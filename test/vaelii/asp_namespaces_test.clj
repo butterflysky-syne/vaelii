@@ -46,9 +46,7 @@
     'vaelii.labeling-test
     'vaelii.minimize-solve-test
     'vaelii.solve-context-test
-    'vaelii.solve-rule-test
-    'vaelii.sudoku-solve-test
-    'vaelii.tsp-solve-test})
+    'vaelii.solve-rule-test})
 
 (def ^:private availability-call
   "How the availability call is spelled, in the one place both the scan and the script read it."

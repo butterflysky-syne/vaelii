@@ -1,45 +1,13 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.asp.clingo
-  "In-process ASP solver: a JNA binding to the native clingo C API (which
-   embeds clasp). Same solve modes and return shape as
-   `vaelii.impl.asp.clasp/solve`, but without the subprocess + JSON round-trip.
-
-   `solve` takes a translated program map `{:aspif <text> :stmts <statements>}`
-   and injects the ground `:stmts` straight through the `clingo_backend_*`
-   accessors — no ASPIF text, no temp file, no parse (`backend-load!`). Each
-   program atom id is interned as the function symbol `a(<id>)` carrying its s/c
-   label; a model's true atoms come back through clingo_model_symbols and are
-   mapped to labels through that symbol association, so no show statement is
-   emitted. `classify-both` keeps the ASPIF-text path (`clingo_control_load_aspif`
-   over a temp file), since one live control serves both enumerations.
-
-   Why in-process: it drops the per-solve fork and JSON round-trip the
-   subprocess pays, which is the whole win on the small programs
-   `vaelii.impl.asp.solver` routes here.
-
-   The four modes map to clingo configuration passed as command-line arguments
-   to clingo_control_new (clingo accepts clasp's flags): --opt-mode=optN so
-   brave/cautious enumerate over optimal models only, --enum-mode=brave|cautious,
-   --models=0|1. The lexicographic cost vector comes from clingo_model_cost.
-
-   Native lib: a system libclingo (brew install clingo) reachable via
-   jna.library.path, or an absolute path in -Dvaelii.clingo.lib. Crash isolation
-   is lost vs the subprocess — every native return is checked, every solve handle
-   is closed in a finally and every Control is freed in one; a malformed program
-   throws rather than segfaults.
-
-   The search flags are clasp's (`clasp/search-args`): one thread, a fixed seed, and
-   `--solve-limit` from `config/asp-solve-limit`, which the control takes as a solver
-   option and applies to each solve.  A search the solve limit stops reports neither
-   the exhausted bit nor the interrupted one, and `finalize` reads that as
-   `:interrupted`.
-
-   The time limit (`config/asp-time-limit`), the backstop behind it, is not a flag here
-   — libclingo's control takes solver options only and refuses `--time-limit` — so each
-   solve runs async and is drained through `clingo_solve_handle_wait` with what remains
-   of the budget; a solve still running when it runs out is cancelled and reports the
-   interrupted bit, read as `:interrupted`."
+  "The in-process ASP backend: a JNA binding to libclingo, with `vaelii.impl.asp.clasp/solve`'s
+   modes and return shape.  `solve` injects a translated program's `:stmts` through the
+   `clingo_backend_*` accessors (`backend-load!`); `classify-both` loads the ASPIF text once
+   over a temp file and runs both enumerations on one control.  The search flags are
+   `clasp/search-args`, and the time limit is a cancel at the deadline (`drain-models`).
+   Every native return is checked, and every solve handle and control is freed in a
+   `finally`.  See docs/asp.md, \"Getting a solver\" and \"The time limit\"."
   (:require [clojure.string :as str]
             [taoensso.trove :as trove]
             [vaelii.impl.asp.clasp :as clasp]
@@ -144,10 +112,8 @@
             (mapv symbol->string (.getLongArray buf 0 (int n))))))))
 
 (defn- model-atoms
-  "The true atoms of backend model `m`, as label strings, via `sym->label` — the map
-   from an interned `a(<id>)` symbol to its show label that `backend-load!` returns.
-   Read with `show-atoms` so backend-added atoms come back whatever the show state; a
-   returned symbol with no label (none, in practice) is dropped."
+  "The true atoms of backend model `m`, as label strings through `sym->label`
+   (`backend-load!`'s map), read with `show-atoms`; a symbol with no label is dropped."
   [m sym->label]
   (let [sz (LongByReference.)]
     (chk! "model_symbols_size" (ci "clingo_model_symbols_size" m show-atoms sz))
@@ -180,18 +146,12 @@
 
 (defn- keep-model
   "Fold model `m` into `acc` (`{:models [..] :optimum cost-vec :any-optimal? bool}`)
-   under a `retain` policy.  `:optimum` (the lexicographically least cost vector seen)
-   and `:any-optimal?` (did any model come back optimality-proven) are tracked here
-   rather than derived from `:models` afterwards, so a model `retain` drops still
-   counts towards both.
+   under a `retain` policy.  `:optimum` (the least cost vector seen) and `:any-optimal?`
+   count every model, kept or not.
 
-   * `:optimal` — every model whose cost has not since been beaten.  A strictly better
-     cost arriving discards what came before, because `finalize` keeps only the models
-     at the proven optimum anyway; a search streams improving models, so this is the
-     whole stream but the last plateau.
-   * `:last` — the newest, and only the newest.  The brave and cautious enumerations
-     stream converging approximations and `finalize` reads `(last models)`; every
-     earlier one is read for its cost and then discarded."
+   * `:optimal` keeps the models on the best cost seen, dropping them when a better one
+     arrives;
+   * `:last` keeps only the newest, the one `finalize` reads for the enumerations."
   [{:keys [models optimum any-optimal?]} m retain]
   (let [c       (:cost m)
         better? (and (seq c) (or (nil? optimum) (neg? (compare (vec c) (vec optimum)))))]
@@ -205,17 +165,10 @@
   "The models solve handle `h` yields that `retain` keeps, in order, read as each
    arrives — `{:models [..] :optimum cost-vec :any-optimal? bool}` (see `keep-model`).
 
-   `limit` is the solve's budget in seconds (`config/asp-time-limit`; 0 is none).
-   Each wait for the next model is bounded by what remains of it, and a search still
-   running when nothing remains is cancelled — `clingo_solve_handle_get` then carries
-   the interrupted bit, and the models read so far ride beside it for diagnostics.
-
-   Retention matters because a search streams: a 400-node colouring at a two-second
-   budget yields 618 models to a `:label` solve that reads one, and 184 to a cautious
-   enumeration that reads the last.  Every one of them is a map of freshly marshaled
-   atom-label strings, and holding all of them costs what none of them are worth.
-
-   `read-atoms` reads each model's true atoms as label strings (see `read-model`)."
+   `limit` is the solve's budget in seconds (`config/asp-time-limit`; 0 is none).  Each
+   wait for the next model is bounded by what remains of it, and a search still running
+   when nothing remains is cancelled, which sets the interrupted bit.  `read-atoms` reads
+   each model's true atoms (`read-model`)."
   [h limit retain read-atoms]
   (let [deadline (when (pos? limit) (+ (System/nanoTime) (long (* limit 1e9))))
         ready    (Memory. 1)]
@@ -236,16 +189,9 @@
    :optimum cost-vec :any-optimal? bool}`, the models being what `retain` kept
    (see `drain-models`).
 
-   The close is in a `finally` — freeing a control with a handle still open is
-   undefined behaviour in libclingo, so a native failure inside the drain must not
-   skip it — and the close itself is guarded, because a `finally` that throws
-   *replaces* the exception on its way out.  The in-flight one is the informative
-   one: `chk!` names the native call that failed in `:op`, and that is the only
-   record of which one it was.  A close that fails on its own is logged and the
-   drain's answer stands; there is nothing left to do about the handle either way.
-   The sibling `delete-keep-temps!` guards its own cleanup for the same reason.
-
-   `read-atoms` reads each kept model's true atoms as label strings (see `read-model`)."
+   The close runs in a `finally`, since freeing a control with a handle open is undefined
+   in libclingo.  A close that throws is logged and does not replace the exception in
+   flight, whose `:op` names the native call that failed."
   [^PointerByReference hr limit retain read-atoms]
   (let [h (.getValue hr)]
     (try
@@ -361,12 +307,10 @@
 
 (defn- backend-load!
   "Inject the ground program `stmts` into control `ctl` through the `clingo_backend_*`
-   accessors — no ASPIF text, no temp file, no parse — as one batch: begin, intern the
-   atom universe of `stmts` as `a(<id>)` symbols, emit every head and body/weight literal
-   remapped through that vid→cid table (sign preserved on body literals), end. No show
-   statement is emitted — the symbol association is the show. Returns the symbol → label
-   map the model readback reads through (`model-atoms`), holding only the *labelled*
-   atoms, since an unlabelled one is dropped there anyway."
+   accessors as one batch: intern each atom id as the symbol `a(<id>)`, then emit every
+   statement with its literals remapped to clingo atom ids, signs kept.  No show statement
+   is emitted.  Returns the map from a labelled atom's symbol to its label, which
+   `model-atoms` reads through."
   [ctl stmts]
   (let [vid->label (into {} (keep (fn [{:keys [type atom text]}]
                                     (when (= :show type) [atom text])))
@@ -397,10 +341,8 @@
       sym->label)))
 
 (defn- backend-solve
-  "Solve the ground program `stmts` in-process through the backend accessors under
-   `arg-strs` (clasp-style flags), keeping the models `retain` keeps. Returns the raw
-   drain (see `drain-handle`). No temp file: `backend-load!` injects the program and
-   hands back the symbol→label map the model readback reads through."
+  "Solve the ground program `stmts` under `arg-strs` (clasp's flags), keeping the models
+   `retain` keeps.  Returns the raw drain (`drain-handle`)."
   [arg-strs stmts retain]
   (let [argcs (mapv cstr arg-strs)                       ; retained through control_new
         argv  (if (seq argcs) (ptr-array argcs) Pointer/NULL)
@@ -421,15 +363,7 @@
           (cv "clingo_control_free" ctl))))))
 
 (def ^:private mode-args
-  ;; `:label` uses `opt`, not `optN`: `optN` proves the optimum and only THEN yields the
-  ;; optimal model(s), so a solve cancelled at the time limit mid-proof has nothing to hand
-  ;; back.  `opt` with `--models=0` streams each improving model as the bound descends, and
-  ;; `drain`'s `:optimal` retention keeps the lowest-cost one seen — so a completed solve
-  ;; ends on the proven optimum (flagged optimal, `finalize` reports `:optimum`) and an
-  ;; interrupted one still has its best model in hand (`finalize` reports `:best-effort`).
-  ;; `--models=1` would stop at the FIRST, un-optimized model, which is wrong for a labeling.
-  ;; `:sat` is that `--models=1`: a program with no objective has nothing to improve, and
-  ;; `--models=0` there enumerates every model.
+  ;; the flags `clasp/mode-args` gives each mode, in clingo's spelling
   {:label                ["--opt-mode=opt"  "--models=0"]
    :sat                  ["--models=1"]
    :all-optima           ["--opt-mode=optN" "--models=0"]
@@ -456,29 +390,18 @@
                       {:type :unknown-option :mismatch :bad-value :mode mode :valid (keys mode-args)}))))
 
 (defn- finalize
-  "Shared post-processing for the raw drain of either solve path — one-shot
-   `backend-solve` or live-control `solve-control` — into the public contract
-   (matches vaelii.impl.asp.clasp/solve):
+  "The raw drain of either solve path (`backend-solve`, `solve-control`) as
+   `vaelii.impl.asp.clasp/solve`'s result:
      :status    :optimum | :sat | :best-effort | :unsat | :interrupted | :unknown
      :atoms     vector of label strings
      :cost      optimum cost (nil if no minimize / unsat)
      :witnesses vector of value vectors (only for :all-optima)
      :raw       the drain (diagnostics)
 
-   `:optimum` and `:any-optimal?` come off the drain rather than out of `:models`,
-   which holds only what the mode's retention kept (`keep-model`) — a model dropped
-   for being off the best cost still had its say in both.
-
-   `:interrupted` is a search stopped short with NO model to show for it: cancelled at
-   the time limit (the interrupted bit), or stopped by the solve limit (neither the
-   exhausted bit nor `:unsat` — a `:sat` search stops at its first model unexhausted on
-   purpose, so there only a search with no model is short).  A `:label` search stopped
-   *after* it had a model in hand is `:best-effort` instead: that model satisfies every hard constraint and is the lowest
-   cost seen — only its optimality went unproven — so it is an answer worth handing back
-   rather than discarding.  A caller that needs a proven optimum reads the status and
-   refuses it; one that wants a good labeling under a deadline takes it.  `:all-optima`
-   and the classify modes need the search to finish (an incomplete enumeration or a
-   cut-short cautious set is unsound), so they stay `:interrupted`."
+   A search is stopped short when the interrupted bit is set, or when neither the
+   exhausted nor the unsat bit is, except a `:sat` search holding a model.  A stopped
+   `:label` or `:sat` search holding a model is `:best-effort`; any other is
+   `:interrupted`."
   [{:keys [result models any-optimal?] opt :optimum :as raw} mode]
   (let [cost     (first opt)
         stopped? (or (pos? (bit-and result result-interrupted))
@@ -501,8 +424,7 @@
          :cost cost :witnesses (mapv (comp vec :atoms) opts) :raw raw})
 
       (:classify-true :classify-supportable)
-      ;; brave/cautious stream converging approximations; the LAST model is the
-      ;; converged consequence set (matches clasp's last-witness semantics).
+      ;; the last model is the converged consequence set
       {:status status :atoms (vec (:atoms (last models))) :cost cost :raw raw})))
 
 (defn- objective?
@@ -524,17 +446,10 @@
               mode)))
 
 (defn- load-block!
-  "Load the base ASPIF program into `ctl` via clingo_control_load_aspif. NOT
-   additive: clingo rejects a second load_aspif (\"incremental aspif programs are
-   not supported\"), so this is a one-shot base load for `open-control` — a live
-   control solves the program it opened with, and nothing grows it in place.
-   Returns the temp File (caller keeps it alive until the control is freed).
-
-   No `deleteOnExit`: its hook set retains one path, unreclaimable, for the
-   process's life — the very cost `delete-keep-temps!` exists to keep off a
-   long-running daemon. The file is instead deleted here when the write or the
-   load throws, since a caller that never receives it has nothing to hand that
-   function."
+  "Load `aspif-text` into `ctl` through `clingo_control_load_aspif`, once: clingo refuses
+   a second load.  Returns the temp File, which the caller deletes after freeing the
+   control (`delete-keep-temps!`).  A write or load that throws deletes the file here.
+   No `deleteOnExit`, whose hook holds one path per call for the life of the process."
   [ctl aspif-text]
   (let [tmp (java.io.File/createTempFile "vaelii-session" ".aspif")]
     (try
@@ -547,13 +462,9 @@
         (throw e)))))
 
 (defn open-control
-  "Create a live Control with `arg-strs` flags and load the base `aspif-text`.
-   Returns `{:ctl Pointer :keep [..]}` — `:keep` holds JNA buffers and temp
-   files that must outlive the control (free it with `free-control!`).
-
-   A load that throws frees the control on the way out: the caller is handed an
-   exception rather than a handle, so nothing else can free it, and a leaked
-   Control is native memory no GC reaches."
+  "Create a live Control with `arg-strs` flags and load `aspif-text`.  Returns `{:ctl
+   Pointer :keep [..]}`, `:keep` holding the JNA buffers and temp file that must outlive
+   the control (`free-control!`).  A load that throws frees the control first."
   [arg-strs aspif-text]
   (let [argcs (mapv cstr arg-strs)
         argv  (if (seq argcs) (ptr-array argcs) Pointer/NULL)
@@ -568,11 +479,10 @@
           (throw e))))))
 
 (defn solve-control
-  "Solve a live control under `assume-lits` (signed program literals assumed
-   for THIS solve only), keeping the models `retain` keeps.  Returns the same drain
-   shape as the one-shot path.  The mode flags are fixed at `open-control` time; this
-   is the ASPIF-text path (`classify-both` loads via load_aspif), so witnesses come off
-   the output table through the `show-shown` atom selection `model-symbols` reads."
+  "Solve a live control under `assume-lits` (signed literals assumed for this solve only),
+   keeping the models `retain` keeps; the drain shape of `backend-solve`.  The control was
+   loaded from ASPIF text, so witnesses are read through the show statements
+   (`model-symbols`)."
   [ctl assume-lits retain]
   (let [amem (int-array-mem assume-lits)
         hr   (PointerByReference.)]
@@ -586,20 +496,13 @@
       raw)))
 
 (defn free-control!
-  "Free a live control and let its keep-alive buffers/temps be reclaimed. Freeing
-   twice is a native double free, so a caller frees exactly once — `classify-both`
-   does it in a finally."
+  "Free a live control, exactly once: a second free is a native double free."
   [ctl]
   (cv "clingo_control_free" ctl))
 
 (defn delete-keep-temps!
-  "Delete every temp File in a control's `:keep` vector — the ASPIF file
-   `load-block!`/`open-control` wrote. Call AFTER `free-control!`. Non-File
-   keep entries (JNA buffers) are left for GC. Only the `classify-both` path writes a
-   temp now (the one-shot `solve` injects its program through the backend accessors and
-   writes none); a live control outlives its solve, so `classify-both` calls this
-   instead of leaning on deleteOnExit — which in a long-running daemon holds one .aspif
-   file, and one never-GC'd JVM DeleteOnExitHook entry, per classify."
+  "Delete every temp File in a control's `:keep` vector, after `free-control!`.  JNA
+   buffers are left for the GC."
   [keep]
   (doseq [k keep :when (instance? java.io.File k)]
     (try (.delete ^java.io.File k) (catch Throwable _ nil))))
@@ -626,19 +529,15 @@
             (ci "clingo_configuration_value_set" conf (Integer/valueOf (int enum-k)) (cstr mode-str))))))
 
 (defn classify-both
-  "Load `aspif-text` ONCE and run both classify enumerations over the one control,
-   switching `solve.enum_mode` between them — avoiding the second control_new +
-   load_aspif that two separate `solve` calls pay. Returns
-   `{:cautious <result> :brave <result>}`, each shaped like `solve` for the
-   corresponding classify mode."
+  "Load `aspif-text` once and run the cautious and the brave enumeration on one control,
+   switching `solve.enum_mode` between them.  Returns `{:cautious <result> :brave
+   <result>}`, each shaped like `solve`'s."
   [aspif-text]
   (let [{:keys [ctl keep]} (open-control (into ["--opt-mode=optN" "--models=0"] (clasp/search-args))
                                          aspif-text)]
     (try
       (let [run (fn [enum-mode]
                   (set-enum-mode! ctl enum-mode)
-                  ;; both classify modes share finalize's post-processing (last model),
-                  ;; and its retention with it
                   (finalize (solve-control ctl [] (mode-retention :classify-true))
                             :classify-true))
             cautious (run "cautious")
@@ -647,10 +546,7 @@
         (identity keep)                          ; retain open-control buffers past the solves
         {:cautious cautious :brave brave})
       (finally
-        ;; the temps go even when the free throws.  `delete-keep-temps!` is the only
-        ;; thing that removes them — there is no `deleteOnExit` to fall back on — so a
-        ;; throw out of `free-control!` would leave one .aspif per classify behind in a
-        ;; long-running daemon's tmpdir.
+        ;; the temps go even when the free throws: nothing else deletes them
         (try (free-control! ctl)
              (finally (delete-keep-temps! keep)))))))
 

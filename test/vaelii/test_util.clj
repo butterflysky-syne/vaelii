@@ -39,6 +39,7 @@
             [vaelii.host.starter :as starter]
             [vaelii.impl.checks :as checks]
             [vaelii.impl.config :as config]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.disk.backend :as disk]
             [vaelii.impl.disk.index-snapshot :as index-snapshot]
             [vaelii.impl.except :as exc]
@@ -203,7 +204,7 @@
   constraint-only behavior rather than the shipped one.
 
   `with-shipped`'s job for the one switch it cannot do: `shipped-defaults` captures each
-  root at *this* namespace's load, and this root is set at `vaelii.impl.checks`'s, which
+  root at *this* namespace's load, and this root is set at `vaelii.impl.decide.argument`'s, which
   is earlier — so a capture would record the sweep's value as the shipped one.  The
   default is written out here instead, in the one place that has to state it.
 
@@ -211,7 +212,7 @@
   is no `:arg-type` conviction of a symbol argument to assert, because the declaration
   mints the type it demands rather than testing for it (docs/argtypes.md)."
   [& body]
-  `(binding [checks/*assertive-arg-types?* false] ~@body))
+  `(binding [argument/*assertive-arg-types?* false] ~@body))
 
 (defmacro with-entailing
   "Run `body` with the argument declarations read as **entailments** — the shipped
@@ -220,7 +221,7 @@
   for a test whose subject is the entailment itself — what it mints, or what its
   per-assert read cost is."
   [& body]
-  `(binding [checks/*assertive-arg-types?* true] ~@body))
+  `(binding [argument/*assertive-arg-types?* true] ~@body))
 
 (defn write-conviction
   "Write `sentence` in `context` with `assert` and answer the argument conviction it meets,
@@ -726,13 +727,13 @@
 
 (defn- dump-per-root
   "A fn of no arguments answering the dump `build` makes, built once per JVM for each root
-  value of `checks/*assertive-arg-types?*`.  `build-dump`'s thread reads that root, and a
+  value of `argument/*assertive-arg-types?*`.  `build-dump`'s thread reads that root, and a
   namespace that alters it around its fixtures (`web_jobs_test`) builds a dump the other
   reading's restores must not receive."
   [build]
   (let [dumps (atom {})]
     (fn []
-      (let [k (.getRawRoot #'checks/*assertive-arg-types?*)]
+      (let [k (.getRawRoot #'argument/*assertive-arg-types?*)]
         @(get (swap! dumps update k #(or % (delay (build)))) k)))))
 
 (def ^:private starter-dump
@@ -916,24 +917,10 @@
   `tmpdog17` / `TmpMuffet17` rather than an anonymous `tmp_t17`.  The generated name
   satisfies the naming invariant for its role by construction.
 
-  A `:type` temp keeps the **base's own spelling**: a base already carrying an
-  underscore (`physical_object`) becomes snake_case, a bare lowercase word (`dog`)
-  becomes another bare lowercase word.  That distinction is required.  A
-  snake_case functor names a type and is therefore legal only as a *unary* predicate
-  (`vaelii.impl.naming/problems`), so spelling every type temp with underscores would
-  commit it to arity 1 — a commitment a test writing `dog` or `likes` never made,
-  since a bare lowercase word satisfies the predicate *and* the type convention and is
-  disambiguated by arity rather than by the symbol.  Left bare, the temp is usable
-  either way; writing the base with an underscore is how a test says \"a type, and
-  only a type\".
-
-  A `:predicate` temp is **bare lowercase** for the same reason read the other way.
-  The naming rule is a biconditional now — snake_case is arity 1 and camelCase is arity
-  2 and above — so a camelCase temp would commit to being a relation exactly as an
-  underscored one commits to being a kind, and a test that wrote `wabPremise` as a base
-  made neither commitment.  The base's own capitals are folded out (`wabPremise` ⇒
-  `tmpwabpremise17`), which is the one spelling both conventions admit; a test that
-  wants the commitment writes the base with an underscore and takes a `:type` temp."
+  A `:type` temp keeps the base's own spelling (a base with an underscore becomes
+  snake_case, a bare lowercase word stays bare), and a `:predicate` temp is bare
+  lowercase with the base's capitals folded out (`wabPremise` ⇒ `tmpwabpremise17`).  Why:
+  docs/naming.md, \"Temporaries in tests\"."
   [role base]
   (case role
     :type       (let [n (snake base)]

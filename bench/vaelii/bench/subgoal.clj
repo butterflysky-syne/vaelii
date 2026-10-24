@@ -57,6 +57,7 @@
             [vaelii.impl.literal-cache :as lc]
             [vaelii.impl.observe :as observe]
             [vaelii.impl.provers :as provers]
+            [vaelii.impl.resolution :as res]
             [vaelii.browser.sandbox :as sandbox]
             [vaelii.host.starter :as starter]
             [vaelii.koinii.channel :as ch]
@@ -118,14 +119,14 @@
         hit  (get @table k)]
     (if (and hit (== now (long (:clock hit))))
       (do (.incrementAndGet hits)
-          (map #(lc/rename-bindings rename %) (:value hit)))
+          (keep #(lc/rename-bindings res/unify rename %) (:value hit)))
       (do (.incrementAndGet misses)
           (->> (f kb prs canon context)
                (storing (fn [vs]
                           (when (== (observe/change-clock) now)
                             (swap! table caches/assoc-bounded table-limit
                                    k {:clock now :value vs}))))
-               (map #(lc/rename-bindings rename %)))))))
+               (keep #(lc/rename-bindings res/unify rename %)))))))
 
 (defn- install!
   "Wrap the registry's dispatch.  Idempotent by construction — called once from `-main`,

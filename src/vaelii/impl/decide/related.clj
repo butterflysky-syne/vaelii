@@ -16,10 +16,8 @@
 
 ;; ---- declarations over related types -------------------------------------------
 ;;
-;; A `disjoint` over two types one reaches the other of through `genl` is a one-member hard
-;; clash of the declaration, and a cover naming a part the `disjoint` separates from its
-;; whole a two-member one of the cover and the declaration (docs/reference.md, decision 8).
-;; Both are found from the declarations' own arguments, read off the argument trie: the
+;; The `disjoint` alone is a one-member hard clash, and the cover and its `disjoint` a
+;; two-member one.  Both are found from the declarations' own arguments, read off the argument trie: the
 ;; `disjoint`s naming a type at argument 1 or 2, and the covers naming a whole at argument
 ;; 1.  `:related-dj` keeps the `disjoint`s whose arguments are related over the unscoped
 ;; `genl` closure, read again for the declarations naming a type at or below the lower end

@@ -25,6 +25,7 @@
   symmetric predicate, so an end-to-end query would answer correctly even if
   canonicalization had mangled what was stored."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
+            [clojure.walk :as walk]
             [vaelii.core :as v]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.provers :as provers]
@@ -208,6 +209,80 @@
                 (list linksTo '?var1 '?var2)
                 (list linksTo '?var2 '?var3)]
                (:antecedent (v/sentex kb h1))))))))
+
+(deftest every-ordering-of-a-nested-NAF-conjunction-canonicalizes-alike
+  ;; Each row's conjuncts tie under `cmp-blind`, sit in a conjunction nested inside
+  ;; another, or are a binder's variables, so the blind sort alone leaves the written
+  ;; order in place.  An exception row is canonicalized in the rule's canonical
+  ;; variables, which `aligned-exception` substitutes for `?x` and `?z`.
+  (let [rule      (fn [naf] (sx/sentence-of
+                             (sx/sentex (list 'implies (list 'and '(pair ?x ?z) naf) '(out ?x ?z))
+                                        'CxA)))
+        exception (fn [q] (sx/canonical-exception
+                           (sx/exception-conjuncts (walk/postwalk-replace '{?x ?var0 ?z ?var1} q))
+                           '[?var0 ?var1]))
+        exists    (fn [cs] (list 'unknown (list 'thereExists '(?c ?d) (cons 'and cs))))
+        head      (fn [cs] (list 'forall '?y (list 'implies '(childOf ?x ?y) (cons 'and cs))))
+        body      (fn [cs] (list 'forall '?y (list 'implies (cons 'and cs) '(fed ?y))))
+        inner     (fn [cs] (list 'unknown (list 'and '(childOf ?x ?z)
+                                                (list 'thereExists '?c (cons 'and cs)))))
+        binder    (fn [vs] (list 'unknown (list 'thereExists vs
+                                                '(and (likes ?x ?c) (likes ?c ?d) (likes ?d ?e)))))
+        within    (fn [cs] (list 'unknown (cons 'and cs)))
+        bound     (fn [cs] (list 'thereExists '?c (cons 'and cs)))]
+    (doseq [[label canon wrap lits]
+            [["an unknown's thereExists conjunction" rule exists '[(likes ?x ?c) (likes ?c ?x)]]
+             ["a join over two binder variables" rule exists
+              '[(likes ?x ?c) (likes ?c ?d) (likes ?d ?c)]]
+             ["a forall's conjunctive head" rule head '[(asleep ?y) (fed ?y) (likes ?x ?y)]]
+             ["a forall head whose conjuncts tie" rule head '[(likes ?x ?y) (likes ?y ?x)]]
+             ["a forall body whose conjuncts tie" rule body '[(likes ?x ?y) (likes ?y ?x)]]
+             ["a thereExists conjunct inside an unknown" rule inner '[(likes ?x ?c) (likes ?c ?z)]]
+             ["a thereExists binder list" rule binder '[?c ?d ?e]]
+             ["a forall binder list" rule
+              #(list 'forall % '(implies (likes ?x ?c ?d) (fed ?d))) '[?c ?d]]
+             ["an exception's unknown conjunction" exception within '[(likes ?x ?z) (fed ?z)]]
+             ["an exception's thereExists conjunction" exception bound
+              '[(likes ?x ?c) (likes ?c ?z)]]
+             ["an exception's forall head" exception
+              #(list 'forall '?y (list 'implies '(childOf ?x ?y) (cons 'and %)))
+              '[(asleep ?y) (fed ?y)]]
+             ["an exception's thereExists binder list" exception
+              #(list 'thereExists % '(and (likes ?x ?c) (likes ?c ?d))) '[?c ?d]]]]
+      (let [forms (into #{} (map #(canon (wrap %))) (permutations lits))]
+        (is (= 1 (count forms)) (str label ": " (pr-str forms))))))
+  (testing "a one-variable binder list is the variable"
+    (is (= (sx/sentence-of (sx/sentex '(implies (and (pair ?x ?z) (unknown (thereExists ?c (likes ?x ?c))))
+                                                (out ?x ?z)) 'CxA))
+           (sx/sentence-of (sx/sentex '(implies (and (pair ?x ?z) (unknown (thereExists (?c) (likes ?x ?c))))
+                                                (out ?x ?z)) 'CxA)))))
+  (testing "a reversed join through the binder is still a different rule"
+    (is (not= (sx/sentence-of (sx/sentex (list 'implies '(and (pair ?x ?z)
+                                                              (unknown (thereExists ?c (and (likes ?x ?c) (likes ?c ?z)))))
+                                               '(out ?x ?z))
+                                         'CxA))
+              (sx/sentence-of (sx/sentex (list 'implies '(and (pair ?x ?z)
+                                                              (unknown (thereExists ?c (and (likes ?z ?c) (likes ?c ?x)))))
+                                               '(out ?x ?z))
+                                         'CxA)))))
+  (testing "a join through two binder variables reversed at one end is a different rule"
+    (is (not= (sx/sentence-of (sx/sentex '(implies (and (pair ?x ?z) (unknown (thereExists (?c ?d) (and (likes ?x ?c) (likes ?c ?d)))))
+                                                   (out ?x ?z)) 'CxA))
+              (sx/sentence-of (sx/sentex '(implies (and (pair ?x ?z) (unknown (thereExists (?c ?d) (and (likes ?x ?d) (likes ?c ?d)))))
+                                                   (out ?x ?z)) 'CxA)))))
+  (testing "an exception over reversed arguments is a different exception"
+    (is (not= (sx/canonical-exception (sx/exception-conjuncts '(unknown (and (likes ?var0 ?var1) (fed ?var1))))
+                                      '[?var0 ?var1])
+              (sx/canonical-exception (sx/exception-conjuncts '(unknown (and (likes ?var1 ?var0) (fed ?var1))))
+                                      '[?var0 ?var1]))))
+  (testing "an exception's deferred literals follow its generators in their written order"
+    (let [canon #(sx/canonical-exception (sx/exception-conjuncts (list 'thereExists '?n (cons 'and %)))
+                                         '[?var0])
+          cnt   '(agg/count ?n ?c (childOf ?var0 ?c))
+          lt    '(lessThan 1 ?n)]
+      (is (= #{(canon [cnt '(fed ?n) lt])}
+             (into #{} (map canon) [['(fed ?n) cnt lt] [cnt lt '(fed ?n)]])))
+      (is (not= (canon [cnt lt]) (canon [lt cnt]))))))
 
 ;; ---- deferred (evaluable) literals: the author's order is operational ----
 

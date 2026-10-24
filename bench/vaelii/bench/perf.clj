@@ -101,6 +101,7 @@
   Exit status is 0 when every check passes, 1 when any fails, which is what makes it
   usable from a hook or a workflow."
   (:require [clojure.string :as str]
+            [taoensso.nippy :as nippy]
             [vaelii.core :as v]
             [vaelii.impl.asp.solve-context :as sc]
             [vaelii.impl.asp.solver :as solver]
@@ -108,6 +109,7 @@
             [vaelii.impl.checks :as checks]
             [vaelii.impl.columnar :as columnar]
             [vaelii.impl.decide :as decide]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.dense-kv :as dense]
             [vaelii.impl.dense-roots :as dense-roots]
             [vaelii.impl.disk.record-store :as drs]
@@ -132,7 +134,7 @@
             [vaelii.impl.stp :as stp]
             [vaelii.impl.taxonomy :as tax]
             [vaelii.impl.types.reasoning :as reasoning]
-            [taoensso.nippy :as nippy]))
+            [vaelii.impl.vantage :as vantage]))
 
 ;; ---- measurement --------------------------------------------------------
 
@@ -300,6 +302,38 @@
        (do (v/assert kb (list 'plt_a x) 'CxPA {})
            (nanos (v/assert kb (list 'plt_b x) 'CxPB {})))))))
 
+(defn- computed-joint-read
+  "A `CxInference` read of a membership only `ArgTypeProver` answers, under `strategy`,
+  beside n contexts no `genlCx` edge touches, each holding its own usage, declaration and
+  one more fact.
+
+  ```
+  CxJe_i  (arg jeP_i 1 je_t)  (jeP_i JeX_i JeY)  (jeQ JeX_i JeY)
+  CxJeZ sees CxUniverse: the one edge, which none of the n touches
+  ```
+
+  The goal `(je_t JeX_k)` rests on two handles in `CxJe_k`.  The fan's readers add the
+  contexts of the handles naming `JeX_k` (`provers/ingredient-contexts`), and post-hoc
+  places the one derivation `ArgTypeProver` reports, so neither reads the other n - 1
+  contexts.  Constraint-only, so no membership is stored and the prover answers alone."
+  [strategy n]
+  (binding [argument/*assertive-arg-types?* false]
+    (let [kb (fresh-kb)]
+      (v/assert kb '(genlCx CxJeZ CxUniverse) 'CxUniverse {:strength :monotonic})
+      (v/with-deferred-settle kb
+        (doseq [i (range n)
+                :let [c (symbol (str "CxJe" i))
+                      p (symbol (str "jeP" i))
+                      x (symbol (str "JeX" i))]]
+          (v/assert kb (list 'arg p 1 'je_t) c {:strength :monotonic})
+          (v/assert kb (list p x 'JeY) c {})
+          (v/assert kb (list 'jeQ x 'JeY) c {})))
+      (binding [vantage/*strategy* strategy]
+        (doall
+         (for [i (range 60)
+               :let [goal (list 'je_t (symbol (str "JeX" (mod i n))))]]
+           (nanos (count (v/query kb goal 'CxInference)))))))))
+
 (defn- chain-join
   "The closing step of an `anti_transitive` chain split across three contexts, beside n
   open chains split the same way.
@@ -382,7 +416,7 @@
   whatever else names it.  The mint about `PMWOther` keeps the mint set non-empty, and
   the lookup runs only over a non-empty set."
   [n]
-  (binding [checks/*assertive-arg-types?*  true
+  (binding [argument/*assertive-arg-types?*  true
             checks/*prune-subsumed-mints?* true]
     (let [kb (fresh-kb)]
       (v/assert kb '(genl pmw_animal thing) 'CxPerf {:strength :monotonic})
@@ -404,7 +438,7 @@
   settle that moves no membership, `genl` edge or `genlCx` edge reads nothing about the
   ones standing (`special/withheld-releases`)."
   [n]
-  (binding [checks/*assertive-arg-types?*  true
+  (binding [argument/*assertive-arg-types?*  true
             checks/*prune-subsumed-mints?* true]
     (let [kb (fresh-kb)
           m  {:strength :monotonic}]
@@ -430,7 +464,7 @@
   draws the 40 facts' mints again and keeps the memberships the departure can have
   withheld, which `may-release` reads off `pmd_kind`'s closure once per term."
   [n]
-  (binding [checks/*assertive-arg-types?*  true
+  (binding [argument/*assertive-arg-types?*  true
             checks/*prune-subsumed-mints?* true]
     (let [kb    (fresh-kb)
           m     {:strength :monotonic}
@@ -450,6 +484,46 @@
                  (v/assert kb leaf 'CxPerf m)
                  (quot t 40)))))))
 
+(defn- release-beside-forced-declarations
+  "One `v/edit!` taking out n memberships `(prf_dog PrfX_i)`, per membership, beside 4000
+  forced-monotonic declarations in `CxPrfB`, each read by a rule in `CxPrfA`, and one
+  guard defeat.  Each `PrfX_i` owns 4 facts under `(arg prfOwns 1 prf_animal)`, whose mint
+  the membership withholds, so the edit's settle writes n mints in one release pass.  The
+  memberships are asserted again after each reading.
+
+  **The reader states one pass reads** (`except/*reader-states*`): each mint's
+  subsumption check reads belief through the placed-defeat walk, whose reader state reads
+  every declaration's supporter contexts.  The pass keeps each context's frame across the
+  mints' writes, which move nothing it reads; a frame per check costs each mint the 4000
+  declarations."
+  [n]
+  (binding [argument/*assertive-arg-types?*  true
+            checks/*prune-subsumed-mints?* true]
+    (let [kb   (fresh-kb)
+          m    {:strength :monotonic}
+          U    'CxUniverse
+          dogs (mapv #(list 'prf_dog (symbol (str "PrfX" %))) (range n))]
+      (v/with-deferred-settle kb
+        (v/assert kb '(genlCx CxPrfA CxUniverse) U)
+        (v/assert kb '(genlCx CxPrfB CxUniverse) U)
+        (v/assert kb '(genl prf_animal thing) U m)
+        (v/assert kb '(genl prf_dog prf_animal) U m)
+        (v/assert kb '(arg prfOwns 1 prf_animal) U m)
+        (dotimes [j 4000]
+          (let [p (symbol (str "prfF" j))]
+            (v/assert kb (list 'forced_monotonic_predicate p) 'CxPrfB)
+            (v/assert kb (list 'implies (list 'and (list p '?x '?y)) (list (symbol (str "prfG" j)) '?x '?y))
+                      'CxPrfA)))
+        (v/assert kb '(exceptWhen (prf_penguin ?b)
+                                  (set/defaultRule (set/forwardRule (implies (and (prf_bird ?b)) (prf_flies ?b)))))
+                  'CxPrfA)
+        (v/assert kb '(prf_bird PrfOpus) 'CxPrfA)
+        (v/assert kb '(prf_penguin PrfOpus) 'CxPrfA)
+        (doseq [d dogs, k (range 4)] (v/assert kb (list 'prfOwns (second d) (symbol (str "PrfT" k))) U m)))
+      (doall (for [_ (range 12)]
+               (do (v/with-deferred-settle kb (doseq [d dogs] (v/assert kb d U m)))
+                   (quot (nanos (v/edit! kb {:remove (mapv #(v/handle-of kb % U) dogs)})) n)))))))
+
 (defn- recover-genlarg-types-down-a-chain
   "One `recover` of n facts `(pgaUses t_i PGAOwner)` under `(genlArg pgaUses 1 thing)`,
   divided by n, where `t_i` is the i-th type of one chain of n types under `thing`.
@@ -459,7 +533,7 @@
   reading a separated type is weighed, so the only `genlArg` atom that can be held is an
   individual outside the hierarchy, and no type pays a walk to `thing`."
   [n]
-  (binding [checks/*assertive-arg-types?* true]
+  (binding [argument/*assertive-arg-types?* true]
     (let [kb (fresh-kb)
           m  {:strength :monotonic}
           t  (fn [i] (symbol (str "pga_c" i "_kind")))]
@@ -476,7 +550,7 @@
   the settle decides again the holds the edge reaches (`checks/refresh-argument-holds!`),
   and none of the n held facts is among them."
   [n]
-  (binding [checks/*assertive-arg-types?* true]
+  (binding [argument/*assertive-arg-types?* true]
     (let [kb (fresh-kb)
           m  {:strength :monotonic}]
       (v/with-deferred-settle kb
@@ -487,6 +561,35 @@
                    :let [lo (symbol (str "pgh_lo" r)) hi (symbol (str "pgh_hi" r))]]
                (do (v/assert kb (list 'genl hi 'thing) 'CxPerf m)
                    (nanos (v/assert kb (list 'genl lo hi) 'CxPerf m))))))))
+
+(defn- genl-ends-above-deep-declarations
+  "One batch of four `genl` edges into a new type, beside 500 `arg` declarations, each on
+  its own declared type at the bottom of a chain of n types.  The four lower ends sit
+  above 600 types and the upper end above them all, so each of the five moved types has
+  more specializations than the refresh walks, and the refresh reads every declaration to
+  find the ones naming a type below a moved one (`checks/refresh-argument-holds!`).  None
+  is below one."
+  [n]
+  (binding [argument/*assertive-arg-types?* true]
+    (let [kb    (fresh-kb)
+          m     {:strength :monotonic}
+          chain (fn [i] (symbol (str "pgd_c" i)))
+          wides (mapv #(symbol (str "pgd_wide" %)) (range 4))]
+      (v/with-deferred-settle kb
+        (v/assert kb (list 'genl (chain 0) 'thing) 'CxPerf m)
+        (doseq [i (range 1 (inc n))] (v/assert kb (list 'genl (chain i) (chain (dec i))) 'CxPerf m))
+        (doseq [j (range 500)
+                :let [t (symbol (str "pgd_t" j))]]
+          (v/assert kb (list 'genl t (chain n)) 'CxPerf m)
+          (v/assert kb (list 'arg (symbol (str "pgdRel" j)) 1 t) 'CxPerf m))
+        (v/assert kb (list 'genl (first wides) 'thing) 'CxPerf m)
+        (doseq [w (rest wides)] (v/assert kb (list 'genl (first wides) w) 'CxPerf m))
+        (doseq [j (range 600)] (v/assert kb (list 'genl (symbol (str "pgd_leaf" j)) (first wides)) 'CxPerf m)))
+      (doall (for [r (range 20)
+                   :let [top (symbol (str "pgd_top" r))]]
+               (do (v/assert kb (list 'genl top 'thing) 'CxPerf m)
+                   (nanos (v/with-deferred-settle kb
+                            (doseq [w wides] (v/assert kb (list 'genl w top) 'CxPerf m))))))))))
 
 (defn- holds-pass-over-declared-predicates
   "The declaring super-predicates of each of n predicates, each under its own `(arg
@@ -515,7 +618,7 @@
   stated beside them is read.  Each reading wires a fresh `super`, untimed but for the
   edge."
   [n]
-  (binding [checks/*assertive-arg-types?*  true
+  (binding [argument/*assertive-arg-types?*  true
             checks/*prune-subsumed-mints?* true]
     (let [kb (fresh-kb)
           m  {:strength :monotonic}]
@@ -543,7 +646,7 @@
   `sub` one context leaf at a time (`special/withdrawal-candidates`), so the mints stated
   elsewhere are not read.  Each reading wires a fresh `super`, untimed but for the edge."
   [n]
-  (binding [checks/*assertive-arg-types?*  true
+  (binding [argument/*assertive-arg-types?*  true
             checks/*prune-subsumed-mints?* true]
     (let [kb (fresh-kb)
           m  {:strength :monotonic}]
@@ -646,6 +749,49 @@
      (for [i (range 100)]
        (nanos (v/assert kb (list 'p_empty_det (+ 1000000 i)) (symbol (str "CxPedT" i))
                         {}))))))
+
+(defn- try-assert-tuple-beside-tuples
+  "100 `try-assert`s of a fact of a predicate bound to length 2 and marked `irreflexive`
+  and `anti_symmetric`, beside n stored tuples of it that share argument 1 with the timed
+  ones.  Each write asks the three fact checks `checks/fact-clash-checks` names: the
+  length read off the binding, the self-tuple marks, and the one converse the tuple's
+  arguments name.  None of them walks the predicate's extent or argument 1's posting."
+  [n]
+  (let [kb (fresh-kb)]
+    (doseq [s '[(arity pTryMarked 2) (irreflexive pTryMarked) (anti_symmetric pTryMarked)]]
+      (v/assert kb s 'CxPerf {:strength :monotonic}))
+    (v/with-deferred-settle kb
+      (dotimes [i n]
+        (v/assert kb (list 'pTryMarked 'PTryA (symbol (str "PTryS" i))) 'CxPerf {})))
+    (doall
+     (for [i (range 100)]
+       (nanos (v/try-assert kb (list 'pTryMarked 'PTryA (symbol (str "PTryT" i)))
+                            'CxPerf {}))))))
+
+(defn- try-assert-declaration-beside-tuples
+  "100 `try-assert`s, each refused, of a declaration over a predicate with n stored
+  two-argument tuples, one three-argument tuple and one self tuple: its length binding,
+  an `irreflexive` mark, and a `genl` edge into a predicate bound to length 2, in turn.
+  Each asks `checks/declaration-clash-checks`: the length checks read one shape-length
+  set and one count per breaking shape, and the mark reads the self-tuple posting.  None
+  reads the n tuples."
+  [n]
+  (let [kb (fresh-kb)]
+    (v/assert kb '(arity pTryBound 2) 'CxPerf {:strength :monotonic})
+    (v/with-deferred-settle kb
+      (dotimes [i n]
+        (v/assert kb (list 'pTryDecl 'PTryA (symbol (str "PTryS" i))) 'CxPerf {}))
+      (v/assert kb '(pTryDecl PTryA PTryB PTryC) 'CxPerf {})
+      (v/assert kb '(pTryDecl PTryA PTryA) 'CxPerf {}))
+    (doall
+     (for [i (range 100)]
+       (nanos (try (v/try-assert kb (nth '[(arity pTryDecl 2) (irreflexive pTryDecl)
+                                           (genl pTryDecl pTryBound)]
+                                         (mod i 3))
+                                 'CxPerf {})
+                   (throw (ex-info "the declaration was stored" {}))
+                   (catch clojure.lang.ExceptionInfo e
+                     (when-not (= :definitional-clash (:type (ex-data e))) (throw e)))))))))
 
 (defn- defeasible-load
   "n facts arriving through one defeasible forward rule.  The rule fires per fact and the
@@ -2750,11 +2896,14 @@
   rebuilds it queued (`decide/rebuild-candidates!`, the settle `recover` closes with),
   divided by the nogoods: 1600 terms, each a member of a type under each of two
   `disjoint` roots, over a layered `genl` graph per root of nine levels of w types (0 to
-  8), each type below level 0 under up to three types of the level above.  `own?` gives
-  each term a leaf type of its own under a level-8 type per root, so the 3200 subsumptions
-  are distinct; otherwise four level-8 types per root hold the terms, so the 1600 nogoods
-  climb eight subsumptions, each through the w·8 types above its leaf."
-  [w own? rounds]
+  8), each type below level 0 under up to three types of the level above.  A `parents`
+  of one or more gives each term a leaf type of its own per root under up to that many
+  level-8 types, so the 3200 subsumptions are distinct; with 0, four level-8 types per
+  root hold the terms, so the 1600 nogoods climb eight subsumptions, each through the w·8
+  types above its leaf.  `cold?` stores a `covering` declaration naming no type of the
+  graph, so a membership's routes read the covers above its types, and writes a `genl`
+  edge naming none before each round, which retires the held closures."
+  [w parents cold? rounds]
   (let [kb   (fresh-kb)
         nn   1600
         rnd  (java.util.Random. 48)
@@ -2763,6 +2912,7 @@
         top  (fn [side] (symbol (str "rpw" side "_kind")))]
     (v/with-deferred-settle kb
       (v/assert kb (list 'disjoint (top "a") (top "b")) 'CxPerf M)
+      (when cold? (v/assert kb '(covering rpwcov_kind rpwcov1_kind rpwcov2_kind) 'CxPerf M))
       (doseq [side ["a" "b"]]
         (dotimes [j w] (v/assert kb (list 'genl (node side 0 j) (top side)) 'CxPerf {}))
         (doseq [i (range 1 9) j (range w) pj (distinct (repeatedly 3 #(.nextInt rnd (int w))))]
@@ -2771,15 +2921,18 @@
       (dotimes [x nn]
         (let [t    (symbol (str "RPW" x))
               leaf (fn [side shared]
-                     (if own?
+                     (if (pos? (long parents))
                        (let [l (symbol (str "rpwl" side "_" x "_kind"))]
-                         (v/assert kb (list 'genl l (node side 8 (.nextInt rnd (int w)))) 'CxPerf {})
+                         (doseq [pj (distinct (repeatedly parents #(.nextInt rnd (int w))))]
+                           (v/assert kb (list 'genl l (node side 8 pj)) 'CxPerf {}))
                          l)
                        (node side 8 shared)))]
           (v/assert kb (list (leaf "a" (mod x 4)) t) 'CxPerf {})
           (v/assert kb (list (leaf "b" (mod (quot x 4) 4)) t) 'CxPerf {}))))
-    (doall (for [_ (range rounds)]
-             (do (decide/rebuild-candidates! kb)
+    (doall (for [r (range rounds)]
+             (do (when cold?
+                   (v/assert kb (list 'genl (symbol (str "rpwnew" r "_kind")) 'rpwother_kind) 'CxPerf {}))
+                 (decide/rebuild-candidates! kb)
                  (quot (nanos (settle/settle kb)) nn))))))
 
 (defn- recover-placement-walk
@@ -2788,7 +2941,7 @@
   per nogood.  The eight walks grow with w, and the 1600 nogoods divide their share of
   each nogood's cost."
   [w]
-  (placement-walk-settles w false 12))
+  (placement-walk-settles w 0 false 12))
 
 (defn- recover-placement-own-leaves
   "`placement-walk-settles` with a leaf type of its own per term, eight rounds.  The
@@ -2796,7 +2949,16 @@
   (`tax/reach-support`'s router), so each type is entered once per root and threshold,
   and a nogood's two walks cost their leaves' edges and the path read off the lengths."
   [w]
-  (placement-walk-settles w true 8))
+  (placement-walk-settles w 1 false 8))
+
+(defn- recover-placement-braided-leaves
+  "`placement-walk-settles` with a leaf type of its own per term under two level-8 types
+  per root, beside a cover, the held closures retired before each of eight rounds.  A
+  route reads the separated types above a leaf cut to the separable ones
+  (`tax/separable-genls`) and the covers above it off the cover table, so the settle
+  builds no leaf's up-closure."
+  [w]
+  (placement-walk-settles w 2 true 8))
 
 (defn- routed-walks-up-a-braid
   "The `genl` witness walks from the eight bottom types of a braid of n levels of eight
@@ -2905,10 +3067,9 @@
   "One assert of a fact naming nothing, on a KB whose 16 `unknown` rules hold n refused
   firings between them in the refusal record.
 
-  Every settle pass asks the record for the lifts, the mints and the argument
-  convictions waiting in it (`settle/released-lifts`, `released-mints`,
-  `released-constraint-refusals`), and the KB holds none of the three: what the
-  unrelated assert owes the record is nothing at both sizes.  The population is built
+  Every settle pass asks the record for the lifts and the argument convictions waiting
+  in it (`settle/released-lifts`, `released-constraint-refusals`), and the KB holds
+  neither: what the unrelated assert owes the record is nothing at both sizes.  The population is built
   under one deferred settle, with each blocking fact stored before the firing it
   refuses."
   [n]
@@ -3204,7 +3365,7 @@
 
   ```
   CxUniverse
-   ├─ CxPerfGacSide  (genl pgacRel_i pgacRoot) (arity pgacRel_i 1), (arity pgacRoot 2)
+   ├─ CxPerfGacSide  (genl pgac_rel_i pgacRoot) (arity pgac_rel_i 1), (arity pgacRoot 2)
    └─ CxPerfGacEdge  the chain pgac7_t < … < pgac0_t, (arity pgac0_t 1)
                      timed  (genl pgacv_j_t pgac7_t)
   ```
@@ -3222,7 +3383,7 @@
       (doseq [c '[CxPerfGacSide CxPerfGacEdge]] (v/assert kb (list 'genlCx c 'CxUniverse) 'CxUniverse m))
       (v/assert kb '(arity pgacRoot 2) 'CxPerfGacSide m)
       (dotimes [i n]
-        (let [p (symbol (str "pgacRel" i))]
+        (let [p (symbol (str "pgac_rel" i))]
           (v/assert kb (list 'genl p 'pgacRoot) 'CxPerfGacSide m)
           (v/assert kb (list 'arity p 1) 'CxPerfGacSide m))))
     (doseq [i (range 1 8)]
@@ -3317,6 +3478,36 @@
     (doall (for [_ (range edge-writes)]
              (nanos (dotimes [_ reads-per-reading]
                       (checks/edge-stratification-violation kb '(genl pscsub_t psctop_t))))))))
+
+(defn- edge-stratification-mints-in-one-pass
+  "One `(genlArg pemKind<r> 2 pem_top)` declaration over n stored facts, each naming a type
+  of its own in position 2, so its write mints n `genl` edges under `pem_top` in one pass,
+  per mint.  One excepted rule keeps each edge's stratification check walking, and a rule
+  concluding `(?p …)` keeps every lower end below a rule.  Each walk passes the 512 rules
+  reading the consequent of the one rule reading `pem_top`.  The pass reads the rules'
+  graph nodes once and the n checks share them (`rules/*stratification-memo*`); a graph
+  read per check costs each mint the 512 nodes."
+  [n]
+  (binding [argument/*assertive-arg-types?* true]
+    (let [kb (fresh-kb)
+          m  {:strength :monotonic}
+          fw {:direction :forward}]
+      (v/with-deferred-settle kb
+        (v/assert kb '(genl pem_top thing) 'CxPerf m)
+        (v/assert kb '(exceptWhen (pemexc ?x)
+                                  (set/defaultRule (implies (and (pembase ?x)) (pemseen ?x))))
+                  'CxPerf {})
+        (v/assert kb '(implies (and (pemVar ?p ?x)) (?p ?x)) 'CxPerf fw)
+        (v/assert kb '(implies (and (pem_top ?x)) (pemmid_t ?x)) 'CxPerf fw)
+        (dotimes [j 512]
+          (v/assert kb (list 'implies (list 'and '(pemmid_t ?x) (list (symbol (str "pemq" j "_t")) '?x))
+                             '(pemend_t ?x))
+                    'CxPerf fw)))
+      (doall (for [r (range 24)
+                   :let [rel (symbol (str "pemKind" r))]]
+               (do (dotimes [i n]
+                     (v/assert kb (list rel 'PemObj (symbol (str "pemx" r "_" i "_t"))) 'CxPerf m))
+                   (quot (nanos (v/assert kb (list 'genlArg rel 2 'pem_top) 'CxPerf m)) n)))))))
 
 (defn- genl-edge-under-separated-type
   "One `genl` edge from a fresh type to `pgswheel_t`, beside n stored memberships of
@@ -3637,34 +3828,14 @@
      (for [l (range (dec levels) -1 -1), i (range width)]
        (nanos (v/assert kb (list 'arity (ty l i) 1) 'CxPerf {:strength :monotonic}))))))
 
-(defn- declaration-rebuild
-  "n types in a chain under `thing`, one `arg` declaration naming each, then
-  `special/rebuild-pending!` timed whole and read per hundred declarations (one is
-  under the noise floor).
-
-  The rebuild asks each declared type its own arity bindings (`checks/mintable-type?`),
-  so a declaration costs a record read and one read per type.  A walk up from each
-  declaration's type costs its position in the chain, and reads here as growth with n."
-  [n]
-  (let [kb (fresh-kb)
-        ty (fn [i] (symbol (str "pdr" i "_t")))]
-    (v/with-deferred-settle kb
-      (doseq [i (range n)]
-        (v/assert kb (list 'genl (ty i) (if (zero? i) 'thing (ty (dec i)))) 'CxPerf
-                  {:strength :monotonic})
-        (v/assert kb (list 'arg (symbol (str "pdrRel" i)) 1 (ty i)) 'CxPerf
-                  {:strength :monotonic})))
-    (doall (for [_ (range 4)]
-             (/ (nanos (special/rebuild-pending! kb)) (/ n 100.0))))))
-
 (defn- mint-release-after-genl-move
   "n types in a chain, each bound to two arguments, one `arg` declaration naming each, so
   n declarations wait on a mintable type; then a `genl` edge between two other types,
   timed through its settle, read per hundred declarations.
 
-  A waiting entry is re-asked when the arity family moves the length of a type it waits
-  on (`special/owe-mints-on-lengths!`), and the edge moves none.  A settle re-asking every
-  waiting declaration per edge reads here as growth with n."
+  The declarations naming a type are read when the type's own bindings move
+  (`special/mints-on-lengths`), and the edge moves none.  A settle reading every waiting
+  declaration per edge reads here as growth with n."
   [n]
   (let [kb (fresh-kb)
         ty (fn [i] (symbol (str "pmrt" i)))]
@@ -4118,7 +4289,7 @@
   under `sub` sees over the facts stated where the edge newly shows `sub`, and not over
   every fact `super` sees.  Each reading wires a fresh `sub`, untimed but for the edge."
   [n]
-  (binding [checks/*assertive-arg-types?* true]
+  (binding [argument/*assertive-arg-types?* true]
     (let [kb (fresh-kb)
           m  {:strength :monotonic}]
       (doseq [[s g] '[[CxGsdTop CxUniverse] [CxGsdR CxGsdTop] [CxGsdY CxGsdTop]]]
@@ -4144,7 +4315,7 @@
   since `sub` sees none of them, so a reading that grows with n is the arm drawing each
   of them again.  Each reading asserts the edge to a fresh `sub`."
   [n]
-  (binding [checks/*assertive-arg-types?* true]
+  (binding [argument/*assertive-arg-types?* true]
     (let [kb (fresh-kb)
           m  {:strength :monotonic}]
       (doseq [[s g] '[[CxGecTop CxUniverse] [CxGecR CxGecTop]]]
@@ -4167,7 +4338,7 @@
   descendant of the fact's context sees them, and not every declaration of the predicate.
   Each reading asserts a fresh fact."
   [n]
-  (binding [checks/*assertive-arg-types?* true]
+  (binding [argument/*assertive-arg-types?* true]
     (let [kb (fresh-kb)
           m  {:strength :monotonic}]
       (doseq [[s g] '[[CxFdTop CxUniverse] [CxFdF CxFdTop] [CxFdLeaf CxFdF]]]
@@ -4192,7 +4363,7 @@
   contexts `sub` no longer sees, one here at both n, and not every stored mint.  Each
   reading wires a fresh `sub` and asserts the edge, untimed, and times the retraction."
   [n]
-  (binding [checks/*assertive-arg-types?* true]
+  (binding [argument/*assertive-arg-types?* true]
     (let [kb (fresh-kb)
           m  {:strength :monotonic}]
       (doseq [[s g] '[[CxGlL CxUniverse] [CxGlR CxUniverse] [CxGlFar CxUniverse]
@@ -4537,12 +4708,11 @@
 
 (defn- write-after-rolled-back-preview
   "One fact asserted after a rolled-back preview of a `genl` edge, beside n `arg`
-  declarations waiting on a type bound to two arguments.  The preview moves the `genl`
-  generation and no waiting entry's (`special/mint-generations`), so the write's settle
-  re-asks none of the n (docs/preview.md, \"What the rollback restores\").  The preview
-  is untimed."
+  declarations waiting on a type bound to two arguments.  The preview moves no type's own
+  bindings, so the write's settle reads none of the n (`special/mints-on-lengths`,
+  docs/preview.md, \"What the rollback restores\").  The preview is untimed."
   [n]
-  (binding [checks/*assertive-arg-types?* true]
+  (binding [argument/*assertive-arg-types?* true]
     (let [kb (fresh-kb)]
       (v/with-deferred-settle kb
         (v/assert kb '(genl prw_t thing) 'CxPerf {})
@@ -4556,6 +4726,26 @@
        (for [i (range 40)]
          (do (v/preview kb {:add [[(list 'genl (symbol (str "prw_q" i)) 'thing) 'CxPerf]]})
              (nanos (v/assert kb (list 'prw_t (symbol (str "PRWX" i))) 'CxPerf {}))))))))
+
+(defn- genl-write-beside-waiting-declarations
+  "One `genl` edge asserted beside n `arg` declarations, each naming a type bound to two
+  arguments and each over one stored fact, with no preview.  The edge moves no type's own
+  bindings, so a settle reading only what the edge reaches costs the same at both sizes
+  (`special/mints-on-lengths`)."
+  [n]
+  (binding [argument/*assertive-arg-types?* true]
+    (let [kb (fresh-kb)]
+      (v/with-deferred-settle kb
+        (v/assert kb '(genl gwd_t thing) 'CxPerf {})
+        (doseq [i (range n)
+                :let [p (symbol (str "gwdWaits" i))
+                      t (symbol (str "gwdorphan" i))]]
+          (v/assert kb (list 'binary_predicate t) 'CxPerf {})
+          (v/assert kb (list 'arg p 1 t) 'CxPerf {})
+          (v/assert kb (list p (symbol (str "GWDA" i)) 'GWDB) 'CxPerf {})))
+      (doall
+       (for [i (range 40)]
+         (nanos (v/assert kb (list 'genl (symbol (str "gwd_q" i)) 'gwd_t) 'CxPerf {})))))))
 
 (def ^:private inherit-chain-depth
   "How far above the claim-holders the preserved relation runs, so that **one reach walk
@@ -5066,7 +5256,7 @@
         m    {:strength :monotonic}
         U    'CxUniverse
         dogs (mapv #(list 'prw_dog (symbol (str "PrwX" %))) (range 40))]
-    (binding [checks/*assertive-arg-types?*  true
+    (binding [argument/*assertive-arg-types?*  true
               checks/*prune-subsumed-mints?* true]
       (try
         (let [kb (v/open-kb {:backend :disk-snapshot :dir path})]
@@ -5101,7 +5291,7 @@
   the term's unary predicate set.  Read off the predicates holding the term at argument 1, the n
   binary predicates are n `genl?` tests per mint and read here as growth."
   [n]
-  (binding [checks/*assertive-arg-types?*  true
+  (binding [argument/*assertive-arg-types?*  true
             checks/*prune-subsumed-mints?* true]
     (let [kb (fresh-kb)
           m  {:strength :monotonic}]
@@ -6095,6 +6285,16 @@
     :max-ratio 2.0
     :run       membership-departure-below-a-chain}
 
+   ;; Both ends measured 2026-10-23 by `lein perf --only`, load average 35 to 55.  Healthy
+   ;; 0.18x (7.804 ms against 1.423).  With a reader state built per check: 0.84x (98.318
+   ;; ms against 83.027).
+   {:name      :release-beside-forced-declarations
+    :group     :argtypes
+    :claim     "16x the mints one release pass writes beside 4000 forced-monotonic declarations costs each under 0.5x"
+    :sizes     [4 64]
+    :max-ratio 0.5
+    :run       release-beside-forced-declarations}
+
    ;; Both ends measured 2026-10-17 by `lein perf --only`.  Healthy 0.99x.  With a `genl?`
    ;; walk to `thing` per atom at the declared position: 4.71x.
    ;; Both ends measured 2026-10-20, load average 3.  Healthy 0.89x (1.081 ms against
@@ -6106,6 +6306,16 @@
     :sizes     [200 1600]
     :max-ratio 2.0
     :run       genl-write-beside-held-facts}
+
+   ;; Both ends measured 2026-10-21, load average 14 to 104.  Healthy 0.17x to 0.41x
+   ;; (13.954 ms at the large end, load 14).  With one `genl?` walk per declared type per
+   ;; moved end: 3.26x (195.547 ms against 638.210).
+   {:name      :genl-ends-above-deep-declarations
+    :group     :argtypes
+    :claim     "8x the depth above 500 declared types costs a batch moving five genl ends with many specializations under 2x"
+    :sizes     [40 320]
+    :max-ratio 2.0
+    :run       genl-ends-above-deep-declarations}
 
    ;; Both ends measured 2026-10-20, load average 35.  Healthy 0.94x (0.386 ms against
    ;; 0.363).  With the memo map keyed by the declaring set, compared by value: 6.20x
@@ -6185,6 +6395,25 @@
     :max-ratio 2.0
     :run       per-reading-vantages}
 
+   ;; Flat by construction: a computed membership's readers and its placement read the
+   ;; handles naming its individual, which the other n - 1 contexts do not hold.  Measured
+   ;; 2026-10-22 under `--only` on a loaded box: fan 1.35x (0.308 against 0.417 ms),
+   ;; post-hoc 0.89x (0.208 against 0.184 ms).  The bound is the file's standing 2.0
+   ;; for a flat claim.
+   {:name      :computed-joint-read-beside-edgeless-contexts-fan
+    :group     :placement
+    :claim     "16x the edgeless contexts beside a computed CxInference membership costs under 2x per fan read"
+    :sizes     [64 1024]
+    :max-ratio 2.0
+    :run       (partial computed-joint-read :fan)}
+
+   {:name      :computed-joint-read-beside-edgeless-contexts-post-hoc
+    :group     :placement
+    :claim     "16x the edgeless contexts beside a computed CxInference membership costs under 2x per post-hoc read"
+    :sizes     [64 1024]
+    :max-ratio 2.0
+    :run       (partial computed-joint-read :post-hoc)}
+
    ;; **Both ends measured, on full runs.**  Above: 1.11x and 0.90x, and 0.84x and 0.67x
    ;; on two trees whose join is this one.  Below: the join reading every believed step
    ;; of the functor and filtering on the term, where it reads the term's postings, reads
@@ -6216,6 +6445,20 @@
     :sizes     [250 2000]
     :max-ratio 2.0
     :run       functional-in-arg-empty-determinant-sweep}
+
+   {:name      :try-assert-tuple-beside-tuples
+    :group     :tuples
+    :claim     "8x the stored tuples of a length-bound, irreflexive, anti_symmetric predicate costs the same per try-assert"
+    :sizes     [1000 8000]
+    :max-ratio 2.0
+    :run       try-assert-tuple-beside-tuples}
+
+   {:name      :try-assert-declaration-beside-tuples
+    :group     :tuples
+    :claim     "8x the stored tuples of a predicate costs the same per refused try-assert of its length binding, an irreflexive mark or a genl edge into a bound predicate"
+    :sizes     [1000 8000]
+    :max-ratio 2.0
+    :run       try-assert-declaration-beside-tuples}
 
    {:name      :defeasible-load
     :group     :chaining
@@ -6803,16 +7046,6 @@
     :max-ratio 2.0
     :run       bound-type-load}
 
-   ;; Both ends measured 2026-10-01.  Healthy 0.95x and 0.97x (0.130 ms against 0.124,
-   ;; 0.131 against 0.127).  With a walk up from each declaration's type, the reading is
-   ;; 14.44x (4.56 ms against 65.86).  2x sits between.
-   {:name      :declaration-rebuild
-    :group     :argtypes
-    :claim     "16x the declarations over a 16x deeper hierarchy costs under 2x per hundred declarations the recover rebuild re-reads"
-    :sizes     [200 3200]
-    :max-ratio 2.0
-    :run       declaration-rebuild}
-
    ;; Both ends measured 2026-10-01.  Healthy 0.52x and 0.13x (0.267 ms against 0.512,
    ;; 0.291 against 2.160).  With a walk up from each waiting declaration's type, the
    ;; reading is 13.04x (5.40 ms against 70.40).  2x sits between.
@@ -7218,6 +7451,15 @@
     :max-ratio 2.0
     :run       edge-stratification-unconcluded}
 
+   ;; Both ends measured 2026-10-22, load average 50.  Healthy 0.31x (2.579 ms against
+   ;; 0.804).  With the rules' graph read once per check: 0.82x (8.092 ms against 6.650).
+   {:name      :edge-stratification-mints-in-one-pass
+    :group     :taxonomy
+    :claim     "16x the genl edges one declaration mints in a pass costs each mint's write under 0.5x"
+    :sizes     [4 64]
+    :max-ratio 0.5
+    :run       edge-stratification-mints-in-one-pass}
+
    {:name      :genl-edge-under-separated-type
     :group     :clashes
     :claim     "a genl edge into a type separated from a preserved predicate is flat in that type's memberships"
@@ -7353,6 +7595,20 @@
     :sizes     [64 1024]
     :max-ratio 2.0
     :run       write-after-rolled-back-preview}
+
+   ;; Both ends measured 2026-10-22 under `--only` at load 21-30.  Healthy 0.69x and
+   ;; 0.84x (3.19 ms against 2.21, 3.40 against 2.85).  With every waiting declaration's
+   ;; refusal entry walked on each `genl` write, the reading is 2.21x and 1.73x (3.01 ms
+   ;; against 6.67, 2.46 against 4.26).  1.5x sits between.  At [64 1024] the walk read
+   ;; 1.96x and 1.04x against a healthy 1.29x, too close to separate.  A full run reads
+   ;; 2.27x (0.83 ms against 1.88) when `entail-under-edge` builds the union of every
+   ;; declaring predicate per edge; `--only` read the same code at 1.10x to 1.46x.
+   {:name      :genl-write-beside-waiting-declarations
+    :group     :clashes
+    :claim     "16x the declarations waiting on a type bound to another length costs under 1.5x per genl edge asserted beside them"
+    :sizes     [256 4096]
+    :max-ratio 1.5
+    :run       genl-write-beside-waiting-declarations}
 
    ;; **Flat, and calibrated from both ends** as the header requires. Healthy it reads
    ;; **0.91x and 0.90x** on full runs (0.74x under `--only`): the answer set is one fact
@@ -8057,6 +8313,16 @@
     :max-ratio 3.5
     :run       recover-placement-own-leaves}
 
+   ;; Both ends measured 2026-10-22, warm beside the check before it, load average 12 to
+   ;; 25.  Healthy 1.43x to 1.73x (0.18 ms against 0.31).  With each leaf's up-closure
+   ;; walked by the separation and cover routes: 3.44x (0.39 ms against 1.34).
+   {:name      :recover-placement-braided-leaves
+    :group     :recover
+    :claim     "8x the types above 3200 distinct two-parent leaves costs under 2.6x per nogood in the settle that places what a rebuilt candidate index queued over retired closures"
+    :sizes     [20 160]
+    :max-ratio 2.6
+    :run       recover-placement-braided-leaves}
+
    ;; Both ends measured 2026-10-19, load average 8 to 12.  Healthy 1.05x (0.040 ms
    ;; against 0.042).  With each entered type tested by its up-closure: 10.24x (0.241 ms
    ;; against 2.467).
@@ -8154,6 +8420,9 @@
    ;; and defeat's target per write read 2.35x at load 8 (1.01 and 2.38).  The yield check
    ;; reads the opposed bodies by functor (`except/yielding-reads?`): 0.99x at load 38 (1.22
    ;; and 1.21), where a scan of every opposed body per write read 5.50x (1.46 and 8.02).
+   ;; A reader frame's declaration check probes each declaration (`except/frame-watch`):
+   ;; 0.96x at load 11 (1.46 and 1.40), where a set of every handle a defeat names read
+   ;; 2.27x (1.04 and 2.36).
    {:name      :genl-defeat-beside-defeats-columnar
     :group     :placement
     :claim     "128x the standing defeats of other genl edges costs under 2x per genl edge's defeat and a membership read through it on memory-columnar"

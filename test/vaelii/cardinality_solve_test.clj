@@ -1,17 +1,10 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.cardinality-solve-test
-  "Native cardinality bounds on a choice predicate: `(asp/atMost k ?v pattern)` and
-  `(asp/atLeast k ?v pattern)` (and the soft twins), which `solve-context` grounds to ONE
-  solver cardinality atom per group rather than the `C(n, k+1)` subset nogoods a
-  hand-written encoding needs (docs/solving.md).
-
-  The surface mirrors `agg/count`'s projection: `?v` is the counted variable, the
-  pattern's other variables are the group, so `(asp/atMost 6 ?c (build ?c transport))` is
-  one global bound and `(asp/atMost cap ?a (ferry ?a ?t))` is one bound per `?t`.
-
-  End-to-end tests need an ASP backend and are guarded on `asp?`; the wrapper/record and
-  refusal unit tests are not."
+  "`asp/atMost` / `asp/atLeast` and the soft twins, which `solve-context` grounds to one
+  solver cardinality entry per group (docs/solving.md, \"`atMost` / `atLeast`\").  The
+  solving tests are guarded on `asp?`; the wrapper, record and refusal tests run without a
+  backend."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
             [vaelii.impl.asp.solver :as solver]
@@ -128,17 +121,12 @@
             (is (zero? (count (v/contradictions kb))))))))))
 
 (deftest cardinality-grounds-where-subset-nogoods-cannot
-  ;; Thirty cities, exactly ten transports (a hard at-most-10 AND at-least-10).  The
-  ;; at-most bound alone is `C(30, 11)` ≈ 54M subset nogoods under a hand-written encoding
-  ;; — the heap-death the app clamps its inputs to avoid.  Each native bound grounds to
-  ;; ONE weight-body constraint, so the whole program grounds instantly, and a plain
-  ;; `:sat` solve (no optimization to prove) finds a model at once.  Both bounds bind:
-  ;; exactly ten transports, and every city still builds one thing.
+  ;; thirty cities, a hard at-most-10 and at-least-10: a hand-written at-most alone is
+  ;; `C(30, 11)` ≈ 54M subset nogoods, and each bound here is one weight-body constraint
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [build]
-        ;; a soft-free program, so `:sat` is plain satisfaction with nothing to optimize —
-        ;; the point is that GROUNDING stays linear, not that a symmetric optimum is cheap
+        ;; a soft-free program, so `:sat` has nothing to optimize
         (doseq [v '[transport army]]
           (v/assert kb (list 'set/assumptionRule (list 'implies (list 'cand '?c) (list build '?c v)))
                     'CxBig))
@@ -208,10 +196,7 @@
 ;; ---- 3. check predicts a malformed bound without throwing -----------------
 
 (deftest check-reports-a-malformed-cardinality-rather-than-throwing
-  ;; `assert` throws on a malformed bound; `check` must PREDICT that as a returned
-  ;; problem, not throw out of itself.  A batch critic — the web save preview, the RPC
-  ;; `:check` op — feeds `check` lines and reports a problem per line, so a throw would
-  ;; abort the whole batch instead of flagging the one bad line.
+  ;; `check` returns the problem `assert` throws, so a batch caller flags one line
   (tu/with-neutral-kb [kb tu/fresh]
     (tu/with-terms [build]
       (doseq [bad [(list 'asp/atMost -1 '?c (list build '?c 'transport))
@@ -272,11 +257,8 @@
 ;; ---- 5. a global at-least over an empty choice is infeasible, not dropped --
 
 (deftest a-global-atleast-over-an-empty-choice-is-infeasible
-  ;; A GLOBAL `asp/atLeast` whose choice predicate grounds to no head (an empty global
-  ;; group) is infeasible — the floor cannot vanish because nothing was a candidate,
-  ;; where a single candidate under `atLeast 2` would already be infeasible.  A
-  ;; co-resident, independently satisfiable choice keeps the program non-empty, so the
-  ;; zero labelings come from the floor and not from an empty program.
+  ;; a second, satisfiable choice keeps the program non-empty, so the zero labelings
+  ;; come from the floor
   (when asp?
     (tu/with-cleared-kb [kb tu/fresh]
       (tu/with-terms [deploy]

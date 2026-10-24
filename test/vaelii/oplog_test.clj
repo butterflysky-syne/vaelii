@@ -4,13 +4,15 @@
   "The operation log (`vaelii.impl.oplog`): a KB carrying one records each outermost
   public write as the call that made it, with the inputs the call reads beyond its
   arguments.  A nested write appends no frame, a deferred batch records its closing
-  settle, and a configuration call, an argument nippy cannot freeze or a change-feed
-  listener's write marks the log unusable.  The frames and the mark read back after a
-  reopen, which truncates a torn trailing frame.  The logged record store fsyncs an
-  operation's frame before the operation writes a record older than the log, and a
-  record write outside every operation marks the log unusable.  Under `:each` every frame
-  is fsynced before its operation runs, and a log that cannot take a frame stops: the
-  write is refused before it runs, and so is every write after it."
+  settle, and a configuration call, an argument nippy cannot freeze, a change-feed
+  listener's write or a `VirtualMachineError` inside a write marks the log unusable; a
+  `VirtualMachineError` freezing a frame propagates before the write runs.  The frames
+  and the mark read back after a reopen, which truncates a torn trailing frame.  The
+  logged record store fsyncs an operation's frame before the operation writes a record
+  older than the log, and a record write outside every operation marks the log unusable.
+  Under `:each` every frame is fsynced before its operation runs, and a log that cannot
+  take a frame stops: the write is refused before it runs, and so is every write after
+  it."
   (:require [clojure.java.io :as io]
             [clojure.test :refer [is use-fixtures]]
             [vaelii.core :as v]
@@ -125,6 +127,41 @@
       (let [r (v/forward-chain lkb {:on-progress (fn [_] nil)})]
         (is (= [:unfreezable :forward-chain] (take 2 (oplog/unusable log))))
         (is (number? (:derived r)) "the write the frame describes still runs")))))
+
+(defn- deep-sentence
+  "A sentence nested `n` deep, which overflows the stack nippy freezes it on."
+  [n]
+  (reduce (fn [acc _] (list 'p acc)) 'X (range n)))
+
+(tu/deftest-kb a-virtual-machine-error-freezing-a-frame-neither-marks-the-log-nor-runs-the-write
+  (doseq [[arg cls] [[(lazy-seq (cons 1 (lazy-seq (throw (OutOfMemoryError. "freeze")))))
+                      OutOfMemoryError]
+                     [(deep-sentence 200000) StackOverflowError]]]
+    (with-log kb
+      (fn [lkb log _]
+        (let [ran    (atom false)
+              thrown (try (oplog/run-op lkb :assert :replay [arg] (constantly {})
+                                        (fn [_] (reset! ran true)))
+                          nil
+                          (catch Throwable t (class t)))]
+          (is (= [cls false nil []]
+                 [thrown @ran (oplog/unusable log) (oplog/read-frames log)])))))))
+
+(tu/deftest-kb a-virtual-machine-error-inside-a-logged-write-marks-the-log
+  (tu/with-terms [dog Fido CxPets]
+    (doseq [[label throwable] [["thrown as itself" (OutOfMemoryError. "mid-write")]
+                               ["wrapped" (ex-info "wrapped" {} (StackOverflowError.))]]]
+      (with-log kb
+        (fn [lkb log _]
+          (let [s (list dog Fido)]
+            (is (thrown? Throwable
+                         (oplog/run-op lkb :assert :replay [s CxPets] (constantly {})
+                                       (fn [_] (throw throwable))))
+                label)
+            (let [vm (.getName (class (or (ex-cause throwable) throwable)))]
+              (is (= [{:op :assert :args [s CxPets]} {:unusable [:vm-error :assert vm]}]
+                     (mapv #(if (:op %) (select-keys % [:op :args]) %) (oplog/read-frames log)))
+                  label))))))))
 
 (tu/deftest-kb a-listener-write-marks-the-log-unusable
   (tu/with-terms [dog Fido Rex CxPets]

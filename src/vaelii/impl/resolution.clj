@@ -9,6 +9,7 @@
   that applied to its more general types — we consult the genl closure at match
   time rather than materializing supertype facts."
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [clojure.walk :as walk]
             [vaelii.impl.budget :as budget]
             [vaelii.impl.capabilities :as cap]
@@ -792,23 +793,18 @@
 
 (defn visible-supporter-fn
   "`handle -> boolean`, memoized: is the sentex `handle` believed, inherited by
-  `context`, and not hidden there by a visibility exception? nil when `context` is nil
-  or a `?var` — the unscoped path, which every caller reads as *no filter* rather than
-  as *nothing visible*.
-
-  The dynamic var a **context-scoped equality** read hangs on: the equality partition records
-  its supporters as handles, and only the record store knows where each was asserted."
+  `context`, and not hidden there by a visibility exception?  nil when `context` is nil
+  or a `?var`, the unscoped read, which every caller reads as *no filter*.  The predicate
+  a context-scoped equality read takes: the partition records its supporters as handles."
   [kb context]
   (when (and (symbol? context) (not (sx/variable? context)))
     (memoize #(supporter-visible? kb % context))))
 
 (defn representative-in
-  "`term`'s equality-class representative as `visible?` sees the merges — the global
-  one when nothing has merged `term` (the overwhelming case, one map lookup), when the
-  read is unscoped (`visible?` nil), or when the reader can see the term's whole class
-  anyway (`tax/class-fully-visible?`), which is every KB stating its merges where the
-  reader can see them.  Only a class genuinely split by an invisible edge pays for
-  `scoped-class`."
+  "`term`'s equality-class representative as `visible?` sees the merges.  The global
+  representative, one map lookup, when nothing has merged `term`, when `visible?` is nil,
+  or when the reader sees the whole class (`tax/class-fully-visible?`); `tax/scoped-class`
+  otherwise."
   [kb visible? term]
   (let [tax (reasoning/taxonomy kb)]
     (if (and visible? (tax/merged? tax term) (not (tax/class-fully-visible? tax term visible?)))
@@ -816,12 +812,9 @@
       (tax/representative tax term))))
 
 (defn same-class-in?
-  "Do `a` and `b` denote one thing as `context` sees the merges?  The context-scoped
-  twin of `tax/same-class?`: two terms are one class here only when the edges that merged
-  them are visible up `context`'s `genlCx` ancestor set, so a merge behind a supporter the reader
-  cannot see does not put them in one class for it.  A nil or `?var` context is unscoped
-  and gives the global answer `tax/same-class?` gives — the reads share `representative-in`,
-  which is one map lookup until an *invisible* edge actually splits the class."
+  "Do `a` and `b` denote one thing as `context` sees the merges?  The scoped twin of
+  `tax/same-class?`, through `representative-in`; a nil or `?var` context gives the global
+  answer."
   [kb a b context]
   (let [visible? (visible-supporter-fn kb context)]
     (= (representative-in kb visible? a)
@@ -839,31 +832,19 @@
       term)))
 
 (def ^:private equality-mention-heads
-  "The equality relations whose **argument positions are mentions** — the names the
-  sentence relates, not uses of the concept — so a `sameAs` / `equals` identity merge must
-  not fold them onto a class representative.  A `rewriteOf` spelling rename still applies,
-  since that renames the name itself; the args are treated exactly like a quoted position.
-
-  Without this a stored `(not (sameAs A B))` is congruence-rewritten to the vacuous
-  `(not (sameAs A A))` by the very merge it denies — superseding the real denial, so a
-  monotonic denial of a default equality is silently lost (docs/equality.md).  `different`
-  is not here: it is never stored and `goal-normal-form` exempts it whole at the goal.
-
-  The schematic half of the normal form reads the same set: `rewrite/normalize-sentence`
-  leaves these positions unrewritten too, so a stored `(not (equals (fatherOf (fatherOf
-  Tom)) (grandfather_of Tom)))` is not restated by the equation it denies.
-  `kb/equality-predicates`, which cannot be required here (`kb` requires this namespace),
-  mirrors it; `equality_test` asserts the two in step."
+  "The equality relations, whose argument positions are **mentions**: a `sameAs` /
+  `equals` merge does not fold them onto a class representative and a `rewriteOf` spelling
+  rename does, as in a quoted position.  So a stored `(not (sameAs A B))` is not restated
+  as `(not (sameAs A A))` by the merge it denies, and `rewrite/normalize-sentence` leaves
+  these positions unrewritten too.  `kb/equality-predicates` holds the same set
+  (`equality_test/the-mention-set-mirrors-the-canonical-equality-predicate-set`)."
   rewrite/equality-relations)
 
 (defn equation?
-  "Is `sentence` a positive equation — `(rewriteOf P D)`, `(sameAs A B)` or `(equals A B)`
-  at the top?  Migration never restates one (`kb/rewritable-sentex?`), so the stored
-  equation is the only spelling of itself there will ever be.  Two readers depend on
-  that: `retired-for?` never reports an equation retired, and `goal-normal-form` asks an
-  equation goal as spelled, so the goal and the stored sentence meet unrewritten.  The
-  equality closure answers the rest of what an equation goal asks, through
-  `provers/EqualityProver`."
+  "Is `sentence` a positive equation, `(rewriteOf P D)`, `(sameAs A B)` or `(equals A B)`
+  at the top?  Migration never restates one, so `retired-for?` never reports one retired
+  and `goal-normal-form` asks an equation goal as spelled (docs/equality.md, \"Answering
+  an equation\")."
   [sentence]
   (and (sequential? sentence) (contains? equality-mention-heads (first sentence))))
 
@@ -900,7 +881,7 @@
     (symbol? term)     (if (sx/variable? term) term (representative-in kb visible? term))
     :else              term))
 
-(defn- attitude-application?
+(defn attitude-application?
   "Is `term` `(P agent proposition)` for a declared `modal_predicate` `P` — the shape
   `BeliefProjectionProver` projects?  Its **third** argument is what the agent holds true,
   and the shape test is the prover's own: arity 2, over a sentence-shaped proposition.  A
@@ -965,35 +946,15 @@
 
 (defn representative-term
   "`term` with every non-variable symbol replaced by its class representative
-  (`representative-in`), **recursively** — so a merged symbol nested inside a compound is
-  rewritten at whatever depth it sits.
+  (`representative-in`) at any depth: ground congruence, so `(QuantityFn 5 Kilogram)` and
+  `(QuantityFn 5 Kg)` meet under `(sameAs Kilogram Kg)`.
 
-  `representative-in` alone is a flat lookup: the closure is keyed by symbol, so handing
-  it a compound returns that compound unchanged and the caller silently compares
-  unnormalized forms.  Every caller that may see a compound wants this one, and the
-  difference is congruence — with `(sameAs Kilogram Kg)` believed, `(QuantityFn 5
-  Kilogram)` and `(QuantityFn 5 Kg)` normalize to one term here and to two there.
-
-  **Mention opacity.** Two kinds of head make a position a *mention* — a term named as
-  syntax, rewritten by *spelling* (`rewriteOf`) only and never by a `sameAs` / `equals`
-  identity merge, so a quoted term does not fold onto its referent's class.  A quoting
-  function (`Quote`, `Quasiquote`, fixed by the engine: `sx/quoting-functors`) quotes its
-  arguments; a `modal_predicate`
-  (`believes`, and whatever else is granted) quotes the **proposition** it attributes,
-  because an attitude is opaque: from *Oedipus believes he married Jocasta* and *Jocasta is
-  his mother* it does not follow that he believes he married his mother, and the asker's
-  merges are not his.  What the agent's *own* context merges does apply, and applies where
-  the projection reads it (`provers/BeliefProjectionProver`).  The marks are read once at
-  entry (`tax/mention-marks`); a compound node pays two set lookups for them.
-
-  This covers ground congruence, which is what an identity merge does.  The oriented
-  equational rewriting `kb/rewrite-term*` applies after it (`rewrite/normalize-sentence`)
-  is a walk over argument terms that does not read these marks, so a schematic `equals`
-  normalizes inside a quoted position as it does outside one.  It skips an equality
-  relation's arguments, the one mention position both halves share.
-
-  The mention marks are read unscoped: whether an argument is a mention is a fact
-  about the sentence (`tax/mention-marks`)."
+  A mention position, the arguments of a quoting function (`sx/quoting-functors`) and the
+  proposition of a `modal_predicate`, is rewritten by `rewriteOf` spelling only (docs/belief.md,
+  \"Opacity: the proposition is a mention\"); the operator and an attitude's agent stay
+  transparent.  The marks are read once, unscoped (`tax/mention-marks`).  The schematic
+  rewriting `kb/rewrite-term*` applies afterwards reads no mention mark, except an
+  equality relation's arguments."
   [kb visible? term]
   (representative-term-mention kb visible? (tax/mention-marks (reasoning/taxonomy kb)) term false))
 
@@ -1034,13 +995,9 @@
     :else acc))
 
 (defn displaced-terms-in
-  "The `{old-term representative}` rewrites `sentence` undergoes under `visible?`, computed
-  the way `representative-term` actually rewrites it — so a quoted mention held opaque to a
-  `sameAs` is not reported displaced by `why-not`.  An equality relation's arguments are a
-  mention too (spelling-only), so a `sameAs`-merged term inside a `(sameAs …)` is not
-  recorded displaced either.
-
-  The mention marks are read unscoped, as `representative-term` reads them."
+  "The `{old-term representative}` rewrites `sentence` undergoes under `visible?`, by the
+  traversal `representative-term` rewrites with, so a mention held opaque to a `sameAs` is
+  not reported displaced."
   [kb visible? sentence]
   (displacements-mention kb visible? (tax/mention-marks (reasoning/taxonomy kb)) sentence false {}))
 
@@ -1053,34 +1010,19 @@
     visible? (filterv #(visible? (:handle %)))))
 
 (defn normal-form
-  "`term` (a sentence or a term) in the **equality normal form** the KB stores and asks in:
-  every symbol to its class representative (`representative-term`), then argument terms
-  reduced by the oriented schematic equations visible to the same reader
-  (`rewrite/normalize-sentence`).  Migration and query both go through here, so a stored
-  term and a goal meet at one form.
-
-  Both halves are belief-following and each runs only when its input exists: a KB with no
-  merges pays a representative lookup per symbol, one with no schematic equations skips
-  normalization entirely (`tax/rewrite-rules` is empty).  `visible?` is the supporter
-  predicate already built (`visible-supporter-fn`), so a caller normalizing many sentences
-  under one reader builds it once; nil is the unscoped read, which asks about the KB
-  rather than from a vantage.  `kb/rewrite-term` is the spelling for a caller holding a
-  context instead."
+  "`term` (a sentence or a term) in the equality **normal form** the KB stores and asks in:
+  `representative-term`, then argument terms reduced by the schematic equations the same
+  reader sees (`rewrite/normalize-sentence`).  Migration and query both go through here.
+  `visible?` is a built supporter predicate (`visible-supporter-fn`), nil for the unscoped
+  read; `kb/rewrite-term` takes a context instead."
   [kb term visible?]
   (rewrite/normalize-sentence (rewrite-rules-in kb visible?)
                               (representative-term kb visible? term)))
 
 (defn goal-held-as-spelled?
-  "Is `goal` asked **as spelled**, exempt from the goal rewrite?  Two shapes are.
-
-  * **`different`** — rewriting its arguments would map each to its class representative,
-    so a merged pair would compare equal, and reading class membership is the whole job
-    of `different`.  `provers/DifferentProver` normalizes its own arguments instead.
-  * **A positive equation** (`equation?`) — its arguments are mentions, and a `rewriteOf`
-    spelling rename would turn `(rewriteOf P D)` into the self-edge `(rewriteOf P P)`.
-    The stored equation is never restated, so the goal meets it only as spelled, and
-    `provers/EqualityProver` reads the closure for the symmetric, reflexive and
-    transitive answers."
+  "Is `goal` asked **as spelled**, exempt from the goal rewrite?  A `different` goal is,
+  since its prover reads class membership, and so is a positive equation (`equation?`),
+  whose arguments are mentions (docs/equality.md, \"What a merge does\" step 3)."
   [goal]
   (and (sequential? goal)
        (or (= 'different (nm/functor goal))
@@ -1088,12 +1030,9 @@
 
 (defn goal-normal-form
   "`normal-form` for a **goal**, as `context` sees the merges, except for a goal
-  `goal-held-as-spelled?` exempts.
-
-  A question asked from a context is a question about what that context holds, so a merge
-  it does not inherit must not rename what it asked.  `kb/rewrite-goal` is the read entry points'
-  spelling; `BeliefProjectionProver` calls this one directly, to put a proposition held
-  opaque to the asker into the normal form of the **agent** whose belief it is."
+  `goal-held-as-spelled?` exempts.  `kb/rewrite-goal` is the read entry points' spelling;
+  `BeliefProjectionProver` calls this one to put a proposition into the normal form of
+  the **agent** whose belief it is."
   [kb goal context]
   (if (goal-held-as-spelled? goal)
     goal
@@ -1125,6 +1064,442 @@
    :groups-of  (fn [f _arity] (into #{} (filter #(contains? entries [:commuting f %]))
                                     (tax/commuting-groups tax f)))})
 
+;; ---- an open application read through its corresponding predicate ----------
+;; docs/nat.md, The corresponding predicate.  `kb-sentex` respells a rule here, below
+;; `nat`, because every store and lookup builds its sentex through it.
+
+(def nat-quoting-predicates
+  "Predicates whose expression argument is a verbatim NAT payload, neither reified nor
+  type-checked as a term."
+  '#{natFormula rewriteOf})
+
+(def correspondence-predicate
+  "The declaration relating a NAT function to the predicate stating the same thing."
+  'functionCorrespondingPredicate)
+
+(defn any-corresponding-predicates?
+  "Does the KB declare any `functionCorrespondingPredicate`?  One O(1) functor count."
+  [kb]
+  (pos? (reads/stored-count-with-functor (:index kb) correspondence-predicate)))
+
+(defn believed-correspondences
+  "Believed correspondence declarations as `[function predicate position-or-nil]`
+  triples, kept where `match?` holds of the triple.  Read off the predicate extent and
+  filtered in memory: the declarations are few, while an argument root holds every fact
+  about the predicate.  `reads/believed-with-args` reads both arities in one probe."
+  [kb match?]
+  (when (any-corresponding-predicates? kb)
+    (->> (reads/believed-with-args kb correspondence-predicate {})
+         (keep #(p/get-sentex (:records kb) %))
+         (map :sentence)
+         (filter #(<= 3 (count %) 4))
+         (map (fn [[_ f pr n]] [f pr (when (integer? n) n)]))
+         distinct
+         (filter match?))))
+
+(defn correspondence-of
+  "The `[predicate position]` declared for function `f` applied to `m` arguments, or
+  nil.  `position` defaults to `m + 1`, the value last.  Nil when the KB believes more
+  than one declaration for `f` (docs/nat.md, The corresponding predicate)."
+  [kb f m]
+  (let [ds (believed-correspondences kb #(= f (first %)))]
+    (when (= 1 (count ds))
+      (let [[_ pr n] (first ds)
+            pos      (or n (inc m))]
+        (when (and (symbol? pr) (<= 1 pos (inc m)))
+          [pr pos])))))
+
+(defn insert-at
+  "`args` with `v` spliced in at 1-based `position`."
+  [args position v]
+  (let [i (dec position)]
+    (concat (take i args) [v] (drop i args))))
+
+(def ^:private application-constructs
+  "The antecedent and consequent functors whose literal the respell does not enter: an
+  open application under one leaves the rule as written."
+  (into '#{unknown thereExists forall exists ist and or implies} (keys sx/aggregate-functors)))
+
+(defn correspondence-declarations
+  "Believed correspondence declarations as `[function predicate position-or-nil handle]`
+  rows, in content order of the declaration."
+  [kb]
+  (when (any-corresponding-predicates? kb)
+    (->> (reads/believed-with-args kb correspondence-predicate {})
+         (keep #(p/get-sentex (:records kb) %))
+         (filter #(<= 3 (count (:sentence %)) 4))
+         (map (fn [{[_ f pr n] :sentence h :id}] [f pr (when (integer? n) n) h]))
+         (filter #(symbol? (second %)))
+         (sort-by (fn [[f pr n h]] [(nm/print-key [f pr n]) h])))))
+
+(defn- application-of?
+  "Is `t` an open application of a function `reifiable?` accepts, not a quoting one?"
+  [reifiable? t]
+  (and (seq? t) (seq t) (symbol? (first t))
+       (not (sx/quoting-functor? (first t)))
+       (reifiable? (first t))
+       (not (sx/ground-term? t))))
+
+(defn- variable-application?
+  "Is `t` an application whose functor is a variable, `(?fn AppleTree)`?  A dotted rest
+  pattern, `(?pred . ?args)`, is a sentence pattern and is not one."
+  [t]
+  (and (seq? t) (< 1 (count t)) (sx/variable? (first t)) (not-any? #{'.} t)))
+
+(defn- applications-in
+  "The applications `app?` accepts in `form`, at any nesting, outermost first.  A quoting
+  function's arguments and a quoting predicate's payload are mentions and are not read."
+  [app? form]
+  (when (and (sequential? form) (seq form)
+             (not (sx/quoting-functor? (first form)))
+             (not (contains? nat-quoting-predicates (first form))))
+    (cond->> (mapcat #(applications-in app? %) (if (seq? form) (rest form) form))
+      (app? form) (cons form))))
+
+(defn open-applications
+  "The open applications of a function `reifiable?` accepts in `form`, at any nesting,
+  outermost first (`applications-in`)."
+  [reifiable? form]
+  (applications-in #(application-of? reifiable? %) form))
+
+(defn names-variable-application?
+  "Does `form` hold a variable-functor application, `(?fn AppleTree)`, at any nesting
+  outside a mention?"
+  [form]
+  (boolean (seq (applications-in variable-application? form))))
+
+(defn formula-type?
+  "Is `t` `formula` or a type under it?  Read unscoped, as `formula-position?` reads it."
+  [kb t]
+  (and (symbol? t) (not (sx/variable? t))
+       (or (= 'formula t) (tax/genl?-global (reasoning/taxonomy kb) t 'formula))))
+
+(defn formula-position?
+  "Does a believed `arg`, `argN` or `quotedArg` declaration type position `n` of `pred`
+  as a `formula` or a type under it, as `(arg ist 2 sentence)` does?  Read unscoped: a
+  rule's stored spelling and its hold are one record every reader shares."
+  [kb pred n]
+  (and (symbol? pred) (not (sx/variable? pred))
+       (let [recs     (:records kb)
+             formula? #(formula-type? kb %)
+             proj     (some (fn [[f k]] (when (= k n) f)) sx/arg-projections)
+             decls    (fn [kind] (keep #(:sentence (p/get-sentex recs %))
+                                       (reads/believed-with-args kb kind {1 pred})))]
+         (boolean
+          (or (some (fn [[_ _ k t]] (and (= n k) (formula? t)))
+                    (concat (decls 'arg) (decls 'quotedArg)))
+              (when proj (some (fn [[_ _ t]] (formula? t)) (decls proj))))))))
+
+(defn- respell-walk
+  "The tests a respell in `kb` reads: `fixed?`, an open application of a
+  `reifiable_function` (the mark read unscoped); `app?`, that or a variable-functor
+  application; `formula?`, `formula-position?` memoized for one respell."
+  [kb]
+  (let [tax    (reasoning/taxonomy kb)
+        fixed? (fn [t] (application-of? #(tax/has-prop? tax :reifiable %) t))]
+    {:fixed?   fixed?
+     :app?     #(or (variable-application? %) (fixed? %))
+     :formula? (memoize #(formula-position? kb %1 %2))}))
+
+(defn- arg-app?
+  "The application test for argument `a`, at 0-based index `i` of a literal on `pred`:
+  `fixed?` where a variable-functor compound is a sentence pattern (a construct's
+  argument, or a `formula-position?`), `app?` elsewhere."
+  [{:keys [app? fixed? formula?]} pred i a]
+  (if (and (seq (applications-in variable-application? a))
+           (or (contains? application-constructs pred) (formula? pred (inc i))))
+    fixed?
+    app?))
+
+(defn rule-form?
+  "Is `l` a rule, its wrappers peeled: a generator's consequent, whose applications the
+  rule it generates reads when it is stored?"
+  [l]
+  (sx/implies? (peek (sx/peel-rule-wrapper l))))
+
+(defn holds-variable-application?
+  "Does literal `l` hold a variable-functor application outside a sentence position
+  (`arg-app?`): one a stored rule leaves as written?  A rule `l` is not read
+  (`rule-form?`)."
+  [kb l]
+  (let [walk (delay (respell-walk kb))]
+    (letfn [(holds? [l]
+              (cond
+                (not (and (seq? l) (seq l)))                  false
+                (rule-form? l)                                false
+                (contains? nat-quoting-predicates (first l))  false
+                (and (= 'not (first l)) (= 2 (count l)))      (holds? (second l))
+                :else (boolean (some (fn [[i a]]
+                                       (and (seq (applications-in variable-application? a))
+                                            (= (:app? @walk) (arg-app? @walk (first l) i a))))
+                                     (map-indexed vector (rest l))))))]
+      (holds? l))))
+
+(defn- application-variable
+  "A variable named for `application`: `?`, the function's name with its `Fn` suffix
+  dropped and its first letter lowercased (a variable functor's name as it is), then
+  `suffix`, with a hash of `application` appended where `used` holds it already."
+  [application suffix used]
+  (let [f    (first application)
+        n    (if (sx/variable? f) (subs (name f) 1) (name f))
+        n    (if (and (str/ends-with? n "Fn") (< 2 (count n))) (subs n 0 (- (count n) 2)) n)
+        base (str "?" (str/lower-case (subs n 0 1)) (subs n 1) suffix)]
+    (->> (iterate #(str % "-" (Integer/toString (bit-and (hash application) 0x7fffffff) 36))
+                  base)
+         (map symbol)
+         (remove used)
+         first)))
+
+(defn- declared-position
+  "The value position declaration row `[f pr n h]` gives an application of `m` arguments,
+  or nil when it is out of range."
+  [[_ _ n _] m]
+  (let [pos (or n (inc m))]
+    (when (<= 1 pos (inc m)) pos)))
+
+(defn- rule-readings
+  "The readings of an application of `f` to `m` arguments in a rule, under declaration
+  rows `decls`: one `{:pred :pos :decls}` per distinct believed `[predicate position]`, in
+  content order, `:decls` the handles declaring it.  None for a variable functor."
+  [decls f m]
+  (if (sx/variable? f)
+    []
+    (->> decls
+         (filter #(= f (first %)))
+         (keep (fn [d] (when-let [pos (declared-position d m)] [[(second d) pos] (peek d)])))
+         (group-by first)
+         (map (fn [[[pr pos] ds]] {:pred pr :pos pos :decls (mapv second ds)}))
+         (sort-by #(nm/print-key [(:pred %) (:pos %)]))
+         vec)))
+
+(defn- goal-readings
+  "The readings of an application of `f` to `m` arguments in a goal: `rule-readings`'
+  one where `f` has exactly one, and otherwise one `{:functor :n :pos}` per distinct
+  declaration shape among `f`'s believed declarations (every function's, for a variable
+  `f`), read through a predicate variable."
+  [decls f m]
+  (let [direct (rule-readings decls f m)]
+    (if (= 1 (count direct))
+      direct
+      (->> decls
+           (filter #(or (sx/variable? f) (= f (first %))))
+           (keep (fn [d] (when-let [pos (declared-position d m)] {:functor f :n (nth d 2) :pos pos})))
+           distinct
+           (sort-by #(nm/print-key [(:n %) (:pos %)]))
+           vec))))
+
+(defn- reading-literals
+  "The literals stating `v` is the value of an application to `args` under `reading`;
+  `pv` is the predicate variable a declaration shape reads through."
+  [reading args v pv]
+  (if-let [pr (:pred reading)]
+    [(apply list pr (insert-at args (:pos reading) v))]
+    [(apply list (cond-> [correspondence-predicate (:functor reading) pv]
+                   (:n reading) (conj (:n reading))))
+     (apply list pv (insert-at args (:pos reading) v))]))
+
+(defn- take-reading!
+  "The literals stating `v` is the value of application `t'` to `args`, under the reading
+  `state`'s `:choice` picks for it, or nil when `readings` gives it none.  Records the
+  reading count in `:counts` and the declaring handles in `:decls`."
+  [readings state t' args v]
+  (let [rs (readings (first t') (count args))
+        i  (count (:counts @state))]
+    (vswap! state update :counts conj (count rs))
+    (when (seq rs)
+      (let [r  (nth rs (get (:choice @state) i 0))
+            pv (when-not (:pred r) (application-variable t' "Predicate" (:used @state)))]
+        (vswap! state #(-> % (update :used into (filter sx/variable?) [v pv])
+                           (update :decls conj (:decls r [nil]))))
+        (reading-literals r args v pv)))))
+
+(defn- respell-term
+  "`t` with each application `app?` accepts in it, innermost first, replaced by its value
+  variable; `state` (a volatile `{:vars {application var} :used #{var} :hoisted [lit]
+  :choice [k] :counts [n] :decls [[handle]]}`) gathers the literals of each
+  (`take-reading!`).  Nil when an application has no reading."
+  [app? readings state t]
+  (if (and (seq? t) (seq t) (not (sx/quoting-functor? (first t))))
+    (let [args (doall (map #(respell-term app? readings state %) (rest t)))]
+      (when (every? some? args)
+        (let [t' (apply list (first t) args)]
+          (if-not (app? t')
+            t'
+            (or (get-in @state [:vars t'])
+                (let [v (application-variable t' (if (sx/variable? (first t')) "Value" "") (:used @state))]
+                  (when-let [lits (take-reading! readings state t' args v)]
+                    (vswap! state #(-> % (assoc-in [:vars t'] v) (update :hoisted into lits)))
+                    v)))))))
+    t))
+
+(defn- respell-literal
+  "Literal `l` with its applications replaced (`respell-term`), under a `not` too, as a
+  vector of literals, or nil when it cannot be: an application with no reading, or a
+  construct holding a reifiable one.  `(equals x (F a…))`, either way round, is the
+  reading's own literals with `x` the value.  A rule `l` is returned as it is
+  (`rule-form?`)."
+  [walk readings state l]
+  (cond
+    (or (not (and (seq? l) (seq l))) (rule-form? l) (contains? nat-quoting-predicates (first l)))
+    [l]
+    (and (= 'not (first l)) (= 2 (count l)))
+    (let [inner (respell-literal walk readings state (second l))]
+      (when (= 1 (count inner)) [(list 'not (first inner))]))
+    :else
+    (let [pr  (first l)
+          as  (vec (rest l))
+          a?s (vec (map-indexed #(arg-app? walk pr %1 %2) as))
+          app (:app? walk)]
+      (cond
+        (not (some seq (map applications-in a?s as))) [l]
+        (contains? application-constructs pr) nil
+        (and (= 'equals pr) (= 2 (count as)) (not= (boolean (app (as 0))) (boolean (app (as 1)))))
+        (let [[a x] (if (app (as 0)) as (rseq as))
+              args  (doall (map #(respell-term app readings state %) (rest a)))
+              x'    (respell-term app readings state x)]
+          (when (and x' (every? some? args))
+            (take-reading! readings state (apply list (first a) args) args x')))
+        :else (let [args (doall (map #(respell-term %1 readings state %2) a?s as))]
+                (when (every? some? args) [(apply list pr args)]))))))
+
+(defn- readings-of
+  "Every reading `f` gives, `[[result decls] …]`: the first takes each application's first
+  reading, the rest every other combination.  `f` takes the state volatile
+  `respell-term` reads, seeded with `used`, and answers nil when a literal cannot be
+  respelled; then this is nil."
+  [used f]
+  (let [run     (fn [choice]
+                  (let [state (volatile! {:vars {} :used used :hoisted [] :choice choice
+                                          :counts [] :decls []})]
+                    [(f state) @state]))
+        [r0 s0] (run [])]
+    (when (some? r0)
+      (into [[r0 (:decls s0)]]
+            (map (fn [c] (let [[r s] (run c)] [r (:decls s)])))
+            (rest (reduce (fn [acc n] (for [c acc k (range n)] (conj c k))) [[]] (:counts s0)))))))
+
+(defn- justification-sets
+  "Every set of declaring handles a combination's `decls` (one handle vector per
+  application) reads, one handle per application, sorted."
+  [decls]
+  (into [] (comp (map #(vec (sort (remove nil? %)))) (distinct))
+        (reduce (fn [acc hs] (for [a acc h hs] (conj a h))) [[]] decls)))
+
+(defn- respell-rule
+  "The `implies` form `r` with every open application respelled under `state`'s choice,
+  the literals stating the values added to its antecedents; `r` itself when nothing
+  changed, nil when one cannot be respelled."
+  [walk readings state r]
+  (let [antes0 (vec (sx/rule-antecedents r))
+        conseq (sx/rule-consequent r)
+        antes  (mapv #(respell-literal walk readings state %) antes0)
+        c      (respell-literal walk readings state conseq)]
+    (when (and (every? some? antes) (= 1 (count c)))
+      (let [antes' (into (into [] cat antes) (:hoisted @state))]
+        (if (and (= antes' antes0) (= (first c) conseq))
+          r
+          (sx/rule-sentence antes' (first c)))))))
+
+(defn- map-inner-rule
+  "`form` with `f` applied to the `implies` form its rule wrappers enclose, the wrappers
+  kept; `form` unchanged when it is no rule."
+  [f form]
+  (cond
+    (sx/implies? form) (f form)
+    (not (and (seq? form) (seq form))) form
+    (and (= sx/except-wrapper (first form)) (= 3 (count form)) (not (sx/exceptWhen-meta? form)))
+    (list (first form) (second form) (map-inner-rule f (nth form 2)))
+    (and (= 2 (count form))
+         (or (contains? sx/rule-direction-wrappers (first form))
+             (contains? sx/constraint-rule-wrappers (first form))
+             (contains? #{sx/default-rule-wrapper sx/assumption-rule-wrapper sx/solve-rule-wrapper}
+                        (first form))))
+    (list (first form) (map-inner-rule f (second form)))
+    :else form))
+
+(defn- without-applications
+  "Literal `l` with each outermost application `arg-app?` accepts in its arguments, under
+  a `not` too, replaced by `v`."
+  [walk v l]
+  (letfn [(sub [a? form]
+            (cond
+              (a? form) v
+              (and (seq? form) (seq form) (not (sx/quoting-functor? (first form))))
+              (apply list (first form) (map #(sub a? %) (rest form)))
+              :else form))]
+    (cond
+      (or (not (and (seq? l) (seq l))) (contains? nat-quoting-predicates (first l))) l
+      (and (= 'not (first l)) (= 2 (count l))) (list 'not (without-applications walk v (second l)))
+      :else (apply list (first l) (map-indexed #(sub (arg-app? walk (first l) %1 %2) %2) (rest l))))))
+
+(defn goal-alternatives
+  "Conjunction `goals` read through the believed correspondences, as the vector of
+  conjunctions whose answers the reader merges (docs/nat.md, The corresponding
+  predicate).  An open application of a `reifiable_function` with one believed
+  correspondence reads its predicate; one with several, and a variable-functor
+  application outside a sentence position (`arg-app?`), reads `functionCorrespondingPredicate`
+  and a predicate variable, one conjunction per distinct declaration shape.  An `and` goal
+  is read as its conjuncts.  The literals
+  stating each value come first, innermost application first.  Where an application has
+  no reading, each is replaced by `unmatched`, a term no stored sentex names, so the one
+  conjunction answers nothing.  The declarations and the reifiable mark are read
+  unscoped, so a goal is respelled exactly as the stored rules it reaches are."
+  [kb goals unmatched]
+  (let [walk (respell-walk kb)
+        app  (:app? walk)]
+    (if (not-any? #(and (seq? %) (some (fn [a] (seq (applications-in app a))) (rest %))) goals)
+      [goals]
+      (let [goals (into [] (mapcat (fn conjuncts [g] (if (and (seq? g) (= 'and (first g)))
+                                                       (mapcat conjuncts (rest g))
+                                                       [g])))
+                        goals)
+            decls (delay (correspondence-declarations kb))
+            rs    (readings-of (sx/form-variables goals)
+                               (fn [state]
+                                 (let [gs (mapv #(respell-literal walk (fn [f m] (goal-readings @decls f m))
+                                                                  state %)
+                                                goals)]
+                                   (when (every? some? gs)
+                                     (into (:hoisted @state) cat gs)))))]
+        (if (seq rs)
+          (into [] (comp (map first) (distinct)) rs)
+          [(mapv #(without-applications walk unmatched %) goals)])))))
+
+(def ^:dynamic *as-written*
+  "While true, `kb-sentex` leaves a rule's open applications as written: the spelling
+  `assert` records as a premise's written one (`integrate/spellings-key`)."
+  false)
+
+(defn rule-respellings
+  "Every spelling of rule `sentence` its open applications of a `reifiable_function` read
+  through the believed correspondences, as `[[spelling handle-sets] …]`: one per
+  combination of each application's correspondences, `handle-sets` the sets of
+  declarations it reads.  The first takes each function's content-least correspondence
+  and is the one `kb-sentex` stores; `chain/sync-rule-respellings!` stores the rest.  Nil
+  when `sentence` is no rule, holds no open application, or names a function with no
+  believed correspondence or a variable-functor application (docs/nat.md, The
+  corresponding predicate).  The mark and the declarations are read unscoped: the stored
+  rule is one row every reader shares."
+  [kb sentence]
+  (when (and (not *as-written*) (seq? sentence)
+             (seq (tax/props (reasoning/taxonomy kb) :reifiable)))
+    (let [inner (volatile! nil)]
+      (map-inner-rule #(vreset! inner %) sentence)
+      (when-let [r @inner]
+        (let [walk (respell-walk kb)]
+          (when (seq (applications-in (:fixed? walk) r))
+            (let [decls (delay (correspondence-declarations kb))]
+              (some->> (readings-of (sx/form-variables r)
+                                    #(respell-rule walk (fn [f m] (rule-readings @decls f m)) % r))
+                       (mapv (fn [[r' ds]]
+                               [(map-inner-rule (constantly r') sentence) (justification-sets ds)]))))))))))
+
+(defn respell-applications
+  "Rule `sentence` as `kb-sentex` stores it: the first of `rule-respellings`, or
+  `sentence` unchanged when that is nil."
+  [kb sentence]
+  (or (ffirst (rule-respellings kb sentence)) sentence))
+
 (defn kb-sentex
   "Build a sentex canonicalized against this KB's taxonomy: a symmetric predicate's
   arguments are sorted, so `(siblingOf Bob Ann)` and `(siblingOf Ann Bob)` become the
@@ -1138,11 +1513,12 @@
   The property read is global: the store keys a fact by the sort every stored mark gives
   it, so an asserted form and a probe meet at one key.  While `*spelled-by*` names this sentence's predicate and context, the sort reads only
   the marks it lists, so a spelling a reader reads can be stored and looked up
-  (`spelling-planner`)."
+  (`spelling-planner`).  A rule's open applications are read through their corresponding
+  predicates first (`respell-applications`)."
   [kb sentence context]
   (let [tax (reasoning/taxonomy kb)
         [p ctx entries] *spelled-by*]
-    (sx/sentex sentence context
+    (sx/sentex (respell-applications kb sentence) context
                (if (and p (= ctx context) (= p (permuted-functor sentence)))
                  (spelling-opts tax entries)
                  {:symmetric? #(tax/has-prop? tax :symmetric %)
@@ -2272,36 +2648,14 @@
        (sub-predicates kb (first sentence) view-context)))))
 
 (defn retired-for?
-  "Does `sentence` name a term the reader has retired — i.e. is it *not* in normal form
-  for that reader?  Asked term by term rather than by building the rewritten sentence,
-  since the answer is a disjunction and the first displaced symbol settles it.  Each symbol
-  reaches the election only when `merged?` holds for it (one `contains?` against a
-  snapshot held by the caller), so an unmerged sentence never reaches the
-  election.  `visible` is the caller's **delay** over the supporter memo, forced only by a
-  symbol that got that far.  Public for the reads whose match shape `without-retired`
-  cannot take — `qcn-kb/refuted-pairs` yields `[handle a b]` triples with no sentex at
-  index 2, so it filters with this directly.
-
-  **A sentence that quotes takes the mention-aware read instead.**  Inside a quoted
-  position — a quoting function's arguments, or the proposition an attitude attributes to
-  its agent — a symbol is retired by a *spelling* rename and not by a `sameAs` / `equals`
-  identity merge, which makes the flat per-symbol shortcut unsound there and would retire a
-  belief nobody renamed.  Whether the sentence quotes at all is asked only of a sentence
-  the flat read finds a displaced symbol in, since that is necessary for either read to
-  move it: a symbol a spelling rename moves has its identity representative moved too (a
-  `rewriteOf` loser is never elected, and a component's preferred heads are heads of the
-  class holding it), and an unmerged one is its own representative and its own spelling.
-  So a sentence in normal form answers false on the one `merged?` walk the flat read
-  takes, and never pays for `any-mention-position?`.
-
-  **An equality relation's arguments are mentions too** (`equality-mention-heads`): a
-  `sameAs` merge does not restate `(not (sameAs A B))`, so the flat read, which would
-  call `B` retired, is confirmed against the structural walk before it drops the
-  sentence.  A positive **equation** is never retired at all (`equation?`): migration
-  never restates one, so dropping it would leave a believed equation that no read
-  returns under any spelling.
-
-  The mention marks are read unscoped, as `representative-term` reads them."
+  "Does `sentence` name a term the reader has retired, so that it is not in that reader's
+  normal form?  `visible` is the caller's **delay** over the supporter memo and `merged?`
+  its partition snapshot (`tax/merged-term-pred`), so an unmerged sentence answers false on
+  one `merged?` walk and never forces `visible`.  A positive equation is never retired
+  (`equation?`).  A sentence with a mention position, an equality relation's arguments
+  included, is confirmed against the mention-aware walk before it is called retired.
+  Public for `qcn-kb/refuted-pairs`, whose `[handle a b]` rows `without-retired` cannot
+  take."
   [kb visible merged? sentence]
   (let [marks (tax/mention-marks (reasoning/taxonomy kb))]
     (cond
@@ -2322,26 +2676,10 @@
           (not= (representative-term-plain kb @visible sentence) sentence)))))
 
 (defn without-retired
-  "Drop the matches whose stored spelling `view-context` has **retired** — the
-  reader-scoped half of supersession.
-
-  `jtms/superseded` holds a spelling out of belief once its own context elects another,
-  and that is per *datum*: a sentex lives in one context, so one flag answers for one
-  context.  Staleness is per *reader*.  A fact stated above a merge is believed where it
-  lives — its own context was told nothing — while a context below the merge sees both it
-  and the twin migration placed there, and would otherwise report one fact twice, under
-  two names it knows denote one thing.  This drops the spelling that reader has retired
-  and leaves the one it elected, which is what makes a count over an answer set mean
-  something (docs/equality.md).
-
-  **This runs only when the closure is non-empty**, so a KB that has merged nothing —
-  every KB until somebody states an equality — pays one deref for the whole query, and one
-  that has pays a `contains?` per symbol of each match against a snapshot taken once here,
-  before anything else runs.  The scoped-supporter memo is built behind a `delay`, since
-  most matches in a KB with a handful of merges name none of the merged terms and the
-  question never reaches it.  A variable or nil `view-context` is the unscoped read and
-  filters nothing: it asks about the KB rather than from a vantage, exactly as the class
-  reads do."
+  "Drop the `matches` whose stored spelling `view-context` has **retired**: the
+  reader-scoped half of supersession (docs/equality.md, \"The reader is not the fact's own
+  context\").  Filters nothing when the closure is empty, one deref, or when
+  `view-context` is nil or a variable, the unscoped read."
   [kb view-context matches]
   (let [merged? (tax/merged-term-pred (reasoning/taxonomy kb))]
     (if-not (and merged? (symbol? view-context) (not (sx/variable? view-context)))
@@ -2442,7 +2780,7 @@
      (visible-matches kb sentence view-context)
      (let [[canonical rename] (lc/canonicalize sentence)]
        (lc/rename-matches
-        rename
+        unify rename
         (lc/lookup (reasoning/matches kb)
                    [canonical view-context
                     *hierarchical-retrieval* *arg-root-retrieval* *structural-index*
@@ -2759,7 +3097,7 @@
 
   Antecedents are substituted **before** planning, not after, so the planner costs
   them against real values — `count-at [parentOf Tom]` is an exact count where
-  `parentOf` with an unknown-but-bound first argument is only an average branch.
+  `parentOf` with a bound but unknown first argument is costed at the whole extent.
   Pushing the substituted literals is equivalent to pushing the originals, because
   every binding map they are later substituted with extends this one.
 
@@ -3096,7 +3434,7 @@
               ;; rides the goal stack rather than being checked at the rule frame because
               ;; this chainer solves antecedents by *pushing* them — there is no other
               ;; moment at which "the argument is now complete" is observable.  A marker is
-              ;; a **vector**, and a goal never is (see `core/goal-conjunction`), so the two
+              ;; a **vector**, and a goal never is (see `quasiquote/prepare-conjunction-for-read`), so the two
               ;; are told apart structurally.
               (guard-marker? (first goals))
               (recur (cond-> stack

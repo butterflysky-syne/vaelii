@@ -1,134 +1,12 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.asp.edge
-  "The real ASP backend behind `vaelii.impl.types.solve/Solver` — the edge solver.
-
-  `solve.clj` describes *what* an edge solve is: most of the KB is monotonic or
-  default-true with no conflict, so only the contested defeasible nodes are sent,
-  known-true content is fixed background, and contradictions are soft and
-  prioritized so a solve never fails.  This namespace renders that `Program` to
-  ASPIF and reads an answer set back.
-
-  ## The encoding
-
-  Each contested assumption is a **choice atom**: true means believed, false means
-  defeated.  Known-true (`:fixed`) members of a contradiction are *not* atoms —
-  they hold by assumption, which is exactly what makes them background.
-
-  A contradiction `#{h1 h2 ...}` becomes a violation atom derived from its
-  contested members:
-
-      v :- a_h1, a_h2, ...
-
-  and a **weak** constraint minimizing `v`.  Weak rather than hard is the whole
-  point: an unsatisfiable contradiction costs, it does not make the program UNSAT,
-  so it comes back in `:violated` instead of throwing.
-
-  A nogood carrying `:hard true` (a `set/hardConstraint` rule ground by
-  `solve-context`) is instead a **hard integrity constraint**
-
-      :- a_h1, a_h2, ...
-
-  with no violation atom and no minimize term: a model satisfying its whole body is
-  excluded outright.  That is what makes graph 3-coloring plain satisfaction rather
-  than optimality-proving over soft violations — an adjacency clash is never
-  tradeable.  Soft nogoods (the default) keep the minimize path above.
-
-  A solve's **normal rules** (`program`'s `:derivations`, ground from `set/solveRule`s by
-  `solve-context`) are rendered as they are written,
-
-      d :- a_1, ..., not a_k.
-
-  over the choice atoms and the **derived** atoms (`:derived`), which get atoms after the
-  choices and carry no choice rule and no minimize term: the rules alone decide them.  A
-  hard nogood left with no atom holds in every model and renders as the empty integrity
-  constraint.
-
-  A **cardinality** entry (`program`'s `:cardinalities`, ground from a `asp/atMost` /
-  `asp/atLeast` rule) is a bound on how many of a set of choice heads may or must hold,
-  rendered as ONE weight-body statement rather than the `C(n, k+1)` subset nogoods a
-  hand-written encoding needs.  A hard bound is a weight-body integrity constraint
-
-      :- k+1 <= #count{ a_m1, a_m2, ... }        # at-most-k: never k+1 together
-
-  a soft one derives a violation atom the same minimize path penalizes
-
-      v :- k+1 <= #count{ ... }                  # breaching the bound costs, not excludes
-
-  and at-least-`k` is the mirror over the default-negated members (`card-encoding`).
-
-  In practice `:violated` comes back empty, and that is correct rather than a gap.
-  An irreducible known-true clash never reaches a solver: `decide/verdict`
-  classifies it as *hard* and reports it directly, and `solve/program` drops any nogood
-  with no contested member.  What does arrive always has a contested member, and
-  defeating that member always satisfies it.
-  The `:doomed` path below is therefore defensive — it adds no work and stays
-  correct if nogoods ever grow beyond today's `S` vs `(not S)` pairs.
-
-  ## The objective, most significant first
-
-  Higher ASPIF minimize priorities dominate lower ones, so the levels are:
-
-  | level | minimizes | why |
-  |---|---|---|
-  | `2 + rank(p)` | violation atoms | satisfy contradictions, caller priority first |
-  | `1` | defeated assumptions | give up as little belief as possible |
-  | `0` | a content-keyed weight | break remaining ties *stably* |
-
-  Caller priorities are mapped through their ascending rank rather than used as
-  levels directly, so any integers work and none can collide with the two levels
-  below.
-
-  ## Determinism
-
-  A tie between equally-good answer sets has no principled winner, but it must not
-  depend on assertion order — the engine-wide invariant in docs/nmtms.md.  Atom ids
-  are allocated in `solve/content-key` order, and level 0 weights defeating the
-  greatest content-key most cheaply, mirroring the stub's choice.  Same knowledge
-  in any order, same answer set.
-
-  ## Availability
-
-  `edge-solver` degrades rather than fails **when there is no backend at all**: with no
-  clingo and no clasp reachable it delegates to `solve/local-solver`, so installing it is
-  always safe.  Degradation is confined to that case on purpose — see below.
-
-  ## A result that is not an answer
-
-  A backend's result is an answer set only at `:optimum` or `:sat`.  `:interrupted`
-  (the solve limit, `config/asp-solve-limit`; the time limit, `config/asp-time-limit`;
-  or a signal) and `:unknown` carry **no** witness, and every reader here maps an atom's
-  absence to *defeated* or *not kept* — so read as an answer, an empty result defeats
-  every contested assumption and labels every choice head false.  Each reader runs only when
-  `answered?` holds.
-
-  **With a backend present, `edge-solver` decides nothing rather than degrading.**  The
-  stub and ASP disagree — measured on two nogoods sharing a member, the stub defeats
-  `{1,3}` where the optimum defeats `{2}` — and the two are not interchangeable halves of
-  one answer.  A labeling solve that runs out of budget while the classification solve
-  beside it finishes would pair a stub labeling with an ASP classification, which
-  `label/check-agrees` reports as `:labeling-inconsistent`, blaming the encoding for a
-  disagreement the fallback introduced.  A labeling committed from such a pair would
-  differ run to run on identical knowledge — the order-independence invariant in
-  docs/nmtms.md is a claim about *knowledge*, and a wall clock is not knowledge.  So `undecided` is
-  returned instead: no defeat, the contested assumptions all stand, and `:error` names
-  what went wrong for a caller that can act on it.  With no backend the two degrade
-  together and stay consistent for free — `classify-program` claims nothing without one —
-  which is why that case, and only that case, still falls back.
-
-  A backend that **throws** — clingo's `:solver-failed`, clasp's `:solver-unavailable`,
-  a JNA `Error` against a missing libclingo — reads the same way, and the catch is here
-  rather than at the caller because this is the boundary a native failure crosses.
-  `undecided` hands the failure back as data, and `label/solved-labeling` raises its
-  `:error` before the labeling asserts anything.
-
-  `:unsat` is different and keeps its own reading: a definite *no model*, the same answer
-  in every run, so it costs the invariant nothing.  Each reader has a word for it —
-  `edge-solver` degrades, `kept-of` keeps nothing, `enumerate-optima` is empty.
-
-  The imperative readers (`kept-of`, `enumerate-optima`, `classify-program`) refuse an
-  unanswered result with `:solver-failed` rather than return a world nobody computed.
-  They are not mid-arbitration, so a throw there adds no work and says more."
+  "`edge-solver`, the ASP implementation of `vaelii.impl.types.solve/Solver`.  `translate`
+  renders a `Program` to ASPIF, and the readers read a backend's answer set back:
+  `interpret` for `edge-solver`, `kept-of`, `enumerate-optima` and `classify-program` for
+  the imperatives.  A reader runs only on an answer (`answered?`); the imperative readers
+  refuse any other result with `:solver-failed`.  The encoding, the objective levels,
+  determinism and the no-answer policy: docs/asp.md."
   (:require
    [taoensso.trove :as trove]
    [vaelii.impl.asp.aspif :as aspif]
@@ -187,38 +65,19 @@
        :assumptions [handle ...]        ; in content-key order
        :doomed     [nogood ...]}        ; all-fixed, unsatisfiable without solving
 
-  `:tiebreak?` (default true) emits the level-0 content-keyed objective that makes
-  the optimum unique.  Solving for *one* labeling wants it — an arbitrary choice
-  still has to be a stable one.  Enumerating optima wants it **off**: it is an
-  arbitrary preference, not a semantic constraint, and leaving it in collapses every
-  tie to a single answer set, which would report a genuinely open choice as forced.
-  `label/classify-program` is the caller that turns it off.
-
-  `:keep-belief?` (default true) emits the level-1 objective that minimizes defeated
-  assumptions — keep as much belief as possible.  Turning it **off** makes the solve
-  plain *satisfaction* rather than optimization: with no minimize term clingo stops at
-  the first model instead of proving cost-optimality over the choice atoms, which is
-  the difference between finishing and not at scale (a 10k-node graph 3-coloring).  A
-  caller turns it off only when the program's hard constraints already determine what must be
-  chosen (e.g. a hard at-least-one), so \"keep as much as possible\" adds nothing."
+  `:tiebreak?` (default true) emits the level-0 content-keyed objective, which makes the
+  optimum unique; an enumeration turns it off (docs/asp.md, \"Two things keep `classify`
+  from reporting a tie as forced\").  `:keep-belief?` (default true) emits the level-1
+  objective minimizing defeated assumptions; `do/label :sat` turns it off (docs/solving.md,
+  \"The three modes\")."
   ([program] (translate program {}))
   ([{:keys [assumptions contradictions derived derivations] :as program}
     {:keys [tiebreak? keep-belief?] :or {tiebreak? true keep-belief? true}}]
    (let [ordered   (nm/sort-by-content-key #(solve/content-key program %) compare assumptions)
-         ;; a solve's derived atoms (`solve/program`'s `:derivations` arity): atoms its normal
-         ;; rules decide, allocated after the choices in the same content order
+         ;; a solve's derived atoms, allocated after the choices in the same content order
          ordered-d (nm/sort-by-content-key #(solve/content-key program %) compare derived)
-         ;; the nogoods too: a caller hands them in arrival order, and every emission
-         ;; below — the violation-atom interning, the constraints, the minimize and
-         ;; show statements — walks this seq, so an unsorted one renders two logically
-         ;; identical programs as different ASPIF text and (without the tiebreak) two
-         ;; different first-found optima for one KB.  The key is a COMPARABLE STRUCTURE
-         ;; (a vector `compare` orders directly), not a printed string, and it is built
-         ;; ONCE per nogood here — not by the sort's key fn, which `sort-by` re-invokes
-         ;; on every comparison.  A printed key computed in the sort would do both: it
-         ;; re-renders the whole nogood and re-`content-key`s every member, O(n log n)
-         ;; times over the nogood set, which measures ~12× slower to ground a large
-         ;; 3-colouring than leaving the nogoods in arrival order does.
+         ;; the nogoods and cardinality entries in content order, since every emission
+         ;; below walks them; each key is a vector built once per entry, not per comparison
          contradictions (let [ck #(solve/content-key program %)]
                           (->> contradictions
                                (map (fn [ng]
@@ -228,9 +87,6 @@
                                        ng]))
                                (sort-by first)
                                (mapv second)))
-         ;; Cardinality entries sorted the same content-keyed way, for the same reason:
-         ;; every emission below walks this seq, so an unsorted one renders two logically
-         ;; identical programs as different ASPIF text.
          cardinalities (let [ck #(solve/content-key program %)]
                          (->> (:cardinalities program)
                               (map (fn [c]
@@ -242,36 +98,24 @@
                               (mapv second)))
          n         (count ordered)
          table     (atoms/new-table)
-         ;; Allocate in content-key order so atom ids never depend on assertion order.
          atom-of   (into {} (map (fn [h] [h (atoms/intern-sentex! table h)]))
                          (concat ordered ordered-d))
          ;; a nogood member is an atom when it is a choice or a derived atom; any other is
          ;; fixed background (a nogood's known-true members)
          atom?     (fn [h] (contains? atom-of h))
-         ;; Sorted by atom id — and therefore by content, since that is how atoms were
-         ;; allocated.  A nogood's members are sets, so an unsorted body would put
-         ;; literals in hash order and render two logically identical programs as
-         ;; different text.  `pos` are members forbidden to hold together (`:nogood`);
-         ;; `neg` are members forbidden to be absent together (`:neg`, e.g. an
-         ;; at-least-one), emitted as default-negated literals.
+         ;; a body sorted by atom id, which is content order; `neg` members render
+         ;; default-negated
          pos       (fn [ng] (sort-by atom-of (filter atom? (:nogood ng))))
          neg       (fn [ng] (sort-by atom-of (filter atom? (:neg ng))))
          involved  (fn [ng] (concat (pos ng) (neg ng)))
-         ;; A fixed `:neg` member is an assumed-true one: its default-negated literal
-         ;; is false, so the body can never hold and the nogood constrains nothing.
-         ;; Dropping only the member instead would *tighten* the constraint — models
-         ;; nothing forbade would be excluded, or penalized.
+         ;; a fixed `:neg` member is assumed true, so the body never holds; dropping only
+         ;; the member would tighten the nogood
          vacuous?  (fn [ng] (not-every? atom? (:neg ng)))
          grounded  (remove vacuous? contradictions)
          doomed    (filterv (comp empty? involved) grounded)
          live      (remove (comp empty? involved) grounded)
-         ;; A `:hard` nogood is an integrity constraint (no witness atom, no minimize);
-         ;; the rest are soft, minimized violations.
          hard-live (filter :hard live)
          soft-live (remove :hard live)
-         ;; A cardinality entry's members map to their atoms (sorted, so the weight body
-         ;; is content-ordered), then `card-encoding` gives its weight body or drops it as
-         ;; vacuous.  Members are contested heads, so all have atoms.
          card-specs (into []
                           (keep (fn [c]
                                   (let [member-atoms (vec (sort (keep atom-of (:members c))))
@@ -280,8 +124,7 @@
                           cardinalities)
          hard-cards (filter :hard card-specs)
          soft-cards (remove :hard card-specs)
-         ;; Caller priorities become levels by ascending rank, clear of 0 and 1 — a soft
-         ;; cardinality breach costs at its own priority alongside the soft nogoods.
+         ;; caller priorities become levels by ascending rank, clear of 0 and 1
          levels    (into {} (map-indexed (fn [i p] [p (+ 2 i)]))
                          (sort (distinct (concat (map :priority soft-live)
                                                  (map #(:priority % 1) soft-cards)))))
@@ -290,8 +133,7 @@
          stmts     (concat
                     ;; believed-or-defeated
                     (map (fn [h] (aspif/choice (atom-of h))) ordered)
-                    ;; a solve's normal rules: head :- the positive atoms, not the negated
-                    ;; ones.  Sorted by content, as every other emission is
+                    ;; a solve's normal rules, sorted
                     (->> derivations
                          (map (fn [{:keys [head pos neg]}]
                                 [(atom-of head)
@@ -299,53 +141,41 @@
                                               (map - (sort (map atom-of neg)))))]))
                          sort
                          (map (fn [[h body]] (if (seq body) (aspif/rule h body) (aspif/fact h)))))
-                    ;; a hard nogood with no atom left holds in every model (a required atom
-                    ;; nothing derives), so no model is admissible
+                    ;; a hard nogood with no atom left holds in every model
                     (when (some :hard doomed) [(aspif/constraint [])])
                     ;; hard: forbid any model in which the whole (signed) body holds
                     (map (fn [ng] (aspif/constraint
                                    (concat (mapv atom-of (pos ng))
                                            (mapv #(- (atom-of %)) (neg ng)))))
                          hard-live)
-                    ;; v :- the whole signed body holds — every `:nogood` member true
-                    ;; and every `:neg` member absent, the same body the hard branch
-                    ;; forbids.  Positive members alone would emit a `:neg`-only
-                    ;; nogood's witness as an unconditional fact: always violated,
-                    ;; never steering.
+                    ;; soft: v :- the whole signed body, the body the hard branch forbids
                     (mapcat (fn [[ng v]]
                               [(aspif/rule v (concat (mapv atom-of (pos ng))
                                                      (mapv #(- (atom-of %)) (neg ng))))
-                               ;; a minimize / priority soft carries its per-head weight
-                               ;; (`:weight`); an ordinary soft costs 1
                                (aspif/minimize (levels (:priority ng)) [[v (:weight ng 1)]])])
                             v-atoms)
-                    ;; hard cardinality: ONE weight-body integrity constraint per group —
-                    ;; `:infeasible` (a `asp/atLeast` bound no group can meet) is an empty
-                    ;; integrity constraint, which excludes every model.
+                    ;; hard cardinality: one weight-body integrity constraint per group, an
+                    ;; empty one when `:infeasible`
                     (map (fn [{:keys [enc]}]
                            (if (= :infeasible enc)
                              (aspif/constraint [])
                              (aspif/weight-constraint (first enc) (second enc))))
                          hard-cards)
-                    ;; soft cardinality: the bound derives a violation atom the minimize
-                    ;; path penalizes, so breaching it costs rather than excludes.  An
-                    ;; infeasible soft bound is an unconditional violation (always costs).
+                    ;; soft cardinality: a violation atom, a fact when `:infeasible`
                     (mapcat (fn [[{:keys [enc priority]} v]]
                               [(if (= :infeasible enc)
                                  (aspif/fact v)
                                  (aspif/weight-rule v (first enc) (second enc)))
                                (aspif/minimize (levels (or priority 1)) [[v 1]])])
                             card-v)
-                    ;; keep as much belief as possible: a defeated atom is a false one.
-                    ;; Off ⇒ plain satisfaction (no optimization to prove) — see the docstring.
+                    ;; level 1: a defeated assumption is a false atom
                     (when (and keep-belief? (seq ordered))
                       [(aspif/minimize level-defeat-count
                                        (mapv (fn [h] [(- (atom-of h)) 1]) ordered))])
-                    ;; stable tiebreak: cheapest to defeat is the greatest content-key
+                    ;; level 0: cheapest to defeat is the greatest content-key
                     (when (and tiebreak? (seq ordered))
                       [(aspif/minimize level-tiebreak
                                        (map-indexed (fn [i h] [(- (atom-of h)) (- n i)]) ordered))])
-                    ;; labels are how the answer set comes back
                     (map (fn [h] (aspif/show (atom-of h) (atoms/label-of-atom table (atom-of h))))
                          (concat ordered ordered-d))
                     (map (fn [[_ v]] (aspif/show v (atoms/label-of-atom table v))) v-atoms)
@@ -360,16 +190,14 @@
       :doomed      doomed})))
 
 (defn- answered?
-  "Is `result` an answer set — an optimum proven, or a model found with nothing to
-  optimize?  `:unsat` is a definite *no model*, which each reader handles on its own
-  terms; `:interrupted` and `:unknown` are no result at all (see the ns docstring)."
+  "Is `result` an answer set: `:optimum` or `:sat`?  Each reader handles `:unsat` on its
+  own terms."
   [result]
   (contains? #{:optimum :sat} (:status result)))
 
 (defn- unanswered-ex
   "The `:solver-failed` exception for a result that is not an answer, naming the mode
-  and the status.  A *value* rather than a throw, because `edge-solver` carries it back
-  in `:error` where the imperative readers raise it."
+  and the status, as a value `edge-solver` returns in `:error`."
   [mode result]
   (ex-info (str "the ASP backend returned no answer for a " (name mode)
                 " solve: " (name (:status result :unknown))
@@ -384,32 +212,18 @@
   (throw (unanswered-ex mode result)))
 
 (defn- backend-failed-ex
-  "`e` — whatever the backend threw — as one `:solver-failed`-shaped exception.
-
-  The backends fail in several currencies: `clingo/chk!` raises `:solver-failed` with
-  the `:op` that returned zero, clasp raises `:solver-unavailable` when the binary is
-  not there, and a JNA lookup against a missing or wrong-ABI libclingo raises an
-  `Error` carrying no data at all.  A caller ranking a failure wants one shape, so the
-  original `ex-data` is kept (its `:type` wins, since `:solver-unavailable` says more
-  than the generic one) and the throwable rides as the cause."
+  "`e`, whatever the backend threw, as one exception: `:type :solver-failed` unless
+  `e`'s own `ex-data` names a type, which wins, and `e` as the cause (docs/asp.md, \"A
+  backend that throws\")."
   [^Throwable e]
   (ex-info (str "the ASP backend failed: " (or (ex-message e) (.getName (class e))))
            (merge {:type :solver-failed} (ex-data e))
            e))
 
 (defn- interpret
-  "Read `result`'s answer set back into the `Solver` contract.  `result` has been
-  `answered?`-checked by the caller.
-
-  `:violated` is ordered **highest caller priority first, then by content** — the
-  `Solver` contract in `solve.clj`.  Taken as they come, the witnesses arrive in
-  violation-atom order and the `:doomed` ones ahead of them, which is `translate`'s
-  nogood sort: a key of `[members priority hard]` that omits `:sentence`, so two
-  constraint rules grounding to the same choice heads at the same priority tie, and
-  `sort-by`'s stability then decides the reading by which arrived first.  Sorting here
-  rather than widening that key keeps the cost off the grounding path — the nogood sort
-  runs over every nogood a program has, this one over the handful that could not be
-  satisfied, which in practice is none (see the ns docstring)."
+  "Read an answered `result` back into the `Solver` contract.  `:violated` is ordered
+  highest caller priority first, then by sentence.  `translate`'s nogood key omits
+  `:sentence`, so the order is set here, over the violated nogoods alone."
   [{:keys [table by-label assumptions doomed]} result]
   (let [true-labels (set (:atoms result))
         defeated    (into #{} (remove #(true-labels (atoms/label-of-atom table (atoms/atom-of-sentex table %))))
@@ -423,17 +237,10 @@
                 nm/compare-form violated)}))
 
 (defn kept-of
-  "The chosen-true assumption handles of one `:label` answer set, and the derived atoms
-  true in it, read back through
-  translation `t`'s atom table — the single-answer-set counterpart to `interpret`'s
-  defeat set (kept = assumptions − defeated).  `solve-context`'s `:one` mode reads a
-  labeling with it.  An `:unsat` result carries no true labels, so this returns `#{}`
-  (nothing kept); an `:interrupted` or `:unknown` one is refused (`:solver-failed`),
-  since its empty atom list would read the same way and mean nothing.  A `:best-effort`
-  result — the lowest-cost model a cancelled optimization still had in hand — reads like
-  an answer: its true labels are a valid labeling, unproven-optimal, which the imperative
-  `:one` caller wants over nothing.  The belief path (`edge-solver`) does NOT come here;
-  it holds `answered?` to a proven result so a wall clock never moves belief (ns docstring)."
+  "The chosen-true assumption handles and the true derived atoms of one `:label` result,
+  read through translation `t`'s atom table; `do/label :one` and `:sat` read a labeling
+  with it.  An `:unsat` result keeps `#{}`, a `:best-effort` one is read as an answer, and
+  an `:interrupted` or `:unknown` one is refused (`:solver-failed`)."
   [{:keys [table assumptions derived]} result]
   (when-not (or (answered? result) (contains? #{:unsat :best-effort} (:status result)))
     (unanswered! :label result))
@@ -453,15 +260,9 @@
   brave/cautious reasoning over its optimal answer sets — in every optimum, in some,
   in none.
 
-  `:fixed` handles are reported `:true`: known-true background is assumed by every
-  model, which is what makes it background rather than something the solver decides.
-  With no ASP backend every contested assumption is genuinely one of several options,
-  so it is reported `:supportable` and nothing is claimed forced or excluded.  An
-  enumeration the backend did not finish is refused (`:solver-failed`): a cautious set
-  read off a cut-short stream would call forced what was merely not yet ruled out.
-
-  Below `vaelii.core` on purpose: the classification is a property of the encoding and
-  the backend, not of any KB.  `asp.label` re-exports it for the KB-level callers."
+  `:fixed` handles are `:true`.  With no ASP backend every contested assumption is
+  `:supportable`.  An enumeration the backend did not finish is refused (`:solver-failed`).
+  `asp.label` re-exports it."
   [{:keys [assumptions fixed] :as program}]
   (let [base {:true (set fixed) :supportable #{} :false #{}}]
     (cond
@@ -480,24 +281,14 @@
          :false       (into #{} (remove in-some) assumptions)}))))
 
 (defn enumerate-optima
-  "Every optimal answer set of `program`, each as the **set of its chosen-true
-  assumption handles** — the raw material for materializing one labeling context per
-  answer set (docs/solving.md).
+  "Every optimal answer set of `program`, each as the set of its chosen-true assumption
+  handles, from an `:all-optima` solve of the tiebreak-off encoding:
 
-  Uses the solver's `:all-optima` mode over the **tiebreak-off** encoding, so genuinely
-  tied optima come back as distinct witnesses rather than collapsing to one.  A witness's
-  atom labels are mapped back through `handles-of`.
+  * `[]`        — no assumptions, or an `:unsat` program;
+  * `nil`       — no ASP backend;
+  * `[#{h} …]`  — one handle set per optimum otherwise.
 
-  Returns:
-  * `[]`        — no assumptions (nothing to decide; the caller makes no labeling);
-  * `nil`       — no ASP backend (enumeration needs one; the caller reports that);
-  * `[#{h} …]`  — one handle-set per optimum otherwise.
-
-  With assumptions but no nogoods every choice can be kept, so the single optimum keeps
-  them all; a `functional`/`disjoint`/`¬` clash is what splits the optima apart.  A
-  program whose hard constraints admit no model is `:unsat` and enumerates to `[]`; an
-  enumeration the backend did not finish is refused (`:solver-failed`) rather than
-  returned as the optima it happened to reach."
+  An enumeration the backend did not finish is refused (`:solver-failed`)."
   [{:keys [assumptions] :as program}]
   (cond
     (empty? assumptions)      []
@@ -508,21 +299,14 @@
           {:keys [witnesses]}   (if (or (answered? result) (= :unsat (:status result)))
                                   result
                                   (unanswered! :all-optima result))]
-      ;; distinct: two optimal *models* can project to the same set of chosen
-      ;; assumptions (they differ only in violation atoms), and those are one labeling
+      ;; two optimal models that differ only in violation atoms are one labeling
       (into [] (distinct) (map #(handles-of table %) witnesses)))))
 
 (defn- undecided
   "The `Solver` answer for a solve that produced no answer set with a backend present:
-  **nothing is decided**.  No defeat, so every contested assumption stands exactly as it
-  did; `:violated` still carries the `:doomed` nogoods, which `translate` settled without
-  solving anything.  `:error` is the `ExceptionInfo` naming why, for a caller that can act
-  on it — `asp.label`'s `solved-labeling` raises it, so an imperative refuses with
-  `:solver-failed` instead of committing a labeling nobody computed.
-
-  Deciding nothing rather than degrading is what keeps belief a function of knowledge
-  rather than of a wall clock (see the ns docstring), and returning it rather than
-  throwing is what keeps a native failure from unwinding an arbitration in progress."
+  no defeat, `:violated` holding the `:doomed` nogoods, and `:error` the exception naming
+  why, which `asp.label`'s `solved-defeat` raises (docs/asp.md, \"Refuse rather than
+  degrade, whenever a backend is present\")."
   [t ^Throwable err]
   (trove/log! {:level :error :id ::no-answer-set
                :msg  (str "deciding nothing — " (ex-message err))
@@ -530,27 +314,19 @@
   {:defeat #{} :violated (vec (:doomed t)) :error err})
 
 (def edge-solver
-  "An ASP-backed `solve-types/Solver`.  Install with `(core/set-solver kb edge-solver)`.
-
-  Falls back to `solve/local-solver` when **no** ASP backend is reachable, so this is
-  safe to install unconditionally; check `(solver/available?)` if you need to know which
-  one will run.  With a backend present it answers from the backend or decides nothing —
-  it never mixes the two, and it never throws (see the ns docstring, and `undecided`)."
+  "The ASP `solve-types/Solver`, `(core/set-solver kb :asp)`.  With no ASP backend
+  reachable it is `solve/local-solver`; with one it answers from the backend or decides
+  nothing (`undecided`), and throws only a `VirtualMachineError`."
   (reify solve-types/Solver
     (solve [_ program]
       (let [{:keys [aspif] :as t} (translate program)]
         (cond
-          ;; nothing contested — only the structurally hopeless remain
+          ;; nothing contested: only the `:doomed` nogoods remain
           (nil? aspif)             {:defeat #{} :violated (vec (:doomed t))}
           (not (solver/available?)) (solve-types/solve solve/local-solver program)
           :else
-          ;; Only the backend call is guarded, and it is guarded against `Throwable`:
-          ;; a native call fails as an `Error` (a JNA `LinkageError`) as readily as an
-          ;; exception, and a failure there comes back as `:error` for the caller to
-          ;; raise (`label/solved-labeling` does) before it writes.  Two exceptions: a
-          ;; `VirtualMachineError` (out of memory, stack overflow) is the JVM's and is
-          ;; rethrown, and an interrupt decides nothing with the thread's flag put back,
-          ;; so the interrupt that was meant to stop the caller still reaches it.
+          ;; `Throwable`, since a native call fails as a JNA `Error` too; a
+          ;; `VirtualMachineError` is rethrown, and an interrupt keeps the thread's flag
           (let [result (try (solver/solve t :label)
                             (catch VirtualMachineError e (throw e))
                             (catch InterruptedException e
@@ -560,18 +336,11 @@
             (cond
               (answered? result) (interpret t result)
               (:error result) (undecided t (:error result))
-              ;; `:unsat` should be unreachable — every nogood a dilemma program holds
-              ;; is soft — and is a definite answer wherever it does arrive: the same
-              ;; program is `:unsat` in every run, so the stub's reading of it is stable
-              ;; and costs the order-independence invariant nothing.
+              ;; a dilemma program's nogoods are all soft, so `:unsat` is unreachable
               (= :unsat (:status result))
               (do (trove/log! {:level :warn :id ::unsat
                                :msg  "the ASP program was unsatisfiable; deciding with the local solver"
                                :data {:assumptions (count (:assumptions t))}})
                   (solve-types/solve solve/local-solver program))
-              ;; `:interrupted` / `:unknown` (no witness), and `:best-effort` (a witness,
-              ;; but one a longer budget might improve): all decide nothing here.  The
-              ;; imperative `:one` reader takes a `:best-effort` model — a caller asked for
-              ;; a labeling under a deadline — but belief must not turn on a wall clock, so
-              ;; this path holds out for a proven answer and otherwise leaves the round be.
+              ;; `:interrupted`, `:unknown` and `:best-effort` all decide nothing
               :else (undecided t (unanswered-ex :label result)))))))))

@@ -32,7 +32,7 @@
   bookkeeping (`natFormula`, `result`) rides real vocabulary."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
-            [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.test-util :as tu]))
 
 (use-fixtures :each (tu/neutral-fresh #(doto (tu/fresh) (tu/load-core!))))
@@ -63,13 +63,13 @@
                       'CxUniverse)]
       (testing "the assertion is accepted, its sides reified to symbols"
         (is (some? h))
-        (is (every? nat/reified-nat-symbol? (rest (:sentence (v/sentex kb h))))))
+        (is (every? nat-read/reified-nat-symbol? (rest (:sentence (v/sentex kb h))))))
       (testing "the reified NATs merge — a fact about Alice's mother holds of Bob's"
         (is (= [{'?c NYC}] (v/ask kb (list livesIn (list MotherOf Bob) '?c) 'CxUniverse))))
       (testing "and they resolve to one class"
         (is (v/same-class? kb
-                           (nat/dedup-constant kb (list MotherOf Alice))
-                           (nat/dedup-constant kb (list MotherOf Bob)))))
+                           (nat-read/dedup-constant kb (list MotherOf Alice))
+                           (nat-read/dedup-constant kb (list MotherOf Bob)))))
       (testing "retracting the equation is belief-following: Bob's mother separates,"
         (v/retract! kb h)
         (is (empty? (v/ask kb (list livesIn (list MotherOf Bob) '?c) '?ctx))))

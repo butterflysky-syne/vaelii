@@ -245,13 +245,7 @@
   [sentex] (some? (constraint-of sentex)))
 
 ;; ---- negation as failure: `unknown` antecedents --------------------------
-;; An `(unknown S)` antecedent is closed-world negation inline in the rule body, the
-;; per-literal cousin of `exceptWhen`: the rule does not conclude for a binding under
-;; which `S` is derivable.  Like an exception it is re-evaluated (never stored) and
-;; drives the same block / sweep / revive machinery — so the accessors below mirror
-;; the exception ones, and `special`/`settle` read both.  (A standalone positive
-;; `thereExists` is desugared away in the sentex constructor, so it is an ordinary
-;; antecedent here, not a NAF one.)  See docs/naf.md.
+;; The accessors mirror the exception ones.  See docs/naf.md, "In a rule antecedent".
 
 (defn naf-antecedents-of
   "The `(unknown S)` antecedent literals of a raw rule *sentence* — for the checks
@@ -302,32 +296,13 @@
   (boolean (seq (different-antecedents sentex))))
 
 (defn watched-literals
-  "The literals a re-check must actually watch for the query literal `q` — the frames
-  peeled off until what is left is something a *fact* can carry.
-
-  A query operator's own functor is not one: no sentex is stored under `unknown`,
-  `thereExists` or `agg/count`, so a rule registered in the re-check index under one is
-  registered under a predicate nothing ever arrives on, and no fact can ever queue it.
-  The condition would then be evaluated correctly and re-evaluated never, which reads as
-  a guard that holds whatever happens.
-
-  So each frame yields what it reads: an `unknown` its conjuncts (recursively — a
-  conjunction is watched conjunct by conjunct, since it starts holding when the *last*
-  of them does), a `thereExists` its body, a `forall` its desugared NAF, an aggregate
-  its census body.  An `(and …)`
-  is peeled for the same reason and reached the same way: nothing is stored under `and`,
-  and a conjunction under a quantifier is a **joined** query (docs/naf.md) whose every
-  conjunct can be the one that completes it.  Anything else is a literal a fact can
-  carry, and is watched as itself.
-
-  A `not` frame is deliberately **not** peeled: the trigger side keys an arriving
-  `(not S)` under `not` too (`special/recheck-on-sentence` reads the sentence's own
-  functor), so the two agree — coarsely, one bucket for every negated condition, but
-  they agree, and peeling one side alone is what would break it.
-
-  One function for both readers: an `unknown` antecedent's query, and an `exceptWhen`
-  conjunct — which may itself be any of these, `exceptWhen`'s query being any closed
-  level-6 goal."
+  "The literals a re-check watches for query literal `q`, an `unknown` antecedent's query
+  or an `exceptWhen` conjunct: each query-operator frame peeled, recursively, to what it
+  reads (an `unknown`'s conjuncts, a `thereExists`'s body, a `forall`'s desugared NAF, an
+  aggregate's census body, an `and`'s conjuncts), and anything else as itself.  No sentex
+  is stored under a query operator's functor, so no fact arrives on one.  A `not` frame is
+  not peeled, because `special/recheck-on-sentence` keys an arriving `(not S)` under `not`
+  too (docs/naf.md, \"`S` may be a conjunction\")."
   [q]
   (cond
     (sx/unknown? q)      (mapcat watched-literals (sx/naf-query-conjuncts q))
@@ -347,36 +322,26 @@
   (keep nm/functor (mapcat watched-literals queries)))
 
 (defn- naf-queries-of
-  "The query literals one `(unknown …)` antecedent is evaluated as: its conjuncts
-  (`sentex/naf-query-conjuncts`), each unwrapped to what the level-6 query reads.
-
-  **Every** conjunct, because the antecedent is only maintained if all of them are
-  watched: a conjunction blocks when all hold, so a fact arriving on any one of their
-  predicates can be what makes the whole condition hold, and a rule keyed on the first
-  conjunct alone would never be re-checked for the others."
+  "The query literals one `(unknown …)` antecedent is watched by: `watched-literals` of
+  every conjunct."
   [unk]
   (mapcat watched-literals (sx/naf-query-conjuncts unk)))
 
 (defn naf-predicates-of
-  "The predicates a raw rule *sentence*'s `unknown` antecedents mention — for the
-  stratification check on a rule not yet stored (the mirror of the exception's
-  negative dependence)."
+  "The predicates a raw rule *sentence*'s `unknown` antecedents mention, for the
+  stratification check on a rule not yet stored."
   [rule-sentence]
   (keep nm/functor (mapcat naf-queries-of (naf-antecedents-of rule-sentence))))
 
 (defn naf-predicates
-  "The predicates a rule's `unknown` antecedents mention — the keys the re-check index
-  posts the rule under, so a fact arriving or leaving on one re-evaluates the NAF
-  condition.  The exception analogue is `exception-predicates`; both feed the same
-  `[:exception-index …]` index."
+  "The predicates a stored rule's `unknown` antecedents mention: its keys in the
+  `[:exception-index …]` re-check index."
   [sentex]
   (keep nm/functor (mapcat naf-queries-of (naf-antecedents sentex))))
 
 (defn naf-queries
-  "The inner query literals of a rule's `unknown` antecedents (each conjunct, unwrapped
-  past a `thereExists`), so the settle-time firing filter can shape them against a
-  trigger exactly as it shapes an exception's conjuncts — the ground ones narrow, the
-  existential ones fall through to 'keep' like any non-flat conjunct."
+  "The inner query literals of a rule's `unknown` antecedents (`naf-queries-of`), for
+  the settle-time firing filter."
   [sentex]
   (mapcat naf-queries-of (naf-antecedents sentex)))
 
@@ -419,14 +384,18 @@
   [sentex]
   (watched-predicates (aggregate-antecedents sentex)))
 
+(defn condition-queries-of
+  "The queries a raw rule *sentence*'s re-check conditions read: every conjunct of its
+  `unknown` antecedents, and its aggregate antecedents, which `watched-literals` peels to
+  their census bodies.  The closed-extent, separation-denial and negates-denial re-check
+  keys of a rule are read off these."
+  [rule-sentence]
+  (concat (mapcat sx/naf-query-conjuncts (naf-antecedents-of rule-sentence))
+          (aggregate-antecedents-of rule-sentence)))
+
 ;; ---- a closed extent: `(not (P …))` read as negation as failure ----------
-;; `(closed_extent_predicate P)` is a context-scoped grant that P's **believed** extent is
-;; complete, so nothing being stored about `(P a)` is enough to conclude `(not (P a))`
-;; (docs/naf.md).  In a rule body that turns a *closed* negative antecedent into a NAF
-;; literal: withheld from the join, decided at derive time, and maintained on the same
-;; re-check index `unknown` uses.  `(closedExtentForArg P n v)` grants the same for the
-;; goals whose argument n is v.  The structural half lives here; whether a grant is in
-;; force is a taxonomy read the callers pass in.
+;; The structural half; the callers pass the taxonomy that says whether a grant is in
+;; force.  See docs/naf.md, "Under the grant, a negative antecedent is NAF".
 
 (defn negative-literal?
   "Is `a` a `(not (P …))` literal with a flat, symbol-headed body — the form a closed
@@ -436,14 +405,8 @@
        (let [b (second a)] (and (sequential? b) (symbol? (first b))))))
 
 (defn closed-negative-antecedents
-  "The `(not L)` antecedents of `antes` every variable of which another **generator**
-  antecedent binds — the negative literals that are a *test* rather than a source of
-  bindings.
-
-  Only these can be read as negation as failure.  A negative antecedent whose variable
-  nothing else binds is what *produces* that binding, by matching a stored `(not …)`;
-  withholding it from the join would leave the rule with nothing to fire on, which is a
-  silently inert rule rather than a different reading."
+  "The `(not L)` antecedents of `antes` every variable of which a generator antecedent
+  binds: the only negative literals a closed extent reads as negation as failure."
   [antes]
   (let [gens  (remove #(or (sx/unknown? %) (sx/deferred-literal? %) (negative-literal? %))
                       antes)
@@ -451,27 +414,18 @@
     (filterv #(and (negative-literal? %) (every? bound (sx/free-vars %))) antes)))
 
 (defn closed-extent-declared?
-  "Does `tx` declare a closed extent on `pred` anywhere — whole, by
-  `closed_extent_predicate`, or for some argument value, by `closedExtentForArg`?
-
-  Unscoped and blind to the grant's position and value.  The callers are the join, the
-  re-check index and the stratification graph, and each over-approximates safely: a
-  literal selected here is decided at derive time by the full level-6 question in the
-  conclusion's context, which `ClosedExtentProver` answers only where a grant matching the
-  literal is visible."
+  "Does `tx` declare a closed extent on `pred` in any context, by
+  `closed_extent_predicate` or by a `closedExtentForArg` of any position and value?  The
+  join, the re-check index and the stratification graph read this over-approximation;
+  derive time decides each selected literal in the conclusion's context."
   [tx pred]
   (or (tax/has-prop? tx :closed-extent pred)
       (tax/has-prop? tx :closed-extent-arg pred)))
 
 (defn closed-extent-antecedents
   "The closed negative antecedents of `antes` whose predicate `tx` declares a closed
-  extent (`closed-extent-declared?`) — read **unscoped**, because the join has no
-  placement context to scope by, and an over-selected literal is one derive time decides
-  correctly anyway: it asks the full level-6 question in the conclusion's context, which a
-  context without the grant answers exactly as it does today.
-
-  It runs only when the KB declares any closed extent at all, so a KB not using the
-  feature pays two set reads on the join path and stops."
+  extent (`closed-extent-declared?`), unscoped.  Two set reads and `[]` when the KB
+  declares no closed extent."
   [tx antes]
   (if (and (empty? (tax/props tx :closed-extent)) (empty? (tax/props tx :closed-extent-arg)))
     []
@@ -479,13 +433,33 @@
              (closed-negative-antecedents antes))))
 
 (defn closed-extent-predicates-of
-  "The predicates a raw rule *sentence*'s closed-extent negative antecedents read — the
-  re-check keys the index posts the rule under, and the negative edges the stratification
-  graph reads.  The key is the predicate **inside** the `not`: `recheck-on-sentence` posts
-  an arriving sentence under its own functor *and* its underlying body's, so this one key
-  catches a `(P a)` arriving and a `(not (P a))` arriving alike."
+  "The predicates inside a raw rule *sentence*'s closed-extent negative antecedents: its
+  re-check keys and its negative edges."
   [tx rule-sentence]
   (keep #(nm/functor (second %)) (closed-extent-antecedents tx (antecedents rule-sentence))))
+
+(defn closed-extent-query-predicates
+  "The predicates of the `(not (P …))` literals a re-check watches in `queries`
+  (`watched-literals`) on which `tx` declares a closed extent (`closed-extent-declared?`).
+  These are the extra re-check keys and negative edges of a closed-extent negative inside
+  an `unknown` antecedent, an aggregate body or an `exceptWhen` query: the literal is
+  posted under `not`, and
+  a `(P …)` arriving or leaving moves it while posting under `P` alone."
+  [tx queries]
+  (distinct (for [l     (mapcat watched-literals queries)
+                  :when (negative-literal? l)
+                  :let  [p (nm/functor (second l))]
+                  :when (closed-extent-declared? tx p)]
+              p)))
+
+(defn closed-extent-recheck-predicates-of
+  "The re-check keys a raw rule *sentence*'s closed-extent negatives post it under, and
+  its negative edges on them: the antecedents' (`closed-extent-predicates-of`) and those
+  nested in its `unknown` antecedents and aggregate bodies (`condition-queries-of`,
+  `closed-extent-query-predicates`)."
+  [tx rule-sentence]
+  (distinct (concat (closed-extent-predicates-of tx rule-sentence)
+                    (closed-extent-query-predicates tx (condition-queries-of rule-sentence)))))
 
 (defn separation-denial-predicates
   "The types a separation's denial can move a negated literal of `queries` on, as the
@@ -507,23 +481,41 @@
      p)))
 
 (defn separation-denial-predicates-of
-  "`separation-denial-predicates` of a raw rule *sentence*'s `unknown` antecedents: the
-  extra keys the re-check index posts the rule under beside `recheck-predicates`
-  (`special/index-rule-sentex`), a taxonomy read as `closed-extent-predicates-of` is."
+  "`separation-denial-predicates` of a raw rule *sentence*'s `unknown` antecedents and
+  aggregate bodies (`condition-queries-of`): the extra keys the re-check index posts the
+  rule under beside `recheck-predicates` (`special/index-rule-sentex`), a taxonomy read as
+  `closed-extent-predicates-of` is."
   [tx rule-sentence]
-  (separation-denial-predicates tx (mapcat sx/naf-query-conjuncts
-                                           (naf-antecedents-of rule-sentence))))
+  (separation-denial-predicates tx (condition-queries-of rule-sentence)))
+
+(defn negates-denial-predicates
+  "The predicates a `negates` declaration's denial can move a negated literal of
+  `queries` on, as the re-check index's extra keys: for each `(not (P …))` a re-check
+  watches (`watched-literals`), every predicate declared to negate `P` or a supertype of
+  it (`tax/negates-over`, unscoped, a superset over every reader).
+  `provers/NegatesProver` answers `(not (P …))` from a believed tuple of such a
+  predicate's spec subtree, and the trigger fans the tuple up to the predicate
+  (`special/recheck-on-predicate`).  Empty, off one map read, on a KB declaring no
+  `negates`."
+  [tx queries]
+  (if-not (tax/negates? tx)
+    ()
+    (distinct
+     (for [l     (mapcat watched-literals queries)
+           :when (negative-literal? l)
+           [_ r] (sort (tax/negates-over tx (first (second l))))]
+       r))))
+
+(defn negates-denial-predicates-of
+  "`negates-denial-predicates` of a raw rule *sentence*'s `unknown` antecedents and
+  aggregate bodies, as `separation-denial-predicates-of` reads them."
+  [tx rule-sentence]
+  (negates-denial-predicates tx (condition-queries-of rule-sentence)))
 
 (defn has-nested-naf?
-  "Does this rule carry a NAF query with a **NAF inside it** — a nested `(unknown …)`,
-  or an aggregate under the quantifier?
-
-  The distinction is about which direction an arriving fact moves the condition.  A
-  plain `(unknown S)` is antitone in what the KB derives: a fact can only make `S`
-  derivable, so it can only *block*.  A nested one is not — `(unknown (thereExists ?y
-  (and (childOf Bob ?y) (unknown (asleep ?y)))))` is the `forall` desugar, and an
-  arriving `(asleep …)` removes the witness and **releases** the block.  So such a rule
-  is owed a re-join whatever the blocked set did, exactly as an aggregate is."
+  "Does an `unknown` query of this rule carry a nested `(unknown …)` or an aggregate, so
+  that an arriving fact can release its block (docs/naf.md, \"`forall` is sugar for a
+  nested `unknown`\")?"
   [sentex]
   (boolean (some (fn [unk] (sx/some-form #(or (sx/unknown? %) (sx/aggregate? %))
                                          (second unk)))
@@ -1123,6 +1115,16 @@
                    (rewrap inner dir def? assum con (sx/solve-wrapped? sentence)))]
       [nil sentence])))
 
+(defn exceptWhen-not-a-rule
+  "The refusal an inline `(exceptWhen <query> X)` earns when X is not a rule, as a problem
+  map, or nil.  An exception blocks a rule's conclusions, and a fact has none; `assert`
+  throws it, `check` reports it and an import skips the frame."
+  [exc inner]
+  (when-not (rule-sentence? (inner-rule inner))
+    {:type :not-well-formed :sentence inner :exception (vec exc)
+     :message (str "exceptWhen qualifies a rule, and " (pr-str inner) " is not one: an"
+                   " exception blocks what a rule concludes, and a fact concludes nothing")}))
+
 ;; ---- generators: a rule whose consequent is a rule -----------------------
 ;; `(implies <antes> (implies <inner-antes> <inner-conseq>))` — a **generator**, whose
 ;; firing generates the inner rule with its holes filled.  The scoping rule is
@@ -1312,9 +1314,16 @@
 ;; at all, by both storage entry points and by `core/check` alike.
 
 (defn- some-disjunction
-  "The first `or` anywhere in `form`, or nil."
+  "The first `or` anywhere in `form`, arguments included, or nil."
   [form]
   (sx/some-form sx/disjunction? form))
+
+(defn- literal-disjunction
+  "The first `or` standing in a literal position of `form`, or nil.  The positions are
+  the ones `nm/applied-literals` descends, which treats an `or` as a literal and
+  descends no argument, so an `or` in an argument slot is a term and is not returned."
+  [form]
+  (some (fn [[_ lit]] (when (sx/disjunction? lit) lit)) (nm/applied-literals form)))
 
 (defn- malformed
   "The `:not-well-formed` problem an `or` in a position nothing expands carries.  The
@@ -1358,7 +1367,7 @@
     (vec (mapcat #(antecedent-disjunction-problems sentence %) (rest lit)))
 
     (sx/negation? lit)
-    (if (some-disjunction (second lit))
+    (if (literal-disjunction (second lit))
       [(malformed
         sentence {:literal lit}
         (str "or cannot stand under not: (not (or A B)) is \"neither A nor B\", which is"
@@ -1368,7 +1377,7 @@
       [])
 
     (sx/unknown? lit)
-    (if (some-disjunction (second lit))
+    (if (literal-disjunction (second lit))
       [(query-body-problem sentence "unknown"
                            (str "(unknown (or A B)) is \"neither A nor B is derivable\","
                                 " so write (unknown A) and (unknown B) as two"
@@ -1376,14 +1385,14 @@
       [])
 
     (sx/there-exists? lit)
-    (if (some-disjunction (nth lit 2))
+    (if (literal-disjunction (nth lit 2))
       [(query-body-problem sentence "thereExists"
                            (str "there is no rewrite that keeps one witness: write one"
                                 " rule per alternative, each with its own thereExists"))]
       [])
 
     (sx/aggregate? lit)
-    (if (some-disjunction (sx/aggregate-body lit))
+    (if (literal-disjunction (sx/aggregate-body lit))
       [(query-body-problem sentence (name (first lit))
                            (str "a count over a union is not the sum of two counts —"
                                 " a witness satisfying both alternatives would be"
@@ -1469,9 +1478,10 @@
   carry no `or` at all.
 
   Four families, reported in that order so the sharpest complaint comes first: an `or`
-  in a position nothing expands (a conclusion, a closed-query body, an exception, a
-  standalone sentence), an empty `(or)`, a rule wider than `max-alternatives`, and an
-  alternative the consequent is not range-restricted over.
+  in a position nothing expands (a conclusion, a closed-query body, an exception, under
+  `not`), an empty `(or)`, a rule wider than `max-alternatives`, and an alternative the
+  consequent is not range-restricted over.  A sentence that is not a rule reads empty:
+  `sx/connective-problems` refuses a standalone `or` and a `not` over one.
 
   A **generator** is read level by level: every level's antecedents may disjoin, since
   the mint expands what it stores, and only the innermost level's consequent is a
@@ -1483,25 +1493,17 @@
     []
     (let [[_ _ exc _ _ inner] (sx/peel-rule-wrapper sentence)]
       (if-not (rule-sentence? inner)
-        (if (sx/disjunction? inner)
-          [(malformed
-            sentence {}
-            (str "a disjunction is not one assertable sentence: nothing decides which"
-                 " alternative holds, and belief is a label on a sentex rather than on a"
-                 " set of them.  As a rule antecedent an or expands to one rule per"
-                 " alternative; as a conclusion, offer the alternatives to a solve with"
-                 " set/assumptionRule (docs/solving.md)"))]
-          [])
+        []                              ; `sx/connective-problems` refuses a fact's `or`
         (let [levels     (nesting inner)
               innermost  (peek levels)
               structural (-> (vec (for [level levels
                                         lit   (:antecedents level)
                                         p     (antecedent-disjunction-problems sentence lit)]
                                     p))
-                             (into (when (some-disjunction (:consequent innermost))
+                             (into (when (literal-disjunction (:consequent innermost))
                                      [(consequent-disjunction-problem
                                        sentence (:consequent innermost))]))
-                             (into (for [q exc :when (some-disjunction q)]
+                             (into (for [q exc :when (literal-disjunction q)]
                                      (exception-disjunction-problem sentence q))))]
           (if (seq structural)
             structural
@@ -1641,6 +1643,19 @@
       c)))
 
 ;; ---- the rule indexes' writes ---------------------------------------------
+
+(def ^:dynamic *stratification-memo*
+  "nil, or a volatile an `assert` or a `settle` binds, holding the stored half of the
+  stratification graph that `checks/stratification-readers` builds once and reuses across
+  the write's or the pass's checks.  Every write to the rule indexes below empties it, as
+  does a rule's engines moving (`forget-stratification`)."
+  nil)
+
+(defn forget-stratification
+  "Empty `*stratification-memo*`: a stored rule's graph node moved."
+  []
+  (when-let [m *stratification-memo*] (vreset! m nil)))
+
 ;; A rule is posted under each antecedent key in the `:rule-antecedent` count trie and under
 ;; its consequent key in `:rule-consequent`, each ending in the rule's context; a watched
 ;; rule is posted in the `:exception-index` set of each predicate its re-check condition
@@ -1658,12 +1673,14 @@
   compute the keys."
   [index handle ante-keys conseq-key context]
   (p/family-apply! index (rule-family-ops :post handle ante-keys conseq-key context))
+  (forget-stratification)
   nil)
 
 (defn unindex-rule!
   "Retire rule `handle`, stated in `context`, from the keys `index-rule` posted it under."
   [index handle ante-keys conseq-key context]
   (p/family-apply! index (rule-family-ops :retire handle ante-keys conseq-key context))
+  (forget-stratification)
   nil)
 
 (defn- watched-ops [op handle preds]
@@ -1675,6 +1692,7 @@
   `[:rules]` set whatever `preds` holds."
   [index handle preds]
   (p/family-apply! index (watched-ops :post handle preds))
+  (forget-stratification)
   nil)
 
 (defn unindex-exception!
@@ -1682,6 +1700,7 @@
   `[:rules]` set."
   [index handle preds]
   (p/family-apply! index (watched-ops :retire handle preds))
+  (forget-stratification)
   nil)
 
 (defn direct-concluders

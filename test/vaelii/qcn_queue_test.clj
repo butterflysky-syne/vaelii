@@ -1,47 +1,20 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.qcn-queue-test
-  "The arc queue against the reference sweep — a parity oracle, not a behaviour test.
-
-  `qcn/path-consistent` visits every triple once and then revisits only the ones a
-  narrowing could have affected (PC-2).  `qcn/path-consistent-naive` re-sweeps all
-  n(n-1)(n-2) triples every pass.  They must agree on **every** input: the same tightened
-  network, constraint for constraint, and the same inconsistency verdict.  They can,
-  because both compute the unique greatest fixpoint below the network they were handed —
-  tightening only narrows and composition is monotone in ⊆, so which triples are visited
-  in which order decides how many revisits it takes and nothing else.
-
-  Randomized, over four algebras of different sizes (3, 8, 9 and 13 base relations) and
-  several node counts, seeded so a failure reproduces from the seed printed with it.  The
-  networks are deliberately harsh — random disjunctions on random pairs, so a good share
-  of them are unsatisfiable and the verdict path is exercised as hard as the fixpoint."
+  "`qcn/path-consistent`, `path-consistent-from` and `path-consistent-with-support`
+  against the re-sweeping reference `path-consistent-naive`: a seeded parity oracle over
+  four algebras (3, 8, 9 and 13 base relations), plus the first-look and budget routes."
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
             [vaelii.impl.interval :as iv]
             [vaelii.impl.orientation :as dir]
             [vaelii.impl.qcn :as qcn]
-            [vaelii.impl.space :as space]))
+            [vaelii.impl.space :as space]
+            [vaelii.qcn-test :as qt]))
 
-;; ---- a toy point algebra, alongside the three that ship ------------------
-
-(def ^:private point-universe #{:lt :eq :gt})
-
-(def ^:private point-converse {:lt :gt, :eq :eq, :gt :lt})
-
-(def ^:private point-composition
-  {:lt {:lt #{:lt}    :eq #{:lt}    :gt point-universe}
-   :eq {:lt #{:lt}    :eq #{:eq}    :gt #{:gt}}
-   :gt {:lt point-universe  :eq #{:gt}    :gt #{:gt}}})
-
-(def ^:private point-algebra
-  {:universe point-universe
-   :identity #{:eq}
-   :compose  (fn [s1 s2]
-               (into #{} (mapcat (fn [a] (mapcat (fn [b] (get-in point-composition [a b])) s2))) s1))
-   :converse (fn [rels] (into #{} (map point-converse) rels))})
-
+;; the toy point algebra beside three that ship
 (def ^:private algebras
-  {:point    point-algebra
+  {:point    qt/point-algebra
    :rcc8     space/rcc8-algebra
    :cardinal dir/direction-algebra
    :allen    iv/allen-algebra})
@@ -98,10 +71,6 @@
                (pr-str (first bad)))))))
 
 (deftest both-report-the-same-inconsistency-verdict
-  ;; the verdict is what a query actually keys on, and it is the half a network-equality
-  ;; check would silently pass if both implementations returned `:inconsistent` for
-  ;; different reasons.  Counted, so the case is known to be exercised rather than hoped
-  ;; to be.
   (let [algebra (:allen algebras)
         nodes   (mapv #(symbol (str "I" %)) (range 7))
         rnd     (java.util.Random. 4242)
@@ -115,8 +84,6 @@
     (is (some (fn [[a _]] (not a)) results) "and some of them really are not")))
 
 (deftest the-support-carrying-pass-tightens-to-the-same-network
-  ;; the support variant runs the queue too, so it has to agree with the reference as
-  ;; well — support rides along, it does not change what is derived
   (let [algebra (:rcc8 algebras)
         nodes   (mapv #(symbol (str "R" %)) (range 8))
         rnd     (java.util.Random. 7)]
@@ -131,9 +98,6 @@
           (is (= a (:network b))))))))
 
 (deftest the-queue-does-not-depend-on-the-order-of-the-nodes
-  ;; the property the queue must not have cost us: the node order decides which triples
-  ;; are visited first and which pairs seed the queue, and it must still land on the same
-  ;; fixpoint
   (let [algebra (:cardinal algebras)
         rnd     (java.util.Random. 99)
         nodes   (mapv #(symbol (str "P" %)) (range 6))]
@@ -144,8 +108,6 @@
                                (qcn/path-consistent net (shuffle ns) algebra))))))))))
 
 (deftest a-network-a-sweep-cannot-report-is-refused-by-both
-  ;; the two shapes that are unsatisfiable *as given*, which no triple ever visits: both
-  ;; drivers must take the same up-front exit
   (let [algebra (:point algebras)]
     (testing "a constraint handed in already empty"
       (let [net '{[A B] #{:lt} [B A] #{:gt} [X Y] #{} [Y X] #{}}]
@@ -157,10 +119,6 @@
         (is (= :inconsistent (qcn/path-consistent-naive net (nodes-of net) algebra)))))))
 
 ;; ---- the warm start -------------------------------------------------------
-;; `path-consistent-from` closes a network by starting from the answer for a network it
-;; narrows and revisiting only the triples reading a pair that moved.  It has to agree with
-;; the reference sweep at every step of a narrowing sequence — which is what a KB being
-;; loaded produces, one arriving fact at a time.
 
 (defn- narrowed
   "One arriving fact: intersect a random pair of `net` with a random relation set, writing
@@ -181,22 +139,15 @@
           n            [4 7 10]
           seed         [1 2 3 4 5]]
     (let [rnd   (java.util.Random. (+ seed (* 100 n) (* 10000 (hash nm))))
-          ;; the nodes arrive over the walk rather than all at once, which is what a KB
-          ;; being loaded does — a pair naming a node the previous network never held is
-          ;; the ordinary case, not the corner one
+          ;; the nodes arrive over the walk rather than all at once
           v     (mapv #(symbol (str "N" %)) (range n))
-          ;; walk a narrowing sequence, warm-starting each step off the last answer and
-          ;; checking it against a run that starts from nothing
           bad   (loop [net {}, prior nil, step 0, bad nil]
                   (if (or bad (= step (* 3 n)))
                     bad
                     (let [net'  (narrowed rnd algebra v net)
                           fresh (qcn/path-consistent-naive net' (nodes-of net') algebra)
-                          ;; **no node set** on the warm call: a warm start is taken when
-                          ;; facts have arrived, and an arriving fact names nodes neither
-                          ;; the previous network nor the caller holds, so reading them off
-                          ;; the merged network is part of the contract rather than a
-                          ;; convenience.  Passing `nodes-of` here would hide a miss.
+                          ;; no node set on the warm call: it reads them off the merged
+                          ;; network, and passing `nodes-of` here would hide a miss
                           warm  (if (and prior (qcn/narrowing-of? net' net algebra))
                                   (qcn/path-consistent-from net' prior nil algebra)
                                   (qcn/path-consistent net' (nodes-of net') algebra))]
@@ -210,21 +161,17 @@
                (pr-str bad))))))
 
 (deftest a-widening-is-not-a-narrowing
-  ;; the precondition, stated as a test because a caller getting it wrong is the one way
-  ;; the warm start returns a network tighter than the facts license
   (let [algebra (:point algebras)]
     (is (qcn/narrowing-of? '{[A B] #{:lt}} '{[A B] #{:lt :eq}} algebra))
     (is (qcn/narrowing-of? '{[A B] #{:lt}} '{[A B] #{:lt}} algebra))
     (is (not (qcn/narrowing-of? '{[A B] #{:lt :eq}} '{[A B] #{:lt}} algebra)))
     (testing "a pair that has gone away is the universe, so it widens unless it was one"
       (is (not (qcn/narrowing-of? '{} '{[A B] #{:lt}} algebra)))
-      (is (qcn/narrowing-of? '{} {'[A B] point-universe} algebra)))
+      (is (qcn/narrowing-of? '{} {'[A B] qt/universe} algebra)))
     (testing "and a new pair is a narrowing of the universe it was not recorded at"
       (is (qcn/narrowing-of? '{[A B] #{:lt} [C D] #{:gt}} '{[A B] #{:lt}} algebra)))))
 
 (deftest the-warm-start-reaches-an-inconsistency-the-sweep-reaches
-  ;; the verdict half, as for the queue: a narrowing that empties a constraint only by
-  ;; composition must be found from a warm start too, where no triple sweep runs at all
   (let [algebra (:point algebras)
         ;; A < B < C, then C ≤ A — unsatisfiable, and only the composition says so
         prior-net '{[A B] #{:lt} [B A] #{:gt} [B C] #{:lt} [C B] #{:gt}}
@@ -236,9 +183,6 @@
     (is (= :inconsistent (qcn/path-consistent-from net prior (nodes-of net) algebra)))))
 
 (deftest an-algebra-whose-universe-does-not-compose-to-itself-is-still-tightened
-  ;; the loop skips a triple whose two inputs are both unknown, and only when the algebra
-  ;; makes that provably a no-op.  Here it does not — composing the universe with itself
-  ;; loses a relation — so nothing may be skipped, and the unknown pair must still narrow.
   (let [universe #{:a :b}
         algebra  {:universe universe
                   :identity #{:a}
@@ -253,11 +197,6 @@
         "X?Z was unknown and both routes to it are unknown, and it still tightens")))
 
 ;; ---- the first look need not be a sweep ---------------------------------
-;; A network read out of a KB records a constraint at a handful of pairs, and under a
-;; jointly-exhaustive algebra a triple reading two unknowns narrows nothing — so the
-;; recorded pairs are the only ones a first pass can learn from, and a sweep of every
-;; triple is n(n-1)(n-2) visits to find that out.  The queue starts from them instead,
-;; under a budget, and falls back to sweeping when the network turns out to close dense.
 
 (defn- sweeps
   "`[answer sweep-count]` for one pass — how many full sweeps of every triple it made."
@@ -302,11 +241,6 @@
         "and it is the answer the re-sweeping reference reaches")))
 
 (deftest an-algebra-that-composes-the-universe-smaller-is-not-seeded-from-recorded-pairs
-  ;; The seed rests entirely on `no-op?`: only where the universe composes to itself is an
-  ;; unrecorded pair provably incapable of narrowing on a first look.  Where it does not,
-  ;; a network recording *nothing at all* still tightens — every pair to what the universe
-  ;; composes to — and a run that seeded from the recorded pairs would seed from nothing,
-  ;; drain nothing, and answer that the network was already closed.
   (let [algebra {:universe #{:a :b}
                  :identity #{:a}
                  :compose  (fn [_ _] #{:a})       ; the universe composes to a proper subset
@@ -320,9 +254,6 @@
     (is (= (qcn/path-consistent-naive net ns algebra) answer))))
 
 (deftest a-dense-network-falls-back-to-sweeping
-  ;; the estimate cannot see how much a network will narrow, so the budget is what bounds
-  ;; how wrong it can be — the drain gives up, keeps what it narrowed, and the sweep route
-  ;; finishes from there
   (let [net            (total-order 40)
         ns             (nodes-of net)
         [answer swept] (sweeps net ns iv/allen-algebra)]

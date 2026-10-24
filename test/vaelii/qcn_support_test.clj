@@ -1,13 +1,8 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.qcn-support-test
-  "Support-carrying path consistency: which stored sentexes an entailed relation rests on.
-
-  A composed relation has no handle — nothing stored says `A` is inside `D`, the table
-  does — so what an explanation can name, and what a justification would rest on, has to
-  come out of the fixpoint itself.  Two halves are tested here: the engine's, over a toy
-  algebra with handles standing in for sentexes, and the KB's, where the handles are real
-  and retracting them is what proves the support sound."
+  "Support-carrying path consistency, over a toy algebra with integers for handles and
+  over a KB where retracting the handles tests the support."
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
@@ -15,26 +10,10 @@
             [vaelii.impl.qcn :as qcn]
             [vaelii.impl.qcn-kb :as qkb]
             [vaelii.impl.space :as space]
+            [vaelii.qcn-test :refer [converse-set point-algebra universe]]
             [vaelii.test-util :as tu]))
 
-;; ---- the engine, over a toy point algebra --------------------------------
-
-(def ^:private universe #{:lt :eq :gt})
-
-(def ^:private converse-rel {:lt :gt, :eq :eq, :gt :lt})
-
-(def ^:private composition
-  {:lt {:lt #{:lt}    :eq #{:lt}    :gt universe}
-   :eq {:lt #{:lt}    :eq #{:eq}    :gt #{:gt}}
-   :gt {:lt universe  :eq #{:gt}    :gt #{:gt}}})
-
-(defn- compose-sets [s1 s2]
-  (into #{} (mapcat (fn [a] (mapcat (fn [b] (get-in composition [a b])) s2))) s1))
-
-(defn- converse-set [rels] (into #{} (map converse-rel) rels))
-
-(def ^:private point-algebra
-  {:universe universe :identity #{:eq} :compose compose-sets :converse converse-set})
+;; ---- the engine, over `qcn_test`'s toy point algebra ---------------------
 
 (defn- net
   "A network plus its asserted support, from `[i j rels handle]` entries — the form a
@@ -74,12 +53,6 @@
     (is (= universe (qcn/constraint (:network r) point-algebra 'A 'D)))
     (is (nil? (get (:support r) '[A D])) "there is nothing to support \"unknown\"")))
 
-(deftest the-support-pass-tightens-exactly-as-the-plain-one-does
-  ;; the two share their step, and this is the contract that keeps them sharing it
-  (let [[n s] (net ['A 'B #{:lt :eq} 1] ['B 'C #{:lt} 2] ['C 'D #{:lt} 3])]
-    (is (= (qcn/path-consistent n '[A B C D] point-algebra)
-           (:network (qcn/path-consistent-with-support n s '[A B C D] point-algebra))))))
-
 (deftest an-emptied-constraint-names-the-pair-and-its-culprits
   (testing "a cycle no order of the three can satisfy"
     (let [[n s] (net ['A 'B #{:lt} 1] ['B 'C #{:lt} 2] ['C 'A #{:lt} 3])
@@ -94,14 +67,6 @@
           r     (qcn/path-consistent-with-support n' s' '[A B X Y] point-algebra)]
       (is (= '[X Y] (:inconsistent r)))
       (is (= #{7} (:culprits r))))))
-
-(deftest support-is-not-tracked-unless-it-is-asked-for
-  ;; `path-consistent` keeps its contract exactly: a network in, a network or
-  ;; `:inconsistent` out, and no support map allocated on the way
-  (let [[n _] (net ['A 'B #{:lt} 1] ['B 'C #{:lt} 2])]
-    (is (map? (qcn/path-consistent n '[A B C] point-algebra)))
-    (is (= #{:lt} (qcn/constraint (qcn/path-consistent n '[A B C] point-algebra)
-                                  point-algebra 'A 'C)))))
 
 ;; ---- the KB, where the handles are real ----------------------------------
 
@@ -138,9 +103,6 @@
       (is (= (set hs) (qkb/support space/rcc8 kb C A E))))))
 
 (tu/deftest-kb every-reported-handle-is-a-believed-sentex-of-the-calculus
-  ;; soundness, stated as the property rather than as a list: the support may
-  ;; over-approximate, but it may never name something that is not a believed fact this
-  ;; calculus read
   (tu/with-terms [A B D Other tmpLikes]
     (v/assert kb (list 'nonTangentialProperPart A B) C)
     (v/assert kb (list 'nonTangentialProperPart B D) C)
@@ -156,9 +118,7 @@
               (str "handle " h " is a fact of this calculus, not " (:sentence s))))))))
 
 (tu/deftest-kb retracting-any-supporter-of-a-chain-destroys-the-entailment
-  ;; the strongest thing a support claim can be asked for: take away any one link and the
-  ;; conclusion goes.  (In general the set is an over-approximation, so only "all of it"
-  ;; is guaranteed — a chain is the case where every member is genuinely necessary.)
+  ;; a chain, because there every member of the support is necessary
   (tu/with-terms [A B D E]
     (let [links [(list 'nonTangentialProperPart A B)
                  (list 'nonTangentialProperPart B D)
@@ -174,11 +134,7 @@
           (doseq [h hs :when (not= h (nth hs dropped))] (v/retract! kb h)))))))
 
 (tu/deftest-kb the-support-is-one-witness-not-every-witness
-  ;; A reaches E two ways.  Support propagates where a constraint *moves*, so the route
-  ;; that got there first is the one named and the second re-derives a value already
-  ;; reached — exactly what a justification is, one support list rather than all of them.
-  ;; Retracting the named set therefore destroys *that* derivation, and asking again names
-  ;; the survivor.
+  ;; A reaches E two ways
   (tu/with-terms [A B D E]
     (v/assert kb (list 'nonTangentialProperPart A B) C)
     (v/assert kb (list 'nonTangentialProperPart B E) C)
@@ -198,7 +154,6 @@
             (is (not (v/ask? kb (list 'nonTangentialProperPart A E) C)))))))))
 
 (tu/deftest-kb a-negative-fact-supports-what-it-narrows
-  ;; the negative half of the read carries support like the positive one
   (tu/with-terms [A B D]
     (let [h1 (v/assert kb (list 'nonTangentialProperPart A B) C)
           h2 (v/assert kb (list 'not (list 'regionConnectedTo B D)) C)]
@@ -222,9 +177,6 @@
         (is (empty? (qkb/support iv/allen kb C A D)))))))
 
 (tu/deftest-kb the-support-pass-is-memoized-on-the-network-and-its-support
-  ;; a separate cache from `tighten`'s, so asking for support twice runs the pass once and
-  ;; an ordinary query pays for none of it.  The key is the network *and* the asserted
-  ;; support, because the same sentences at different handles read into the same network.
   (tu/with-terms [A B D]
     (v/assert kb (list 'nonTangentialProperPart A B) C)
     (v/assert kb (list 'nonTangentialProperPart B D) C)

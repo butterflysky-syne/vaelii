@@ -262,7 +262,8 @@
   (`vaelii.impl.dense-jtms`), and a justification *concluding* the phantom makes it IN —
   so the KB comes back believing a handle it cannot show anyone, and everything derived
   from it.  Skipped and counted instead, which is the policy `io.import` takes at the
-  other end of the same store.
+  other end of the same store, and the skipped handles are filed under `:unrooted` in
+  `kb`'s `:unrecovered` atom.
 
   A rule-handle informant is checked with the antecedents (`jtms/rests-on`): the network
   treats it as an implicit antecedent and lists the justification under its node, so a
@@ -291,7 +292,7 @@
         stored? (fn [h] (or (not (integer? h))
                             (contains? live h)
                             (some? (p/get-sentex rec h))))
-        skipped (volatile! 0)]
+        skipped (volatile! [])]
     ;; The replay is `settle-phases`' `:belief` centre for a `recover`: `add-justification`
     ;; relabels each consequence's region as it lands, and the region relabels compose to
     ;; the fixpoint (no closing whole-graph pass and no chaining), so this is the belief
@@ -318,13 +319,15 @@
           (check-abandoned!)
           (if (and (stored? (:consequence d)) (every? stored? (jtms/rests-on d)))
             (jtms/add-justification tms d)
-            (vswap! skipped inc))
+            (vswap! skipped conj id))
           (progress/tick! r))))
-    (when (pos? (long @skipped))
+    ;; read by `vaelii.impl.record-edit/sweep!`, which deletes them when its caller asks
+    (swap! (:unrecovered kb) assoc :unrooted @skipped)
+    (when (seq @skipped)
       (trove/log! {:level :warn :id ::justifications-unrooted
-                   :msg  (str @skipped " stored justifications name a sentex this store"
+                   :msg  (str (count @skipped) " stored justifications name a sentex this store"
                               " does not hold and are left out of the network")
-                   :data {:skipped @skipped}}))
+                   :data {:skipped (count @skipped)}}))
     tms))
 
 (defn- recover-from-records
@@ -426,8 +429,8 @@
             ;; ...and the class memberships a metatype route derives, which a store
             ;; written with no belief holds no justification for
             classes? (chain/resync-arity-classes! kb)]
-        ;; ...and the lifts and declarations still waiting on an absent type,
-        ;; which that re-fire does not reach
+        ;; ...and the lifts an argument conviction still refuses, which that
+        ;; re-fire does not reach
         (special/rebuild-pending! kb)
         (when (or classes? (pos? (long (or derived 0)))) (settle/settle kb))))
     ;; the settle above places the inherited clashes and stands aside from the other

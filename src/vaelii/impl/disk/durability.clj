@@ -306,9 +306,10 @@
 
 (defn check-abort!
   "Throw `:shutdown-abort` when a shutdown has asked the running public write to stop and
-  the write is inside `as-unit`.  Called at the write's clean points: after a rule firing
-  and at the start of a settle pass, where every record written so far has its premise
-  mark or its justification."
+  the write is inside `as-unit`.  Called at the write's clean points: after a rule firing,
+  at the start of a settle pass, and between the moved types and the declarations an
+  argument-hold refresh reads before it writes a hold (`checks/refresh-argument-holds!`),
+  where every record written so far has its premise mark or its justification."
   []
   (when (and *abortable?* (.get ^AtomicBoolean abort-requested))
     (throw (ex-info (str "the process is shutting down, and this write stopped at a clean"

@@ -748,15 +748,23 @@
    ;; `(unary_predicate P)` a declaration entails stands for P's length to withdraw
    ;; (`special/withdrawn-type-entailments`): one read of each per declaration.
    ;;
+   ;; Half of the `:arity-binding` 800: a binding to a length other than one moves
+   ;; whether P mints, so the settle reads P's IN bindings to ask whether a declaration
+   ;; naming P mints now (`special/mints-on-lengths`), four reads per declaration.
+   ;;
+   ;; Half of the `:mint` 200: the same move asks once whether the mint family holds a
+   ;; record P's length could now rule out (`special/withdrawn-type-mints`), one read per
+   ;; declaration, and with the family empty it reads nothing more.
+   ;;
    ;; `(arity P n)` also enters the arity-binding trie, its leaf, child edge and count, and
    ;; posts `[:exact n]` under P's kinds and P in `[:arity-bound]`: three `:roots` and two
    ;; `:slots` writes per declaration.
    {:name    :arity-declaration
     :build   arity-declaration
     :sentexes 100
-    :reads   {:arity-binding 400 :argument-root 100 :argument-slot 100 :exception-index 100
+    :reads   {:arity-binding 800 :argument-root 100 :argument-slot 100 :exception-index 100
               :opposed 100 :predicate-extent 1200 :rule-index 100 :term-index 200
-              :trie-counts 900 :trie-lookup 100 :mint 100}
+              :trie-counts 900 :trie-lookup 100 :mint 200}
     :writes  {:levels 500 :terms 300 :roots 1300 :term-names 1 :slots 400}}
 
    ;; **Two workloads, one budget, and the equality is the claim.**  A `genl` edge on a KB

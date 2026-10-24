@@ -4,16 +4,10 @@
   "Forward chaining on a claim nobody stored.
 
   `(transitiveInArgInverse largerThan 1 genl)` beside `(largerThan dog cat)` licenses
-  `(largerThan chihuahua maine_coon)`, and a rule over `largerThan` has to fire on it —
-  or `sentexes-matching` reads one answer out of the fixpoint while `ask` re-derives
-  another through `TransitiveInArgProver`, which is the same knowledge giving two answers
-  depending on which entry point the reader came in.
-
-  What makes that possible is that an inherited claim, while it is not stored, was
-  *read from* things that are: the claim that was stated, the declaration licensing the
-  move, and the relation edges the reach travelled.  The firing names them, so the
-  tests below are mostly about that list — `why` reads it back, retraction walks it,
-  and placement is computed from it."
+  `(largerThan chihuahua maine_coon)`, and a rule over `largerThan` fires on it
+  (docs/inherit.md, \"Forward chaining on a claim nobody stored\").  The firing names
+  the stated claim, the declaration and the reach edges, so most tests below are about
+  that list: `why` reads it back, retraction walks it, and placement is computed from it."
   (:require [clojure.set :as set]
             [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]

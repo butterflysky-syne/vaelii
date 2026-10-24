@@ -180,7 +180,7 @@ hides the twins there. What a reader there answers follows from where the fact l
   own. The fact's context still sees `E`, so the original stays superseded there, and
   the twin rests on `E`, which the reader below cannot see. Migration takes the contexts
   holding an except of an equality that bears on the fact as readers
-  (`special/reader-contexts-for`, the meet with the fact's context) and stores a
+  (`special/reader-contexts-at`, the meet with the fact's context) and stores a
   **copy** of the fact's spelling in such a reader, justified by `[original, E, except]`
   under the informant `except` (`special/migrate-into`), as it stores a twin in a reader
   that elects another form. Reads and forward chaining in that reader and below it see

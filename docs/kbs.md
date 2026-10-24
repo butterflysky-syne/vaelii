@@ -190,7 +190,13 @@ would round-trip every known-true premise down to a default. And because an `exc
 asserts *two* things — the rule, and the exception qualifying it — a wrapper on the
 **query**, `(exceptWhen (set/monotonic Q) R)`, states the exception's own class where it
 differs from the rule's. Both are peeled before anything is stored, so neither reaches a
-sentence as a functor ([exceptions.md](exceptions.md)).
+sentence as a functor ([exceptions.md](exceptions.md)). `assert`, `check` and `try-assert`
+read both positions as the loader does, the sentence an `(ist Cx S)` names included, and
+refuse a whole-form wrapper beside an `opts` `:strength :default` (`:shape`). Anywhere else
+they refuse the wrapper (`:shape`): elsewhere on a sentence's wrapper chain, inside a
+`set/*Rule` or an `exceptWhen`'s rule, and inside the sentence, in an antecedent, a
+consequent, a query or under `not`. `assert-inert` refuses it in every position, since an
+inert sentex has no strength.
 
 `(set/inert S)` stores `S` through `assert-inert`: indexed, durable and browsable, but no
 premise, so nothing believes it, chains from it or reports a contradiction against it
@@ -199,7 +205,9 @@ a whole form, and the export writes every inert sentex under it. An inert sentex
 strength, so `(set/inert (set/monotonic S))` and the reverse nesting are refused `:shape`.
 A rule under `(set/inert …)` is refused `:not-indexable`, as `assert-inert` refuses one;
 `(set/inertRule R)` is the form for a rule that is believed and fires in neither
-direction ([inference.md](inference.md)). `assert` does not read `set/inert`.
+direction ([inference.md](inference.md)). `assert`, `check` and `assert-inert` refuse
+`set/inert` anywhere on the wrapper chain or inside the sentence, an `exceptWhen` query
+included (`:shape`): the call is `assert-inert` itself.
 
 **A form the EDN reader refuses is refused by file and line.** An unbalanced form, an
 unknown `#tag` and a `#=` read-eval form are `:unreadable`, with `:file` and the `:line`

@@ -1,60 +1,18 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.rewrite
-  "Symbolic (schematic) equational rewriting — the oriented term-rewriting half of
-  equality, the gap docs/equality.md leaves open.
-
-  A schematic equation `(equals L R)` with variables — `(equals (fatherOf (fatherOf
-  ?x)) (grandfather_of ?x))` — is not a merge of two symbols (that is the partition,
-  docs/equality.md) nor a ground reifiable-NAT compound (that reifies to symbols,
-  docs/nat.md).  It is a **rewrite rule over a schema**: oriented into a terminating
-  reduction `L → R`, it lets a term be normalized so that a stored `(parent_chain
-  (fatherOf (fatherOf Tom)))` and a query `(parent_chain (grandfather_of Tom))` meet at
-  one normal form.
-
-  ## Orientation and termination
-
-  An equation is oriented by a **reduction order** — the Knuth-Bendix order `kbo>`
-  with unit weights — so rewriting strictly decreases every term at each step and
-  therefore terminates, whatever the rule set and without any confluence/completion
-  argument (`orient`).  The heavier side (by `term-size`) rewrites to the lighter; an
-  **equal-weight** pair is oriented by a fixed symbol precedence (root, then
-  lexicographically on the arguments), so a shape like `(f (g ?x)) = (g (f ?x))`
-  orients where a size-only rule would refuse it.  Both are conditional on the variable
-  condition (`var-dominates?`), which keeps the order stable under *every*
-  substitution.  Only a **permutative** equation — `(rel ?x ?y) = (rel ?y ?x)`, which
-  no term order can orient — or one whose variable condition fails both ways is
-  refused (`orient` returns nil).
-
-  ## What normalizes, and what does not
-
-  Rewriting applies to **terms in argument position** — the denoting terms a
-  schematic equation is about — never to a top-level predication (`normalize-sentence`
-  keeps the sentence's functor and rewrites each argument).  `fatherOf` the function
-  symbol and `fatherOf` a predicate are the same symbol; protecting the predication is
-  what stops a rule about the *term* `fatherOf(fatherOf(x))` from rewriting a *fact*
-  that merely happens to share the shape.
-
-  This namespace is **pure**: it takes the oriented rules as data and knows nothing of
-  the store, the taxonomy, or belief.  The taxonomy caches the active oriented rules
-  (belief-following, like the equality partition), `vaelii.impl.kb` threads
-  `normalize-sentence` into `rewrite-term` so migration and query both see one normal
-  form, and `vaelii.impl.special` justifies each rewritten twin — the same
-  belief-following machinery ground congruence already uses.  Bottom layer: it
-  requires only `vaelii.impl.sentex`."
+  "The pure term algebra of schematic equational rewriting: Knuth-Bendix orientation,
+  one-way matching, normalization of argument terms, and critical-pair detection.  It
+  takes the oriented rules as data and reads no store, taxonomy or belief, and it
+  requires only `vaelii.impl.sentex`.  See docs/equational.md."
   (:require [vaelii.impl.sentex :as sx]))
 
 ;; ---- term structure ------------------------------------------------------
 
 (defn- rewritable-subterms
-  "Every subterm of `term` that `normalize` can rewrite **at** — `term` itself, and the
-  same of each of its arguments.
-
-  A compound in **functor** position is not one, and that is what makes this narrower
-  than a plain `tree-seq`: `normalize` rebuilds a compound as
-  `(apply list (first term) (map normalize (rest term)))`, so it descends into the
-  arguments and never into the head.  Counting a head as rewritable would let
-  `rule-applies?` claim a rule that cannot touch the term's normal form."
+  "Every subterm of `term` that `normalize` can rewrite **at**: `term` itself, and the
+  same of each of its arguments, never a compound in functor position, since `normalize`
+  never descends into the head."
   [term]
   (if (sequential? term)
     (cons term (mapcat rewritable-subterms (rest term)))
@@ -90,21 +48,12 @@
   (if (sequential? term) (first term) term))
 
 (defn- prec-compare
-  "`compare` made total over **every** term shape, not merely over the leaf classes.
-  Two values of the same class compare natively when that class compares an element at
-  a time without inspecting what is inside — a symbol, a string, a number, a keyword —
-  and values of different classes order by class name.
-
-  Everything else compares by its **printed form**: a compound root (`root` returns
-  `(f ?x)` for `((f ?x) a)`), a collection of any kind, and a vector whose elements are
-  of mixed classes, all of which `compare` refuses — either by not implementing
-  `Comparable` at all or by throwing on the first element pair it cannot rank.  A print
-  is derived from content alone, so the order stays what `prec>` promises: arbitrary,
-  deterministic, and identical whichever way round the equation was written.
-
-  Totality is the point.  `orient` is reached from the assert entry point, and a comparison
-  that throws there refuses an equation by exception rather than by returning nil —
-  which is not a refusal but a crash."
+  "`compare` made total over every term shape.  Two values of one class compare natively
+  when that class is `Comparable` and not a collection, values of different classes order
+  by class name, and everything else (a compound root, a collection, a mixed vector)
+  compares by its printed form.  Content-derived, so `prec>` does not depend on which way
+  round the equation was written; total, so `orient` refuses by returning nil rather than
+  by throwing."
   [a b]
   (let [ca (if (nil? a) "" (.getName (class a)))
         cb (if (nil? b) "" (.getName (class b)))]
@@ -138,18 +87,11 @@
     :else                     (kbo> (first ss) (first ts))))
 
 (defn kbo>
-  "The **Knuth-Bendix order** with unit weights: is `s ≻ t`?  A genuine reduction order
-  (stable under substitution and context, well-founded), so a rule `l → r` with `l ≻ r`
-  terminates whatever the rule set — the termination guarantee for schematic rewriting.
-
-  Decided in order: the variable condition must hold; then the heavier side wins; an
-  equal-weight pair is decided by the precedence on the two roots (a constant's root
-  is itself), and same-root compounds by a lexicographic comparison of the arguments.
-  With unit weights `term-size` *is* the weight, so this refines a size-only rule —
-  it agrees on unequal sizes and additionally orients an equal-size pair like
-  `(f (g ?x))` vs `(g (f ?x))`, or `(g a ?x)` vs `(g b ?x)`.  A constant against a
-  same-named nullary compound (`c` vs `(c)`) is the one equal-weight, same-root pair
-  with no arguments to compare, and it is incomparable."
+  "The **Knuth-Bendix order** with unit weights: is `s ≻ t`?  The variable condition must
+  hold; then the heavier side wins; an equal-weight pair is decided by the precedence on
+  the two roots (a constant's root is itself), and same-root compounds by a lexicographic
+  comparison of the arguments.  A constant against a same-named nullary compound (`c` vs
+  `(c)`) is incomparable."
   [s t]
   (and (var-dominates? s t)
        (let [ws (term-size s) wt (term-size t)]
@@ -167,13 +109,9 @@
                      :else       false))))))
 
 (defn orient
-  "Orient `(equals l r)` into a terminating rewrite `[big small]`, or nil when no
-  terminating orientation exists.  The Knuth-Bendix order (`kbo>`) decides: the heavier
-  side rewrites to the lighter, and two **equal-weight** sides are oriented by the
-  symbol precedence — so `(f (g ?x)) = (g (f ?x))` orients, where a size-only rule
-  would refuse it.  nil only when the sides are KBO-**incomparable**: a *permutative*
-  equation like `(rel ?x ?y) = (rel ?y ?x)`, which no term order can orient, or one
-  whose variable condition fails in both directions."
+  "Orient `(equals l r)` into a terminating rewrite `[big small]` by `kbo>`, or nil when
+  the sides are KBO-incomparable: a permutative equation such as `(rel ?x ?y) = (rel ?y
+  ?x)`, or one whose variable condition fails both ways."
   [l r]
   (cond
     (kbo> l r) [l r]
@@ -322,12 +260,10 @@
 ;; ---- schematic-equation detection ----------------------------------------
 
 (defn schematic-equation?
-  "Is `sentence` a schematic equational rule — an `(equals L R)` whose sides carry a
-  variable-bearing compound?  This is the structure that becomes a rewrite rule rather
-  than a partition merge: `equals` specifically (not `sameAs`, individuals-only, nor
-  `rewriteOf`, whose compound form is a NAT declaration), with a compound side and a
-  variable, so a ground `(equals (F a) (F b))` — which reifies to symbols — is *not*
-  one."
+  "Is `sentence` a schematic equational rule: an `(equals L R)` with a compound side and a
+  variable?  A ground `(equals (F a) (F b))` is not one; it reifies to symbols
+  (docs/nat.md).  A compound `sameAs` is refused by `wff`, and a compound `rewriteOf` is a
+  NAT declaration."
   [sentence]
   (and (sequential? sentence)
        (= 'equals (first sentence))
@@ -336,35 +272,17 @@
        (not (sx/ground-term? sentence))))
 
 (defn rule-applies?
-  "Does the oriented rule `{:lhs …}` rewrite some argument subterm of `sentence`?  The
-  test for whether a schematic equation justifies a migrated twin — a rule that
-  matches nothing in the sentence contributed nothing to its normal form.
-
-  The positions asked about are exactly the positions `normalize` reduces at
-  (`rewritable-subterms`), so the two agree: a wider read here would justify a twin by a
-  rule that never touched it, and retracting that rule would then withdraw a twin it
-  never made.  The same holds of the argument terms: an equality relation's arguments
-  are not among them (`equality-relations`)."
+  "Does the oriented rule `{:lhs …}` rewrite some argument subterm of `sentence`?  Asked
+  at exactly the positions `normalize` reduces at (`rewritable-subterms`, outside the
+  `equality-relations` arguments), so a rule justifies only the twins it rewrote."
   [rule sentence]
   (boolean (some #(some (fn [st] (reduct rule st)) (rewritable-subterms %))
                  (argument-terms sentence))))
 
 ;; ---- confluence surfacing: critical pairs between rules ------------------
-;; A terminating rewrite system is confluent iff every **critical pair** joins (the
-;; critical-pair lemma).  Two rules `l1 → r1` and `l2 → r2` *overlap* when a
-;; non-variable subterm of `l1` unifies with `l2`: the overlap term can then be
-;; rewritten two ways, and if the results normalize to different forms the rules
-;; disagree about a shared term.  This is **detection, not completion** — the engine
-;; still gives a deterministic normal form (rules applied in a content-sorted order,
-;; `match` the arbiter), so a match is never wrong; the report warns that a term
-;; written one way and a theory-equal term written another may not meet.
-;;
-;; **Self-overlaps are excluded.**  A single rule's internal non-confluence — `(f (f
-;; ?x)) → (g ?x)` reduces `f³` two ways in the abstract — is absorbed by the
-;; deterministic normalization (the same syntactic term always normalizes the same
-;; way), so it never causes a stored-vs-query miss and is not worth flagging.  What is
-;; worth surfacing is two **distinct** equations disagreeing, `f∘f = g` alongside `f∘f
-;; = h`.
+;; Detection, not completion (docs/equational.md, "Confluence — surfaced, not
+;; completed").  A rule's overlap with itself is not reported: one syntactic term always
+;; normalizes one way.
 
 (defn- resolve-var
   "`t` with a bound variable followed to the **end** of its chain.  One binding may name
@@ -425,16 +343,9 @@
     {:lhs (subst (:lhs rule) m) :rhs (subst (:rhs rule) m)}))
 
 (defn- positions
-  "Every `[path compound-subterm]` of `term` a rewrite can happen **at** — `path` a
-  vector of child indices, `[]` the whole term.
-
-  Only compound subterms, since a rule LHS (always a compound) can overlap nothing else;
-  and only **argument** positions, for the reason `rewritable-subterms` narrows
-  `rule-applies?` the same way: `normalize` rebuilds a compound as `(apply list (first
-  term) (map normalize (rest term)))`, so it descends into the arguments and never into
-  the head.  Counting a compound head would report a critical pair over an overlap no
-  term's normal form can reach — a confluence warning about a reduction the engine does
-  not perform."
+  "Every `[path compound-subterm]` of `term` a rewrite can happen **at**, `path` a vector of
+  child indices and `[]` the whole term: argument positions only, as
+  `rewritable-subterms` reads them."
   [term]
   (letfn [(go [t path]
             (when (and (sequential? t) (seq t))
@@ -466,10 +377,8 @@
 
 (defn non-joining-pairs
   "The overlaps between `new-rule` and the **other** rules in `all-rules` whose two
-  reducts do not normalize to one form — the non-confluent conflicts worth surfacing.
-  Each entry is `{:with <other handle> :form-a t :form-b t}`.  Self-overlaps are
-  excluded (see the section note).  `all-rules` includes `new-rule`; it is the whole
-  active set the reducts are normalized against."
+  reducts do not normalize to one form, as `{:with <other handle> :form-a t :form-b t}`.
+  `all-rules`, `new-rule` included, is the active set the reducts are normalized against."
   [new-rule all-rules]
   (let [others   (remove #(= (:handle %) (:handle new-rule)) all-rules)
         rulemaps (map #(select-keys % [:lhs :rhs]) all-rules)]

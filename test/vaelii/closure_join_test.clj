@@ -8,8 +8,9 @@
   it the same way whenever the join has bound an end: the reflexive pair and the pair no
   edge states both fire, the firing names the edges of one path, and an arriving or
   departing edge re-joins the rule.  With both ends open the stored edges answer alone."
-  (:require [clojure.test :refer [is testing use-fixtures]]
+  (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
+            [vaelii.order-independence-test :as oi]
             [vaelii.test-util :as tu]))
 
 (use-fixtures :once (tu/loaded tu/load-core!))
@@ -152,6 +153,72 @@
       (testing "the far pair names the edges of the path"
         (let [h (v/handle-of kb (list qualifies CxLow U) U)]
           (is (contains? (set (tree-seq coll? seq (v/why kb h))) low)))))))
+
+;; ---- the planner runs the closure literal after a literal binding an end ----
+;; Each reading builds its own KB on the isolated space, so a reading's sentences
+;; compare across arrival orders by content.
+
+(deftest a-closure-literal-the-cost-model-ranks-first-waits-for-its-end
+  ;; Eight `pairOf` rows against two edges: ranked on stored rows alone, the closure
+  ;; literal would run first with both ends open and read the two edges only.
+  (doseq [rel     '[genl genlCx]
+          written [:pair-first :closure-first]
+          order   (oi/permutations [:rule :edges :pairs])]
+    (testing (str rel ", " written ", " order)
+      (tu/with-neutral-kb [kb tu/isolated-fresh]
+        (tu/with-terms [pairOf qualifies pug dog mammal CxLow CxMid]
+          (let [[lo mid hi] (if (= 'genl rel) [pug dog mammal] [CxLow CxMid U])
+                antes       [(list pairOf '?a '?b) (list rel '?a '?b)]
+                step {:rule  #(v/assert kb (list 'set/forwardRule
+                                                 (list 'implies
+                                                       (cons 'and (if (= :pair-first written)
+                                                                    antes
+                                                                    (reverse antes)))
+                                                       (list qualifies '?a '?b)))
+                                        U)
+                      :edges #(doseq [[x y] [[lo mid] [mid hi]]] (v/assert kb (list rel x y) U))
+                      :pairs #(doseq [[x y] (concat [[lo lo] [lo hi]]
+                                                    (repeatedly 6 (fn [] [(tu/tmp-ind "F")
+                                                                          (tu/tmp-ind "G")])))]
+                                (v/assert kb (list pairOf x y) U))}]
+            (doseq [k order] ((step k)))
+            (is (holds? kb (list qualifies lo lo) U) "reflexive")
+            (is (holds? kb (list qualifies lo hi) U) "two edges apart")))))))
+
+(defn- reasons
+  "The justifications of `goal` in CxUniverse as `[antecedents subsumptions]`, by content."
+  [kb goal]
+  (let [content (fn [h] (let [sx (v/sentex kb h)] [(v/sentence-of sx) (:context sx)]))]
+    (frequencies (for [j (v/supporting-justifications kb (v/handle-of kb goal U))]
+                   [(into #{} (map content) (:antecedents j)) (:subsumptions j)]))))
+
+(deftest a-closure-literal-the-recursive-literal-binds-stores-one-justification-set-in-every-order
+  ;; The recursive literal runs after every other generator, and only it binds an end of
+  ;; the `genl` literal.
+  (tu/with-terms [pug dog mammal reaches Z]
+    (doseq [written [:closure-first :recursive-first]]
+      (testing (name written)
+        (let [antes    [(list 'genl '?a '?b) (list reaches '?b '?c)]
+              rule     (list 'set/forwardRule
+                             (list 'implies (cons 'and (if (= :closure-first written)
+                                                         antes
+                                                         (reverse antes)))
+                                   (list reaches '?a '?c)))
+              readings (for [order (oi/permutations [:rule :near :far :fact])]
+                         (tu/with-neutral-kb [kb tu/isolated-fresh]
+                           (doseq [s (map {:rule rule
+                                           :near (list 'genl pug dog)
+                                           :far  (list 'genl dog mammal)
+                                           :fact (list reaches mammal Z)}
+                                          order)]
+                             (v/assert kb s U))
+                           [(reasons kb (list reaches pug Z)) (reasons kb (list reaches dog Z))]))]
+          (is (= 1 (count (distinct readings))))
+          (is (contains? (ffirst readings)
+                         [#{[(list reaches mammal Z) U] [(list 'genl pug dog) U]
+                            [(list 'genl dog mammal) U]}
+                          #{[pug mammal]}])
+              "the pair two edges apart joins the fact directly"))))))
 
 ;; ---- a disjoint antecedent reads the separations ---------------------------
 

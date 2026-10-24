@@ -35,6 +35,7 @@
   re-queues everything wholesale)."
   (:require [vaelii.impl.decide :as decide]
             [vaelii.impl.discovery :as discovery]
+            [vaelii.impl.except :as exc]
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.naming :as nm]
@@ -123,6 +124,7 @@
     (observe/notify-remove kb sentex)
     ;; and the change clock, mirroring the same line there
     (observe/note-change)
+    (exc/note-stored! kb sentex false)
     ;; the handle cache holds "this sentence is stored at this handle", and this is the
     ;; one event that falsifies it — so the invalidation belongs beside the removal
     ;; itself, not in the caller that happens to have a cache bound
@@ -342,7 +344,7 @@
   `move-row!` draws again.  `rewrite` is `move-row!`'s."
   [kb sx sentence rewrite]
   ;; the pieces spelled as the row was stop being spelled as the row is
-  (put-spellings! kb (:id sx) (rewritten rewrite sentence (written-out kb (:id sx) (:sentence sx))))
+  (put-spellings! kb (:id sx) (rewritten rewrite sentence (written-out kb (:id sx) (sx/sentence-of sx))))
   (special/disintegrate-sentex! kb sx)
   (let [sx' (kb/respell-sentex! kb sx sentence)]
     (special/refile-mint! kb sx (:id sx'))
@@ -485,8 +487,8 @@
   ;; read before anything moves: the doomed row's pieces, spelled as it wrote them, go to
   ;; the survivor with everything else it hands over
   (let [dsx     (p/get-sentex (:records kb) doomed)
-        ssent   (:sentence (p/get-sentex (:records kb) survivor))
-        dpieces (written-out kb doomed (:sentence dsx))
+        ssent   (sx/sentence-of (p/get-sentex (:records kb) survivor))
+        dpieces (written-out kb doomed (sx/sentence-of dsx))
         spieces (written-out kb survivor ssent)
         copied  (fold-supports! kb doomed survivor)]
     (when (seq copied) (special/refile-mint! kb nil survivor))

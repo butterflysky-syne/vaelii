@@ -197,6 +197,23 @@
 (s/fdef vaelii.core/mark-inert!
   :args (s/cat :kb ::kb :opts ::mark-inert-opts))
 
+;; the batch `edit-records!` takes and the options of the rebuild after it
+;; (docs/storage.md), under their own namespace: `::direction` is `assert`'s option
+(s/def :vaelii.impl.spec.record-edit/remove (s/coll-of ::handle-arg))
+(s/def :vaelii.impl.spec.record-edit/direction (s/map-of ::handle-arg keyword?))
+(s/def :vaelii.impl.spec.record-edit/seeds (s/coll-of ::handle-arg))
+(s/def :vaelii.impl.spec.record-edit/arg-types? boolean?)
+
+(s/fdef vaelii.core/edit-records!
+  :args (s/cat :kb ::kb
+               :batch (s/keys :opt-un [:vaelii.impl.spec.record-edit/remove
+                                       :vaelii.impl.spec.record-edit/direction])))
+
+(s/fdef vaelii.core/settle-record-edits!
+  :args (s/cat :kb ::kb
+               :opts (s/? (s/nilable (s/keys :opt-un [:vaelii.impl.spec.record-edit/seeds
+                                                      :vaelii.impl.spec.record-edit/arg-types?])))))
+
 (s/fdef vaelii.core/add-provenance
   :args (s/cat :kb ::kb :handle ::handle-arg :m map?))
 
@@ -449,6 +466,8 @@
     vaelii.core/unsupported
     vaelii.core/remove-unsupported!
     vaelii.core/mark-inert!
+    vaelii.core/edit-records!
+    vaelii.core/settle-record-edits!
     vaelii.core/add-provenance
     vaelii.core/add-prover
     vaelii.core/set-solver

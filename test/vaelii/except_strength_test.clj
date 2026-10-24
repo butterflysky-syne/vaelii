@@ -113,6 +113,56 @@
               (is (= (:message (first ps)) (ex-message e))
                   "check and assert refuse it in the same words"))))))))
 
+(deftest a-whole-form-strength-wrapper-is-read-and-every-other-wrapper-placement-is-refused
+  (tu/with-cleared-kb [kb tu/fresh]
+    (tu/with-terms [bird flies penguin Tweety CxHalf]
+      (v/assert kb (list 'genlCx CxHalf 'CxUniverse) 'CxUniverse)
+      (let [rule   (vr/rule-sentence [(list bird '?b)] (list flies '?b))
+            fact   (list bird Tweety)
+            mono   (list 'set/monotonic fact)
+            before (count (v/handles kb))
+            refuses-at (fn [form opts writes]
+                         (testing (pr-str form opts)
+                           (is (= [:shape] (mapv :type (v/check kb form CxHalf opts))))
+                           (doseq [write writes]
+                             (let [e (is (thrown? clojure.lang.ExceptionInfo
+                                                  (write kb form CxHalf opts)))]
+                               (is (= :shape (:type (ex-data e))))))))]
+        (doseq [form [(list 'set/inert fact)
+                      (list 'set/monotonic (list 'set/inert fact))
+                      (list 'set/monotonic fact fact)
+                      (list 'set/forwardRule (list 'set/monotonic rule))
+                      (list 'set/solveRule (list 'set/inert rule))
+                      (list 'exceptWhen (list penguin '?b) (list 'set/monotonic rule))
+                      (list 'exceptWhen (list 'set/inert (list penguin '?b)) rule)
+                      (vr/rule-sentence [(list bird '?b) (list 'set/monotonic (list penguin '?b))]
+                                        (list flies '?b))
+                      (vr/rule-sentence [(list bird '?b)] (list 'set/monotonic (list flies '?b)))
+                      (vr/rule-sentence [(list bird '?b) (list 'unknown (list 'set/inert (list penguin '?b)))]
+                                        (list flies '?b))
+                      (list 'not (list 'set/monotonic fact))
+                      (list 'not (list 'set/inert fact))
+                      (list 'ist CxHalf (list 'not (list 'set/monotonic fact)))
+                      (list 'ist CxHalf (vr/rule-sentence [(list 'set/monotonic (list bird '?b))]
+                                                          (list flies '?b)))
+                      (list 'exceptWhen (list 'unknown (list 'set/monotonic (list penguin '?b))) rule)]]
+          (refuses-at form nil [v/assert v/try-assert]))
+        (refuses-at mono {:strength :default} [v/assert v/try-assert])
+        (testing "an inert sentex has no strength"
+          (let [e (is (thrown? clojure.lang.ExceptionInfo (v/assert-inert kb mono CxHalf)))]
+            (is (= :shape (:type (ex-data e))))))
+        (is (= before (count (v/handles kb))) "no refusal stores a sentex")
+        (testing "around the whole sentence it is {:strength :monotonic}, as the loader reads it"
+          (is (empty? (v/check kb mono CxHalf)))
+          (doseq [write     [v/assert v/try-assert]
+                  [form cx] [[mono CxHalf] [(list 'ist CxHalf mono) 'CxUniverse]]]
+            (let [h (write kb form cx)]
+              (is (= [h h :monotonic fact CxHalf]
+                     [(v/handle-of kb form cx) (v/handle-of kb fact CxHalf)
+                      (:strength (v/sentex kb h)) (:sentence (v/sentex kb h))
+                      (:context (v/sentex kb h))]))
+              (v/retract! kb h))))))))
+
 ;;; ── the round trip ────────────────────────────────────────────────────
 
 (deftest all-four-strength-pairings-round-trip-through-text

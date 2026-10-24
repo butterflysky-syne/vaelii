@@ -45,9 +45,10 @@
   (when (nil? (:antecedent sx))
     (sx/arity-binding (:sentence sx))))
 
-(defn- fact-shape
+(defn fact-shape
   "`[q n]` for a stored fact `sx` whose sentence is a positive tuple of `n` arguments with
-  a symbol functor, else nil."
+  a symbol functor, else nil.  `checks` asks it of a sentence about to be written, as
+  `{:sentence s}`."
   [sx]
   (let [s (:sentence sx)]
     (when (and (nil? (:antecedent sx)) (seq? s) (<= 2 (count s)))
@@ -269,7 +270,7 @@
                   m))
               {} (reads/as-stored-arity-bindings-global idx p)))))
 
-(defn- shape-length
+(defn shape-length
   "The length an engine grammar term's `:shape` gives it (`predicates/shape-of`), with
   no grounds: `{:exact n}` for a fixed argument list, `{:min n}` for one with an
   `:optional` or `:variadic` tail; nil for a term with no shape."
@@ -277,6 +278,19 @@
   (when-let [{:keys [args optional variadic]} (when (symbol? q) (predicates/shape-of q))]
     (assoc (if (or optional variadic) {:min (count args)} {:exact (count args)})
            :via q :grounds #{})))
+
+(defn admits-shape?
+  "Does a length binding of the engine term `q`, `kind` and `v` as `sx/arity-binding`
+  answers them, admit every length `q`'s shape admits (`shape-length`)?  An exact length
+  agrees with an exact shape of that length, an `arityMin` floor with a shape whose
+  shortest length is at or above it, and `variable_arity` with every shape.  True for a
+  term with no shape."
+  [q kind v]
+  (let [{exact :exact floor :min} (shape-length q)]
+    (case kind
+      :exact (if exact (= v exact) (nil? floor))
+      :min   (<= (long v) (long (or exact floor v)))
+      :var   true)))
 
 (defn- reduce-own
   "The binding `q`'s own bindings `own` give it: under `variable_arity` its single
@@ -303,7 +317,7 @@
   bindings, held in the length entries (`own-held`), answer when every one of them admits
   one, since then every IN subset of them does; otherwise the IN bindings answer
   (`held-bindings`), so no OUT binding decides.  No `genl` closure is read, so a length
-  `t` inherits is not consulted (`checks/mintable-type?`, docs/argtypes.md)."
+  `t` inherits is not consulted (`mintable-type?`, docs/argtypes.md)."
   [kb t]
   (if-let [s (shape-length t)]
     (= 1 (:exact s))
@@ -314,19 +328,46 @@
           (let [{:keys [exact var min]} (held-bindings kb t)]
             (ok? (keys exact) (seq var) (keys min)))))))
 
+(defn mintable-type?
+  "Is `t` a type a membership can be minted in: a symbol other than `thing` whose own
+  arity admits one argument (`unary-consistent?`)?  A type is a unary predicate, so
+  a declared type with no arity statement is one, and the declaration that mints in it
+  entails its `unary_predicate` membership (`special/entail-existing`).  `thing` mints
+  nothing: a membership in it says nothing about the term.  One read of `t`'s stored
+  arity bindings, with no `genl` closure read (docs/argtypes.md, \"Where it does not
+  mint\")."
+  [kb t]
+  (and (symbol? t) (not (sx/variable? t)) (not= 'thing t) (unary-consistent? kb t)))
+
 (defn- bound-above
-  "The predicates above `q`, `q` left out, storing an exact or `variable_arity` binding,
-  over the unscoped closure: a relation's length is read the same at every context
-  (docs/taxonomy.md, \"Arity\"), so the cut reads every `genl` edge whoever can see it.
-  `tax/genls-global-union` probes the bound predicates once per type above `q`."
-  [kb q]
-  (let [idx    (:index kb)
-        bound? (fn [p] (and (reads/stored-arity-bound? idx p)
-                            (some (fn [[kind]] (not= :min kind))
-                                  (reads/as-stored-arity-binding-kinds idx p))))]
-    (if (pos? (reads/stored-count-arity-bound idx))
-      (disj (tax/genls-global-union (reasoning/taxonomy kb) q (filter bound?) (volatile! {})) q)
-      #{})))
+  "The predicates at or above `q` storing an exact or `variable_arity` binding, `q` left
+  out unless `self?`, over the unscoped closure: a relation's length is read the same at
+  every context (docs/taxonomy.md, \"Arity\"), so the cut reads every `genl` edge whoever
+  can see it.  `tax/genls-global-union` probes the bound predicates once per type above
+  `q`."
+  ([kb q] (bound-above kb q false))
+  ([kb q self?]
+   (let [idx    (:index kb)
+         bound? (fn [p] (and (reads/stored-arity-bound? idx p)
+                             (some (fn [[kind]] (not= :min kind))
+                                   (reads/as-stored-arity-binding-kinds idx p))))]
+     (if (pos? (reads/stored-count-arity-bound idx))
+       (cond-> (tax/genls-global-union (reasoning/taxonomy kb) q (filter bound?) (volatile! {}))
+         (not self?) (disj q))
+       #{}))))
+
+(defn- with-write
+  "The bindings `held` (`held-bindings`'s map) with the bindings `added` beside them, in
+  the same shape."
+  [held added]
+  (merge-with (fn [a b] (if (set? a) (into a b) (merge-with into a b))) held added))
+
+(defn- write-kinds
+  "The `[kind value]` pairs of the bindings `added` (`held-bindings`'s map), as
+  `reads/as-stored-arity-binding-kinds` lists them."
+  [{:keys [exact min var]}]
+  (cond-> (into #{} (concat (map #(vector :exact %) (keys exact)) (map #(vector :min %) (keys min))))
+    (seq var) (conj [:var nil])))
 
 (defn relation-length
   "What binds `q`'s length, as `{:exact n :via p}` or `{:min m :via q}`, or nil, read the
@@ -336,9 +377,14 @@
   `grounds?`, the result also carries `:grounds #{h}`: the bindings stating the length,
   an engine term's own bindings stating its shape's length.  The rule is
   docs/taxonomy.md's \"Arity\"; `why-not` reads the grounds of an inert tuple's length
-  (`inert-binding`)."
-  ([kb q] (relation-length kb q false))
-  ([kb q grounds?]
+  (`inert-binding`).
+
+  With `write`, the length a write not yet stored would give `q` (`write-breaks`):
+  `:held` maps a predicate to the bindings the write adds to it, in `held-bindings`'
+  shape, and `:above` holds the predicates the write puts above `q`."
+  ([kb q] (relation-length kb q false nil))
+  ([kb q grounds?] (relation-length kb q grounds? nil))
+  ([kb q grounds? write]
    (or (when-let [s (shape-length q)]
          (if-not grounds?
            (dissoc s :grounds)
@@ -349,15 +395,25 @@
                                      (get-in own [:exact (:exact s)])
                                      (get-in own [:min (:min s)]))
                                    #{})))))
-       (let [own (held-bindings kb q)]
+       (let [held-of (if write
+                       (fn [p] (with-write (held-bindings kb p) (get-in write [:held p])))
+                       #(held-bindings kb %))
+             own     (held-of q)]
          (if (or (seq (:var own)) (seq (:exact own)))
            (cond-> (reduce-own q own) (not grounds?) (dissoc :grounds))
            ;; the predicates above grouped by the exact lengths they store, each group in
            ;; name order, the smallest group first: a second length leaves `q` unbound, so
            ;; the rest go unread, and the first believed binding of a group names `:via`
            (let [idx    (:index kb)
-                 cut    (bound-above kb q)
-                 kinds  (into {} (map (fn [p] [p (reads/as-stored-arity-binding-kinds idx p)])) cut)
+                 cut    (cond-> (bound-above kb q)
+                          write (into (filter #(and (not= q %)
+                                                    (some (fn [[k]] (not= :min k))
+                                                          (write-kinds (held-of %)))))
+                                      (:above write)))
+                 kinds  (into {} (map (fn [p] [p (cond-> (reads/as-stored-arity-binding-kinds idx p)
+                                                   (get-in write [:held p])
+                                                   (-> set (into (write-kinds (get-in write [:held p])))))]))
+                              cut)
                  by-len (update-vals
                          (reduce (fn [m p] (reduce #(update %1 %2 (fnil conj []) p) m
                                                    (values-of (kinds p) :exact)))
@@ -366,7 +422,7 @@
                  seen   (volatile! {})
                  held   (fn [p] (if-let [e (find @seen p)]
                                   (val e)
-                                  (let [b (held-bindings kb p)]
+                                  (let [b (held-of p)]
                                     (vswap! seen assoc p b) b)))
                  holds? (fn [n p] (contains? (:exact (held p)) n))
                  vias   (reduce (fn [acc [n ps]]
@@ -424,12 +480,12 @@
 (defn broken-binding
   "The binding a tuple of `n` arguments of `q` breaks, as `{:length n :via p :grounds [h …]
   :route [h …]}` with `:length` an exact length, or `{:min m …}` for a floor, or nil when
-  it breaks none (`relation-length` with its grounds).  `:route` holds the IN supporters of
-  one path of `genl` edges from `q` up to `:via` (`tax/genl-path-edges`), empty for a
-  length `q` binds itself."
+  it breaks none (`shape-breaks?`, then `relation-length` with its grounds).  `:route`
+  holds the IN supporters of one path of `genl` edges from `q` up to `:via`
+  (`tax/genl-path-edges`), empty for a length `q` binds itself."
   [kb q n]
-  (let [b   (relation-length kb q true)
-        tax (reasoning/taxonomy kb)
+  (let [tax (reasoning/taxonomy kb)
+        b   (when (shape-breaks? kb tax q n) (relation-length kb q true))
         tms (reasoning/tms kb)]
     (when (breaks? b n)
       (cond-> {:via     (:via b)
@@ -636,11 +692,14 @@
 
 (defn drain!
   "Refresh the inert shapes (`refresh-shapes!`) of every functor whose length can have
-  moved since the last call, and answer `{:pairs {p dirs} :moved ts}`.  `:pairs` holds the
-  predicates whose arity pairs the settle places again (`pair-sets`): `:both` for a queued
-  predicate and those below it, whose own binding or whose lengths above moved, and `:up`
-  for an exact-bound predicate at or below the lower end of a `genl` edge moved since
-  `::gen`.  `:moved` is the set of terms whose length can have moved, or `:all`.
+  moved since the last call, and answer `{:pairs {p dirs} :moved ts :bound qs}`.  `:pairs`
+  holds the predicates whose arity pairs the settle places again (`pair-sets`): `:both`
+  for a queued predicate and those below it, whose own binding or whose lengths above
+  moved, and `:up` for an exact-bound predicate at or below the lower end of a `genl`
+  edge moved since `::gen`.  `:moved` is the set of terms whose length can have moved, or
+  `:all`.  `:bound` maps each predicate whose own bindings were stored, removed or
+  relabelled since the last call to those bindings' `#{[kind value]}`, on every call:
+  what `unary-consistent?` reads.
   Everything is refreshed when the shapes are owed whole (a recover), on the first call,
   and when the `genl` relation was rebuilt: every functor of a stored fact, `:up` for
   every bound predicate, and `:moved` `:all`."
@@ -679,7 +738,119 @@
       (refresh-shapes! kb tax f (if whole?
                                   (get-in @(reasoning/nogood-candidates kb) [::out f] #{})
                                   (get-in old [::fresh f] #{}))))
-    {:pairs ps :moved (if whole? :all fs)}))
+    {:pairs ps :moved (if whole? :all fs) :bound (::bound old {})}))
+
+;; ---- a write not yet stored -------------------------------------------------------
+;;
+;; `try-assert` refuses a declaration that would hold a stored tuple inert
+;; (`checks/length-declaration-conflict`).  `write-breaks` reads, for each functor whose
+;; length the write can move, the length `relation-length` gives it with the write beside
+;; the stored bindings, against the lengths its tuples are stored at: one shape-length
+;; read and one count read per functor and shape, no tuple read.
+
+(defn class-route-ok?
+  "Does the `genl` edge supporter `[h ctx]` carry a metatype route: IN at `:monotonic`?"
+  [tms [h _]]
+  (and (jtms/in? tms h) (= :monotonic (jtms/defeat-class tms h))))
+
+(defn- route-types
+  "`t` and the types below it through `genl` edges a supporter of which carries a
+  metatype route (`class-route-ok?`), over the unscoped closure, as a class membership's
+  route is read."
+  [kb tax t]
+  (let [tms (reasoning/tms kb)]
+    (loop [q [t] seen #{t}]
+      (if-let [x (peek q)]
+        (let [nxt (into [] (filter #(and (not (contains? seen %))
+                                         (some (fn [sup] (class-route-ok? tms sup))
+                                               (tax/supporters tax [:genl % x]))))
+                        (tax/direct-specs-global tax x))]
+          (recur (into (pop q) nxt) (into seen nxt)))
+        seen))))
+
+(defn- monotonic-members
+  "The symbols `x` of the stored memberships `(t x)` held at `:monotonic`, for each type
+  of `ts`."
+  [kb ts]
+  (let [tms  (reasoning/tms kb)
+        recs (:records kb)]
+    (into #{} (comp (mapcat #(reads/as-stored-with-functor (:index kb) %))
+                    (filter #(= :monotonic (jtms/defeat-class tms %)))
+                    (keep #(second (membership-of (p/get-sentex recs %)))))
+          ts)))
+
+(defn- class-writes
+  "`{f write}` (`relation-length`'s `write`) for the functors at or below each member of
+  `xs` whose length the exact lengths `ns` can move (`moved-below`), each member given
+  `ns` and placed above the functors below it."
+  [kb tax xs ns]
+  (let [held (into {} (map (fn [x] [x {:exact (zipmap ns (repeat #{::write}))}])) xs)
+        bs   (mapv #(vector :exact %) ns)]
+    (reduce (fn [m x]
+              (reduce (fn [m f] (update m f #(-> (or % {:held held :above #{}})
+                                                 (update :above conj x))))
+                      m (moved-below kb tax x bs)))
+            {} xs)))
+
+(defn- write-targets
+  "`{f write}`: each functor whose length the sentence `s`, written and not stored, can
+  move, with the `relation-length` write it gives the functor.  A length binding moves its
+  predicate and the functors below it (`moved-below`).  A `genl` edge `(genl a b)` puts
+  the bound predicates at or above `b` above `a` and every term below it; written
+  `mono?` (`:monotonic`) where `b` is or reaches an exact-arity class, it binds each
+  `:monotonic` member of `a`, or of a type below `a` through a metatype route, to the
+  class's length (`class-paths`).  A `:monotonic` membership `(t x)` whose type reaches
+  an exact-arity class binds `x` so."
+  [kb tax s mono?]
+  (let [tms (reasoning/tms kb)
+        ok? #(class-route-ok? tms %)
+        lengths (fn [t] (if (contains? exact-classes t)
+                          [(sx/exact-arity-classes t)]
+                          (mapv sx/exact-arity-classes (keys (class-paths kb t ok?)))))]
+    (or
+     (when-let [[p kind v] (sx/arity-binding s)]
+       (let [w {:held  {p (case kind
+                            :exact {:exact {v #{::write}}}
+                            :min   {:min {v #{::write}}}
+                            :var   {:var #{::write}})}
+                :above #{p}}]
+         (zipmap (moved-below kb tax p [[kind v]]) (repeat w))))
+     (when-let [[a b] (when (and (seq? s) (= 'genl (first s)) (= 3 (count s))
+                                 (every? #(and (symbol? %) (not (sx/variable? %))) (rest s)))
+                        (rest s))]
+       (let [above   (bound-above kb b true)
+             inherit (when (seq above) (zipmap (at-or-below tax a) (repeat {:above above})))
+             ns      (when (and mono? (reaches-class? kb b)) (lengths b))
+             classes (when (seq ns)
+                       (class-writes kb tax (monotonic-members kb (route-types kb tax a)) ns))]
+         (merge-with (fn [x y] {:held (:held y) :above (into (:above x) (:above y))})
+                     inherit classes)))
+     (when-let [[t x] (when mono? (membership-of {:sentence s}))]
+       (when (and (not (contains? exact-classes t)) (reaches-class? kb t))
+         (when-let [ns (seq (lengths t))]
+           (class-writes kb tax [x] (vec ns))))))))
+
+(defn write-breaks
+  "The stored shapes the sentence `s`, written at `:monotonic` when `mono?` and not yet
+  stored, would hold inert: `[{:relation f :arguments n :count c} …]` for each functor
+  whose length it can move (`write-targets`) and each length `n` its positive facts are
+  stored at that the length `relation-length` gives with the write breaks and the stored
+  length does not (`shape-breaks?`), `c` the count of those facts in every context, in
+  content order: a relation's length is read the same at every context, so a tuple in
+  any context is held inert.  A functor with an engine shape takes its length from the shape, which
+  no write moves.  Empty when the write moves no length."
+  [kb s mono?]
+  (let [tax (reasoning/taxonomy kb)
+        idx (:index kb)]
+    (vec (for [[f write] (sort-by (comp nm/name-key key) (write-targets kb tax s mono?))
+               :when (and (symbol? f) (not (predicates/shape-of f)))
+               :let  [ls (reads/as-stored-shape-lengths idx f)]
+               :when (seq ls)
+               :let  [b (relation-length kb f false write)]
+               :when b
+               n     (sort ls)
+               :when (and (breaks? b n) (not (shape-breaks? kb tax f n)))]
+           {:relation f :arguments n :count (reads/stored-count-shape-tuples-global idx f n)}))))
 
 ;; ---- the pairs ---------------------------------------------------------------
 

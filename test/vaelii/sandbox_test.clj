@@ -15,7 +15,7 @@
             [vaelii.browser.sandbox :as sandbox]
             [vaelii.browser.web :as web]
             [vaelii.core :as v]
-            [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.test-util :as tu]))
 
 (use-fixtures :once (tu/loaded tu/load-starter!))
@@ -58,7 +58,7 @@
         ;; under the entailing reading CxUniverse's (arg genlCx 1 context) derives the edge's
         ;; membership; the starter loaded under the same reading already holds CxWell's
         (is (= (cond-> #{(list 'genlCx sbx 'CxWell)}
-                 checks/*assertive-arg-types?* (conj (list 'context sbx)))
+                 argument/*assertive-arg-types?* (conj (list 'context sbx)))
                (into #{} (map #(:sentence (v/sentex kb %)))
                      (remove before (tu/sentex-ids kb))))
             "the genlCx edge that makes it a context, and what the edge derives")

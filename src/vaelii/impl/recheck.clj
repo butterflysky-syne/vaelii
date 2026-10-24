@@ -56,6 +56,7 @@
         (tax/has-prop? tx :transitive pred)
         (tax/has-prop? tx :reflexive pred)
         (seq (tax/inverses-under tx pred))
+        (seq (tax/inverses-over tx pred))
         (inherit/declared-about? kb pred))))
 
 (defn- merge-normalizer
@@ -79,12 +80,25 @@
 (defn- reachable-predicates
   "The trigger predicates that can answer the exception conjunct `lit`, whose predicate is
   `pred`: the global `specs` of `pred` for a positive conjunct, and `specs` plus `genls`
-  for a negated one."
+  for a negated one, each across `genlInverse` edges too (`special/signed-all`), since a
+  swapped tuple has the multiset of arguments the shape test compares."
   [kb pred lit]
   (let [tax (reasoning/taxonomy kb)]
     (if (sx/negation? lit)
-      (into (tax/specs-global tax pred) (tax/genls-global tax pred))
-      (tax/specs-global tax pred))))
+      (into (special/signed-all tax :down pred) (special/signed-all tax :up pred))
+      (special/signed-all tax :down pred))))
+
+(defn- negates-reaches?
+  "Can a trigger on the predicate `tp` answer the negated conjunct `lit` on `pred` through
+  a `negates` declaration's denial: a tuple of a predicate below one that a declaration
+  says negates `pred` or a supertype of it (`tax/negates-over`) answers `(not (pred …))`
+  on the same arguments?  The reads are unscoped: a spare candidate re-checks and yields
+  nothing, and the re-check reads the rule's own context."
+  [kb pred lit tp]
+  (let [tax (reasoning/taxonomy kb)]
+    (boolean (and (sx/negation? lit) (symbol? tp) (symbol? pred) (tax/negates? tax)
+                  (let [ups (tax/genls-global tax tp)]
+                    (some (fn [[_ r]] (contains? ups r)) (tax/negates-over tax pred)))))))
 
 (defn- separation-reaches?
   "Can a trigger on the predicate `tp` answer the negated unary conjunct `lit` on `pred`
@@ -98,16 +112,13 @@
 
 (defn- firing-reachable?
   "Could a trigger of a shape in `shapes` have flipped this firing's block condition?
-  `except` is the rule's block literals; `bindings` are substituted into each, and one
-  literal whose arguments agree with a trigger's and whose `reachable-predicates` hold the
-  trigger's predicate, or whose denial a membership on it answers through a separation
-  (`separation-reaches?`), is enough.  An unreadable literal, or one on a `cross?` predicate,
-  keeps the firing.
-
-  `cross?` is `cross-argument-predicate?` memoized by the caller for the pass, because
-  one of its arms reads the index and the filter reads nothing but memory per firing.
-  `norm` is `merge-normalizer`'s answer, applied to each substituted literal as it is to
-  the trigger shapes."
+  `except` is the rule's block literals, each substituted with `bindings` and put through
+  `norm` (`merge-normalizer`); one literal whose arguments agree with a trigger's and whose
+  `reachable-predicates` hold the trigger's predicate, or whose denial a membership or a
+  tuple on it answers (`separation-reaches?`, `negates-reaches?`), is enough.  An
+  unreadable literal, or one on a `cross?` predicate, keeps the firing.  `cross?` is
+  `cross-argument-predicate?` memoized for the pass, since one of its arms reads the
+  index."
   [kb except bindings shapes cross? norm]
   (boolean
    (some (fn [lit]
@@ -117,7 +128,8 @@
                    (let [reach (reachable-predicates kb lp lit')]
                      (some (fn [[tp ta]] (and (= la ta)
                                               (or (contains? reach tp)
-                                                  (separation-reaches? kb lp lit' tp))))
+                                                  (separation-reaches? kb lp lit' tp)
+                                                  (negates-reaches? kb lp lit' tp))))
                            shapes)))
                true)))                                    ; unreadable conjunct: keep
          except)))
@@ -287,10 +299,12 @@
           queued)))
 
 (defn exception-blocked-set
-  "The blocked set after re-deciding the exceptions of `exception-candidates`' firings:
-  a block outside the candidates is carried forward, and every candidate is re-decided
-  from scratch.  The whole set, since `jtms/set-blocked` replaces rather than adds.
-  `cands` is `exception-candidates`' answer for `queued`, when the caller holds it."
+  "The blocked set after re-deciding, for each of `exception-candidates`' firings,
+  whether an `except` hides an antecedent or something the rule carries blocks the firing
+  (`chain/justification-excepted?`): a block outside the candidates is carried forward.
+  The whole set, since `jtms/set-blocked` replaces rather than adds; the caller adds the
+  rule-carried withdrawals.  `cands` is `exception-candidates`' answer for `queued`, when
+  the caller holds it."
   ([kb queued] (exception-blocked-set kb queued (exception-candidates kb queued)))
   ([kb _queued cands]
    (let [tms   (reasoning/tms kb)

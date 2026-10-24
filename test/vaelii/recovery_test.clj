@@ -13,6 +13,7 @@
             [vaelii.host.starter :as starter]
             [vaelii.impl.chain :as chain]
             [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.disk.durability :as dur]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.reads :as reads]
@@ -750,7 +751,7 @@
   ;; left alone with it — has to draw the mint on a KB rebuilt from the store exactly as on
   ;; the KB that withheld it.
   (tu/with-terms [animal dog parentOf Fred Mary CxWorld CxDogs]
-    (binding [checks/*assertive-arg-types?* true
+    (binding [argument/*assertive-arg-types?* true
               checks/*prune-subsumed-mints?* true]
       (let [build (fn [kb]
                     (doseq [c [CxWorld CxDogs]]
@@ -906,8 +907,11 @@
             #(let [w (future (try (v/edit! kb batch) :done
                                   (catch clojure.lang.ExceptionInfo e
                                     (select-keys (ex-data e) [:type :rolled-back]))))]
-               @started
-               [(dur/quiesce-writes! (assoc quiesce :release? true)) @w]))))
+               ;; a slowed fn the edit never calls answers `::not-started` rather than parking
+               [(if (deref started 30000 false)
+                  (dur/quiesce-writes! (assoc quiesce :release? true))
+                  ::not-started)
+                @w]))))
 
 (tu/deftest-kb a-shutdown-waits-for-a-running-write-and-stops-one-past-its-bound
   (tu/with-terms [widget gadget]
@@ -935,3 +939,41 @@
         (let [kb2 (restart)]
           (v/recover kb2)
           (is (= {:n 0 :handles []} (v/unsupported kb2))))))))
+
+;; `(genl vmid vk)` moves two types, each with more specializations than a limit of 1.
+;; The four-argument `assert` is the outermost write, its settle runs inside the write's
+;; unit, and the settle's argument-hold refresh reads the two types in turn.  The first
+;; read is slowed past the shutdown's wait, so the stop falls between the two reads.
+;; Forced to the entailing reading: under the constraint-only one an end with more
+;; specializations than the limit reads every declaration whole (`lattice-candidates`),
+;; so the refresh reads no moved type and holds no stop between two of them.
+(tu/deftest-kb a-shutdown-stops-a-write-between-the-moved-types-a-holds-refresh-reads
+  (tu/with-terms [vdog vmid vk vneeds]
+    (tu/with-entailing
+      (let [edge  (list 'genl vmid vk)
+            fh    (peek (mapv #(v/assert kb % 'CxUniverse)
+                              [(list 'genl vk 'integer) (list 'genl vmid 'thing) (list 'genl vdog vmid)
+                               (list 'unary_predicate vneeds) (list 'arg vneeds 1 vdog) (list vneeds 5)]))
+            reads (atom 0)
+            orig  @#'checks/end-candidates]
+        (is (not (v/believed? kb fh 'CxUniverse)))
+        (with-redefs-fn {#'checks/spec-walk-limit 1
+                         #'checks/end-candidates  (fn [& args]
+                                                    (when dur/*abortable?* (swap! reads inc))
+                                                    (apply orig args))}
+          #(let [started (promise)]
+             (slowed #'checks/end-candidates 200 started
+                     (fn []
+                       (let [w (future (try (v/assert kb edge 'CxUniverse {}) :done
+                                            (catch clojure.lang.ExceptionInfo e
+                                              (select-keys (ex-data e) [:type]))))]
+                         (is (= [true {:type :shutdown-abort}]
+                                [(if (deref started 30000 false)
+                                   (dur/quiesce-writes! {:wait-ms 50 :unwind-ms 10000 :release? true})
+                                   ::not-started)
+                                 @w])))))))
+        (is (= 1 @reads) "the write stopped before the second moved type")
+        (is (nil? (v/handle-of kb edge 'CxUniverse)))
+        (is (not (v/believed? kb fh 'CxUniverse)) "the hold the edge would release stands")
+        (v/assert kb edge 'CxUniverse)
+        (is (v/believed? kb fh 'CxUniverse) "and the next write's refresh releases it")))))

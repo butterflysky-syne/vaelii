@@ -1,28 +1,9 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.plan-branches-test
-  "Two things `vaelii.plan-test` leaves open: the planner's short-circuit branch when
-  a **recursive** literal is present, and what actually happens when an evaluable runs
-  with its variables still unbound.
-
-  The short-circuit (`plan/order`, the `(< (count gens) 2)` arm) exists because there
-  is nothing to *choose* between when at most one generator is reorderable — but it
-  still has work to do, and the work is exactly the thing the arm's comment names:
-  the deferred literals can be pulled forward **past the recursive one**, which is
-  placed last.  `plan-test` reaches that arm only with `recs` empty, so the
-  `(concat gens early recs (drop-i defs early))` assembly — the only place the four
-  groups are spliced back together — is never checked with all four non-trivial.  A
-  reassembly that emitted `recs` before `early` would lose the early prune the branch
-  exists for; one that forgot `drop-i` would emit the deferred literal twice.
-
-  The second is a claim `vaelii.impl.plan`'s docstring makes outright: an evaluable
-  run before its arguments are bound \"does not throw, it quietly yields *no*
-  solutions\".  Everything in the suite tests that as an *ordering* fact — the
-  evaluable ends up last, so it never runs unbound — and with `plan/*enabled*` false
-  the antecedents are still in canonical order, which places evaluables last anyway.
-  Nothing executes one unbound.  The tests at the bottom do, because the whole
-  justification for treating deferred literals as reorderable-but-fixed-in-position rests on the
-  failure mode being empty rather than an exception."
+  "The planner's arm for fewer than two reorderable generators with a recursive literal
+  present (`plan-pairs`), and an evaluable run unbound: an unbound goal answers empty,
+  and an unbound rule antecedent is refused at assert."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.plan :as plan]
@@ -33,11 +14,7 @@
 ;; ---- the short-circuit arm, with a recursive literal in play ----------------
 
 (tu/deftest-kb one-generator-plus-a-recursive-literal-still-pulls-the-deferred-forward
-  ;; The uncovered branch: `gens` has one member so there is no ordering decision, but
-  ;; `recs` is non-empty and the deferred literal must land *between* them.  Emitting
-  ;; `recs` before `early` type-checks, keeps every literal, and throws away the only
-  ;; reason this arm does anything at all — the test would then run once per recursive
-  ;; solution instead of pruning before the recursion is entered.
+  ;; One generator and a recursive literal: the deferred literal lands between them.
   (tu/with-terms [step reaches Aa Bb CxPlan]
     (v/assert kb (list step Aa Bb) CxPlan)
     (let [gen (list step '?x '?y)
@@ -48,13 +25,13 @@
         (is (= [gen flt rec] ordered)))
       (testing "and nothing is dropped or duplicated by the reassembly"
         (is (= 3 (count ordered)))
-        (is (= (frequencies [gen rec flt]) (frequencies ordered)))))))
+        (is (= (frequencies [gen rec flt]) (frequencies ordered))))
+      (testing "an evaluate is ready once its inputs are bound, its output aside"
+        (let [ev (list 'evaluate '?z (list '+ '?x 1))]
+          (is (= [gen ev rec] (plan/order kb [gen rec ev] CxPlan {:consequent-pred reaches}))))))))
 
 (tu/deftest-kb a-deferred-literal-the-recursion-binds-stays-after-the-recursion
-  ;; The complement, and the reason `ready` is consulted rather than the deferred
-  ;; literals being hoisted wholesale: `?z` is bound by the recursive literal alone, so
-  ;; there is no early point to run the test at.  This is the `drop-i` call with an
-  ;; empty `early` — every deferred literal has to come back out of the tail.
+  ;; `?z` is bound by the recursive literal alone, so `early` is empty.
   (tu/with-terms [step reaches Aa Bb CxPlan]
     (v/assert kb (list step Aa Bb) CxPlan)
     (let [gen (list step '?x '?y)
@@ -66,9 +43,7 @@
       (is (= 3 (count ordered))))))
 
 (tu/deftest-kb with-no-generators-at-all-a-ready-deferred-literal-still-overtakes-the-recursion
-  ;; `gens` empty — the degenerate end of the same arm.  The variables arrive from the
-  ;; caller's `:bound` (a rule expanded under bindings already substituted in), so the
-  ;; test is runnable immediately and belongs in front of the recursive literal.
+  ;; `gens` empty; the variables arrive from the caller's `:bound`.
   (tu/with-terms [reaches CxPlan]
     (let [rec (list reaches '?y '?z)
           flt (list 'lessThan '?x '?y)
@@ -78,16 +53,10 @@
       (is (= 2 (count ordered))))))
 
 ;; ---- an evaluable that actually runs unbound --------------------------------
-;; DECISION (vaelii.impl.plan's docstring): "(evaluate ?z (+ ?x ?y)) run before ?x is
-;; bound does not throw, it quietly yields *no* solutions."  That is what licenses the
-;; planner to treat deferred literals as ordinary reorderable literals that happen to
-;; be fixed in position — if the failure mode were an exception, a planning bug would take the
-;; query down instead of returning a wrong (empty) answer.
+;; docs/inference.md: a hoisted `evaluate` yields no solutions rather than an error.
 
 (tu/deftest-kb an-unbound-evaluate-yields-no-solutions-rather-than-throwing
-  ;; Driven straight at the prover, which is the same call a chainer makes on a deferred
-  ;; antecedent whose bindings do not cover it.  `eval-expr` must reach its ::fail
-  ;; arm on the unbound symbol; applying `+` to it would be a ClassCastException.
+  ;; `eval-expr` reaches its ::fail arm on the unbound symbol.
   (tu/with-terms [CxEval]
     (is (empty? (v/ask kb (list 'evaluate '?z (list '+ '?q 1)) CxEval)))
     (testing "and nested one level down, where the failure has to propagate outward"
@@ -98,9 +67,7 @@
                       (v/ask kb (list 'evaluate '?z (list '+ 2 1)) CxEval)))))))
 
 (tu/deftest-kb an-unbound-comparison-yields-no-solutions-rather-than-throwing
-  ;; `EvaluableProver` refuses a goal whose arguments are not all numbers, so an
-  ;; unbound `lessThan` falls through to the fact and rule provers and finds nothing.
-  ;; Answering-with-nothing is the documented behaviour; `apply <` on a symbol is not.
+  ;; `EvaluableProver` refuses a goal whose arguments are not all numbers.
   (tu/with-terms [CxEval]
     (is (empty? (v/ask kb (list 'lessThan '?n 35) CxEval)))
     (is (empty? (v/ask kb (list 'greaterThan '?n 35) CxEval)))
@@ -108,18 +75,11 @@
       (is (seq (v/ask kb (list 'lessThan 1 35) CxEval)))
       (is (empty? (v/ask kb (list 'lessThan 35 1) CxEval))))))
 
-;; A bare *goal* nothing binds answers empty, above.  A rule *antecedent* nothing binds
-;; is refused instead, and the difference is not inconsistency — a goal is asked and
-;; gone, while a rule is stored and re-run.  Answering it empty means the two chainers
-;; read one rule differently forever: backward silently finds nothing, forward reaches
-;; `chain/solve-deferred`, which throws rather than report a comparison that never ran
-;; as one that failed — and by then the rule is stored, so every later assert re-fires
-;; it and throws again.  `sentex/check-naf-closed` refuses it at assert time, which is
-;; the one point where the author can still fix the typo it almost always is.
+;; A rule antecedent nothing binds is refused at assert (`sentex/check-naf-closed`):
+;; stored, it would answer empty backward and throw forward (`chain/solve-deferred`).
 
 (tu/deftest-kb a-rule-antecedent-nothing-binds-is-refused-rather-than-stored
-  ;; `?m` appears in no other antecedent, so however the planner arranges these the
-  ;; comparison would run unbound.
+  ;; `?m` appears in no other antecedent.
   (tu/with-terms [age young Tom Bob CxPlan]
     (v/assert kb (list age Tom 30) CxPlan)
     (v/assert kb (list age Bob 40) CxPlan)
@@ -131,8 +91,7 @@
       (is (some? e) "nothing in the rule writes ?m")
       (is (= :naf-not-closed (:type (ex-data e))))
       (is (= '[?m] (:unbound (ex-data e))))
-      ;; the refusal is at canonicalization, so `handle-of` cannot be the probe — it
-      ;; would have to build the very form that is refused
+      ;; `handle-of` would build the refused form, so the probe is the count
       (is (= before (v/sentex-count kb)) "a refused rule stores nothing"))
     (testing "the bound comparison is stored and runs, so this is not vacuous"
       (v/assert-rule kb [(list age '?p '?n) (list 'lessThan '?n 35)]

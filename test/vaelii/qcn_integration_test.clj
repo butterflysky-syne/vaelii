@@ -1,19 +1,15 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.qcn-integration-test
-  "Where the qualitative calculi meet the rest of the engine.
-
-  Each algebra's own namespace tests it in isolation; this one tests the protocol they all
-  reach through `vaelii.impl.qcn-kb` — what a registered prover is *reachable from*, what
-  it is not, and what it reports when the facts it reads cannot all hold.  Several of
-  these behaviours fall out of the registry being a KB-held list rather than being
-  designed in, which is exactly why they need asserting: nothing else would notice if a
-  change to the prover engine took them away."
+  "The protocol every calculus reaches through `vaelii.impl.qcn-kb`: what a registered
+  prover is reachable from, the readers, negative facts, the resident network, the
+  semi-naive re-join, and what an unsatisfiable network reports."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.walk :as walk]
             [vaelii.core :as v]
             [vaelii.impl.interval :as iv]
             [vaelii.impl.observe :as observe]
+            [vaelii.impl.provers :as provers]
             [vaelii.impl.qcn :as qcn]
             [vaelii.impl.qcn-kb :as qkb]
             [vaelii.impl.space :as space]
@@ -34,9 +30,7 @@
 ;; ---- reachable from a rule ----------------------------------------------
 
 (tu/deftest-kb a-rule-antecedent-is-discharged-by-the-prover
-  ;; The node engine's leaf is `solve-goal`, the whole registry, which is what makes a
-  ;; rule's antecedent answerable by *any* registered prover.  So a rule can join on a
-  ;; spatial relation nobody stored — the composition is found during the proof.
+  ;; a backward rule's leaf is the whole registry
   (tu/with-terms [A B D tmpInside tmpWatched]
     (v/assert kb (list 'nonTangentialProperPart A B) C)
     (v/assert kb (list 'nonTangentialProperPart B D) C)
@@ -57,10 +51,7 @@
                               (v/query kb (list tmpInside A '?y) C {:max-depth 2}))))))))
 
 (tu/deftest-kb a-rule-exception-can-be-a-qualitative-goal
-  ;; `exceptWhen` evaluates its query over the **registry**, which expands no rule, and
-  ;; the registry is the KB's own list, so a registered prover is in it.  A rule can
-  ;; therefore state its exception in terms of a relation the network derives rather than
-  ;; one anybody stored.
+  ;; `exceptWhen` evaluates its query over the registry
   (tu/with-terms [Cage Room Sparrow Canary tmpBird tmpFlies]
     (v/assert kb (list tmpBird Sparrow) C)
     (v/assert kb (list tmpBird Canary) C)
@@ -224,10 +215,6 @@
       (is (empty? (v/sentexes-matching kb (list tmpEnclosed A) C))))))
 
 (tu/deftest-kb forward-chaining-fires-on-an-entailed-relation
-  ;; An entailed relation has no handle, so for a long time it could fire nothing: there
-  ;; was no antecedent for a justification to rest on, and a conclusion nothing can
-  ;; withdraw is worse than one never drawn.  Support closes it — the entailment names
-  ;; the stored facts behind it, and those become the firing's antecedents.
   (tu/with-terms [A B D tmpEnclosed]
     (v/assert-rule kb [(list 'nonTangentialProperPart '?x D)]
                    (list tmpEnclosed '?x) C {:direction :forward})
@@ -248,11 +235,7 @@
           "B is untouched — it never depended on the entailment"))))
 
 ;; ---- which networks the re-join runs against ----------------------------
-;; A qualitative fact cannot be matched at a trigger position, so every forward rule
-;; mentioning its calculus is re-joined against "the networks the calculus has facts
-;; in".  A network is what a *reader* sees, though, and the readers are not only the
-;; contexts holding a fact: a context inheriting two of them sees both their facts at
-;; once and composes what neither composes alone.
+;; docs/qcn.md, "Which networks it joins against".
 
 (defn- placements
   "The contexts a derived `(pred arg)` was placed in, read across every context rather
@@ -262,12 +245,7 @@
   (set (map :context (v/sentexes-matching kb (list pred arg) '?ctx))))
 
 (tu/deftest-kb an-entailment-only-a-context-below-two-others-sees-fires-a-forward-rule
-  ;; The containment chain is split across two incomparable contexts, so neither
-  ;; composes it and the entailment exists only for a reader inheriting both.  `ask`
-  ;; answers it there, and forward chaining owes the same answer: otherwise the same
-  ;; knowledge derives different things according to which context its halves were
-  ;; stated in, and the conclusion's own placement context is the one that cannot see
-  ;; the reason it was drawn.
+  ;; the chain is split across two incomparable contexts
   (tu/with-terms [A B D CxA CxB CxBoth tmpEnclosed]
     (v/assert kb (list 'genlCx CxA 'CxUniverse) C)
     (v/assert kb (list 'genlCx CxB 'CxUniverse) C)
@@ -291,11 +269,7 @@
       (is (empty? (placements kb tmpEnclosed A))))))
 
 (tu/deftest-kb a-fact-that-licenses-nothing-is-not-what-makes-that-firing-appear
-  ;; The sharp form of the same defect, and the reason it is one rather than a missing
-  ;; optimization: reading the network only where facts are *stated* makes a conclusion
-  ;; wait for some unrelated fact to be stated in the context that composes it.  Belief
-  ;; would then depend on an assertion that entails nothing — and survive its
-  ;; retraction, so a reload of the very same content would not reproduce the KB.
+  ;; a firing must not wait for an unrelated fact in the meeting context
   (tu/with-terms [A B D X Y CxA CxB CxBoth tmpEnclosed]
     (v/assert kb (list 'genlCx CxA 'CxUniverse) C)
     (v/assert kb (list 'genlCx CxB 'CxUniverse) C)
@@ -314,10 +288,7 @@
           "and taking it away again decides nothing either"))))
 
 (tu/deftest-kb a-cross-context-chain-composes-one-arriving-fact-at-a-time
-  ;; The re-join is semi-naive — it joins over the pairs that moved since these rules
-  ;; were last joined, per context — so the contexts it takes a delta for have to be the
-  ;; same ones it solves against.  Growing the chain a fact at a time is what asks: each
-  ;; arrival moves the meeting context's network and nothing else's.
+  ;; each arrival moves the meeting context's network and nothing else's
   (tu/with-terms [A B D E CxA CxB CxBoth tmpIn]
     (v/assert kb (list 'genlCx CxA 'CxUniverse) C)
     (v/assert kb (list 'genlCx CxB 'CxUniverse) C)
@@ -335,12 +306,47 @@
       (is (= #{CxA} (placements kb tmpIn D))
           "D reaches E within one context, so that is where its conclusion belongs"))))
 
+(tu/deftest-kb a-context-holding-only-sub-predicate-facts-is-a-reader
+  ;; CxSub holds no fact on a calculus predicate, only facts on a spec of one
+  (doseq [order [[:rule :edge :f1 :f2] [:edge :f1 :f2 :rule] [:rule :f1 :f2 :edge]]]
+    (tu/with-terms [A B D CxSub caged tmpInside]
+      (v/assert kb (list 'genlCx CxSub C) C)
+      (let [steps {:rule #(v/assert-rule kb [(list 'properPartOfRegion '?x D)]
+                                         (list tmpInside '?x) C {:direction :forward})
+                   :edge #(v/assert kb (list 'genl caged 'nonTangentialProperPart) C)
+                   :f1   #(v/assert kb (list caged A B) CxSub)
+                   :f2   #(v/assert kb (list caged B D) CxSub)}]
+        (doseq [s order] ((steps s)))
+        (is (v/ask? kb (list 'properPartOfRegion A D) CxSub) (str order))
+        (is (= #{CxSub} (placements kb tmpInside A)) (str order))
+        (testing "a fact leaving withdraws the firing a load without it never makes"
+          (v/retract! kb (v/handle-of kb (list caged B D) CxSub))
+          (is (not (v/ask? kb (list 'properPartOfRegion A D) CxSub)) (str order))
+          (is (empty? (placements kb tmpInside A)) (str order)))))))
+
+(tu/deftest-kb a-context-meeting-a-sub-predicate-edge-and-its-facts-is-a-reader
+  ;; the edge making `caged` a spec of ntpp is visible from CxBoth and not from CxFacts
+  (doseq [order [[:rule :edge :f1 :f2] [:edge :f1 :f2 :rule] [:rule :f1 :f2 :edge]]]
+    (tu/with-terms [A B D CxEdge CxFacts CxBoth caged tmpInside]
+      (v/assert kb (list 'genlCx CxEdge C) C)
+      (v/assert kb (list 'genlCx CxFacts C) C)
+      (v/assert kb (list 'genlCx CxBoth CxEdge) C)
+      (v/assert kb (list 'genlCx CxBoth CxFacts) C)
+      (let [steps {:rule #(v/assert-rule kb [(list 'properPartOfRegion '?x D)]
+                                         (list tmpInside '?x) C {:direction :forward})
+                   :edge #(v/assert kb (list 'genl caged 'nonTangentialProperPart) CxEdge)
+                   :f1   #(v/assert kb (list caged A B) CxFacts)
+                   :f2   #(v/assert kb (list caged B D) CxFacts)}]
+        (doseq [s order] ((steps s)))
+        (is (v/ask? kb (list 'properPartOfRegion A D) CxBoth) (str order))
+        (is (not (v/ask? kb (list 'properPartOfRegion A D) CxFacts)) (str order))
+        (is (= #{CxBoth} (placements kb tmpInside A)) (str order))
+        (testing "the edge leaving withdraws the firing a load without it never makes"
+          (v/retract! kb (v/handle-of kb (list 'genl caged 'nonTangentialProperPart) CxEdge))
+          (is (empty? (placements kb tmpInside A)) (str order)))))))
+
 (tu/deftest-kb a-variable-context-asks-what-some-reader-entails-not-what-all-facts-would
-  ;; `?ctx` means "in some context" everywhere else in the engine, and a calculus prover
-  ;; owes the same reading.  Two incomparable contexts with *no* common descendant
-  ;; are the case that separates it: their facts compose for no reader at all, since no
-  ;; context inherits both, and a single read over the union of what every context holds
-  ;; would report a relation nowhere entailed.
+  ;; two incomparable contexts with no common descendant compose for no reader
   (tu/with-terms [A B D CxA CxB CxBoth]
     (v/assert kb (list 'genlCx CxA 'CxUniverse) C)
     (v/assert kb (list 'genlCx CxB 'CxUniverse) C)
@@ -369,17 +375,10 @@
       (is (v/ask? kb (list 'partOfRegion A D) '?ctx)))))
 
 ;; ---- a negative fact is a constraint, on every path a positive one is ----
-;; A believed `(not (P a b))` narrows the pair by the complement of P's denotation, so
-;; it moves the network exactly as a positive fact does — it can entail a relation
-;; nobody stated, and it can make the theory impossible.  Both halves of the wiring a
-;; positive fact triggers are therefore owed to it: the re-join that finds the new
-;; entailment, and the re-check that withdraws what an impossible network licensed.
+;; A negative fact owes the re-join and the re-check a positive one owes.
 
 (tu/deftest-kb a-negative-fact-arriving-after-the-rule-licenses-the-firing-it-entails
-  ;; `(not (regionConnectedTo A D))` rules out all seven relations C denotes and leaves
-  ;; DC, so it *entails* `(spatiallyDisconnected A D)` with nothing positive stored.
-  ;; The companion below asserts the identical two sentences the other way round; the
-  ;; pair is an order-independence test, and the order is the only difference.
+  ;; the companion below asserts the same two sentences the other way round
   (tu/with-terms [A D tmpApart]
     (v/assert-rule kb [(list 'spatiallyDisconnected '?x D)] (list tmpApart '?x) C
                    {:direction :forward})
@@ -399,11 +398,6 @@
     (is (= #{C} (placements kb tmpApart A)))))
 
 (tu/deftest-kb a-network-a-negative-fact-makes-impossible-withdraws-what-it-licensed
-  ;; The second half of the same wiring.  An impossible theory is mined for nothing, so
-  ;; a firing the network licensed is blocked the way an excepted one is — and which
-  ;; polarity the impossibility arrived in cannot decide whether that happens, or the
-  ;; KB reports the network unsatisfiable and goes on believing a conclusion drawn
-  ;; from it.
   (tu/with-terms [A B D tmpIn]
     (v/assert-rule kb [(list 'partOfRegion '?x D)] (list tmpIn '?x) C {:direction :forward})
     (v/assert kb (list 'nonTangentialProperPart A B) C)
@@ -478,16 +472,8 @@
     (agree-on-something (vec answers) (zipmap names names))))
 
 (tu/deftest-kb ^:slow the-same-qualitative-knowledge-derives-the-same-belief-in-any-order
-  ;; The oracle for the whole protocol, and the property the two sections above are each one
-  ;; instance of: `qualitative-case` asserted in eight orders, into a KB built from nothing
-  ;; each time, and every order must reach the identical derived set.
-  ;;
-  ;; Orders rather than a fixed expectation because the failure this guards is never a
-  ;; wrong answer, it is a *missing* one: a network read where no reader stands, or an
-  ;; arrival that queues no re-join, both leave a KB that is merely less informative than
-  ;; it should be — and reads as correct against anything but another order of the same
-  ;; content.  The rules are permuted along with the facts, since "the rule arrived last"
-  ;; is exactly the case a rule's own full join would otherwise paper over.
+  ;; `qualitative-case` in eight orders, rules permuted with the facts, each into a KB
+  ;; built from nothing: every order reaches the identical derived set
   (tu/with-terms [A B D P Q X Y CxA CxB CxBoth tmpIn tmpApart]
     (let [t       (zipmap '[A B D P Q X Y CxA CxB CxBoth tmpIn tmpApart]
                           [A B D P Q X Y CxA CxB CxBoth tmpIn tmpApart])
@@ -502,10 +488,8 @@
       (agree-on-something (mapv #(run (shuffled % steps)) (range 8)) t))))
 
 (deftest a-context-edge-arriving-last-composes-what-it-lets-a-reader-see
-  ;; The same composition with the wiring among the arrivals.  Each `genlCx` edge that
-  ;; puts `CxQlBoth` under a fact's context is the last thing the network below needs,
-  ;; and neither fact nor the rule arrives after it to re-join the rule.  One ordering per
-  ;; edge arriving last, both after a fact, and the edges-first ordering as the control.
+  ;; each `genlCx` edge putting `CxQlBoth` under a fact's context arrives last in one
+  ;; ordering; the edges-first ordering is the control
   (let [ops    {:e1 #(v/assert % '(genlCx CxQlBoth CxQlA) 'CxUniverse)
                 :e2 #(v/assert % '(genlCx CxQlBoth CxQlB) 'CxUniverse)
                 :f1 #(v/assert % '(nonTangentialProperPart QlA QlB) 'CxQlA)
@@ -592,11 +576,7 @@
       (is (v/ask? kb (list 'precedes A B) C)))))
 
 ;; ---- the resident network -----------------------------------------------
-;; Reading a network is one belief-filtered read per predicate of the calculus per
-;; polarity, and every consumer asks for one constantly.  So it lives on the KB between
-;; reads, keyed by `observe/change-clock`, and is rebuilt exactly when the engine has
-;; mutated something.  These count *builds*, not calls: the call count is the point of
-;; the mechanism, and the build count is what it costs.
+;; These count builds, not calls.
 
 (defn- counting-builds
   "Run `f` with `qcn-kb/build-network` counted, and return `[result build-count]`."
@@ -614,11 +594,12 @@
       (is (identical? n1 n2) "the second read is the resident value, not a rebuild"))
     (testing "keyed by calculus and context, so neither collides"
       (qkb/network kb iv/allen C)
-      ;; a calculus names its key with an unqualified keyword; every other resident read
-      ;; on this atom keys off its own namespace, which is what keeps them apart.  The
-      ;; Allen read reads the point network too, so that one is resident beside them.
+      ;; a calculus keys with an unqualified keyword; the Allen read reads the point
+      ;; network too, and adds the tolerance its metric narrowing reads to its key
       (is (= #{[:rcc8 C] [:allen C] [:point C]}
-             (into #{} (filter #(and (simple-keyword? (first %)) (= 2 (count %))))
+             (into #{} (comp (filter #(and (simple-keyword? (first %)) (= C (second %))
+                                           (not-any? keyword? (drop 2 %))))
+                             (map #(vec (take 2 %))))
                    (keys @(reasoning/qcn kb))))))
     (testing "and the Allen read leaves its narrowing's own read resident beside them —
               the metric problem, under a key of `stp`'s namespace rather than a calculus
@@ -653,12 +634,27 @@
       (is (not (contains? (qkb/possible space/rcc8 kb C B D) :ntpp))
           "and out of the network, its believed negation narrowing by the complement"))))
 
+(tu/deftest-kb the-resident-interval-network-answers-the-tolerance-bound-at-the-read
+  ;; a gap of 1e-6 s between two intervals reads as `:before` at the default tolerance
+  ;; and as `:meets` at 1e-3; no write moves the clock between the first three reads
+  (tu/with-terms [I J Is Ie Js Je]
+    (doseq [[i s e] [[I Is Ie] [J Js Je]]]
+      (v/assert kb (list 'startOf i s) C)
+      (v/assert kb (list 'endOf i e) C))
+    (v/assert kb (list 'temporalDistance Is Ie '(QuantityFn 2 Hour)) C)
+    (v/assert kb (list 'temporalDistance Js Je '(QuantityFn 3 Hour)) C)
+    (v/assert kb (list 'temporalDistance Ie Js '(QuantityFn 0.000001 Second)) C)
+    (let [read #(iv/possible-allen-relations kb C I J)
+          wide #(binding [provers/*quantity-tolerance* 1e-3] (read))]
+      (is (= #{:before} (read)))
+      (is (= #{:meets} (wide)) "a rebound tolerance reaches the resident network")
+      (is (= #{:before} (read)) "and the default reading stays resident beside it")
+      (observe/note-change)
+      (is (= #{:meets} (wide)) "a rebuild under the binding")
+      (is (= #{:before} (read)) "leaves the default reading to the default tolerance"))))
+
 (tu/deftest-kb a-warm-started-pass-answers-what-a-cold-one-answers
-  ;; The pass is warm-started off the previous resident answer whenever the new network
-  ;; narrows the old — which is what every arriving fact does, so a load takes that path at
-  ;; every step.  Grown one fact at a time here, and checked against the network a KB that
-  ;; saw the same facts as one batch computes: the two must be identical pair for pair, or
-  ;; the shortcut has invented an entailment.
+  ;; grown one fact at a time, against the network a batch load computes
   (tu/with-terms [Hub]
     (let [regions (mapv #(symbol (str "TmpChain" % "Node")) (range 6))
           ;; a containment chain, so every pair composes and the closure is dense
@@ -667,9 +663,8 @@
       (doseq [[i f] (map-indexed vector facts)]
         (v/assert kb f C)
         (let [warm (:constraints (v/qualitative-network kb :rcc8 C))
-              ;; the reference sweep, straight over the raw network — **not** a second
-              ;; read through the engine, which would hit the content-keyed pass cache the
-              ;; warm run just filled and so compare the answer with itself
+              ;; the reference sweep over the raw network: a read through the engine would hit
+              ;; the pass cache the warm run just filled
               cold (qcn/path-consistent-naive (qkb/network kb space/rcc8 C)
                                               (qkb/nodes (qkb/network kb space/rcc8 C))
                                               space/rcc8-algebra)]
@@ -695,12 +690,7 @@
             (str "one network read for the whole 12-binding join, got " builds))))))
 
 ;; ---- the re-join is semi-naive ------------------------------------------
-;; A qualitative fact cannot be matched at a trigger position — a new `ntpp` fact licenses
-;; a `partOfRegion` antecedent and the two are unrelated by genl — so every rule mentioning
-;; the calculus is re-joined whenever one arrives.  Re-joining over every pair the network
-;; entails means the nth arriving fact redoes the (n-1)th's work, so the join runs over the
-;; pairs whose entailment has **moved** since these same rules were last joined
-;; (`qcn-kb/join-delta`).  What must not change is which conclusions come out.
+;; docs/qcn.md, "The re-join is semi-naive, over the pairs that moved".
 
 (defn- links!
   "Links `from`..`to` of a chain under `pred`, nodes named `<prefix><i>`, each link
@@ -730,11 +720,8 @@
            t))))
 
 (tu/deftest-kb a-narrowed-rejoin-derives-what-a-full-one-derives
-  ;; Two loads of the same shape into one KB: the first interleaved, so every arrival takes
-  ;; a delta, and the second `{:chain? false}` with one `forward-chain`, so the whole of it
-  ;; arrives as one delta against the first load's baseline.  Both must derive the same
-  ;; tuples, including the rule with **two** qualitative antecedents — the case a delta that
-  ;; narrowed both at once would silently halve.
+  ;; an interleaved load and a deferred one into one KB, including a rule with two
+  ;; qualitative antecedents
   (tu/with-terms [tmpContained tmpNested]
     (v/assert-rule kb [(list 'properPartOfRegion '?x '?y)] (list tmpContained '?x) C {:direction :forward})
     (v/assert-rule kb [(list 'properPartOfRegion '?x '?y) (list 'properPartOfRegion '?y '?z)]
@@ -753,10 +740,7 @@
         "every pair two proper-part steps apart, which is the whole transitive closure")))
 
 (tu/deftest-kb the-delta-is-generic-over-the-calculus
-  ;; Nothing in the delta knows an algebra — it diffs closed networks and counts handles —
-  ;; so a second calculus is the check that it is the *protocol* being tested rather than
-  ;; RCC-8.  Allen's `after` chain is the same shape in a different algebra, and the two
-  ;; networks coexist in one KB without seeing each other.
+  ;; a second calculus, since nothing in the delta knows an algebra
   (tu/with-terms [tmpLate]
     (v/assert-rule kb [(list 'precedes '?x '?y)] (list tmpLate '?y) C {:direction :forward})
     (links! kb 'after "TmpNow" 9 nil)
@@ -768,10 +752,7 @@
         "every interval but the last one precedes something")))
 
 (tu/deftest-kb a-rule-arriving-mid-load-is-joined-over-both-halves
-  ;; A rule is fully joined at its own datum, and that join is not what sets the baseline —
-  ;; only a re-join of *all* the calculus's rules may claim that.  So the delta a later fact
-  ;; takes can reach back past the rule's arrival, which costs a repeat the TMS dedups and
-  ;; must lose nothing.  Checked against the same chain with the rule there from the start.
+  ;; a rule's own full join sets no baseline, so a later delta reaches back past it
   (tu/with-terms [tmpEarly tmpAlways]
     (v/assert-rule kb [(list 'properPartOfRegion '?x '?y)] (list tmpAlways '?x) C {:direction :forward})
     (chain! kb "TmpBoth" 1 9 nil)
@@ -784,11 +765,7 @@
     (is (= 8 (count (derived kb tmpEarly "TmpLate" 1))))))
 
 (tu/deftest-kb a-retraction-falls-back-to-a-full-rejoin
-  ;; A widening is not computable from the answer it widened, so a delta cannot describe
-  ;; one — the handle it lost is what says so, and the re-join goes back to full.  Checked
-  ;; against a chain that was never joined at all: the survivors of a cut chain are two
-  ;; shorter chains, and the KB must believe exactly what it would have believed if that is
-  ;; what it had been told.
+  ;; a cut chain's survivors against two chains never joined at all
   (tu/with-terms [tmpContained]
     (v/assert-rule kb [(list 'properPartOfRegion '?x '?y)] (list tmpContained '?x) C {:direction :forward})
     (chain! kb "TmpCut" 9 nil)
@@ -806,11 +783,8 @@
     (is (not (v/ask? kb (list 'properPartOfRegion 'TmpCut8 'TmpCut0) C))
         "and the composition across the cut is gone")))
 
-;; The three tests above are end to end — they say the conclusions are right.  These three
-;; are about the delta itself, because "right conclusions" is also what a delta that always
-;; answered `:all` would produce, and the whole value of one is in the cases where it does
-;; not.  None of them asserts a rule: with no rule mentioning the calculus the engine never
-;; re-joins and so never records a baseline of its own, which leaves the mechanism visible.
+;; The delta itself, with no rule asserted, so the engine records no baseline of its
+;; own.
 
 (tu/deftest-kb a-delta-with-no-baseline-is-all-and-an-unchanged-network-moves-nothing
   (tu/with-terms [A B D]
@@ -829,12 +803,7 @@
         (is (contains? moved [D B]) "and the pair its composition reached")))))
 
 (tu/deftest-kb a-join-baseline-outlives-the-resident-cache-clearing
-  ;; A baseline is bookkeeping rather than a memo, and that is the whole difference: a
-  ;; memo lost is recomputed at its own cost, where a baseline lost cannot be recomputed
-  ;; at all — what it records is the network as of the last re-join, a moment that has
-  ;; passed — so every later delta for that calculus and context silently falls back to a
-  ;; full join.  The resident network cache is cleared wholesale when it grows past its
-  ;; bound, so a baseline sharing that atom is dropped by traffic that is not about it.
+  ;; the resident cache clears wholesale at its bound; the baselines are kept apart
   (tu/with-terms [A B]
     (v/assert kb (list 'nonTangentialProperPart A B) C)
     (qkb/note-joined kb space/rcc8 C (:baseline (qkb/join-delta kb space/rcc8 C)))
@@ -848,11 +817,7 @@
         "and the baseline is where it was left, so the next re-join is still a delta")))
 
 (deftest a-wipe-stops-carrying-the-join-baselines
-  ;; The baselines are the one piece of resident state a *clock* tick does not reach —
-  ;; that is what they are for, a claim about a network rather than a memo of one — so
-  ;; the wholesale wipe is the only thing that can retire them, and it is where the
-  ;; other resident maps are retired.  Its own KB: `clear!` empties the store, which is
-  ;; the one thing the neutral fixture will not accept.
+  ;; its own KB: `clear!` empties the store, which the neutral fixture refuses
   (let [kb (doto (v/open-kb tu/plain-memory-space)
              (tu/clear-kb!)
              (tu/load-core!)
@@ -869,9 +834,6 @@
       (finally (tu/clear-kb! kb)))))
 
 (tu/deftest-kb a-lost-handle-makes-the-delta-all
-  ;; a derived support is a union along whatever chain narrowed it, so a handle that goes
-  ;; moves the support at pairs whose *constraint* never moved — undiffable pair by pair,
-  ;; and answered coarsely instead
   (tu/with-terms [A B D]
     (v/assert kb (list 'nonTangentialProperPart A B) C)
     (v/assert kb (list 'nonTangentialProperPart B D) C)
@@ -921,10 +883,7 @@
       (is (zero? @diffs)))))
 
 (tu/deftest-kb the-rejoin-enumerates-the-pairs-that-moved-not-every-pair
-  ;; The structural claim a timing cannot make: an arriving fact answers the pairs it
-  ;; moved, not the pairs the network entails.  In a containment chain those are n and
-  ;; n(n-1)/2 — one `support` call per pair answered, so counting them says which of the
-  ;; two the join ran over.
+  ;; an arrival answers the n pairs it moved, not the n(n-1)/2 the chain entails
   (tu/with-terms [tmpContained]
     (v/assert-rule kb [(list 'properPartOfRegion '?x '?y)] (list tmpContained '?x) C {:direction :forward})
     (chain! kb "TmpMoved" 12 nil)

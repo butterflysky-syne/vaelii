@@ -1325,7 +1325,7 @@
     ;; is remembered as bindings").  Derived state, in memory beside
     ;; `jtms/blocked` rather than in it: these are not justifications
     ;; and must never be labelled.  `:kinds` names the handles holding
-    ;; a `:constraint`, `:lift` or `:mint` entry (`special/kind-entries`).
+    ;; a `:constraint` or `:lift` entry (`special/kind-entries`).
     :refused   (atom {})
     :settle-stats (atom {:iterations 0 :passes 0 :histogram {}})
     :chain-stats  (atom {:runs 0 :last nil})
@@ -1372,10 +1372,8 @@
     ;; the settle that follows a move drains it, and a rebuild clears it
     :except-moves (atom {})
     :qcn       (caches/tallied (atom {}) [:R3])
-    ;; the join baselines beside the network cache, never inside it:
-    ;; the resident cache clears wholesale at its bound, and a baseline
-    ;; is bookkeeping whose loss degrades every later delta join to a
-    ;; full one — bounded by (calculi × reader contexts), not by reads
+    ;; the join baselines, beside the network cache and never inside it (docs/qcn.md,
+    ;; "The network is resident, and the clock is what makes that sound")
     :qcn-joined (atom {})
     :matches   (caches/tallied (atom {}) [:R1])
     ;; one shape, not a map of keyed entries: every entry in it is
@@ -2095,10 +2093,9 @@
     kb))
 
 (def equality-predicates
-  "The relations that assert a merge — `vaelii.impl.special` is where they are
-  acted on, but stratification (`vaelii.impl.checks`) needs the set too.  `different`
-  is not among them: it *reads* the closure and is never stored (see
-  `vaelii.impl.wff`)."
+  "The relations that assert a merge, acted on in `vaelii.impl.special` and read by
+  stratification (`vaelii.impl.checks`).  `different` reads the closure and is never
+  stored."
   '#{rewriteOf sameAs equals})
 
 ;; ---- type queries -------------------------------------------------------
@@ -2623,6 +2620,7 @@
      ;; is one of the two points the stored content moves at, the other being
      ;; `integrate/sentex-removed!`
      (observe/note-change)
+     (exc/note-stored! kb s true)
      ;; a run with the handle cache engaged learns the handle here rather than paying a
      ;; trie walk to rediscover it — keyed on the *canonical* sentence, which is what the
      ;; store holds; a caller looking it up by some other spelling misses and fills its
@@ -2689,6 +2687,8 @@
     (refresh-index-image! kb)
     (observe/notify-add kb s' h)
     (observe/note-change)
+    (exc/note-stored! kb sx false)
+    (exc/note-stored! kb s' true)
     (observe/cache-handle! (handle-cache-key kb) (sx/sentence-of s') (:context s') h)
     (decide/note-candidate! kb s' true)
     (negation/note-respelled! kb s')
@@ -2831,129 +2831,49 @@
   [[f a _]] (when (= f 'rewriteOf) a))
 
 (defn rewrite-term*
-  "`term` (a sentence or a term) rewritten to its **normal form**: first every symbol
-  replaced by its class representative (ground congruence, `res/representative-term`), then its
-  argument terms normalized under any schematic rewrite rules (the oriented equational
-  rewriting of docs/equality.md — `(equals (fatherOf (fatherOf ?x)) (grandfather_of
-  ?x))` reduces `fatherOf∘fatherOf` to `grandfather_of`).
-
-  Both halves are belief-following and both have a presence check: a KB with no merges pays a
-  representative lookup per symbol, and one with no schematic equations skips
-  normalization entirely (`tax/rewrite-rules` is empty).  Migration and query both go
-  through here, so a stored term and a goal meet at one normal form.
-
-  **With a `context`, both halves apply only where they are visible.**  A merge is a
-  sentex, so it rewrites the contexts that inherit it and no others — the same
-  filter `migrate-sentex` puts on the twins it creates, now on the question as well as
-  on the answer.  Without it the two disagree: a rewrite migration correctly declined
-  to make still renames the goal, and a context loses the ability to retrieve a fact it
-  believes, under either spelling.  The two-arity is the **unscoped** read, which asks
-  about the KB rather than from a vantage.
-
-  `rewrite-term*` takes the visibility predicate **already built**, for a caller
-  normalizing many sentences under one reader.  Deciding visibility costs a record fetch
-  per equality supporter, and `res/visible-supporter-fn` memoizes those — but only within
-  the one predicate it returns, so a caller that builds a fresh one per sentence re-fetches
-  the same handful of records once per sentence.  `supersession-map` is that caller: it
-  re-examines every entry the closure displaces on each merging assert.
-
-  One definition, in `resolution` beside the `representative-in` its congruence half
-  recurses with, because `BeliefProjectionProver` normalizes a projected proposition the
-  same way and two copies of that is one copy too many."
+  "`term` (a sentence or a term) in its equality **normal form** (`res/normal-form`),
+  given a built supporter predicate `visible?`, nil for the unscoped read.  A caller
+  normalizing many sentences under one reader builds `visible?` once, since deciding
+  visibility costs a record fetch per equality supporter (`special/supersession-map`)."
   ([kb term visible?] (res/normal-form kb term visible?)))
 
 (defn rewrite-term
-  "`rewrite-term*` for a caller that has a context rather than a built predicate — the
-  ordinary spelling.  Its docstring above owns the semantics."
+  "`rewrite-term*` for a caller holding a context: only the merges and schematic
+  equations `context` sees apply.  The two-arity is the unscoped read."
   ([kb term] (rewrite-term* kb term nil))
   ([kb term context] (rewrite-term* kb term (res/visible-supporter-fn kb context))))
 
 (defn displaced-terms*
-  "The `{old-term representative}` rewrites a sentence undergoes, given the visibility
-  predicate already built — empty when nothing in it has merged.  Mention-aware: a term
-  quoted inside a quoting function (`Quote`, `Quasiquote`) is recorded displaced only by a
-  spelling rename, never by a `sameAs` merge of its referent, matching what `rewrite-term*`
-  actually rewrites (so `why-not` does not over-report a held-opaque mention).  Delegates
-  to `res/displaced-terms-in`."
+  "The `{old-term representative}` rewrites `sentence` undergoes under the built
+  predicate `visible?` (`res/displaced-terms-in`), empty when nothing in it merged."
   [kb sentence visible?]
   (res/displaced-terms-in kb visible? sentence))
 
 (defn displaced-terms
-  "The `{old-term representative}` rewrites a sentence undergoes — empty when nothing
-  in it has merged.  This is what a supersession *records*, so `why-not` can name the
-  representative that displaced a spelling rather than merely reporting that one did.
-
-  Scoped by `context` like every other class read: the spelling that displaced this one
-  is the one *its own* context elected, and naming a representative elected by an edge
-  that context cannot see would make `why-not` cite a merge nobody there has heard of.
-  The `visible?` arity is `rewrite-term*`'s, and for the same caller."
+  "The `{old-term representative}` rewrites a sentence undergoes as `context` elects them,
+  empty when nothing in it merged: what a supersession records, so `why-not` names the
+  displacing representative."
   ([kb sentence] (displaced-terms* kb sentence nil))
   ([kb sentence context] (displaced-terms* kb sentence (res/visible-supporter-fn kb context))))
 
 (defn rewrite-goal
-  "A query goal with its terms rewritten to their class representatives.
-
-  A caller who has not heard about a merge still asks under the old spelling, and
-  that spelling's own sentexes are no longer believed — so the goal is rewritten
-  before lookup and migration stays invisible to them.  Rewriting is a *question*
-  transformation only: `handle-of` and the `lookup` levels deliberately do **not** do
-  it, because they answer about storage rather than about truth.
-
-  **`different` is exempt.**  Rewriting its arguments would map each to its class
-  representative, so a merged pair would compare equal — and since reading class
-  membership is the entire job of `different`, every `different` goal would go false
-  the moment anything merged.  The prover normalizes its own arguments instead, with
-  the same recursive walk (`res/representative-term`) and then compares the results, so
-  the exemption is explicit here rather than resting on the rewrite happening to be a
-  no-op.
-
-  **A positive equation is exempt too.**  Its arguments are mentions, the stored equation
-  is never restated, and a `rewriteOf` spelling rename would turn `(rewriteOf P D)` into
-  the self-edge `(rewriteOf P P)`; `provers/EqualityProver` reads the closure for the rest
-  (`res/goal-held-as-spelled?`, docs/equality.md).
-
-  **A `modal_predicate`'s proposition is exempt too**, and by the same kind of reason: it
-  is what the *agent* holds true, so the asker's merges must not rewrite it.  That one is
-  not spelled here — it is congruence opacity, held inside `res/representative-term` so
-  the stored belief and the question move together (docs/belief.md).
-
-  Rewritten only by the merges `context` can see (`rewrite-term`'s three-arity): a
-  question asked from a context is a question about what that context holds,
-  so a merge it does not inherit must not rename what it asked."
+  "A query goal in the normal form `context` sees (`res/goal-normal-form`), so a caller
+  asking under a retired spelling still finds the restated facts.  `different` and a
+  positive equation are asked as spelled (`res/goal-held-as-spelled?`), and a
+  `modal_predicate`'s proposition is held opaque inside `res/representative-term`.
+  `handle-of` and the `lookup` levels do not rewrite: they answer about storage."
   ([kb goal] (rewrite-goal kb goal nil))
   ([kb goal context] (res/goal-normal-form kb goal context)))
 
-(defn- rule-touches-merged-predicate?
-  "Does rewriting this rule change a **predicate or type** — a non-individual symbol
-  it mentions — rather than only an individual constant?  That is the case a
-  predicate/type merge (docs/equality.md, round two) must migrate a rule for, since
-  it changes a functor the rule reasons over; an individual-only rewrite is held
-  back.  `displaced-terms` already computes the `{changed rep}` map, so this only
-  asks whether any changed spelling is a non-individual."
-  [kb sentence]
-  (boolean (some #(not (nm/individual? %)) (keys (displaced-terms kb sentence)))))
-
 (defn rewritable-sentex?
-  "May this stored sentex be migrated by an equality merge?
-
-  A **rule** is held back for an *individual* merge — rewriting a rule's individual
-  constant is congruence over a schema rather than over ground content, and the
-  rewritten copy would fire alongside its original — but **migrated for a predicate
-  or type** merge, which changes a functor the rule reasons over (`birthplaceOf ⇒
-  bornIn`, `dog ⇒ canine`): the original is superseded and the twin carries the
-  inference (docs/equality.md, round two).  A rule's `exceptWhen` exceptions ride
-  separate meta-sentexes keyed by the rule's handle; migration re-points them onto the
-  twin (`special/migrate-handle-metas`, the same path that carries an `except` or a
-  target-following reply), and a NAF (`unknown`) antecedent lives *in* the rule
-  sentence, so it rewrites with the rule and re-posts through the twin's own
-  `index-rule-sentex` — so an exception/NAF rule migrates with its guard intact.
-
-  A non-rule is migratable unless it is one of the equality relations themselves:
-  rewriting `(rewriteOf Pref Dep)` yields `(rewriteOf Pref Pref)`, the self-edge
-  `wff` exists to refuse."
+  "May this stored sentex be migrated by an equality merge?  A rule when the merge
+  displaces a symbol it mentions (`displaced-terms`): a predicate, a type or an
+  individual constant (docs/equality.md, \"Merging predicates and types\").  A non-rule
+  unless it is an equality relation or the negation of one: migration never restates an
+  equation (docs/equality.md, \"Answering an equation\")."
   [kb sentex]
   (if (rules/rule? sentex)
-    (rule-touches-merged-predicate? kb (sx/sentence-of sentex))
+    (boolean (seq (displaced-terms kb (sx/sentence-of sentex))))
     (let [s (:sentence sentex)]
       (and (not (equality-sentence? s))
            (not (equality-sentence? (sx/positive-body s)))))))
@@ -3068,4 +2988,4 @@
  {:id :R12 :label "Call-scoped memos" :kind :pass :keyed-by :value :reads [:index :T1]
   :holds-content? false
   :retired-by {} :computed :pass :imaged? false
-  :note "volatiles and memoized fns one call holds: `memberships`, `membership-reader` here; `checks/declaration-reader`, `stratification-readers`; `plan/memoizing`, `plan-pairs`; `special/visibility-seeds`, `supersession-map`, `lift-statements`; `inherit/rejoin-rules`; `asp.label/local-analysis`, `component-classifier`"})
+  :note "volatiles and memoized fns one call holds: `memberships`, `membership-reader` here; `checks/declaration-reader`, `stratification-readers` (held for a write or a settle in `rules/*stratification-memo*`, which a rule-index write empties); `except/reader-state`, held for a pass in `except/*reader-states*` while the change clock stands and its frame while `frames-hold?`; `plan/memoizing`, `plan-pairs`; `special/visibility-seeds`, `supersession-map`, `lift-statements`; `inherit/rejoin-rules`; `asp.label/local-analysis`, `component-classifier`"})

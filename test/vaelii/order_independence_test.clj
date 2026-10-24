@@ -40,6 +40,7 @@
             [vaelii.impl.jtms :as jtms]
             [vaelii.impl.memory :as mem]
             [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.reads :as reads]
             [vaelii.impl.sentex :as sx]
@@ -525,8 +526,7 @@
           "the excepted binding concludes nothing under either spelling, forward or backward")))
   (testing "the exception conjunct's own constant is the retired spelling"
     ;; Nothing the firing binds has merged: what moved is a term the *rule* was written
-    ;; with, and an individual-only rewrite holds a rule back from migration, so the
-    ;; stored condition keeps naming `COne` for good.
+    ;; with, and the stored condition names `COne` as written.
     (let [ops [#(v/assert % '(exceptWhen (cskip COne)
                                          (set/defaultRule (set/forwardRule (implies (and (cmark ?x)) (cseen ?x)))))
                           'CxUniverse {:direction :forward})
@@ -879,7 +879,7 @@
                 [(assert-op '(genlResult SkillFn capability))]]
         result (one-outcome-under! "vaelii#100's forms" ops skill-reading)]
     (is (= {:minted 1 :compound true :genl true} (dissoc result :rows)))
-    (is (= [(list 'hasCapability 'Rex (nat/constant-for nat/nat-namespace '(SkillFn Rex)))] (:rows result))))
+    (is (= [(list 'hasCapability 'Rex (nat/constant-for nat-read/nat-namespace '(SkillFn Rex)))] (:rows result))))
   (tu/clear-kb! (tu/test-kb)))
 
 (deftest a-late-inner-declaration-names-the-outer-constant-as-a-first-one-does
@@ -893,8 +893,8 @@
         reading (fn [kb] {:maps  (sort-by pr-str (map :sentence (v/sentexes-with-functor kb 'natFormula)))
                           :likes (mapv :sentence (v/sentexes-with-functor kb 'likes))
                           :ask   (v/ask? kb '(likes Rex (OuterFn (InnerFn Rex))) 'CxUniverse)})
-        inner  (nat/constant-for nat/nat-namespace '(InnerFn Rex))
-        outer  (nat/constant-for nat/nat-namespace (list 'OuterFn inner))
+        inner  (nat/constant-for nat-read/nat-namespace '(InnerFn Rex))
+        outer  (nat/constant-for nat-read/nat-namespace (list 'OuterFn inner))
         result (one-outcome! "a nested pair" ops reading)]
     (is (= {:maps  [(list 'natFormula inner '(InnerFn Rex)) (list 'natFormula outer (list 'OuterFn inner))]
             :likes [(list 'likes 'Rex outer)]
@@ -902,27 +902,28 @@
            (update result :maps (partial sort-by #(str (nth % 2)))))))
   (tu/clear-kb! (tu/test-kb)))
 
-(deftest a-late-reifiable-declaration-re-spells-a-stored-rule-and-a-fired-conclusion
+(deftest a-late-reifiable-declaration-re-spells-a-stored-rule-and-withdraws-an-application-firing
   ;; A rule whose antecedent names `(SkillFn Rex)` matches the use only when both are
-  ;; spelled alike, and a conclusion a rule fired before the declaration keeps its firing
-  ;; once re-spelled: retracting the antecedent takes it, and the constant with it.
+  ;; spelled alike.  A rule concluding `(SkillFn ?x)` that fired before the declaration is
+  ;; held once `SkillFn` is reifiable with no correspondence, and respelled through
+  ;; `skillOf` once it has one; either way the firing it made as written is withdrawn, so
+  ;; the KB holds what the declaration arriving first leaves (docs/nat.md).
   (let [rule   (fn [antes conseq] #(v/assert-rule % antes conseq 'CxUniverse {:direction :forward}))
         joined (one-outcome! "a stored rule"
                              [(rule '[(likes ?x (SkillFn Rex))] '(fan ?x))
                               (assert-op '(likes Bob (SkillFn Rex)))
                               (assert-op '(reifiable_function SkillFn))]
                              #(v/ask? % '(fan Bob) 'CxUniverse))
-        fired  (one-outcome! "a fired conclusion"
-                             [(rule '[(dog ?x)] '(hasCapability ?x (SkillFn ?x)))
-                              (assert-op '(dog Rex))
-                              (assert-op '(reifiable_function SkillFn))]
-                             (fn [kb]
-                               [(skill-reading kb)
-                                (do (v/retract! kb (v/handle-of kb '(dog Rex) 'CxUniverse))
-                                    (skill-reading kb))]))]
+        fire   [(rule '[(dog ?x)] '(hasCapability ?x (SkillFn ?x)))
+                (assert-op '(dog Rex))
+                (assert-op '(reifiable_function SkillFn))]
+        none   {:rows () :minted 0 :compound false}
+        held   (one-outcome! "a held rule's firing" fire #(dissoc (skill-reading %) :genl))
+        spelt  (one-outcome! "a respelled rule's firing"
+                             (conj fire (assert-op '(functionCorrespondingPredicate SkillFn skillOf)))
+                             #(dissoc (skill-reading %) :genl))]
     (is (true? joined))
-    (is (= [{:minted 1 :compound true} {:rows () :minted 0 :compound false}]
-           (mapv #(dissoc % :genl) [(dissoc (first fired) :rows) (second fired)]))))
+    (is (= [none none] [held spelt])))
   (tu/clear-kb! (tu/test-kb)))
 
 (deftest a-reifiable-declaration-leaving-reads-as-one-never-made
@@ -982,7 +983,7 @@
             "(reifiable_function SkillFn)\n(genlResult SkillFn capability)\n")
       (let [kb (tu/fresh)]
         (v/load-text! kb (.getPath dir))
-        (is (= [[(list 'hasCapability 'Rex (nat/constant-for nat/nat-namespace '(SkillFn Rex))) 'CxAlpha]]
+        (is (= [[(list 'hasCapability 'Rex (nat/constant-for nat-read/nat-namespace '(SkillFn Rex))) 'CxAlpha]]
                (mapv (juxt :sentence :context) (v/sentexes-with-functor kb 'hasCapability))))
         (is (v/ask? kb '(genl (SkillFn Rex) capability) 'CxUniverse)))
       (finally
@@ -1875,6 +1876,37 @@
                                       [fact] [rule]]
                                      observe))
         "retracting the edge leaves the KB that never had it, in every interleaving"))
+  (tu/clear-kb! (tu/test-kb)))
+
+(deftest a-merge-seen-through-a-context-edge-given-back-is-the-merge-that-never-came
+  ;; Two `:monotonic` facts a mark merges over, one in each of two contexts, and a reader
+  ;; below both that sees each through its own `genlCx` edge.  The merge drawn at the
+  ;; reader rests on both edges, so retracting the edge to one fact leaves the KB that
+  ;; never had that edge, in every interleaving.
+  (doseq [mark '[functional anti_symmetric]]
+    (tu/with-terms [relOf Tom MumA MumB CxLeft CxRight CxBottom]
+      (let [[s1 s2] (if (= 'functional mark)
+                      [(list relOf Tom MumA) (list relOf Tom MumB)]
+                      [(list relOf MumA MumB) (list relOf MumB MumA)])
+            mono    {:strength :monotonic}
+            edge    (list 'genlCx CxBottom CxRight)
+            base    [#(v/assert % (list mark relOf) CxBottom mono)
+                     #(v/assert % s1 CxLeft mono)
+                     #(v/assert % s2 CxRight mono)
+                     #(v/assert % (list 'genlCx CxBottom CxLeft) 'CxUniverse)]
+            put     #(v/assert % edge 'CxUniverse)
+            observe (fn [kb] {:at-reader (v/same-class? kb MumA MumB CxBottom)
+                              :anywhere  (v/same-class? kb MumA MumB)})
+            never   (one-outcome! (str mark ", no edge") base observe ordering-sample)]
+        (is (= {:at-reader false :anywhere false} never))
+        (is (= {:at-reader true :anywhere true}
+               (one-outcome! (str mark ", the edge") (conj base put) observe ordering-sample))
+            "the edge is what lets the reader see both facts")
+        (is (= never (one-outcome-under! (str mark ", the edge given back")
+                                         (conj (mapv vector base)
+                                               [put #(v/retract! % (v/handle-of % edge 'CxUniverse))])
+                                         observe ordering-sample))
+            (str mark ": retracting the edge takes the merge back")))))
   (tu/clear-kb! (tu/test-kb)))
 
 (deftest a-subsumed-firing-across-a-context-edge-is-order-independent

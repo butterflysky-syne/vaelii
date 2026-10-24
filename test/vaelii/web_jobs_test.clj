@@ -9,7 +9,7 @@
             [vaelii.browser.jobs :as jobs]
             [vaelii.browser.web :as web]
             [vaelii.core :as v]
-            [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.test-util :as tu]))
 
 (def ^:dynamic *app* nil)
@@ -22,10 +22,10 @@
 ;; covers that).
 (use-fixtures :once
   (fn [f]
-    (let [orig checks/*assertive-arg-types?*]
-      (alter-var-root #'checks/*assertive-arg-types?* (constantly false))
+    (let [orig argument/*assertive-arg-types?*]
+      (alter-var-root #'argument/*assertive-arg-types?* (constantly false))
       (try (f)
-           (finally (alter-var-root #'checks/*assertive-arg-types?* (constantly orig)))))))
+           (finally (alter-var-root #'argument/*assertive-arg-types?* (constantly orig)))))))
 
 ;; `catalog/reset-registry!` cancels every job and waits for each to stop before it
 ;; forgets them, so by the time `tu/clear-kb!` runs no chaining thread is still writing

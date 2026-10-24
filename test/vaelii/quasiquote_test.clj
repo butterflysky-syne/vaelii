@@ -10,6 +10,7 @@
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.impl.quasiquote :as quasiquote]
             [vaelii.test-util :as tu]))
 
@@ -25,7 +26,7 @@
     (let [h (v/assert kb (list believes Tom (qq (list isa Fido Dog))) 'CxUniverse)
           k (nth (:sentence (v/sentex kb h)) 2)]
       (testing "the quasiquote is constructed and reified to a mention constant"
-        (is (nat/reified-nat-symbol? k) "arg 2 is now an opaque constant, not a compound")
+        (is (nat-read/reified-nat-symbol? k) "arg 2 is now an opaque constant, not a compound")
         (is (= (list 'Quote (list isa Fido Dog)) (nat/nat-expression kb k))
             "which mentions the constructed sentence"))
       (testing "a query naming the same construction resolves to it"
@@ -39,12 +40,12 @@
                    'CxUniverse {:direction :forward})
     (v/assert kb (list dog Fido) 'CxUniverse)
     (testing "the rule fired and constructed (isa Fido Dog) as a mention"
-      (is (some? (nat/dedup-constant kb (list 'Quote (list isa Fido Dog)))))
+      (is (some? (nat-read/dedup-constant kb (list 'Quote (list isa Fido Dog)))))
       (is (v/ask? kb (list believes Tom (qq (list isa Fido Dog))) 'CxUniverse)))
     (testing "a second binding constructs a distinct mention"
       (v/assert kb (list dog Rex) 'CxUniverse)
-      (is (not= (nat/dedup-constant kb (list 'Quote (list isa Fido Dog)))
-                (nat/dedup-constant kb (list 'Quote (list isa Rex Dog))))))))
+      (is (not= (nat-read/dedup-constant kb (list 'Quote (list isa Fido Dog)))
+                (nat-read/dedup-constant kb (list 'Quote (list isa Rex Dog))))))))
 
 (tu/deftest-kb the-same-binding-converges-to-one-constant
   ;; Determinism is content-addressed: E is its own key, so two firings on the same binding

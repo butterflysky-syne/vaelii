@@ -167,14 +167,15 @@ it (the schematic `equals` of [equational.md](equational.md)) walks argument ter
 reading the marker, so a schematic equation normalizes inside a quoted position as it does
 outside one.
 
-NAT reification does not read the marker either. A ground reifiable NAT inside the
-proposition reifies to its constant before the congruence walk runs, and the constant is
-found through the `natFormula` map under the merges `CxUniverse` holds
-([nat.md](nat.md#what-reification-does-not-cover)). With `(sameAs Apple Pomme)` in
-`CxUniverse` and `(likes Tom (FruitFn Apple))` in `CxAgentAnn`, `(believes Ann (likes Tom
-(FruitFn Pomme)))` is true, although `CxAgentAnn` does not see the merge. A stored `(believes
-A P)` holds the constant in place of the application, so a merge `CxUniverse` holds folds
-the stored belief as well.
+NAT reification holds the proposition opaque as well, and reads the marker globally for
+the same reason. A ground reifiable NAT inside the proposition stays as written through
+the write path and the read entry points, so a stored `(believes A P)` keeps the
+application, and a merge the asker sees folds neither the stored belief nor the question.
+The projection reifies the proposition in the agent's context, under the merges that
+context sees ([nat.md](nat.md#a-nat-resolves-under-the-readers-merges)). With
+`(sameAs Apple Pomme)` in `CxUniverse` and `(likes Tom (FruitFn Apple))` in `CxAgentAnn`,
+`(believes Ann (likes Tom (FruitFn Pomme)))` is false, and with the merge in `CxAgentAnn`
+it is true.
 
 ## More than one modal predicate
 

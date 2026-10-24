@@ -188,6 +188,10 @@
 ;; with both ends open and the closure pair (R0 R2) the body needs is missed.  Under
 ;; `thereExists` that loses the answer; under `unknown` and `exceptWhen` it admits one the
 ;; closure refutes, and the predicate is named in `:unenumerated-in-guards` as well.
+;; A stored exception's conjunction is canonicalized, which sorts `(start ?x)` and
+;; `(finish ?y)` ahead of `aheadOf`, so the exception's body filters the pair with
+;; `different` instead: a deferred test follows the generators however it is written, and
+;; R0 R2 is the one pair that avoids R1.
 
 (defn- open-pair-kb [kb aheadOf start finish R0 R1 R2 CxT]
   (v/assert kb (list 'transitive aheadOf) CxT)
@@ -219,7 +223,9 @@
 
 (tu/deftest-kb an-open-transitive-goal-in-an-exception-admits-the-answer-and-names-a-guard
   (tu/with-terms [aheadOf start finish mark flagged R0 R1 R2 Z CxT]
-    (let [ex   (open-pair-kb kb aheadOf start finish R0 R1 R2 CxT)
+    (open-pair-kb kb aheadOf start finish R0 R1 R2 CxT)
+    (let [ex   (list 'thereExists '[?x ?y] (list 'and (list 'different '?y R1) (list 'different '?x R1)
+                                                 (list aheadOf '?x '?y)))
           goal (list flagged '?z)
           want {:status :incomplete :unenumerated [aheadOf] :unenumerated-in-guards [aheadOf]}]
       (v/assert kb (list 'exceptWhen ex (list 'implies (list mark '?z) (list flagged '?z))) CxT

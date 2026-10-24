@@ -28,9 +28,10 @@
   ground binary tuples under one of them with a stored converse."
   #{:anti-symmetric :asymmetric})
 
-(defn- binary-tuple
+(defn binary-tuple
   "`[a b]` for a stored fact `sx` whose sentence is a ground positive binary tuple with a
-  symbol functor, else nil."
+  symbol functor, else nil.  `checks` asks it of a sentence about to be written, as
+  `{:sentence s}`."
   [sx]
   (let [s (:sentence sx)]
     (when (and (nil? (:antecedent sx)) (seq? s) (= 3 (count s)))
@@ -38,7 +39,7 @@
         (when (and (symbol? f) (not= 'not f) (not (sx/variable? f)) (sx/ground-term? s))
           (vec (nm/args s)))))))
 
-(defn- self-tuple?
+(defn self-tuple?
   "Is the stored fact `sx` a ground positive binary tuple `(p a a)` (`binary-tuple`)?"
   [sx]
   (let [[a b :as ab] (binary-tuple sx)] (boolean (and ab (= a b)))))
@@ -545,11 +546,12 @@
   [tms h]
   (or (= :monotonic (jtms/defeat-class tms h)) (= :monotonic (jtms/premise-strength tms h))))
 
-(defn- merges?
-  "Does the converse pair `h`, `o` over `a` and `b` merge the two terms instead of forming
-  a nogood: two symbols, both members `:monotonic`."
-  [tms a b h o]
-  (and (symbol-pair? a b) (monotonic-member? tms h) (monotonic-member? tms o)))
+(defn merges?
+  "Does a converse pair over `a` and `b` merge the two terms instead of forming a nogood:
+  two symbols, both members `:monotonic` (`h-mono?`, `o-mono?`, each `monotonic-member?`
+  of a stored member)."
+  [a b h-mono? o-mono?]
+  (and (symbol-pair? a b) h-mono? o-mono?))
 
 (defn- same-class-at?
   "Do the symbols `a` and `b` denote one thing through equality edges a reader with
@@ -674,11 +676,13 @@
          (reduce (fn [m [ms spec]] (update m ms (fnil conj #{}) spec)) {})
          (mapv (fn [[ms ss]] {:members ms :specs ss})))))
 
-(defn- convicting
+(defn convicting
   "The predicates carrying `prop` at or above every functor of `fs` over the unscoped
-  closure, in content order."
-  [tax prop fs]
-  (sort (reduce set/intersection (map #(tax/props-over tax prop %) fs))))
+  closure, or with `context` over what a reader there sees (`tax/props-over`), in content
+  order."
+  ([tax prop fs] (sort (reduce set/intersection (map #(tax/props-over tax prop %) fs))))
+  ([tax prop fs context]
+   (sort (reduce set/intersection (map #(tax/props-over tax prop % context) fs)))))
 
 (defn- negates-routes
   "Each `negates` declaration convicting a tuple of `f1` beside one of `f2` (one tuple
@@ -725,7 +729,8 @@
                  :conv  (let [[h o] (sort members)
                               [a b] (binary-tuple (get sxs h))]
                           (concat (by :asymmetric)
-                                  (when-not (merges? tms a b h o) (by :anti-symmetric))))
+                                  (when-not (merges? a b (monotonic-member? tms h) (monotonic-member? tms o))
+                                    (by :anti-symmetric))))
                  :det   (let [[q k n] key
                               [v1 v2] (map #(first (get-in c [::det key %])) members)
                               sym?    (symbol-pair? v1 v2)]

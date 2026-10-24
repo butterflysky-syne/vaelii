@@ -1,41 +1,10 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.naming
-  "KB naming invariants, as predicates over symbols — and the walk that applies them to
-  every **literal** of a sentence rather than to its outermost functor alone.
-
-    predicate    camelCase, lowercase-initial, arity 2+         parentOf, genlCx, arg
-    individual   CapitalCamelCase                               Muffet, Tom
-    type         snake_case, lowercase, unary predicate         dog, physical_object
-    sense        a type, plus which sense of it is meant        abrasive-grit
-    context      Cx prefix, then CapitalCamelCase               CxUniverse, CxWell
-    lexeme       the `lex` namespace; the name is parse input   lex/fool's_gold
-
-  Single lowercase words (dog, genl, parentOf) satisfy both `predicate?` and
-  `type-symbol?`; role is disambiguated by position and arity, not the symbol alone.
-  A sense is a type too, so it is unary for the same reason, and a lexeme is the one
-  role a *namespace* decides — its text is a surface form and not ours to spell.
-The spelling is a **biconditional on arity**.  A functor carrying an underscore is a
-  type name and nothing else, and types are used as *unary* predicates — `(dog Muffet)`,
-  not `(isa Muffet Dog)` — so it is legal at arity 1 and nowhere else.  And the converse
-  now holds too: a *camelCase* functor at arity 1 is refused, because a one-place
-  predicate is a kind or a property rather than a relation between terms, and the whole
-  point of a spelling that reads a role is that it reads it in both directions.
-  `(lives_in penguin cold_place)` is a type name doing a relation's job;
-  `(warmBlooded Muffet)` is a property wearing a relation's spelling.  A bare lowercase
-  word (`dog`, `alive`) satisfies both conventions and is caught by neither, which is
-  where the rule stops: it marks the names that carry more than one word.
-
-  How hard these are enforced is the **KB's** to say, not this namespace's: `open-kb`'s
-  `:naming` selects `:strict` / `:warn` / `:off` (`policies`, below) and `assert` reads
-  it.  The predicates themselves do not move — `:off` stores a name nothing can classify,
-  not one classified differently.
-
-  `problems` checks the functor of every literal a sentence contains — a rule's
-  antecedents, its consequent, an `exceptWhen` query's conjuncts, a `not` body, an
-  `ist`-directed sentence, a negation-as-failure query — not only the outermost one.
-  A rule consequent is exactly where generated content lands, and the outermost
-  functor there is `implies`."
+  "The naming invariants: predicates that read a symbol's role off its spelling, and the
+  walk that applies them to every literal of a sentence, under the KB's `:naming` policy.
+  Also the content-order comparator and keys every tie-break uses (docs/defenses.md,
+  \"Tie-breaks and orderings key on content, not the handle\").  See docs/naming.md."
   (:refer-clojure :exclude [name])
   (:require [clojure.string :as str]
             [taoensso.trove :as trove]
@@ -45,80 +14,38 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
 (defn- nm [s] (clojure.core/name s))
 
 (def lexeme-namespace
-  "The namespace marking a **lexeme** — a surface form exactly as a model or a person
-  wrote it, before anything decided what it means.  A namespace rather than a spelling
-  because a lexeme's own text is unconstrained: it carries apostrophes (`fool's_gold`),
-  dashes, dots and digits, so any marker written *into* the name would collide with the
-  word it marks.  `(namespace x)` is a field read and cannot."
+  "The namespace that marks a **lexeme** (docs/naming.md)."
   "lex")
 
 (defn lexeme?
-  "A lexeme: `lex/fool's_gold`.  Parse input, and the only role whose text this makes no
-  claim about — what a person typed is not ours to spell.
-
-  Every other namespace stays invisible to the role checks: `nm` reads the name half, so
-  `agg/count` and `set/forwardRule` are read as the predicates `count` and `forwardRule`.
-  `lex` is the one namespace that decides a role."
+  "Is `x` a lexeme, a symbol in the `lex` namespace (`lex/fool's_gold`)?  The other role
+  predicates read a symbol's name half and answer false for a lexeme."
   [x]
   (and (symbol? x) (= lexeme-namespace (namespace x))))
 
 (def context-namespace
-  "Reserved namespace of a reified **context** constant (`vaelii.impl.nat`,
-  docs/context-nat.md) — a `cx/` symbol is a context by the same spelling-only rule as a
-  `Cx…` name.  Duplicated here as a literal rather than required from `vaelii.impl.nat`
-  (which requires *this* namespace) so the role predicates stay dependency-free."
+  "The namespace of a reified context constant (docs/context-nat.md).  A literal, since
+  `vaelii.impl.nat` requires this namespace."
   "cx")
 
 (defn context?
-  "A context: a `Cx…` CapitalCamelCase name, or a reified context constant in the `cx/`
-  namespace.  Both decided by spelling alone — role-reading never consults belief
-  (docs/naming.md), which is why a reified *context* NAT carries its own namespace rather
-  than a `(context K)` mark a `context?` would have to look up."
+  "Is `x` a context: a `Cx…` CapitalCamelCase name, or a symbol in the `cx/` namespace?
+  Decided by spelling alone, so a query context answers true."
   [x]
   (and (symbol? x) (not (lexeme? x))
        (or (= context-namespace (namespace x))
            (some? (re-matches #"Cx[A-Z][A-Za-z0-9]*" (nm x))))))
 
 (def query-contexts
-  "The **query contexts**: three `Cx…` symbols naming a *reading mode* rather than a
-  place.
-
-  Cyc reifies `InferencePSC` / `EverythingPSC` as contexts you can assert into.
-  Here scope is a property of the read (docs/from-cyc.md), so these are resolved at the
-  read entry point and **never reach the engine** — nothing is stored in one, no `genlCx` edge
-  names one, and `core/contexts` does not list them.  Each names one of the readings the
-  engine already had and could not spell:
-
-  | symbol | belief | whose view must hold the answer |
-  |---|---|---|
-  | `CxEverything` | **ignored** | — (not a question of a context's view at all) |
-  | `CxInference` | followed | every literal in **one** context's view, handed back as `?ctx` |
-  | `CxNothing` | followed (vacuously) | the empty view: the provers alone |
-
-  A **variable** context (`?ctx`, the default of every short arity) is the fourth spelling
-  of the `CxInference` question.  It follows belief like the last two and reads **joint**
-  like `CxInference`: an answer holds only from some one reader's `genlCx` ancestor set, so two
-  facts no single context sees are never joined — and that reader unifies into the
-  variable, where `CxInference` hands it back as `?ctx` beside the bindings
-  (docs/contexts.md).
-
-  These are **two axes and not a ladder**.  `CxEverything` alone stops following belief,
-  which makes it a different kind of question — its answers are not belief claims — while
-  `?ctx`, `CxInference` and an ordinary context all ask what the KB holds and differ only in
-  whose belief has to hold it.  A reader who takes `query-contexts` for an ordered list concludes
-  that `?ctx` is a near neighbour of `CxEverything`, and it is not.
-
-  Spelled `Cx…` because they stand where a context stands, and deliberately left **in**
-  `context?`, which is spelling alone and stays that way: a role-read asking what a symbol
-  looks like must not have to know this list.  What refuses them is the write side,
-  where the difference between a place and a reading is an invariant rather than a naming
-  policy — `core/assert`'s context slot, and the `genlCx` argument slots at
-  `vaelii.impl.wff`."
+  "The **query contexts**: three `Cx…` symbols that name a reading mode rather than a
+  place.  The read entry point resolves them, so nothing is stored in one and no `genlCx`
+  edge names one.  `context?` answers true for each; `core/assert`'s context slot and
+  the `genlCx` argument slots at `vaelii.impl.wff` refuse them.  What each one reads, and
+  the variable context beside them: docs/contexts.md, \"The query contexts\"."
   '#{CxEverything CxInference CxNothing})
 
 (defn query-context?
-  "Is `x` a query context — a reading mode wearing a context's spelling?  See
-  `query-contexts` for the list and what each one reads."
+  "Is `x` one of `query-contexts`?"
   [x]
   (contains? query-contexts x))
 
@@ -135,31 +62,11 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
   (not (or (symbol? x) (sequential? x))))
 
 (def ^:private disambiguator-re
-  "A **sense** — a word, a `-`, and the disambiguator that says which sense of it is
-  meant: `abrasive-grit`, `abandonment-romantic`, `abandonment-dual`.  Senses are the
-  type hierarchy, and the disambiguator is what makes two senses of one word two terms
-  rather than one.
-
-  The split is on the **last** dash, because the word may hold its own — and may *end*
-  in one, which is the case that forces the rule.  `a-` is a word (A, then the minus),
-  so its sense is `a--musical_note`: the word is `a-`, the disambiguator is
-  `musical_note`, and the boundary is the second dash rather than the first.  Nothing
-  here parses that boundary — the `sense` and `disambiguation` facts record it, and this
-  only has to recognise the shape.
-
-  Both halves admit what real vocabulary carries — a leading dot (`.22_long_rifle-ammo`,
-  `.dll-library`), an internal apostrophe (`fool's_gold-mineral`, `deck-ship's_floor`), a
-  dash of the word's own, and a disambiguator that starts with a digit (`organ_cultures-3d`,
-  `chiptune_composer-8bit`).  A disambiguator is minted rather than found, so it is
-  tempting to hold it to snake_case — but the corpus mints `3d` and `8bit`, and they are
-  good disambiguators.  Only the **first character of the whole symbol** is constrained,
-  because only it is what the reader dispatches on.
-
-  What it may not do is **lead with a digit**, and the reason is the reader rather than
-  taste: `134a-gas` is read as a malformed *number*, not as a symbol, so a KB holding one
-  could not be written to text and read back.  A leading `'`, `#` or `:` fails the same
-  way.  A word that starts with a digit is escaped with an underscore when it is minted
-  — `_134a-gas` — which reads, sorts beside its neighbours, and says it was escaped."
+  "A **sense**: a word, a `-`, and the disambiguator (`abrasive-grit`), split on the last
+  dash (docs/naming.md).  The first character is `[a-z._]`, since the reader reads a
+  leading digit as a number and a leading `'` as the quote macro; the word half admits
+  no capital, and the disambiguator starts alphanumeric and carries no dash and no
+  capital."
   #"[a-z._][a-z0-9_'.+=&:*>#-]*-[a-z0-9][a-z0-9_']*")
 
 (defn sense?
@@ -178,8 +85,7 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
 
 (defn predicate-spelled?
   "Is `x` spelled as a predicate of arity 2 or more: `predicate?` and not `type-symbol?`,
-  so camelCase with an uppercase letter after the first character.  A bare lowercase word
-  satisfies the type spelling as well and is read as a type (docs/naming.md)."
+  so camelCase with an interior capital?  A bare lowercase word answers false."
   [x]
   (and (predicate? x) (not (type-symbol? x))))
 
@@ -195,37 +101,15 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
 (defn arity   [sentence] (if (sequential? sentence) (dec (count sentence)) 0))
 
 ;; ---- a structural order on sentence / context content --------------------
-;; Clash reports and `(contradicts …)` sentences are read in a stable, arrival-free
-;; order, and the tempting way to buy one is a `pr-str` key: cheap, and a string's
-;; lexicographic order is total.  It has two costs the engine was already bitten by
-;; (`kb/antecedent-order`, `solve/content-key`, `settle/content-order`).  It allocates
-;; a String per element per comparison — the keyfn runs inside the comparator, so a
-;; sort builds it ~2·n·log₂n times.  And an ambient `*print-length*` / `*print-level*`
-;; — a REPL's, typically — elides two long sentences to one prefix, collapsing the key
-;; and dropping the tie back onto arrival order, the very dependence a content order
-;; exists to remove.  Those sites bind the print vars off; `compare-form` never prints.
+;; docs/defenses.md, "Tie-breaks and orderings key on content, not the handle".
 
 (defn print-key
-  "`x` printed as a content key: `pr-str` with the print bounds released.
-
-  **The one home for a printed ordering key.**  `compare-form` is the cheaper answer
-  and the one to reach for first, but a few keys are printed on purpose — a
-  `Comparable` String whose lexicographic order is the contract, or a tuple mixing a
-  form with a rank.  Every one of them owes this guard, and the reason is the paragraph
-  above: an ambient `*print-length*` / `*print-level*` — a REPL's, typically — elides two
-  long sentences to one prefix, the key collapses, and the tie falls back to the
-  enumeration order the content key exists to keep out.  A short sentence is not safe
-  either: `*print-length*` 3 prints `(arg parentOf 1 person)` and `(arg parentOf 1 animal)`
-  as the same string.
-
-  `*print-meta*` is bound off with them, so a form carrying metadata keys the same as one
-  that does not — the metadata is no part of what a sentence says.
-
-  One binding frame per call, which is why a caller ordering a large collection binds
-  once around the whole sort instead and prints inside it.  A symbol with no metadata
-  takes no frame: Clojure prints it as its name (`print-simple`), whatever the print vars
-  hold, so the key is `str`, a field read.  `sort_by_content_key_test` scans the sources
-  for a printed key that reaches neither this fn nor such a frame."
+  "`x` printed as a content key: `pr-str` with `*print-length*` and `*print-level*`
+  released and `*print-meta*` off, so no ambient print bound collapses two keys to one.
+  The one home for a printed ordering key; `compare-form` is the first choice, and this
+  is for a key whose String order is the contract.  A symbol without metadata is `str`,
+  with no binding frame.  `sort_by_content_key_test` fails a printed ordering key in
+  `src/` that does not go through this fn or bind the print vars itself."
   ^String [x]
   (if (and (symbol? x) (nil? (meta x)))
     (str x)
@@ -233,11 +117,8 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
       (pr-str x))))
 
 (defn- form-rank
-  "A total order on the *kinds* of thing a sentence is built from, so `compare-form`
-  never throws on a mixed pair — which `clojure.core/compare` does across types — and
-  orders them deterministically instead.  A sentence is EDN: symbols (predicates,
-  terms, contexts, `?vars`), numbers, strings, keywords, booleans, and the one nested
-  kind a value or a term is — a sequential."
+  "A total order on the kinds of value a sentence is built from, so `compare-form`
+  orders a mixed pair where `clojure.core/compare` throws."
   [x]
   (cond
     (nil? x)        0
@@ -251,27 +132,12 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
     :else           8))
 
 (defn compare-form
-  "A structural total order on sentence / context content — what a clash report's sides
-  and a `(contradicts …)` sentence are ordered by — computed by walking the two forms
-  in place rather than printing them.  A drop-in `Comparator` for `sort` / `sort-by`.
-
-  Total and deterministic, and read from **content alone**: no handle enters it, so a
-  tie it breaks is broken the same way in every arrival order.  Different kinds order by
-  `form-rank`; same-kind scalars by the natural `compare` (symbols by ns then name,
-  numbers numerically, and so on); two sequentials element by element, then shorter
-  first — so `(a)` precedes `(a b)`.  The last-resort `:else` is unreachable for
-  well-formed sentence content and totalizes the order for an exotic value alone — a map,
-  a set, a record.  It prints through `print-key` rather than `str`, so it totalizes
-  *without collisions*: `str` on a collection honours the ambient print bounds, and two distinct
-  maps compared under a REPL's `*print-length*` come back **equal** — a comparator that
-  reports 0 for values that are not, in the one branch whose whole job is to leave no
-  pair uncompared.  One binding frame per comparison is what that costs, on the branch
-  sentence content never reaches.
-
-  The order is arbitrary but stable, which is the contract a content order owes
-  (docs/nmtms.md).  It is deliberately **not** the lexicographic order `pr-str` gave —
-  `(a)` before `(a b)` where the printed forms compared the other way — so a caller that
-  had asserted that exact reading asserts this one instead."
+  "A structural total order on sentence and context content, as a `Comparator`.  It
+  walks the two forms in place and reads no handle, so a tie breaks the same way in
+  every arrival order.  Kinds order by `form-rank`; same-kind scalars by `compare`;
+  two sequentials element by element, then shorter first, so `(a)` precedes `(a b)`.
+  A value outside sentence content (a map, a set, a record) is compared by its
+  `print-key`, so the order stays total under an ambient print bound."
   [a b]
   (let [ra (form-rank a) rb (form-rank b)]
     (cond
@@ -288,63 +154,33 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
       :else        (compare a b))))
 
 (defn name-key
-  "`x` as an ordering key where the value is a **scalar** — a symbol, keyword, string or
-  number.  `str` on one of those cannot collapse: the print bounds elide a *collection*
-  and never a name, so a scalar key is safe as it stands and this is `str`.
-
-  What it adds is that the scalar is a claim rather than an assumption.  `str` honours
-  the print vars exactly as `pr-str` does, so a key that turns out to be a sentence, a
-  NAT or a binding map collapses under a REPL's `*print-length*` and the tie it was
-  breaking falls back to arrival order — silently, since both readings are legal strings.
-  A collection reaching here is handed to `print-key` instead, which is the guarded
-  answer for one, so a NAT arriving where a symbol was expected is keyed safely rather
-  than wrongly.
-
-  Cheap where `print-key` is not: no binding frame, no printer, so a plain `sort-by` over
-  scalars needs no decorating.  `compare-form` is still the first thing to reach for
-  where the order may be structural; these two are for a key that must be a `Comparable`
-  String."
+  "`x` as a String ordering key where `x` is expected to be a scalar (a symbol, keyword,
+  string or number): `str`, which no print bound elides for a scalar.  A collection is
+  keyed through `print-key` instead, so a NAT or a sentence arriving here keys safely."
   ^String [x]
   (if (coll? x) (print-key x) (str x)))
 
 (defn sort-by-content-key
-  "`coll` ordered by `(keyfn element)` under `cmp` — the decorate-sort-undecorate the
-  engine's content orders share, in one place.  It closes at once the three costs the
-  scattered `sort-by <expensive-key>` sites each paid:
-
-  * **The key is built once per element, not once per comparison.**  `sort-by` calls its
-    key fn from inside the comparator, so a plain `(sort-by keyfn coll)` rebuilds the key
-    ~2·n·log₂n times; here one `mapv` decorates each element with its key, the pairs sort
-    on the key alone, and the key is stripped.  When the key is a `get-sentex` per
-    antecedent, a `pr-str`, or a taxonomy-closure read, that is the difference between n
-    builds and n·log n.
-  * **Below two there is nothing to order** — a collection of zero or one is already in
-    its own order and the key is what orders, so no key is built at all.  This is the
-    shape `supporting-justifications` on a one-justification fact meets on every proof hop.
-  * **`cmp` defaults to `compare-form`** — structural, so no String is printed to compare
-    two forms.  Pass `compare` when the key is a pre-built `Comparable` tuple (a
-    `[rank …]` priority vector, or a `print-key` whose lexicographic order is the
-    contract).  This does **not** bind the print vars for you: a printed key is built by
-    the caller's `keyfn`, so `print-key` is where that guard lives.
-
-  Stable: `sort-by` keeps equal-keyed elements in `coll`'s order, so a tie falls to
-  arrival only after the content key has had its say — never onto a handle."
+  "`coll` ordered by `(keyfn element)` under `cmp`, as a vector.  The key is built once
+  per element, where `sort-by` builds it once per comparison, and not at all below two
+  elements.  `cmp` defaults to `compare-form`; pass `compare` for a pre-built
+  `Comparable` key (a `[rank …]` tuple, a `print-key`).  The print vars are not bound
+  here: a printed key goes through `print-key` in `keyfn`.  Stable, so equal keys keep
+  `coll`'s order."
   ([keyfn coll] (sort-by-content-key keyfn compare-form coll))
   ([keyfn cmp coll]
    (let [v (vec coll)]
      (case (count v)
        (0 1) v
-       ;; two, the length of most justifications' antecedent lists: one comparison, and
-       ;; a tie keeps `coll`'s order as the stable sort below would
+       ;; two, the length of most antecedent lists: one comparison; a tie keeps `coll`'s order
        2 (let [a (nth v 0) b (nth v 1)]
            (if (pos? (cmp (keyfn a) (keyfn b))) [b a] v))
        (->> v (mapv (fn [x] [(keyfn x) x])) (sort-by first cmp) (mapv second))))))
 
 (defn min-by-content-key
-  "The `sort-by-content-key`-least element of `coll` — `(first (sort-by-content-key keyfn cmp coll))`
-  in a single pass, building the key once per element where the sort would build it once
-  and then discard all but the first.  Ties keep the earliest arrival, exactly as the
-  stable sort's `first` would.  nil for an empty `coll`.  `cmp` defaults to `compare-form`."
+  "`(first (sort-by-content-key keyfn cmp coll))` in one pass, building the key once per
+  element.  A tie keeps the earliest element; nil for an empty `coll`.  `cmp` defaults
+  to `compare-form`."
   ([keyfn coll] (min-by-content-key keyfn compare-form coll))
   ([keyfn cmp coll]
    (when-let [s (seq coll)]
@@ -353,14 +189,8 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
               (map (fn [x] [(keyfn x) x]) s))))))
 
 (defn by-print-key
-  "`coll` ordered by its elements' `print-key` — the guarded form of `(sort-by str coll)`,
-  and what a caller ordering terms, sentences or pairs wants when the printed order is
-  the contract.
-
-  `sort-by-content-key` underneath, so the key is built **once per element** rather than
-  once per comparison, which is what a printed key costs most in: `sort-by` calls its key
-  fn from inside the comparator, and `print-key` opens a binding frame per call.  `compare`
-  because a printed key's lexicographic order is the whole reason it was printed."
+  "`coll` ordered by its elements' `print-key` under `compare`: the guarded
+  `(sort-by str coll)`, with the key built once per element."
   [coll]
   (sort-by-content-key print-key compare coll))
 
@@ -379,36 +209,21 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
     (step coll #{})))
 
 ;; ---- the literals of a sentence ------------------------------------------
-;; A naming invariant is about a **literal** — a predicate applied to arguments.
-;; Everything else a sentence is built from is a *wrapper*: a structural connective
-;; (`not` / `and` / `implies`), a virtual rule wrapper (`set/*Rule`), an `exceptWhen`,
-;; an `ist` redirection, a negation-as-failure quantifier, a `sentexHandle` naming
-;; another sentex.  A wrapper's functor is engine vocabulary rather than a name the
-;; author chose, so the walk descends through it and checks what it holds.
-;;
-;; Arguments are deliberately **not** walked: a compound in argument position is a
-;; term, not a literal — an arithmetic expression `(+ 1 2)`, a structural NAT `(QuantityFn 5
-;; Meter)`, a quoted connective `(comment not "…")` — and its head names a function or
-;; is plain data, neither of which the predicate conventions govern.
+;; docs/naming.md, "Literals, wrappers, and arguments".
 
 (def ^:private literal-roles
-  "The wrapper a literal sits in, as it reads in a rejection.  A repair loop is handed
-  the message verbatim, so it has to say *which* literal of the sentence broke."
+  "The wrapper a literal sits in, as a rejection message names it."
   {:sentence   "sentence"
    :antecedent "rule antecedent"
    :consequent "rule consequent"
    :exception  "exceptWhen exception"
-   ;; a generator's generated rule (docs/generators.md) — named apart from the
-   ;; generator's own literals, because an author reading the rejection has two rules
-   ;; in one sentence to tell apart
+   ;; a generator's generated rule (docs/generators.md)
    :generated-antecedent "generated rule antecedent"
    :generated-consequent "generated rule consequent"})
 
 (def problem-classes
-  "What a naming violation *is*, as a keyword, with the human line under it.  A rejection
-  reads as prose, but a caller that counts them needs to group without parsing English —
-  an operator auditing a corpus wants seven numbers, not eleven million sentences — so the
-  class is the datum and the message is rendered from it."
+  "Each naming violation class `problems*` reports, with the line describing it.  The
+  class is the datum a caller counts by; `message` renders the prose."
   {:context-name   "the KB context named is not a context"
    :functor        "a functor matching no convention"
    :functor-arity  "a snake_case functor (a unary predicate) at an arity other than 1"
@@ -419,32 +234,28 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
    :dot-marker     "a dotted rest marker outside a rule pattern"})
 
 (defn- rule-wrapper?
-  "One of the virtual wrappers that wrap a single rule form — direction, defeasible,
-  assumption, constraint.  Each canonicalizes into a record field, so none of them is
-  ever a predicate application."
+  "Is `h` one of the virtual wrappers around a single rule form (direction, defeasible,
+  assumption, constraint, solve)?"
   [h]
   (or (contains? sx/rule-direction-wrappers h)
       (= sx/default-rule-wrapper h)
       (= sx/assumption-rule-wrapper h)
-      (contains? sx/constraint-rule-wrappers h)))
+      (contains? sx/constraint-rule-wrappers h)
+      (= sx/solve-rule-wrapper h)))
 
 (defn- exception-query-conjuncts
-  "The conjunct literals of an `exceptWhen` wrapper's query: a vector is a conjunction,
-  anything else a single literal.  The shape `sentex/exception-conjuncts` normalizes,
-  read here without canonicalizing — a check must not intern the symbols of content it
-  is about to refuse."
+  "The conjunct literals of an `exceptWhen` query, inside a `(set/monotonic Q)` wrapper
+  when it has one: a vector is a conjunction, anything else one literal.  Read without
+  canonicalizing, so a refused sentence interns no symbol."
   [q]
-  (if (vector? q) q [q]))
+  (let [q (if (and (seq? q) (= sx/strength-wrapper (first q)) (= 2 (count q))) (second q) q)]
+    (if (vector? q) q [q])))
 
 (defn applied-literals
-  "The `[role literal]` pairs of `sentence` as written — every position at which it
-  applies *something* to arguments, tagged with the wrapper that position sits in
-  (`:sentence` / `:antecedent` / `:consequent` / `:exception`).
-
-  Wrappers are descended through, arguments are not, so this is exactly the set of
-  positions an author wrote a predicate application in — a variable functor
-  (`(?p ?x ?y)`, the dotted rest `(?pred . ?args)`) among them, which is what
-  `literals` filters back out and `rules/variable-functor-literals` keeps."
+  "The `[role literal]` pairs of `sentence` as written: every position that applies
+  something to arguments, tagged with the `literal-roles` key of the wrapper it sits in.
+  Wrappers are descended and arguments are not.  A variable-functor position is
+  included; `literals` filters it out and `rules/variable-functor-literals` keeps it."
   ([sentence] (applied-literals :sentence sentence))
   ([role form]
    (if-not (and (sequential? form) (seq form))
@@ -452,8 +263,7 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
      (let [h (first form)
            n (count form)]
        (cond
-         ;; a `do/` imperative is an instruction; it is refused outright inside a rule
-         ;; (`checks/check-no-imperative`) and dispatched at the top level, never named
+         ;; a `do/` imperative names no relation (`checks/check-no-imperative`)
          (sx/do-form? form) []
 
          ;; `(sentexHandle N)` names a stored sentex by integer id
@@ -463,8 +273,7 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
 
          (rule-wrapper? h) (applied-literals role (second form))
 
-         ;; `(exceptWhen <query> <rule-or-handle>)` — the query's conjuncts are
-         ;; literals of their own, then whatever the exception qualifies
+         ;; `(exceptWhen <query> <rule-or-handle>)`: the query's conjuncts, then the rule
          (and (= sx/except-wrapper h) (= 3 n))
          (into (vec (mapcat #(applied-literals :exception %)
                             (exception-query-conjuncts (second form))))
@@ -474,18 +283,10 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
 
          (= sx/and-functor h) (vec (mapcat #(applied-literals role %) (rest form)))
 
-         ;; A rule in **consequent** position is a generator's generated rule
-         ;; (docs/generators.md), and its literals are tagged as such: the naming
-         ;; invariants hold of them exactly as they hold of a written rule's — a
-         ;; generated `(feels ?a ?e)` is still a predicate application — but the
-         ;; *index* has no claim on them, because what gets indexed is the mint and
-         ;; not the pattern.  `rules/variable-functor-literals` reads the tag to draw
-         ;; that line, which is what lets a hole stand in functor position.
-         ;;
-         ;; A generated rule may generate one in turn, so a *generated* consequent is a
-         ;; generator's head by the same reading: the tag survives the whole nesting,
-         ;; and a literal three levels in still reads as generated rather than as the
-         ;; author's own.
+         ;; A rule in consequent position is a generator's generated rule
+         ;; (docs/generators.md): its literals are checked as a written rule's, and tagged
+         ;; `:generated-*` at every nesting depth, the tag
+         ;; `rules/variable-functor-literals` reads to admit a hole in functor position.
          (and (= sx/rule-functor h) (= 3 n))
          (let [gen?  (contains? #{:consequent :generated-consequent} role)
                arole (if gen? :generated-antecedent :antecedent)
@@ -493,8 +294,7 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
            (into (vec (mapcat #(applied-literals arole %) (sx/rule-antecedents form)))
                  (applied-literals crole (sx/rule-consequent form))))
 
-         ;; `(ist Ctx S)` directs S into Ctx; S is the literal (Ctx is checked by
-         ;; `ist-context-problems`)
+         ;; `(ist Ctx S)`: S is the literal, and `ist-context-problems` checks Ctx
          (and (= sx/ist-functor h) (= 3 n)) (applied-literals role (nth form 2))
 
          ;; negation as failure: `(unknown S)` and `(thereExists <vars> S)` wrap a
@@ -503,19 +303,25 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
          (sx/there-exists? form) (applied-literals role (nth form 2))
          (sx/head-exists? form)  (applied-literals role (sx/head-exists-body form))
 
-         ;; an aggregate wraps a query too: `(agg/count ?n ?v <body>)` says
-         ;; nothing itself, and its body is a goal rather than an argument — read as a
-         ;; literal it would be a three-place `agg/count` and the body inside it
-         ;; would never be checked at all
+         ;; `(forall ?v (implies B H))` desugars to a query over B's conjuncts and H
+         ;; (`sx/desugar-forall-literal`), so each is read in the role the forall holds
+         (and (sx/forall? form) (sx/implies? (nth form 2)))
+         (let [body (nth form 2)]
+           (vec (mapcat #(applied-literals role %)
+                        (conj (sx/rule-antecedents body) (sx/rule-consequent body)))))
+
+         ;; an aggregate's body is a goal, not an argument (docs/aggregate.md)
          (sx/aggregate? form)    (applied-literals role (sx/aggregate-body form))
+
+         ;; `(bravely S)` / `(cautiously S)` read S over the current dilemmas
+         ;; (docs/labeling.md)
+         (and (contains? '#{bravely cautiously} h) (= 2 n)) (applied-literals role (second form))
 
          :else [[role form]])))))
 
 (defn literals
-  "The `[role literal]` pairs whose functor **names a predicate** — `applied-literals`
-  without the variable-functor positions, which are patterns and name nothing these
-  invariants can judge.  This is the set of functors an author named, and what every
-  check below reads."
+  "The `[role literal]` pairs of `applied-literals` whose functor is not a variable: the
+  functors an author named, which every check below reads."
   ([sentence] (literals :sentence sentence))
   ([role form]
    (filterv (fn [[_ lit]] (not (sx/variable? (first lit))))
@@ -524,77 +330,71 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
 ;; ---- the invariants, per literal -----------------------------------------
 
 (defn- camel-case
-  "The camelCase spelling of a snake_case symbol — `lives_in` ⇒ `livesIn`.  Named in
-  the rejection so whoever reads it is told what to write, not only what is wrong."
+  "The camelCase spelling of a snake_case symbol, `lives_in` ⇒ `livesIn`, as a String."
   [s]
   (let [[head & more] (str/split (nm s) #"_+")]
     (apply str head (map str/capitalize more))))
 
 (def unary-spelling-exempt
-  "The camelCase functors that stand at arity 1 and are **not** unary predicates, so the
-  snake_case rule does not reach them.  `sentexHandle` names a stored sentex by its id —
-  a term constructor wearing a literal's shape, which states nothing and so is no
-  predicate to spell either way.  Kept as a set rather than a shape test because it is
-  engine vocabulary and finite; a name earns a place here only by naming no relation."
+  "The camelCase functors legal at arity 1 because they name no relation
+  (docs/naming.md, \"The one exemption\")."
   '#{sentexHandle})
 
 (defn snake-case
-  "The snake_case spelling of a camelCase symbol — `warmBlooded` ⇒ `warm_blooded`.  The
-  inverse of `camel-case`, and what a `:functor-unary` rejection proposes."
+  "The snake_case spelling of a camelCase symbol, `warmBlooded` ⇒ `warm_blooded`: the
+  repair a `:functor-unary` rejection names."
   [s]
   (symbol (str/replace (nm s) #"([A-Z])" (fn [[_ c]] (str "_" (str/lower-case c))))))
 
+(defn length-class
+  "The class of the spelling violation a relation `f` of the lengths `binding` admits
+  commits, or nil: `:functor-arity` when `f` is spelled as a type (underscored, or a
+  sense) and `binding` admits no length of one, `:functor-unary` when `f` is camelCase,
+  not `unary-spelling-exempt`, and `binding` admits the length one alone.  `binding` is
+  `{:exact n}` or `{:min m}`; a bare lowercase word and a symbol matching no convention
+  answer nil."
+  [f {exact :exact floor :min}]
+  (cond
+    (not (symbol? f)) nil
+
+    (and (type-symbol? f) (not (predicate? f))
+         (if exact (not= 1 exact) (< 1 (long floor))))
+    :functor-arity
+
+    ;; the converse half of the biconditional.  A bare lowercase word satisfies
+    ;; `type-symbol?` and never reaches this arm
+    (and (predicate? f) (not (type-symbol? f)) (= 1 exact)
+         (not (contains? unary-spelling-exempt f)))
+    :functor-unary))
+
 (defn- functor-problem
-  "The naming violation of one `[role literal]` pair's functor, or nil.  Two ways to
-  fail: the symbol matches no convention at all, or it is snake_case — a type name —
-  used at an arity other than 1."
+  "The naming violation of one `[role literal]` pair's functor, or nil:
+  `:lexeme-functor`, `:functor`, `:functor-arity` or `:functor-unary`."
   [[role literal]]
   (let [f (functor literal)]
     (cond
       (nil? f) nil
 
-      ;; The one fence around a lexeme, and the whole of it.  A surface form is what
-      ;; somebody wrote, not a relation or a kind, so it cannot be applied to anything —
-      ;; while as an *argument* it is ordinary, which is what lets `(sense lex/w s)` say
-      ;; what a lexeme means and `(genl s lex/w)` stand as an unsensified edge until a
-      ;; sense is crafted to replace it.
+      ;; a lexeme names no relation; as an argument it is ordinary
       (lexeme? f)
       {:class :lexeme-functor :role role :symbol f :literal literal}
 
       (not (or (predicate? f) (type-symbol? f)))
       {:class :functor :role role :symbol f :literal literal}
 
-      (and (not (predicate? f)) (not= 1 (arity literal)))
-      {:class :functor-arity :role role :symbol f :literal literal}
-
-      ;; The converse fence, and what makes the spelling a biconditional: snake_case is
-      ;; arity 1, and arity 1 is snake_case.  A camelCase functor carries an interior
-      ;; capital, so `type-symbol?` refuses it, and applied to one argument it is a unary
-      ;; predicate spelled as a relation.  A bare lowercase word satisfies both
-      ;; conventions and is therefore never caught here — which is why `dog` and `alive`
-      ;; need no underscore and never will.
-      (and (not (type-symbol? f)) (= 1 (arity literal))
-           (not (contains? unary-spelling-exempt f)))
-      {:class :functor-unary :role role :symbol f :literal literal})))
+      :else
+      (when-let [c (length-class f {:exact (arity literal)})]
+        {:class c :role role :symbol f :literal literal}))))
 
 (defn- pascal-case
-  "The CapitalCamelCase spelling of an underscored symbol — `South_Pole` ⇒ `SouthPole`."
+  "The CapitalCamelCase spelling of an underscored symbol, `South_Pole` ⇒ `SouthPole`."
   [s]
   (apply str (map str/capitalize (str/split (nm s) #"_+"))))
 
 (defn- argument-problem
-  "The naming violation of one atomic symbol argument, or nil.  An argument *names*
-  something — an individual, a type, a predicate, a context — so it is held to the
-  same conventions as a functor.  `Baby_Penguin` matches none of them: CapitalCamelCase
-  admits no underscore and snake_case no capital, so the symbol claims two roles and
-  fills neither.  Both repairs are named, since which one is meant is the author's to
-  say: `BabyPenguin` if it is an individual, `baby_penguin` if it is a type.
-
-  Only the literal's **own** arguments are checked, never a compound one's insides: a
-  compound in argument position is a term — `(+ 1 2)`, a structural NAT `(QuantityFn 5 Meter)` —
-  and its head is a function, not a name this can judge.  Non-symbols (a number, a
-  comment's string) name nothing and are skipped, as is a variable and the dotted rest
-  marker."
+  "The `:argument` violation of one argument `a` of a literal, or nil: a symbol matching
+  no role.  A variable, the dotted rest marker and a non-symbol are not judged, and a
+  compound argument is a term whose insides are not read."
   [[role literal] a]
   (when (and (symbol? a)
              (not (sx/variable? a))
@@ -604,14 +404,9 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
     {:class :argument :role role :symbol a :literal literal}))
 
 (defn- ist-context-problems
-  "The `(ist Ctx S)` context slots that do not name a context.  `(ist Ctx S)` names the
-  context S is asserted into or asked in, so that slot is a context name like the
-  asserting context.  A variable in the slot is a pattern position and is not judged.
-
-  `sx/forms-where` rather than a `tree-seq`, and this is the check that wants it: an
-  `ist` can sit anywhere, so this is the only one here that descends **arguments** —
-  every node of every sentence asserted, to find a form almost none of them hold.
-  Depth-first pre-order either way, which is the order `problems` reports."
+  "The `(ist Ctx S)` forms anywhere in `sentence`, arguments included, whose Ctx is
+  neither a context name nor a variable, in depth-first pre-order.  `sx/forms-where`
+  walks the tree without the lazy `tree-seq` this check runs over every assert."
   [sentence]
   (mapv (fn [f] {:class :ist-context :role :sentence :symbol (second f) :literal f})
         (sx/forms-where #(and (sequential? %)
@@ -621,9 +416,8 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
                         sentence)))
 
 (defn message
-  "One `problems*` map rendered as the line a rejection carries.  Every message names
-  the offending symbol, the wrapper it sits in and the spelling to write instead: whoever
-  reads it is mid-repair, and a violation reported without its fix is a second lookup."
+  "One `problems*` map rendered as a rejection line: the offending symbol, the wrapper
+  it sits in, and the spelling to write instead."
   [{:keys [class role symbol literal]}]
   (let [where (str (literal-roles role) " " (pr-str literal))]
     (case class
@@ -672,16 +466,10 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
       "'.' is not a valid argument (dotted rest patterns belong in rule patterns)")))
 
 (defn problems*
-  "Checkable naming violations for a sentence in a context, as **data**: a vector of
+  "The naming violations of `sentence` in `context`, as a vector of
   `{:class :role :symbol :literal}` maps in the order `problems` reports them.  `:class`
-  is one of `problem-classes`, `:role` the wrapper the offending literal sits in, `:symbol`
-  the name that broke the convention, and `message` renders the line.
-
-  Data rather than prose because the two callers want different halves of it.  `assert`
-  wants the sentence it refused spelled out; an audit over a whole corpus wants to
-  *group* — how many violations, of which class, over how many distinct spellings — and
-  a message that embeds the literal is unique per record, so counting them counts
-  records.  Rendering is therefore separate and paid only where a message is read."
+  is a `problem-classes` key, `:role` a `literal-roles` key, and `:symbol` the name
+  that broke the convention."
   [sentence context]
   (let [lits (literals sentence)]                     ; one walk, read twice
     (into []
@@ -702,78 +490,42 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
                :literal sentence}])])))
 
 (defn problems
-  "Checkable naming violations for a sentence in a context (seq of strings): the
-  context's own name, then every literal's functor (outermost wrapper first), then every
-  literal's atomic symbol arguments, then any `ist` context slot, then the dotted rest
-  marker where it cannot appear.
-
-  **This is a check on the structure of a name, not on whether the name is worth having.**
-  A *unary* snake_case functor is a well-formed type name, so
-  `(implies (penguin ?x) (has_black_and_white_feathers ?x))` passes here, and so would
-  `capable_of_swimming` or `thermoregulates_via_blubber_and_feathers` — each is exactly
-  what the invariants say a type looks like.  Nothing about a symbol distinguishes a
-  type the ontology wants from a one-off coined for a single sentence, so nothing here
-  can refuse the second: judging that needs the KB's existing vocabulary, which is a
-  separate question asked elsewhere.  Read this as a guard against *misnamed* content,
-  never as a guard against vocabulary fragmentation."
+  "The naming violations of `sentence` in `context`, as message strings: the context's
+  name, then every literal's functor (outermost wrapper first), then every literal's
+  atomic symbol arguments, then each `ist` context slot, then a top-level dotted rest
+  marker.  A check on the spelling of a name, not on whether the vocabulary wants it
+  (docs/naming.md, \"What this does not check\")."
   [sentence context]
   (mapv message (problems* sentence context)))
 
 ;; ---- the policy: whose invariants, and how hard ---------------------------
-;;
-;; The conventions above are what *this* KB reads a role off, and a KB holding a corpus
-;; that spells its names differently is not thereby malformed — it is a KB whose front
-;; entry point is set to a different opinion.  So the policy is per-KB (`open-kb`'s `:naming`),
-;; not a property of the build: one process can hold a strict KB beside a corpus loaded
-;; verbatim, and neither has to win.
-;;
-;; What the setting does **not** change is the role reading.  `predicate?` and its three
-;; siblings answer the same way under every policy, so `:off` is a KB that stores a name
-;; it cannot classify — `term-role` says nil, a `(Type Individual)` goal takes the general
-;; path rather than the shortcut — rather than one that classifies differently.  That is
-;; the whole cost, and it is why the check is worth keeping on where the content is
-;; hand-written.
+;; docs/naming.md, "Whose invariants: the two policies".
 
 (def policies
-  "What a KB does with a naming violation, and the one line each is for.
-
-  A bulk path is not on this list because it does not consult it: a corpus import builds
-  records directly and never asks (`docs/naming.md`, \"The two entry points\").  What it does
-  instead is *report* — an operator learns the refused fraction at load time, from a
-  count rather than from a failed experiment a year later."
+  "The `:naming` settings `open-kb` accepts, each with the line describing it."
   {:strict "refuse the assertion (the default: names stay legible)"
    :warn   "log each one and store anyway (a corpus being cleaned up)"
    :off    "store in silence (a corpus with its own spelling conventions)"})
 
 (defn blocking-problems
-  "The naming violations that **stop** something under `policy` — the messages, or nil.
-  Empty under `:warn` and `:off` by construction, so a caller that has to yield a value
-  rather than throw (`special/naming-violation`, the `assert` dry run) asks this
-  and needs no policy branch of its own."
+  "The naming violations that stop a write under `policy`, as messages, or nil.  Nil
+  under `:warn` and `:off`, so a caller that returns a value rather than throwing
+  (`special/naming-violation`, `core/check`) has no policy branch of its own."
   [policy sentence context]
   (when (= :strict policy) (seq (problems sentence context))))
 
-;; ---- the other entry point: count what it would have refused ---------------------
-;;
-;; A bulk path stores what `assert` refuses, which is the point of having one — but a
-;; store whose contents the public entry point disagrees with is a fact about that store, and the
-;; only moment anybody is in a position to learn it cheaply is while the records are
-;; going past.  So the bulk paths **count** what they do not check.  The tally is a
-;; running map rather than a scan afterwards: a second pass over a corpus that needed a
-;; bulk path in the first place is a second pass nobody will run.
+;; ---- the bulk paths: count what the checks would have refused --------------------
+;; docs/naming.md, "Whose invariants: the two policies".
 
 (def empty-tally
   "A fresh `tally` accumulator: records seen, records with at least one violation, and
-  the per-class breakdown.  Counts records rather than violations — one sentence can
-  break three conventions, and what an operator is deciding is what fraction of the
-  corpus is re-assertable."
+  the records per violation class."
   {:checked 0 :refused 0 :by-class {}})
 
 (defn tally
-  "Fold one sentence's violations into `t`.  Counts and classes only, never spellings: a
-  corpus large enough to need a bulk path has a vocabulary large enough that holding its
-  distinct offending names would cost more than the load
-  (`vaelii.bench.survey`'s `naming` audit is where that question is asked)."
+  "Fold one sentence's violations into `t`, counting records rather than violations.
+  Counts and classes only, never spellings; `vaelii.bench.survey`'s `naming` audit
+  groups by spelling."
   [t sentence context]
   (let [ps (problems* sentence context)
         t  (update t :checked inc)]
@@ -786,8 +538,7 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
                            % (into #{} (map :class) ps)))))))
 
 (defn tally-line
-  "The one line a load prints about `t`, or nil when the public entry point agrees with the
-  corpus — which is the common case and deserves no output at all."
+  "The line a load logs about `t`, or nil when no record was refused."
   [t]
   (let [{:keys [checked refused by-class]} t]
     (when (pos? (long refused))
@@ -799,36 +550,26 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
            " — they are stored, findable and countable, but re-asserting one throws"
            " under :naming :strict"))))
 
-;; Advice already given in this process, so a corpus of the same mistake is one line
-;; rather than a line per fact.  `defonce` for the same reason the space counter is.
+;; The advice ids already logged in this process, so a corpus of one mistake logs one
+;; line.  `defonce` keeps the set across a namespace reload.
 (defonce ^:private advised (atom #{}))
 
 (defn- type-spelling
-  "The type name a CapitalCamelCase symbol was reaching for: `Dog` is `dog`, and
-  `WarmBlooded` is `warm_blooded` rather than `warmblooded`.  A multi-word type is
-  snake_case, and lower-casing alone names a different term."
+  "The type name a CapitalCamelCase symbol stands for: `Dog` ⇒ `dog`, `WarmBlooded` ⇒
+  `warm_blooded`."
   [s]
   (-> (nm s)
       (str/replace #"(?<=[a-z0-9])([A-Z])" "_$1")
       str/lower-case))
 
 (defn advice
-  "A well-formed sentence that is nonetheless almost certainly not what was meant — or
-  nil.  Where `problems` reads the invariants, this reads *intent*, so everything here
-  passes every check and stores cleanly.
-
-  One entry so far.  `(isa Muffet Dog)` is the membership spelling every other KR system
-  taught the reader, and here it stores a two-place predicate named `isa` relating two
-  individuals — legal, indexed, believed, and matched by nothing anyone will ask.  The
-  reader then asks `(isa? kb 'Muffet 'Dog)` and gets false, with no error to search for,
-  because the type they meant was never asserted.  `core.txt` says never to write
-  it and `docs/naming.md` calls it out by name; neither is in front of someone who is
-  typing.
+  "`{:id :message}` for a well-formed sentence that is almost certainly not what was
+  meant, or nil.  One entry: `(isa X T)` at arity 2 (docs/naming.md, \"Advice\").
 
   The bar for a new entry is that the shape has no legitimate reading: `isa` is a
   predicate no shipped KB declares and the one the ontology names as the mistake.  A
-  shape somebody might mean stays out — a nudge that fires on correct input is one that
-  gets tuned out, and takes the real ones with it."
+  shape somebody might mean stays out, because a warning that fires on correct input
+  is one an author learns to ignore."
   [sentence]
   (let [f     (functor sentence)
         [x t] (vec (args sentence))]
@@ -836,21 +577,16 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
       {:id      ::isa-is-not-how-membership-is-written
        :message (str "(isa " x " " t ") stores a two-place `isa` predicate, which nothing "
                      "reads — types here are unary predicates, so membership is written "
-                     ;; the rewrite only where both arguments are symbols: an argument
-                     ;; may legally be a number, a string or a compound term, and
-                     ;; `clojure.core/name` throws on all three — advice that crashes
-                     ;; the assert it was meant to help is worse than none
+                     ;; the rewrite only where both arguments are symbols, since `name`
+                     ;; throws on a number, a string or a compound
                      (if (and (symbol? x) (symbol? t))
                        (str "(" (type-spelling t) " " x ")")
                        "as a unary type predicate, (dog Muffet)")
                      " and the hierarchy with genl.  docs/naming.md")})))
 
 (defn advise!
-  "Log `advice` about `sentence`, once per process per kind of advice.
-
-  Silent under `:naming :off`, which asks for names not to be policed at all.  Never a
-  refusal at any policy: the sentence is well-formed, and refusing a legal shape on a
-  guess about intent would make the public entry point unpredictable."
+  "Log `advice` about `sentence` at `:warn`, once per process per advice id.  Silent
+  under `:off`; never a refusal."
   [policy sentence context]
   (when (not= :off policy)
     (when-let [{:keys [id message]} (advice sentence)]
@@ -861,38 +597,18 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
                      :data {:sentence sentence :context context :advice id}})))))
 
 (defn- refusal
-  "The `:naming` refusal to throw, built with the `ExceptionInfo` **constructor** rather
-  than `ex-info`.
-
-  A refusal here is not a rare event, and that is by design.  The *checked* load — the
-  entry point a corpus takes when the point is to learn what this KB makes of it, rather than the
-  bulk path `tally` above is for — asserts one sentence at a time and **counts** what the
-  public entry point refuses, because which of these checks an ontology trips is the most useful
-  thing an import has to say about it.  So the throw is a reporting path taken a hundred
-  thousand times in a load, and what it costs shows up as the load's own profile.
-
-  `clojure.core/ex-info` (1.12) hands every exception it builds to `elide-top-frames`,
-  which materializes the whole trace into a `StackTraceElement[]` via
-  `Throwable.getStackTrace`, drops its own two frames and sets the array back — resolving
-  every frame to a class, method and line number, for a trace a counted refusal never
-  prints.  Since it walks the trace it materializes, the cost grows with how deep the
-  refusing call sits, and an import refuses from the bottom of one: 6.3 µs against the
-  constructor's 0.8 at the top of a stack, 23.7 against 4.4 forty frames down.  It is the
-  largest single cost in a load that refuses most of what it reads.
-
-  Nothing is lost by skipping it.  The frames elided are `ex-info`'s own, and the
-  constructor's top frame is `check!` — where the refusal was decided."
+  "The `:naming` refusal, built with the `ExceptionInfo` constructor rather than
+  `ex-info`, which materializes the stack trace to elide its own frames
+  (docs/defenses.md, \"A naming refusal skips `ex-info`\").  Same class, message and
+  ex-data; the top frame is `check!`."
   [ps sentence context]
   (ExceptionInfo. (str "naming invariant: " (str/join "; " ps))
                   {:type :naming :sentence sentence :context context}))
 
 (defn check!
   "Enforce `policy` on `sentence` in `context`: throw `:naming` under `:strict`, log
-  under `:warn`, do nothing under `:off`.  The one place the three differ, so no caller
-  spells the throw out and none can drift from another.
-
-  Past the invariants it also gives `advice` — for a sentence that breaks none of them
-  and is still a mistake, which a refusal cannot reach."
+  under `:warn`, do nothing under `:off`.  Under `:strict` and `:warn` it then logs any
+  `advice`."
   [policy sentence context]
   (when (not= :off policy)
     (when-let [ps (seq (problems sentence context))]
@@ -903,3 +619,50 @@ The spelling is a **biconditional on arity**.  A functor carrying an underscore 
                      :data {:sentence sentence :context context}})
         (throw (refusal ps sentence context))))
     (advise! policy sentence context)))
+
+;; ---- a length binding against its relation's spelling ---------------------
+;; docs/naming.md, "A length binding is held to the spelling".
+
+(defn binding-problem
+  "The spelling violation of the length binding `sentence` states (`sx/arity-binding`),
+  as `{:class :symbol :binding}`, or nil: `length-class` of the bound relation over the
+  lengths the binding admits, `{:exact n}` or `{:min m}`.  A `variable_arity` binding
+  admits every length and breaks no spelling."
+  [sentence]
+  (when-let [[q kind v] (sx/arity-binding sentence)]
+    (when-let [b (case kind :exact {:exact v} :min {:min v} nil)]
+      (when-let [c (length-class q b)]
+        {:class c :symbol q :binding b}))))
+
+(defn- binding-message
+  "The rejection line for `binding-problem`'s answer `p` about `sentence`."
+  [sentence {:keys [class symbol binding]}]
+  (let [said (if-let [n (:exact binding)]
+               (str "binds " symbol " to " n (if (= 1 n) " argument" " arguments"))
+               (str "binds " symbol " to " (:min binding) " arguments or more"))]
+    (case class
+      :functor-arity
+      (str (pr-str sentence) " " said ", but " symbol " is snake_case, which names a"
+           " unary predicate — bind a relation spelled camelCase, "
+           (camel-case symbol) ", or bind " symbol " to one argument")
+      :functor-unary
+      (str (pr-str sentence) " " said ", but " symbol " is camelCase, which names a"
+           " relation of two or more arguments — a one-place predicate is spelled "
+           (snake-case symbol)))))
+
+(defn check-binding!
+  "Enforce `policy` on the length binding `sentence` states (`binding-problem`): throw
+  `:length-against-spelling` under `:strict`, carrying `:relation`, `:class` and
+  `:binding`, log under `:warn`, do nothing under `:off`."
+  [policy sentence context]
+  (when (not= :off policy)
+    (when-let [p (binding-problem sentence)]
+      (let [m (binding-message sentence p)]
+        (if (= :warn policy)
+          (trove/log! {:level :warn :id ::binding-spelling
+                       :msg  (str "length binding against its spelling (stored anyway,"
+                                  " :naming :warn): " m)
+                       :data {:sentence sentence :context context}})
+          (throw (ex-info m {:type :length-against-spelling :sentence sentence
+                             :context context :relation (:symbol p) :class (:class p)
+                             :binding (:binding p)})))))))

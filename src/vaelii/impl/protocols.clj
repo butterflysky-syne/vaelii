@@ -331,7 +331,7 @@
   (kv-increment [b k]   "Increment the counter at `k`; return the new value.")
   ;; **Clamped at zero**, and the counters are why.  Every counter key this index writes
   ;; is a *cardinality* — how many sentexes live under a trie prefix — and a cardinality
-  ;; is not negative.  `plan/prefix-estimate` divides its selectivity by these, and a
+  ;; is not negative.  `plan/prefix-estimate` returns these as match bounds, and a
   ;; negative one there is not a wrong estimate but a meaningless one; `unindex-present!`
   ;; reads the reply to decide which nodes died, and `<= 0` is what it asks, so the floor
   ;; changes no decision on the ordinary path.  It is free: the fold has the new value in

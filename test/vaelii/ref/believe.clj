@@ -2,27 +2,13 @@
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.ref.believe
   "The belief reference: what a context believes, computed from the world's premises
-  alone, one context at a time, with no memo, no region and no budget.
+  alone, one context at a time, with no memo, no region and no budget (docs/reference.md,
+  \"The function\").
 
-  **The reading is per context.** Belief at `C` is a function of the writes stored in
-  `up(C)` and of nothing else. Every step below (derivation, classes, nogoods, decision)
-  runs inside the view of `C`, so each context decides its own nogoods from what it sees.
-
-  1. `up(C)`: see `up-with`.
-  2. The premises visible at `C`: every write whose storage context (`world/home`) is in
-     `up(C)`, minus the sentences `C` has taken OUT.
-  3. Derivation: `derive-at`. The rules visible at `C` fire to a fixpoint over the
-     believed sentences, stratum by stratum, with `unknown` and `exceptWhen` evaluated
-     at `C`. A sentence taken OUT is never re-derived.
-  4. Classes: `class-fixpoint`.
-  5. Inherited claims: `inherit-at` adds the claims `transitiveInArgInverse` carries down the
-     believed `genl` edges, with their classes.
-  6. Nogoods: `negation-nogoods` plus every family's output on the view.
-  7. Decision: `decide`, then `resolve-at` applies the defeats and repeats from 2.
-
-  A rule antecedent on `p` is met by a fact of any sub-predicate of `p` over the `genl`
-  edges believed at `C` (`matches`), so a rule on `animal` fires on `(dog Fido)` once
-  `(genl dog animal)` is believed there, and the edges it climbs cap the conclusion.
+  `resolve-at` runs the rounds at one context `C`: `derive-at` fires the rules visible at
+  `C` over the premises stored in `up(C)` minus the OUT set, `class-fixpoint` and
+  `inherit-at` add the classes and the inherited claims, and `decide` gives each nogood
+  its verdict.
 
   The families are passed in (`families`, a seq of functions of a view returning
   nogoods); this namespace requires none of them.
@@ -39,32 +25,8 @@
   `covering` declarations install at `C`.
 
   A nogood is `{:kind k :members #{S …} :ground #{D …}}`: members believed at `C`, and the
-  declarations and edges the clash is read through. The ground takes no part in the
-  weighing (docs/nmtms.md, \"What qualifies as a nogood\": a definitional clash's members
-  are the clashing sentexes alone, and the declaration and the `genl` closure are read
-  through). A declaration keeps the strength it was written at (docs/reference.md D11), and no
-  decision reads its class.
-
-  **A relation mark's reach follows belief and not class** (docs/reference.md D7). A
-  family reads the sub-predicates a mark convicts off `:genl`, which holds the edges
-  believed at `C` and carries no class, and puts the edges of the reach in `:ground`,
-  which `decide` never weighs. An edge OUT at `C` carries no mark there, and a
-  `:default` edge on the reach leaves the verdict a `:monotonic` edge would give. The
-  view had this shape before D7, and D7 changed no code in this namespace.
-  `decide` never takes a forced-monotonic member OUT, and a denial of a mark, of a
-  declaration or of a predicate `genl` edge loses its negation nogood to the stored one
-  (D10, D11), so a mark's reach at `C` is the stored predicate edges visible at `C`.
-
-  **A verdict does not bind a reader against its own view** (docs/reference.md D3). A
-  context below a vantage decides from its own view, and believes what the vantage took
-  OUT when it reads a denial or an edge that dissolves the clash. The test
-  `a-verdict-does-not-bind-a-context-below-that-reads-the-clash-released` holds the
-  smallest world.
-
-  **An exception is asked at every reader** (docs/reference.md D4). `unknown` and
-  `exceptWhen` are evaluated against the sentences believed at the reading context `C`,
-  and not at the rule's placement context. The test
-  `an-unknown-is-asked-at-every-reader-below-the-placement` holds the smallest world."
+  declarations and edges the clash is read through, which `decide` never weighs
+  (docs/nmtms.md, \"What qualifies as a nogood\")."
   (:require [clojure.set :as set]
             [vaelii.ref.world :as world]))
 
@@ -87,18 +49,9 @@
           {} (:writes world)))
 
 (defn- up-with
-  "`up(C)`: `c` plus every context it sees, the reflexive transitive closure of the
-  world's genlCx edges (`edges`, `{sub #{super}}` off `context-edges`) from `c`.
-
-  Every genlCx edge is `:monotonic` (docs/reference.md D1: `world/check-world` stores a
-  genlCx write `:monotonic` and sets a rule concluding one aside as inert, and a denial of
-  one moves no edge), so `up(C)` is a function of the stored edges alone and is fixed for the
-  whole computation. The closure is global, not scoped by visibility: an edge counts
-  whatever context stores it (docs/contexts.md, \"Context-scoped constraint checks\").
-  A genlCx path caps no class, since each of its edges is `:monotonic`.
-
-  A context no genlCx edge names sees only itself, not CxUniverse
-  (docs/contexts.md, \"A context outside the topology\")."
+  "`up(C)`: `c` plus every context it reaches over the genlCx edges `edges` (`{sub
+  #{super}}` off `context-edges`), whatever context stores each edge (docs/reference.md,
+  item 1 of \"The function\")."
   [edges c]
   (loop [seen #{c} todo [c]]
     (if-let [x (peek todo)]
@@ -273,8 +226,7 @@
   as `{:bindings b :edges #{…}}`. A positive pattern on `p` is met by a fact of any
   sub-predicate of `p`; a denial pattern on `p` by the denial of any super-predicate of
   `p`; each path over the believed `genl` edges between the two functors is its own match
-  (docs/inference.md, \"Predicate subsumption in matching\": a rule on `animal` fires on
-  `(dog Fido)` once `(genl dog animal)` holds). Polarity never crosses."
+  (docs/inference.md, \"Predicate subsumption in matching\"). Polarity never crosses."
   [adj l s bindings]
   (let [neg? (world/denial? l)]
     (when (= neg? (world/denial? s))
@@ -327,7 +279,7 @@
 (defn- blocked?
   "Is the firing of rule sentex `r` under `bindings` blocked at the view `believed`: an
   `unknown` whose conjuncts all hold, or an exception whose conjuncts all hold. Both
-  are asked at the reading context (docs/reference.md D4)."
+  are asked at the reading context (docs/reference.md, decision 4)."
   [adj believed r bindings]
   (let [all-hold? (fn [conj] (every? #(holds? adj believed (substitute % bindings)) conj))]
     (boolean (or (some all-hold? (:unknowns (:parsed r)))
@@ -361,8 +313,7 @@
 (defn- void-at?
   "Does rule sentex `r` conclude a literal in the forced-monotonic set `forced?` reads, or its denial,
   without being a forced-monotonic rule there: a `set/defaultRule`, an `unknown`, an exception, or
-  an antecedent outside that set (docs/reference.md D17)?  Such a rule fires at no
-  context whose forced-monotonic set holds its conclusion."
+  an antecedent outside that set (docs/reference.md, decision 17)?"
   [forced? r]
   (let [{:keys [consequent antecedents unknowns]} (:parsed r)
         body (if (world/denial? consequent) (second consequent) consequent)]
@@ -374,16 +325,11 @@
   "The believed sentences at `c` when `out` is taken OUT, before inheritance: `{:believed
   #{S} :justs {S #{j}} :supports {S {home strength}} :sees up(c)}`.
 
-  The visible premises seed the set. Each stratum of the visible rules fires to a
-  fixpoint before the next starts, so an `unknown` or an exception reads only sentences
-  a lower stratum concludes, and the stratified evaluation is exact. The `genl` edges a
-  match climbs are the premise edges and coverings believed at `c`: no rule concludes
-  either in v1. No rule reads an inherited claim (`world/check-world` refuses a rule
-  reading a preserved predicate or one above it), so derivation runs before
-  `inherit-at` and reads none.  `:forced?` reads the forced-monotonic set at `c`: the baseline set
-  (`world/forced?`) and the predicates a forced-monotonic declaration visible at `c` names; a denial
-  of a literal on it is no premise there, and a rule concluding one fires there only as
-  a forced-monotonic rule (`void-at?`, docs/reference.md D17)."
+  Each stratum of the visible rules fires to a fixpoint before the next starts. No rule
+  reads an inherited claim (`world/check-world` refuses one), so derivation runs before
+  `inherit-at`. `:forced?` reads the forced-monotonic set at `c`: the baseline set
+  (`world/forced?`) and the predicates a forced-monotonic declaration visible at `c`
+  names. A rule concluding one fires there only as a forced-monotonic rule (`void-at?`)."
   [prep c out]
   (let [sees     (up-with (:edges prep) c)
         vis      (fn [homes] (select-keys homes sees))
@@ -419,18 +365,12 @@
     cap), the class of each fact it matched, and the class of each sentence supporting a
     `genl` edge it climbed. The informant is out of the cap; its defeasibility is not;
   - a justification whose rule has an `unknown` antecedent or an `exceptWhen` confers
-    `:default` whatever the other classes (docs/reference.md D14: the conclusion goes
-    OUT when a blocker arrives). The test
-    `a-guarded-firing-confers-default-on-monotonic-grounds` holds the smallest world;
+    `:default` whatever the other classes (docs/reference.md, decision 14);
   - the class of a sentence is the strongest of its supports.
 
-  A genlCx path caps nothing: every genlCx edge is `:monotonic` (docs/reference.md D1).
-
-  **The class over routes is the widest bottleneck** (docs/reference.md D9). `matches`
-  makes each `genl` route a firing climbs its own justification, so a conclusion
-  reachable over several routes takes the maximum over routes of the minimum class
-  along each route. The test `a-derivation-over-two-genl-routes-takes-the-widest-bottleneck`
-  holds the smallest world."
+  `matches` makes each `genl` route a firing climbs its own justification, so a
+  conclusion over several routes takes the widest bottleneck (docs/reference.md,
+  decision 9)."
   [prep {:keys [believed justs supports]}]
   (let [rules  (into {} (map (juxt (juxt :rule :context) identity)) (:rules prep))
         class0 (into {} (for [s believed]
@@ -505,39 +445,25 @@
 
 (defn- inherit-at
   "`{:believed :class :inherited}` at a context, from the derivation `d`, its classes
-  `cls` and the OUT set `out` (docs/reference.md D5; docs/inherit.md).
+  `cls` and the OUT set `out` (docs/reference.md, item 4 of \"The function\").
 
-  With `(transitiveInArgInverse P k genl)` believed, a believed claim `(P … sup …)` and `sub`
-  strictly below `sup` over believed `genl` sentences, `(P … sub …)` is believed, with
-  the class the widest bottleneck over the routes (D9): the maximum over the routes of
-  the minimum of the claim's class and the classes of the route's edges. The
-  declaration is `:monotonic` (D7) and caps nothing. Several declarations on one
-  position union their reaches.
-
-  The claim is not believed while its denial `(not (P … sub …))` is believed, nor when a
-  decision took it OUT. D5 states the block for a denial of class at least the claim's.
-  The inherited family (`vaelii.ref.nogoods/inherited`) convicts a weaker denial beside a
-  `:monotonic` general claim and route, the denial is its unique weakest member, and the
-  next round derives the claim; so at the settled state the two statements agree, and no
-  round holds a claim beside its denial as a negation nogood. The class of a sentence a
-  write states or a rule derives, and that inheritance also reaches, is the strongest of
-  the two; `:inherited` holds only the sentences nothing else supports.
+  With `(transitiveInArgInverse P k genl)` believed, a believed claim `(P … sup …)` and
+  `sub` strictly below `sup` over believed `genl` sentences, `(P … sub …)` is believed at
+  the widest bottleneck of the claim's class and the route's edges (decision 9). The
+  declaration caps nothing. Several declarations on one position union their reaches.
+  The claim is not believed while its denial is believed, nor when a decision took it
+  OUT; the inherited family (`vaelii.ref.nogoods/inherited`) takes a weaker denial OUT
+  beside a `:monotonic` reading. `:inherited` holds only the sentences no write states
+  and no rule derives.
 
   Readings the docs leave open, and the one taken here:
 
-  - Two preserved positions on one predicate: each step moves one position, and a
-    claim a step reaches is a claim the next step moves from, so `(P dog cat)` under
-    both positions reaches `(P chi siamese)` through `(P chi cat)` or `(P dog siamese)`.
-    docs/inherit.md's `largerThan` example answers such a tuple and does not say how.
-    The inherited family reads an inherited claim in `:believed` as a general claim, so
-    its nogoods cover the same tuples.
-  - A denial of an intermediate tuple, `(not (P … mid …))` with `mid` between `sub` and
-    `sup`, does not stop the route to `sub`: D5 names only the denial of the reached
-    tuple. docs/inherit.md, \"Specificity\", has a nearer contrary claim undercut a
-    `:default` general claim, which this does not model.
+  - Two preserved positions on one predicate: each step moves one position, so `(P dog
+    cat)` under both positions reaches `(P chi siamese)` through `(P chi cat)` or `(P
+    dog siamese)`.
+  - A denial of an intermediate tuple does not stop the route to `sub`.
   - A `covering` part edge carries no claim; only a stated `genl` sentence does.
-  - The declaration is read for `P` itself and never for a sub-predicate of `P`
-    (docs/inherit.md states this), so a claim spelled at a sub-predicate moves nothing."
+  - The declaration is read for `P` itself and never for a sub-predicate of `P`."
   [d cls out]
   (let [base    (:believed d)
         denied? #(contains? base (list 'not %))]
@@ -598,7 +524,7 @@
     the set at the reading context; `world/forced?` when not given): `:defeat`, that
     denial is the `:loser` at either class (invariant 2);
   - no `:default` member outside the forced-monotonic set otherwise: `:hard`, nobody OUT,
-    since a forced-monotonic member is never a loser (D7, D10–D13);
+    since a forced-monotonic member is never a loser (invariant 2);
   - exactly one `:default` member outside the set: `:defeat`, that member is the `:loser`;
   - two or more `:default` members outside the set: `:dilemma`, nobody OUT.
 
@@ -651,20 +577,10 @@
 
   Each round derives from the premises minus OUT, computes the classes and the inherited
   claims, gathers every nogood (negation plus `families`), and decides each. A defeat
-  only adds to OUT, and a round never takes a sentence back (docs/reference.md, \"The
-  function\", item 8: nothing in the resolution revives one). A round with any defeat
-  whose loser is a ground (`ground-sentence?`) applies those defeats alone and
-  re-enters, so a clash read through an edge the same round withdraws is re-asked before
-  it convicts. The loop stops at the round with no defeat. OUT grows by at least one
-  believed sentence per round, so the loop terminates.
-
-  **The rounds are the semantics** (docs/reference.md D2): OUT grows monotonically, round
-  by round, grounds first, and the number of passes an implementation takes is not part
-  of the answer. The test `the-d2-world-settles-at-its-first-defeat-under-d14` holds the
-  world where a from-scratch re-decision had no fixpoint before D14; under D14 both
-  readings settle there at the first round's defeat. The grounds-first order is what the
-  test `scenario-b-in-one-context-the-edge-is-decided-before-the-clash-read-through-it`
-  asserts."
+  only adds to OUT. A round with any defeat whose loser is a ground (`ground-sentence?`)
+  applies those defeats alone and re-enters. The loop stops at the round with no defeat,
+  and OUT grows by at least one believed sentence per round, so it terminates
+  (docs/reference.md, item 8 of \"The function\" and decision 2)."
   [prep c families]
   (loop [out #{} decided []]
     (let [d         (derive-at prep c out)
@@ -701,7 +617,8 @@
 (defn believed?
   "Is the ground sentence `s` believed at context `c` of `world`, with the nogood
   `families` decided: the contract the engine is held to per sentence
-  (docs/reference.md D5). An inherited claim answers true as a stored sentence does.
+  (docs/reference.md, \"The function\"). An inherited claim answers true as a stored
+  sentence does.
   Computed from the prepared world at `c` alone; the reference answers by settling the
   whole view at `c`, which is correct and not local."
   [world s c families]

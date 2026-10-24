@@ -50,7 +50,7 @@ be preserved along `tangiblePartOf` just as readily:
 
 The two names exist so neither direction requires declaring an inverse predicate that
 has no other purpose. Both are ordinary stored sentexes read through
-`matches-visible`, exactly as `arg` and `genlArg` are — context-scoped and
+`matches-visible`, as `arg` and `genlArg` are — context-scoped and
 belief-following, with no cache of their own. Several declarations may name **one**
 position, and their reaches compose
 ([below](#declarations-at-one-position-compose-with-each-other-and-with-p)).
@@ -79,8 +79,7 @@ because they are declared **differently on purpose**:
 `partType` preserves on the **first only**: a kind of bird has whatever parts birds have,
 so `(partType bird wing)` answers `(partType penguin wing)` — but birds having wings says
 nothing about which *kinds of wing* they have, so position 2 preserves nothing. Each
-position is a separate claim about the relation, and this is what that looks like when
-somebody has actually made both decisions.
+position is a separate claim about the relation.
 
 The capability pair is where `transitiveInArg` ships, and one predicate carries both
 directions at once:
@@ -97,7 +96,7 @@ so whatever can fly can travel. The second position of both predicates is a happ
 `(genlArg hasCapability 2 happening)`, so `(hasCapability Tweety flying)` says Tweety can be
 the doer of a flying event.
 
-The size claims are also where the sharp edge shows. Preservation runs downward, so
+The size claims also show a limit of the declaration. Preservation runs downward, so
 `(largerThan mammal mouse)` reaches every pair below it and lands on `(largerThan mouse
 mouse)` — a kind reported larger than itself, which is not what `largerThan` is for.
 `(largerThan mammal mouse)` is therefore not a fact this ontology can hold, however true
@@ -106,9 +105,8 @@ is a requirement rather than a coincidence.
 
 The requirement is the modeller's, and the engine does not enforce it: `(asymmetric P)`
 convicts against a believed **opposing** claim, and a self tuple has none, so nothing is
-refused and `contradictions` stays empty. Asymmetry does not give you irreflexivity here
-([taxonomy.md](taxonomy.md)), which is exactly why the pairs have to be chosen rather
-than checked.
+refused and `contradictions` stays empty. Asymmetry does not entail irreflexivity here
+([taxonomy.md](taxonomy.md)), so the pairs are chosen rather than checked.
 
 ## The transitivity has to have been declared
 
@@ -124,14 +122,10 @@ ever evidence for. `assert` refuses the declaration:
 ;;     genl / genlCx"
 ```
 
-The refusal lives in `wff` rather than in `(arg transitiveInArg 3 transitive)`
-because `arg` is **open-world**: an argument with no type cannot violate it, so the
-constraint bites for a relation that happens to carry some other type and waves through
-the one that carries none — and naming the relation before typing it is the common
-authoring order. The check is also read at *use*, not only at assert, so retracting
-`(transitive R)` withdraws the inheritance it licensed: the declaration is still stored,
-but a relation nobody currently says composes is one whose reach we have no right to
-close.
+The refusal is a `wff` check and not an `arg` declaration
+([defenses.md](defenses.md#the-transitivity-a-declaration-names-is-checked-by-wff-not-by-arg)).
+`usable-relation?` reads `(transitive R)` again at use, so retracting it withdraws the
+inheritance it licensed while the declaration stays stored.
 
 Because the check reads the store, it is sensitive to what has arrived — which a KB
 **file** must not be, since its blocks run in term order and cannot also run in
@@ -229,8 +223,7 @@ relates at, are left alone. Crossing the line is a different claim: it links two
 predicates and has a quantifier reading to settle (every member? some member?). The
 vocabulary for it is `(typeToInstancePred TypePred InstancePred)` — declared in
 `core.txt` and **deliberately inert**: it records the pairing for a reader and the
-engine infers nothing from it, because the quantifier reading is exactly the thing
-nothing here fixes.
+engine infers nothing from it, because nothing here fixes the quantifier reading.
 
 **It cannot state a pair whose instance half is mixed**, and the shipped ontology holds
 one. `(arg typeToInstancePred 2 instance_relation_predicate)` requires the second
@@ -244,7 +237,7 @@ the predicate that exists to name pairs — declaring the mark to satisfy it wou
 argument check that convicts for a link nothing reads. `partType`/`tangiblePartOf` is the pair the
 link does state, both halves relating individuals to individuals.
 
-## Specificity, and why it is not the deleted axis
+## Specificity undercuts, and does not arbitrate
 
 The interesting case is a claim that inherits *and* a more specific claim that
 disagrees. `(typicallyLargerThan dog cat)` reaches `[chihuahua maine_coon]`;
@@ -252,16 +245,13 @@ disagrees. `(typicallyLargerThan dog cat)` reaches `[chihuahua maine_coon]`;
 and the general one **does not fire for that pair** — undercutting, not defeat. Nothing
 is derived, so there is nothing to arbitrate, and `contradictions` stays empty.
 
-That distinction matters, because it is what keeps genl-based specificity out of
-*arbitration*. Scoring a type by the size of its up-closure is inference **about** the
-knowledge rather than **from** it — a numeric proxy that ties silently whenever the
-exception is not keyed on a narrower type — and [nmtms.md](nmtms.md) is where the two
-defeat classes stop.
+Undercutting keeps `genl`-based specificity out of arbitration, which has one axis,
+defeat class ([defenses.md](defenses.md#there-is-no-second-axis)).
 
 Nothing here reconstructs an ordering. Two claims are compared along the very relation
 the inheritance travels down — `[maine_coon chihuahua]` is below `[cat dog]` because
 `(genl maine_coon cat)` and `(genl chihuahua dog)` are edges the KB holds. Claims that
-are genuinely incomparable are not ranked at all: they come back `:ambiguous` and the
+are incomparable are not ranked at all: they come back `:ambiguous` and the
 prover answers nothing, which is the same thing the engine does with every other
 unresolvable clash.
 
@@ -283,7 +273,8 @@ asserted, with no second declaration:
 ```
 
 The nogood reads the claim and its reading together: with a `:default` declaration or
-edge the reading is capped at `:default`, and the pair is the dilemma of the next section.
+edge the reading is capped at `:default`, and the stored claim undercuts it as it
+undercuts the `:default` claim of the next section.
 
 ```clojure
 (asymmetric typicallyLargerThan)
@@ -296,7 +287,7 @@ edge the reading is capped at `:default`, and the pair is the dilemma of the nex
 ;; (typicallyLargerThan golden_retriever siamese) => true, untouched pairs still inherit
 ```
 
-Accepted, but not *unremarked*. Where the specific claim genuinely overrides the
+Accepted, but not *unremarked*. Where the specific claim overrides the
 inherited one there is nothing to report — the general claim is undercut and never
 fires, so no pair exists. Where two claims at equal defeat class really do contradict
 each other — `(typicallyLargerThan dog cat)` beside a directly-stated
@@ -304,10 +295,9 @@ each other — `(typicallyLargerThan dog cat)` beside a directly-stated
 reports it in `(contradictions kb)` with `:kind :asymmetric`. See
 [nmtms.md](nmtms.md), "Which entry point the content came through".
 
-Same vocabulary, same declarations. Known-true content is the fixed background, so
-contradicting it is an error; a `:default` generality is something a more specific
-statement is entitled to override. The difference is stated on the claim, where it
-belongs, rather than split across two predicates in the ontology.
+One vocabulary and one set of declarations serve both readings. The general claim's
+strength decides which applies, so the difference is stated on the claim rather than
+split across two predicates in the ontology.
 
 ## A contrary claim against a known-true one is a contradiction, and is reported
 
@@ -316,7 +306,7 @@ above is about predicates that carry the mark. The plain case needs no mark at a
 stored `(not (P a b))` denies an inherited `(P a b)` outright, and `undercut?` is what
 decides whether anything follows from that. A `:default` general claim yields — it is
 undercut, does not fire for that tuple, and there is no pair. A `:monotonic` one is not
-undercut, which is exactly the case its docstring calls **a contradiction to report
+undercut, which is the case its docstring calls **a contradiction to report
 rather than a refinement to defer to**.
 
 **The reasons count.** A reading is as strong as its weakest member: the general claim,
@@ -333,18 +323,20 @@ rebuttal is formed, because a negation pair needs a body stored in *both* polari
 of somebody else's tuple. So the nogood's members are the stored claim **and everything
 the reading rests on**:
 
-- the general claim actually stated — `(carriesLoad hauler_kind Bone1)`;
+- the general claim stated — `(carriesLoad hauler_kind Bone1)`;
 - the declaration licensing the move — `(transitiveInArgInverse carriesLoad 1 genl)`;
 - the relation edges the reach travelled — `(genl cart_kind hauler_kind)`;
 - and, for a fact-relation, the `(transitive R)` `usable-relation?` reads at use; for a
   mirrored reading, the `(symmetric …)` behind the mirror.
 
-That the reasons are members here, where a definitional clash names only the clashing
-sentexes, is the one case
-[the nogood admission criterion](nmtms.md#what-qualifies-as-a-nogood) has to admit
-rather than exclude: defeating a reason dissolves the detection, and that is the
-resolution rather than a bug, because this claim has no sentex of its own for a defeat
-to reach instead.
+Defeating a reason dissolves the detection, which
+[the nogood admission criterion](nmtms.md#what-qualifies-as-a-nogood) admits for this
+family alone ([defenses.md](defenses.md#a-nogood-must-survive-being-acted-on)).
+These are the sentexes `supports-for` hands a justification, since they are what the
+claim is. The report carries `:kind :inherited` and an `:inherited` map naming the claim
+nobody wrote, the handle it was read off and the handles it travelled, so `why` explains
+a report about a sentence the KB does not store ([nmtms.md](nmtms.md) has the entry
+shape).
 
 **The converse of an inherited claim.** Under an `asymmetric` mark on `P` or on a
 super-predicate of `P` (`tax/props-over`), a known-true claim that reaches `(P b a)` by
@@ -414,13 +406,6 @@ beside a known-true route of any length therefore leaves the reading known-true,
 converse is defeated, whichever edge arrived first. When every route has a `:default`
 reason, the reading is `:default` and opposes nothing.
 
-The same list `supports-for` hands a justification, and for the same reason: those
-sentexes are what the claim *is*, so a set that must not hold in full is that set and not
-a pair inside it. The report carries `:kind :inherited` and an `:inherited` map naming the
-claim nobody wrote, the handle it was read off and the handles it travelled — enough for
-`why` to explain a report about a sentence the KB does not store
-([nmtms.md](nmtms.md) has the entry shape).
-
 **The belief consequence falls straight out of that, and no rule is invented for it.**
 `decide/verdict` defeats the strictly-weakest member of any nogood, and this one is
 weighed the same way, so the answer is the strength ordering the rest of the engine
@@ -428,24 +413,17 @@ already runs on:
 
 | the reading | the stored contrary claim | what happens |
 |---|---|---|
-| `:default` general claim | any | undercut — no pair, nothing reported |
+| a `:default` general claim, declaration or edge in it | any | undercut — no pair, nothing reported, and the stored claim stands |
 | every member known-true | `:default` | the stored claim is the unique weakest and is **defeated**: the general claim reaches the subkind and the nearer default does not stop it |
-| a `:default` declaration or edge in it | `:default` | the floor is shared — a represented dilemma in `(contradictions kb)`, believed on both sides |
 | every member known-true | `:monotonic` | an irreducible clash in `(conflicts kb)` |
 
-The middle two rows are one rule read twice, and the rule is the one a firing's strength
-already follows: **a reading is capped by its weakest link.** A `:monotonic` claim carried
-by a `:default` declaration draws a `:default` conclusion through the forward entry point (below),
-and it wins no argument a `:default` claim would lose through this one either. So a KB
-whose taxonomy edges and declarations are ordinary defaults — which the shipped ontology's
-are — gets the dilemma: what the engine has no grounds to choose between is *which* of the
-declaration, the edge and the stored claim to give up, and choosing would be inventing an
-ordering. A KB that states the reading as known-true gets the defeat, and the general
-claim then answers `ask?` at the subkind.
-
-Nothing about this is a second defeat axis. Specificity still decides who may undercut
-whom, and defeat class still decides everything else; what changed is that a pair the
-engine could not name now has a name.
+The first two rows are one rule, the one a firing's strength follows: **a reading is
+capped by its weakest link**, and a `:default` reading is undercut as a `:default` claim
+is. A KB whose taxonomy edges and declarations are defaults, as the shipped ontology's
+are, keeps the stored claim and reports nothing
+(`inherited_clash_test/a-reading-resting-on-a-default-reason-is-undercut-and-the-denial-stands`).
+A KB that states the reading known-true gets the defeat, and the general claim then
+answers `ask?` at the subkind. Specificity decides only who may undercut whom.
 
 **The pair is judged at every context that reads it whole**: the stored claim's own
 context, and the most general contexts that see the stored claim, the general claim and
@@ -471,12 +449,12 @@ CxW sees CxA and CxB
 
 CxW reads `(bigP dog ant)` by preservation beside the stored converse and weighs the
 pair: with the edges and the declarations known-true the default loses at CxW and below,
-and with any of them a default it is a dilemma CxW reports. CxB, which cannot see the
-general claim, keeps the stored claim either way. With the edges in a context only a
-context below CxW sees, CxW reads no reach and keeps the stored claim, and that lower
-context is the vantage. An except that hides a reason at the stored claim's context, beside
-a meta-except that shows it again in a context below, makes that lower context the vantage
-in the same way
+and with any of them a default the reading is undercut and CxW keeps the stored claim.
+CxB, which cannot see the general claim, keeps the stored claim either way. With the
+edges in a context only a context below CxW sees, CxW reads no reach and keeps the stored
+claim, and that lower context is the vantage. An except that hides a reason at the stored
+claim's context, beside a meta-except that shows it again in a context below, makes that
+lower context the vantage in the same way
 (`inherited_clash_test/an-inherited-clash-a-meta-except-restores-below-its-members-is-placed-there`).
 
 **The diagonal is excluded**, as it is for `supports-for`: `witness-terms` is reflexive, so
@@ -497,9 +475,8 @@ check (`inherited_clash_test/a-reading-over-a-default-edge-closes-no-genl-cycle`
 ## `(asymmetric P)`
 
 Predicate metadata beside `transitive` / `symmetric` / `reflexive` / `functional`:
-`(P a b)` and `(P b a)` cannot both hold. It does two things — and refusing `(P a a)` is
-not among them, because the check needs a believed opposing claim and a self tuple has
-none ([taxonomy.md](taxonomy.md)).
+`(P a b)` and `(P b a)` cannot both hold. It does two things, and refusing `(P a a)` is
+not one of them ([above](#four-predicates-ship-with-one)).
 
 It gives the **converse the standing to deny a claim**, which is what makes the override
 above work at all — `(typicallyLargerThan maine_coon chihuahua)` counts as evidence
@@ -511,14 +488,13 @@ And it makes a strict order **detectable**. Without it, `(largerThan dog cat)` a
 `(transitive largerThan)` on top you get `(largerThan dog dog)` and nothing objects.
 With it, the second claim is judged against the first's **defeat class**, and a first
 claim reached by preservation against the weakest class of the claim and its reading:
-known-true, and a default second claim is defeated; merely believed, and the two are a
-represented dilemma. Either way the KB
-stops holding both directions in silence, which is the whole point of the
-declaration.
+known-true, and a default second claim is defeated; merely believed, and the reading is
+undercut and the second claim stands. Either way the KB does not hold both directions
+unreported.
 
 The mark is read for the sentence's predicate **and every super-predicate of it**
 (`tax/props-over`), because `(fatherOf a b)` beside `(parentOf b a)` is two `parentOf`
-tuples one way round each, and `(asymmetric parentOf)` denies exactly that. The converse
+tuples one way round each, and `(asymmetric parentOf)` denies that pair. The converse
 is then probed at the marked predicate — `(parentOf b a)`, whose match fans down over
 `parentOf`'s specs and so finds the claim under either spelling — where probing
 `(fatherOf b a)` would miss one written generally. This is the **constraint** direction
@@ -528,12 +504,19 @@ licenses does not.
 ## Reading it back
 
 `TransitiveInArgProver` answers a **ground** goal; an open argument is left to the fact
-and rule provers, in the shape `different` and the NAF operators already use.
-Enumerating one would mean walking the inverse reach of every stored witness, which is a
-much larger question than the one a closed goal asks. `cost :compute`, `completeness
-60` — it augments facts and rules rather than replacing them, since a preserved
-predicate is still an ordinary predicate whose claims can be stored and derived
-directly.
+and rule provers, in the shape `different` and the NAF operators already use
+([defenses.md](defenses.md#transitiveinargprover-answers-no-open-goal)). It answers
+`(P a b)` where `verdict` is `:for` and `(not (P a b))` where it is `:against`
+(`inherit/goal-verdict`), so a surviving denial reached along the declared relations
+answers the negation under the same undercutting and strength rules a surviving claim
+answers the positive under. A separated membership alone does not answer the negation
+(`inherit/answers?`): the separation that undercuts a claim skips the `:monotonic`-edge
+soundness rule `res/separation-denials` applies, and `DisjointnessNegationProver` answers
+the denials that meet it. The forward join reads claims on a positive antecedent
+alone: a `(not (P ?x ?y))` antecedent joins on stored denials. Its `cost` is
+`:compute` and its `completeness` 60: it augments facts and rules rather than replacing
+them, since a preserved predicate is still an ordinary predicate whose claims can be
+stored and derived directly.
 
 `vaelii.impl.inherit/verdict` is the whole semantics in one function: `:for`,
 `:against`, `:ambiguous`, or nil when the predicate declares no preserved position.
@@ -547,37 +530,26 @@ that set, which sends the goal down the union path where this prover is consulte
 Without it, declaring `(transitiveInArgInverse partOfRegion 1 genl)` beside a registered `:rcc8`
 reasoner leaves the declaration inert and `query-plan` listing a prover that never runs.
 
-That read is on the hot path, and it runs behind a two-step presence check. `positions` is asked by
-`TransitiveInArgProver.applicable?` *and* by `shadowing-channels`, so it runs for every
-goal's functor in the KB, and each real read is two `matches-visible` calls. So
+That read runs behind a two-step presence check. `positions` is asked by
+`TransitiveInArgProver.applicable?` and by `shadowing-channels`, so it runs for every
+goal's functor in the KB, and each real read is two `matches-visible` calls.
 `declared-about?` answers first: a cardinality read on the declaration functors' roots,
-false for nearly every KB there is, and only then an intersection with the argument
-root at position 1 — where a declaration's predicate sits — which is exact in the
-negative direction whatever anyone believes. Without the presence check, **one**
-declaration anywhere makes a `genl` goal cost roughly 3× what it costs in a KB with none
-(~15 µs → ~40 µs), a cost every query pays for a feature almost none of them use. With
-it, the two cases are ~16 µs and ~21 µs, and the difference is the declared predicate's own read.
+false in a KB that declares nothing, and then an intersection with the argument root at
+position 1, where a declaration's predicate sits. The intersection is exact in the
+negative direction whatever anyone believes.
 
 ## Forward chaining on a claim nobody stored
 
 A forward rule's antecedents are matched against stored facts, and an inherited claim is
-not one. So the two entry points into the same knowledge answered differently: `ask` reached
-`(largerThan chihuahua maine_coon)` through the prover above, while the fixpoint fired
-`(implies (largerThan ?x ?y) (outweighs ?x ?y))` on the claims that were written and on
-nothing else, and `sentexes-matching` read that back. The engine treats a
-forward/backward disagreement as a defect elsewhere — `provers/exception-holds?` is one
-shared function precisely so an exception cannot block a rule one way and not the other
-— and three further things followed from the conclusion never being derived: `why` could
-not explain an answer `ask` was confident about, retraction did not reach it, and it
-could not be an antecedent of anything.
-
-Support is what closes it, exactly as it does for a relation a constraint network
-entails ([qcn.md](qcn.md)). An inherited claim has no handle, but it was **read from**
-things that do:
+not one. The matcher alone fires `(implies (largerThan ?x ?y) (outweighs ?x ?y))` on the
+written claims, while `ask` answers `(largerThan chihuahua maine_coon)` through the
+prover above, so the forward join reads the claims by preservation too, and the two entry
+points agree. An inherited claim has no handle, but it was **read from** things that do,
+as a relation a constraint network entails is ([qcn.md](qcn.md)):
 
 - the **claim that was stated** — `(largerThan dog cat)`;
 - the **declaration** licensing the move — `(transitiveInArgInverse largerThan 1 genl)`, one per
-  position that actually moved;
+  position that moved;
 - the **relation edges** the reach travelled — `(genl chihuahua dog)`, `(genl maine_coon
   cat)`, one path per position, the one that places the conclusion highest, or one per
   sibling context where routes stated in contexts that do not see each other place it in
@@ -668,7 +640,7 @@ context, like a firing's witness search, reads the network
 
 **A mirrored antecedent licenses the forward entry point too, and the firing says so.** A claim
 whose stored orientation is not the tuple it was read at came through the symmetric
-mirror, and that reading rests on a `(symmetric …)` declaration exactly as a fact-relation
+mirror, and that reading rests on a `(symmetric …)` declaration as a fact-relation
 reach rests on `(transitive R)` — so the justification names it, and retracting the
 symmetry withdraws what only the mirror licensed. The matcher mirrors each fanned literal
 on *its own* declaration, so the one named is the stored sentence's functor's, which is
@@ -684,7 +656,7 @@ way ([inference.md](inference.md#forward-chaining)).
 **A more specific contrary claim withdraws a conclusion with nothing retracted.**
 `(typicallyLargerThan maine_coon chihuahua)` undercuts the inherited
 `(typicallyLargerThan chihuahua maine_coon)`, and the general claim is not defeated: it
-simply does not fire for that pair. Every antecedent of the firing is still stored and
+does not fire for that pair. Every antecedent of the firing is still stored and
 believed, so the justification cannot express the withdrawal. Which way the firing goes
 depends on the contrary claim's class (design ruling 25). The forward join reads the
 claims with each `:default` contrary set aside (`inherit/*default-contraries-set-aside*`),
@@ -751,7 +723,7 @@ A firing whose edges are stated in incomparable contexts with no common descenda
 recorded as `:no-placement`, like any other completed firing that lands nowhere
 ([contexts.md](contexts.md)).
 
-Two things are deliberately left, and both are shared with the qualitative side. Support
+Two things are left, and both are shared with the qualitative side. Support
 names **a** witness per reader the others do not reach rather than every witness — one
 path, and one of however many declarations license the same move, wherever one of them
 is seen from every reader that sees another — so a claim reachable two ways through
@@ -764,7 +736,7 @@ for a fact-relation), with the specificity of the most specific context and then
 breaking a tie between two routes with one label. A route through general contexts
 therefore covers a shorter route through a specific one, places the conclusion above it,
 and every reader of either route holds it. And a firing's **strength** is
-capped by its weakest antecedent as always, which now includes the declaration: a `:monotonic` claim declared
+capped by its weakest antecedent as always, the declaration included: a `:monotonic` claim declared
 preserved by a `:default` declaration draws a `:default` conclusion, where the backward
 prover answers `ask` without weighing either.
 
@@ -813,7 +785,7 @@ each predicate of its fan counts its stored denials
 sub-predicate stores the facts is priced at the sub-predicate's extent, since that is
 what the open probe walks
 (`inherit_test/the-extent-estimate-counts-the-sub-predicates-the-probe-fans-over`).
-The ground position is read at the place the probe will actually **put** it, which is
+The ground position is read at the place the probe will **put** it, which is
 not always the tuple index — the converse an asymmetric predicate is denied by swaps
 them, so a ground term at tuple index 0 is looked up at argument position 2, and
 counting it at position 1 would price a probe nobody is about to make.
@@ -870,7 +842,7 @@ on the clock
 (`inherit_test/a-claims-reader-other-than-the-ask-prover-walks-past-the-deadline`).
 
 That turns the cost from *how deep is the taxonomy* into *how many claims were
-written*, which is the quantity the answer actually depends on. Measured by `lein
+written*, which is the quantity the answer depends on. Measured by `lein
 bench-inherit` on a 32-deep chain with one stored claim, `v/ask?` on a ground goal:
 
 | preserved positions | tuples in the product | product-driven | as it runs |
@@ -880,7 +852,7 @@ bench-inherit` on a 32-deep chain with one stored claim, `v/ask?` on a ground go
 | 3 | 32,768 | 323.966 ms | 0.104 ms |
 
 Flat in both the taxonomy's depth and the number of preserved positions, because
-neither is what it reads any more.
+neither is what it reads.
 
 Two smaller multipliers sit under that, and both are removed by one memo
 (`inherit/*memo*`, opened by `with-memo` and reused when a caller already holds one —
@@ -890,9 +862,8 @@ two `matches-visible` calls; `witness-terms` is asked once per preserved positio
 then again per *pair* of claims inside `undercut?`, and for a fact-relation each walk is
 a `matches-visible` per node. Neither answer can change while one question is being
 answered — a query never mutates belief — so the memo lives for the question and needs
-no invalidation protocol. A KB that declares no preservation reaches none of this: an
-O(1) presence check on the declaration functors having any extent at all sits in front of
-`positions`.
+no invalidation protocol. A KB that declares no preservation stops at the presence check
+([above](#reading-it-back)).
 
 The multiplier the memo removes is the one `undercut?` introduces: it compares every claim
 against every other, so a reach walked per comparison is quadratic in the claims and a
@@ -900,8 +871,8 @@ reach walked per question is linear in them. Both readings have regression tests
 `inherit_test/the-reach-walk-is-linear-in-the-claims-and-not-quadratic` counts
 `matches-visible` calls at three sizes and holds the second difference to a doubling
 rather than a quadrupling, and `lein perf`'s `inherit-reach-memo` prices 8× the claims at
-under 12× per ask, against the ~51× a lost memo reads. The comparing stays quadratic
-either way; only the walking moves.
+under 12× per ask, against the 64× a reach walked per pair of claims reads. The
+comparing stays quadratic either way; only the walking moves.
 
 It is a *thread binding*, so the layers under it — `claims`, `surviving`,
 `solve-with-support` — realize their seqs before returning. A seq handed back
@@ -912,7 +883,6 @@ answers identical, which is why nothing but a cost measurement can see it
 `TransitiveInArgProver`'s `est-bindings` is **1**, and that is the answer count rather
 than the cost — a closed goal has at most the one empty solution. `cost :compute` is
 where the work shows.
-
 
 ## Four things that follow from reading claims out of belief
 

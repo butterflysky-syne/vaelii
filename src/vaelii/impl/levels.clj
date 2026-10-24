@@ -63,7 +63,7 @@
             [vaelii.impl.except :as exc]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.naming :as nm]
-            [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.provers :as provers]
             [vaelii.impl.reads :as reads]
@@ -301,7 +301,7 @@
   rather than about storage: levels 2-5 match the goal as written, which is what makes
   them a legible account of what the index and the two hierarchies hold."
   [kb goal context]
-  (kb/rewrite-goal kb (nat/maybe-reify-for-read kb goal context) context))
+  (kb/rewrite-goal kb (nat-read/maybe-reify-for-read kb goal context) context))
 
 (defn- solved
   "Level 6: the real engine over a prover list, so dispatch, cost estimates and the

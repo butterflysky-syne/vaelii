@@ -1560,6 +1560,24 @@
           (is (every? #(= [:truncated :max-work] ((juxt :status :reason) (run {:max-work %})))
                       (range 0 (or needed 0)))))))))
 
+;; ---- uncorresponded-function -----------------------------------------------
+
+(tu/deftest-kb a-function-a-held-rule-applies-with-no-correspondence-is-reported
+  (tu/with-terms [FruitFn SeedFn PitFn tagged ripe seedOf pitOf stoneOf]
+    (doseq [f [FruitFn SeedFn PitFn]]
+      (v/assert kb (list 'reifiable_function f) 'CxUniverse))
+    (v/assert kb (list 'functionCorrespondingPredicate SeedFn seedOf) 'CxUniverse)
+    (v/assert kb (list 'functionCorrespondingPredicate PitFn pitOf) 'CxUniverse)
+    (v/assert kb (list 'functionCorrespondingPredicate PitFn stoneOf) 'CxUniverse)
+    (let [h1 (v/assert kb (list 'implies (list tagged (list FruitFn '?t)) (list ripe '?t)) 'CxUniverse)
+          _  (v/assert kb (list 'implies (list tagged (list PitFn '?t)) (list ripe '?t)) 'CxUniverse)
+          _  (v/assert kb (list 'implies (list tagged (list SeedFn '?t)) (list ripe '?t)) 'CxUniverse)
+          before (state-snapshot kb)
+          report (v/kb-integrity kb #{} 'CxUniverse {:categories #{:uncorresponded-function}})]
+      (is (= [{:function FruitFn :rules [h1]}] (:uncorresponded-function report))
+          "the rules one and two correspondences respell are not held")
+      (is (= before (state-snapshot kb)) "the audit stores, believes and files nothing"))))
+
 ;; ---- undeclared-arity -----------------------------------------------------
 
 (defn- undeclared

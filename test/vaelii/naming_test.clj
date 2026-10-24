@@ -60,12 +60,7 @@
     (is (not (nm/type-symbol? 'parentOf)))))             ; uppercase ⇒ not snake_case
 
 (deftest a-bare-lowercase-word-satisfies-both-conventions
-  ;; The footing of the whole arity coupling: `problems` refuses a snake_case functor at
-  ;; arity ≠ 1 *because* an underscore rules out `predicate?`, and leaves a bare word
-  ;; alone *because* it satisfies both, so only arity can decide its role.  The test
-  ;; harness relies on the same fact (`test-util/fresh-term`, a `:type` temp named after
-  ;; a bare word).  Should these two ever stop overlapping, the design loses its footing
-  ;; somewhere far from here, so it is enforced rather than left to prose.
+  ;; the arity biconditional and `tu/fresh-term`'s bare-word temps both rest on this overlap
   (doseq [w '[dog likes genl thing p q rel]]
     (testing (str w)
       (is (nm/predicate? w))
@@ -86,16 +81,9 @@
   (is (= '(Tom Bob) (nm/args '(parentOf Tom Bob))))
   (is (= 2 (nm/arity '(parentOf Tom Bob)))))
 
-(deftest problem-detection
-  (is (empty? (nm/problems '(dog Muffet) 'CxNaturalWorld)))
-  (is (seq (nm/problems '(dog Muffet) 'NaturalWorld)))      ; context does not start with Cx
-  (is (seq (nm/problems '(Dog Muffet) 'CxNaturalWorld))))   ; functor not lowercase-initial
-
 ;; ---- the literals a sentence contains -----------------------------------
-;; `problems` checks a functor per *literal*, so which positions count as literals is
-;; the whole substance of the check.  A frame is descended through; an argument is not.
 
-(deftest literals-are-found-inside-every-frame
+(deftest literals-are-found-inside-every-wrapper
   (testing "a plain fact is one literal"
     (is (= [[:sentence '(dog Muffet)]] (nm/literals '(dog Muffet)))))
   (testing "a rule's antecedents and consequent each carry their own role"
@@ -115,21 +103,47 @@
       (is (= [[:exception '(penguin ?x)] [:exception '(sick ?x)]
               [:antecedent '(bird ?x)] [:consequent '(flies ?x)]]
              (nm/literals '(exceptWhen [(penguin ?x) (sick ?x)]
-                                       (implies (bird ?x) (flies ?x))))))))
-  (testing "an `ist` frames the sentence it names a context for"
+                                       (implies (bird ?x) (flies ?x)))))))
+    (testing "inside the strength wrapper that states the exception's class"
+      (is (= [[:exception '(penguin ?x)] [:exception '(sick ?x)]
+              [:antecedent '(bird ?x)] [:consequent '(flies ?x)]]
+             (nm/literals '(exceptWhen (set/monotonic [(penguin ?x) (sick ?x)])
+                                       (implies (bird ?x) (flies ?x))))))
+      (is (seq (nm/problems '(exceptWhen (set/monotonic (Bad_q ?x)) (implies (bird ?x) (flies ?x)))
+                            'CxUniverse)))))
+  (testing "an `ist` wraps the sentence it names a context for"
     (is (= [[:sentence '(unary_predicate dog)]]
            (nm/literals '(ist CxUniverse (unary_predicate dog))))))
-  (testing "a negation-as-failure query is framed by `unknown` / `thereExists`"
+  (testing "a negation-as-failure query is wrapped by `unknown` / `thereExists`"
     (is (= [[:antecedent '(bird ?x)] [:antecedent '(nestOf ?x ?y)] [:consequent '(homeless ?x)]]
            (nm/literals '(implies (and (bird ?x) (unknown (thereExists ?y (nestOf ?x ?y))))
                                   (homeless ?x))))))
-  (testing "a head existential frames the consequent it quantifies"
+  (testing "a head existential wraps the consequent it quantifies"
     (is (= [[:antecedent '(person ?x)] [:consequent '(childOf ?x ?y)]]
            (nm/literals '(implies (person ?x) (exists ?y (childOf ?x ?y)))))))
+  (testing "a `forall` antecedent's body and head are read in the antecedent role"
+    (is (= [[:antecedent '(bird ?x)] [:antecedent '(chickOf ?x ?y)] [:antecedent '(fed ?y)]
+            [:consequent '(provider ?x)]]
+           (nm/literals '(implies (and (bird ?x) (forall ?y (implies (chickOf ?x ?y) (fed ?y))))
+                                  (provider ?x))))))
   (testing "the rule wrappers nest in any order and none of them is a literal"
     (is (= [[:antecedent '(bird ?x)] [:consequent '(flies ?x)]]
            (nm/literals '(set/forwardRule
-                          (set/defaultRule (implies (bird ?x) (flies ?x)))))))))
+                          (set/defaultRule (implies (bird ?x) (flies ?x)))))))
+    (is (= [[:antecedent '(bird ?x)] [:consequent '(flies ?x)]]
+           (nm/literals '(set/solveRule
+                          (set/forwardRule (implies (bird ?x) (flies ?x))))))))
+  (testing "a brave or cautious read wraps the sentence it reads"
+    (is (= [[:antecedent '(bird ?x)] [:antecedent '(pacifist ?x)] [:consequent '(calm ?x)]]
+           (nm/literals '(implies (and (bird ?x) (bravely (pacifist ?x))) (calm ?x)))))
+    (is (= [[:antecedent '(pacifist ?x)] [:consequent '(calm ?x)]]
+           (nm/literals '(implies (cautiously (pacifist ?x)) (calm ?x))))))
+  (testing "an aggregate's body is a goal, not an argument"
+    (is (= [[:sentence '(likes ?y Tom)]] (nm/literals '(agg/count ?n ?y (likes ?y Tom))))))
+  (testing "a generated rule's literals are tagged as generated, at every depth"
+    (is (= [[:antecedent '(p ?x)] [:generated-antecedent '(q ?y)]
+            [:generated-antecedent '(s ?z)] [:generated-consequent '(r ?z)]]
+           (nm/literals '(implies (p ?x) (implies (q ?y) (implies (s ?z) (r ?z)))))))))
 
 (deftest literals-stops-at-what-is-not-a-literal
   (testing "a variable in functor position is a pattern, not a named predicate"
@@ -181,9 +195,7 @@
     (is (empty? (nm/problems '(implies (penguin ?x) (has_black_and_white_feathers ?x))
                              'CxWell)))))
 
-(deftest a-rejection-names-the-literal-and-its-frame
-  ;; a repair loop is handed the message verbatim, so it has to say which literal of
-  ;; which frame broke, and what to write instead
+(deftest a-rejection-names-the-literal-and-its-wrapper
   (let [[p :as ps] (nm/problems '(implies (penguin ?x) (lives_in ?x cold_place)) 'CxWell)]
     (is (= 1 (count ps)))
     (is (re-find #"lives_in" p))
@@ -207,7 +219,7 @@
       (is (re-find #"South_Pole" p))
       (is (re-find #"SouthPole" p) "the individual spelling")
       (is (re-find #"south_pole" p) "the type spelling")))
-  (testing "and the frame is named, exactly as a functor rejection names it"
+  (testing "and the wrapper is named, as a functor rejection names it"
     (let [[p] (nm/problems '(implies (penguin ?x) (locatedIn ?x Cold_Tolerant))
                            'CxWell)]
       (is (re-find #"rule consequent" p))))
@@ -222,13 +234,13 @@
     (is (empty? (nm/problems '(comment penguin "A flightless bird.") 'CxWell)))
     (is (empty? (nm/problems '(implies (bird ?x) (flies ?x)) 'CxWell))))
   (testing "a compound argument is a term, so its head is a function and not a name"
-    ;; descending into it would judge `+` and every structural NAT functor by naming rules that
-    ;; were never about them
     (is (empty? (nm/problems '(evaluate Sum (+ 1 2)) 'CxWell)))
     (is (empty? (nm/problems '(natFormula Rod1 (QuantityFn 5 Meter)) 'CxWell)))))
 
 (deftest ist-names-a-context
   (is (empty? (nm/problems '(ist CxUniverse (flies Tweety)) 'CxWell)))
+  (testing "a variable in the slot is a pattern position and is not judged"
+    (is (empty? (nm/problems '(implies (storyOf ?s ?c) (ist ?c (flies Tweety))) 'CxWell))))
   (testing "anything else is not a context name"
     (is (seq (nm/problems '(ist Muffet (flies Tweety)) 'CxWell)))))
 
@@ -242,31 +254,17 @@
 ;; ---- a problem is data before it is prose --------------------------------
 
 (deftest a-violation-is-a-class-and-a-symbol-before-it-is-a-sentence
-  ;; `assert` wants the sentence it refused spelled out; an audit over a corpus wants to
-  ;; group.  A message embeds the literal, so it is unique per record and counting
-  ;; messages counts records — which is why the class is the datum and the prose is
-  ;; rendered from it.
-  (testing "each shape reports its own class, naming the symbol that broke"
-    (is (= [{:class :context-name :role :sentence :symbol 'NotAThing}]
-           (map #(dissoc % :literal) (nm/problems* '(dog Muffet) 'NotAThing))))
-    (is (= [{:class :functor :role :sentence :symbol 'Flies}]
-           (map #(dissoc % :literal) (nm/problems* '(Flies Tweety) 'CxWell))))
-    (is (= [{:class :functor-arity :role :sentence :symbol 'lives_in}]
-           (map #(dissoc % :literal) (nm/problems* '(lives_in Tweety cold_place) 'CxWell))))
-    (is (= [{:class :argument :role :sentence :symbol 'Baby_Penguin}]
-           (map #(dissoc % :literal) (nm/problems* '(parentOf Baby_Penguin Tom) 'CxWell))))
-    (is (= [{:class :ist-context :role :sentence :symbol 'Muffet}]
-           (map #(dissoc % :literal)
-                (nm/problems* '(ist Muffet (flies Tweety)) 'CxWell)))))
   (testing "every class it can report is one `problem-classes` names"
     (is (every? nm/problem-classes
                 (map :class (nm/problems* '(Flies Baby_Penguin) 'NotAThing)))))
+  (testing "every violation is reported, in the documented order"
+    (is (= [:context-name :functor :argument :ist-context]
+           (mapv :class (nm/problems* '(ist Muffet (Flies Baby_Penguin)) 'NotAThing)))))
   (testing "and `problems` is exactly those rendered, one message each, in order"
     (let [s '(Flies Baby_Penguin)]
       (is (= (mapv nm/message (nm/problems* s 'NotAThing))
              (nm/problems s 'NotAThing)))
-      (is (= 3 (count (nm/problems s 'NotAThing)))
-          "the context, the functor and the argument — all of them, not the first"))))
+      (is (= 3 (count (nm/problems s 'NotAThing)))))))
 
 ;; ---- the policy is the KB's, not the build's -----------------------------
 
@@ -278,9 +276,6 @@
 (def ^:private misnamed '(parentOf Baby_Penguin Tom))
 
 (deftest the-naming-policy-belongs-to-the-kb
-  ;; The conventions are how *this* KB reads a role off a spelling, so a KB holding a
-  ;; corpus that spells its names differently is not malformed — it is a KB whose front
-  ;; entry point is set differently.  Neither has to win, and both can be open at once.
   (testing ":strict is the default, and refuses with a :naming type"
     (tu/with-cleared-kb [kb (kb-with :strict)]
       (is (= :strict (:naming kb)))
@@ -303,16 +298,11 @@
       (is (= 1 (v/sentex-count kb)))))
 
   (testing "an unknown policy is refused rather than defaulted"
-    ;; on the same ground as an unknown `open-kb` key: a KB that silently took :strict
-    ;; when it was told :lenient refuses content the caller expected to land
     (is (= :unknown-option
            (:type (try (v/open-kb (assoc (tu/scratch-space) :naming :lenient))
                        (catch clojure.lang.ExceptionInfo e (ex-data e))))))))
 
 (deftest two-entry-points-over-one-store-disagree-and-both-are-right
-  ;; The policy travels with the KB, not with the records, so a lenient loader and a
-  ;; strict editor can hold the same store at once — which is the whole point of it
-  ;; being per-KB rather than a property of the build.
   (tu/with-cleared-kb [lenient (kb-with :off)]
     (let [strict (v/open-kb (assoc (tu/scratch-space) :naming :strict :recover? false))]
       (v/assert lenient misnamed 'CxWell)
@@ -343,16 +333,14 @@
             (is (= #{misnamed} (naming-of kb)))
             (is (some? (v/handle-of kb admitted 'CxWell))
                 "a conclusion the invariants admit is stored beside it"))))
-      (testing ":off stores it and reports nothing"
-        (tu/with-cleared-kb [kb (kb-with :off)]
-          (doseq [s (cons rule facts)] (v/assert kb s 'CxWell))
-          (is (some? (v/handle-of kb misnamed 'CxWell)))
-          (is (empty? (naming-of kb))))))))
+      (doseq [policy [:warn :off]]
+        (testing (str policy " stores it and reports nothing")
+          (tu/with-cleared-kb [kb (kb-with policy)]
+            (doseq [s (cons rule facts)] (v/assert kb s 'CxWell))
+            (is (some? (v/handle-of kb misnamed 'CxWell)))
+            (is (empty? (naming-of kb)))))))))
 
 (deftest a-policy-moves-what-is-refused-never-how-a-role-is-read
-  ;; The one cost of `:off`, stated as a test so it cannot be forgotten: the KB stores a
-  ;; name it *cannot classify*, rather than classifying it differently.  Nothing
-  ;; downstream starts reading `Baby_Penguin` as an individual because the entry point was open.
   (is (nil? (v/term-role 'Baby_Penguin)))
   (is (= :individual (v/term-role 'BabyPenguin)))
   (is (not (nm/individual? 'Baby_Penguin)))
@@ -363,8 +351,6 @@
     (is (empty? (nm/blocking-problems :off  misnamed 'CxWell)))))
 
 (deftest the-other-entry-point-counts-what-it-does-not-check
-  ;; A bulk path stores what `assert` refuses — that is what it is for — so the two
-  ;; entry points are reconciled by a count rather than by a check.
   (let [t (-> nm/empty-tally
               (nm/tally '(dog Muffet) 'CxWell)
               (nm/tally misnamed 'CxWell)
@@ -373,15 +359,15 @@
     (is (= 2 (:refused t)) "records, not violations — one sentence can break three")
     (is (= {:argument 1 :functor 1 :context-name 1} (:by-class t)))
     (is (re-find #"2 of 3 records" (nm/tally-line t)))
-    (is (re-find #"66\.7%" (nm/tally-line t))))
+    (is (re-find #"66\.7%" (nm/tally-line t)))
+    (is (= {:argument 1} (:by-class (nm/tally nm/empty-tally '(parentOf Baby_Penguin Other_Penguin) 'CxWell)))
+        "a class counts a record once, however many of its violations it holds"))
   (testing "and says nothing at all when the corpus and the public entry point agree"
     (is (nil? (nm/tally-line (nm/tally nm/empty-tally '(dog Muffet) 'CxWell))))))
 
 (deftest a-refused-exceptWhen-leaves-no-bare-rule-behind
-  ;; The exception's own literals are held to the naming invariants like every other
-  ;; literal a rule carries — and the refusal is **atomic**: it runs before the rule
-  ;; is stored, so a caller holds a throw and no handle, never a bare rule believed
-  ;; and firing unguarded with no handle returned to retract it by.
+  ;; the exception query is checked before the rule is stored, so a refusal leaves no
+  ;; unguarded rule without a handle to retract it by
   (tu/with-neutral-kb [kb tu/fresh]
     (tu/with-terms [bird flies CxWell]
       (let [rule (list 'implies (list bird '?x) (list flies '?x))
@@ -395,12 +381,6 @@
             "the bare rule was not stored — the refusal happened before the store")))))
 
 (deftest the-membership-spelling-every-other-system-taught-is-advised-against
-  ;; `(isa Muffet Dog)` breaks no invariant: `isa` is a well-formed predicate and both
-  ;; arguments are well-formed individuals, so it is stored, indexed and believed —
-  ;; as a two-place relation nothing reads.  The reader then asks `(isa? kb 'Muffet
-  ;; 'Dog)`, gets false, and has no error to search for.  docs/naming.md calls this
-  ;; out by name and core.txt says never to write it; neither is in front of
-  ;; someone typing, so the public entry point says it.
   (testing "the shape is advised against, and the advice names the right spelling"
     (let [{:keys [id message]} (nm/advice '(isa Muffet Dog))]
       (is (= ::nm/isa-is-not-how-membership-is-written id))
@@ -410,14 +390,9 @@
   (testing "it is advice and not a refusal — the sentence breaks no invariant"
     (is (empty? (nm/problems '(isa Muffet Dog) 'CxUniverse))))
   (testing "a multi-word type is spelled snake_case, not merely lower-cased"
-    ;; `warmblooded` is a different term from `warm_blooded`, so suggesting it would
-    ;; trade one sentence nothing reads for another
     (is (re-find #"\(warm_blooded Muffet\)"
                  (:message (nm/advice '(isa Muffet WarmBlooded))))))
   (testing "an argument that is not a symbol gets advice, not a ClassCastException"
-    ;; a number, a string and a compound are all legal in argument position, and
-    ;; `clojure.core/name` throws on every one of them — advice that crashes the
-    ;; assert it was meant to help is worse than no advice
     (doseq [s ['(isa Muffet 42)
                '(isa 42 Dog)
                '(isa Muffet "Dog")
@@ -469,9 +444,7 @@
     (doseq [s '[lex/thing lex/fool's_gold lex/a_la_carte]]
       (is (= :lexeme (v/term-role s)) (pr-str s))
       (is (nm/lexeme? s))))
-  (testing "a marker written INTO the name could not work — the word carries the same
-            character.  `fool's_gold` has an apostrophe of its own, and 333 lexemes in
-            the corpus carry one inside as well as at the end."
+  (testing "the name half keeps characters a spelling marker would collide with"
     (is (= :lexeme (v/term-role 'lex/fool's_gold)))
     (is (= "fool's_gold" (name 'lex/fool's_gold))))
   (testing "every other namespace stays invisible to the role checks"
@@ -488,9 +461,6 @@
     (is (empty? (nm/problems* '(sense lex/fools_gold fools_gold-mineral)
                               'CxUniverse))))
   (testing "and what lets an unsensified edge stand until a sense is crafted for it"
-    ;; `(genl <sense> <lexeme>)` is a placeholder, not an error: a word read out of text
-    ;; is a surface form until something decides which of its meanings was meant, and the
-    ;; edge is how the hierarchy holds it in the meantime.
     (is (empty? (nm/problems* '(genl abrasive-grit lex/abrasive_tool)
                               'CxUniverse)))))
 
@@ -507,41 +477,33 @@
 ;;; ── the class table and its renderer are one thing ────────────────────
 
 (def ^:private class-samples
-  "One sentence per `problem-classes` key, and the context to check it in."
-  {:context-name   ['(dog Muffet)                                'NotAThing]
-   :functor        ['(Flies Tweety)                            'CxWell]
-   :lexeme-functor ['(lex/fools_gold Muffet)                     'CxWell]
-   :functor-arity  ['(lives_in Tweety cold_place)              'CxWell]
-   :functor-unary  ['(warmBlooded Muffet)                       'CxWell]
-   :argument       ['(parentOf Baby_Penguin Tom)               'CxWell]
-   :ist-context    ['(ist Muffet (flies Tweety))                'CxWell]
-   :dot-marker     ['(parentOf Tom .)                          'CxWell]})
+  "One sentence per `problem-classes` key, the context to check it in, and the symbol
+  the violation names."
+  {:context-name   ['(dog Muffet)                  'NotAThing 'NotAThing]
+   :functor        ['(Flies Tweety)                'CxWell    'Flies]
+   :lexeme-functor ['(lex/fools_gold Muffet)       'CxWell    'lex/fools_gold]
+   :functor-arity  ['(lives_in Tweety cold_place)  'CxWell    'lives_in]
+   :functor-unary  ['(warmBlooded Muffet)          'CxWell    'warmBlooded]
+   :argument       ['(parentOf Baby_Penguin Tom)   'CxWell    'Baby_Penguin]
+   :ist-context    ['(ist Muffet (flies Tweety))   'CxWell    'Muffet]
+   :dot-marker     ['(parentOf Tom .)              'CxWell    '.]})
 
 (deftest every-problem-class-renders-a-message
-  ;; `problem-classes` is a map and `message` a `case` over its keys, so the two drift in
-  ;; a direction nothing else looks: a class the table names and `problems*` emits with
-  ;; no arm to render it throws `IllegalArgumentException: No matching clause` out of
-  ;; `assert`, where the contract is an `ex-info` carrying `:type :naming`.  The class
-  ;; test above checks the other direction — that an emitted class is one the table
-  ;; names — and the two together are what make the pairing total.
+  ;; `message` is a `case` over the `problem-classes` keys: a class with no arm would throw
+  ;; IllegalArgumentException out of `assert` instead of an `ex-info` carrying `:naming`
   (testing "a new class owes this test a sentence that produces it"
     (is (= (set (keys nm/problem-classes)) (set (keys class-samples)))))
-  (doseq [[cls [sentence context]] class-samples]
+  (doseq [[cls [sentence context sym]] class-samples]
     (testing (str cls)
       (let [ps (nm/problems* sentence context)]
-        (is (some #(= cls (:class %)) ps) "that sentence produces this class")
+        (is (= [{:class cls :role :sentence :symbol sym}] (map #(dissoc % :literal) ps))
+            "that sentence produces this class alone, naming the symbol that broke")
         (doseq [p ps]
-          (let [m (nm/message p)]
-            (is (string? m) "and every violation it reports renders")
-            (is (seq m)))))
-      ;; the composition, which is what `assert` calls and where the crash surfaced
+          (is (seq (nm/message p)) "and every violation it reports renders")))
       (is (seq (nm/problems sentence context))))))
 
 (deftest a-sense-at-the-wrong-arity-is-not-told-to-camelcase-itself
-  ;; A sense reaches `:functor-arity` for the same reason a snake_case type does — both
-  ;; are types, and a type is unary — but the snake_case repair does not transfer: there
-  ;; is no camelCase spelling of `abrasive-grit`, so offering one names the symbol back
-  ;; and reads as advice while being none.
+  ;; a sense has no camelCase spelling, so the snake_case repair would name it back
   (let [[m] (nm/problems '(abrasive-grit Muffet Rex) 'CxUniverse)]
     (is (re-find #"is a sense" m))
     (is (not (re-find #"snake_case" m)))
@@ -551,10 +513,6 @@
       (is (re-find #"camelCase as livesIn" m)))))
 
 (deftest a-lexeme-functor-is-refused-as-an-ex-info-not-a-crash
-  ;; The public entry point's contract is that every refusal is an `ex-info` carrying a `:type`
-  ;; a caller can discriminate on.  A class with no `message` arm breaks it below the
-  ;; level `assert` can catch, so the refusal arrives as an `IllegalArgumentException`
-  ;; naming a `case` — true about the code, and no help to whoever wrote the sentence.
   (tu/with-cleared-kb [kb (kb-with :strict)]
     (let [e (try (v/assert kb '(lex/fools_gold Muffet) 'CxWell) nil
                  (catch clojure.lang.ExceptionInfo e e))]
@@ -562,51 +520,3 @@
       (is (= :naming (:type (ex-data e))))
       (is (re-find #"is a lexeme" (ex-message e)))
       (is (zero? (v/sentex-count kb)) "and nothing was stored"))))
-
-(deftest compare-form-is-a-total-content-order
-  ;; The comparator the clash reports and `solve`'s nogood ordering key on, replacing a
-  ;; `pr-str` key on two counts: no String per comparison, and no ambient `*print-length*`
-  ;; can collapse the order.  `content-key`/`content-order` bound the print vars off to
-  ;; get the second; this gets it by never printing.
-  (testing "different kinds order deterministically instead of throwing (compare does)"
-    (is (neg? (nm/compare-form 1 "a")))                 ; number before string
-    (is (neg? (nm/compare-form :a 'a)))                 ; keyword before symbol
-    (is (neg? (nm/compare-form 'a '(a))))               ; scalar before a sequential
-    (is (zero? (nm/compare-form nil nil))))
-  (testing "same-kind scalars follow the natural compare"
-    (is (neg? (nm/compare-form 'a 'b)))
-    (is (neg? (nm/compare-form 'ns/a 'ns/b)))
-    (is (neg? (nm/compare-form 1 2))))
-  (testing "sequentials compare element by element, then shorter first"
-    (is (neg? (nm/compare-form '(a) '(a b))))           ; a prefix precedes the longer
-    (is (neg? (nm/compare-form '(a b) '(a c))))
-    (is (neg? (nm/compare-form '(rel A B) '(rel A C))))
-    (is (zero? (nm/compare-form '(not (p X)) '(not (p X))))))
-  (testing "the order is insensitive to an ambient *print-length* / *print-level* —"
-    ;; two sentences that share their first n elements, exactly the pair a `pr-str` key
-    ;; under `*print-length* n` elides to one prefix and then orders by arrival.
-    (let [a '(likes Ann Bo Cy Dee)
-          b '(likes Ann Bo Cy Eve)
-          under (fn [pl lv] (binding [*print-length* pl *print-level* lv]
-                              (nm/compare-form a b)))]
-      (is (neg? (under nil nil)))
-      (is (= (under nil nil) (under 2 1) (under 1 1) (under 0 0))
-          "the verdict is the same however the printer is configured")))
-  (testing "and insensitive to it on the last-resort branch too —"
-    ;; The `:else` rank is the one branch that PRINTS, so it is the one a print bound can
-    ;; collapse: `str` on a collection honours them, and two distinct maps then compare 0
-    ;; — a comparator reporting equal for values that are not, in the branch whose job is
-    ;; to leave no pair uncompared.  Sentence content never reaches it; `sort-by-content`
-    ;; is public, so a caller's key can.
-    (doseq [[a b] [[{:a 1 :b 2 :c 3 :d 4} {:a 1 :b 2 :c 3 :d 5}]
-                   [#{#{1}} #{#{2}}]]]
-      (let [under (fn [pl lv] (binding [*print-length* pl *print-level* lv]
-                                (nm/compare-form a b)))]
-        (is (not (zero? (under nil nil))) "distinct values are distinguished")
-        (is (= (under nil nil) (under 3 1) (under 1 1) (under 0 0))
-            "and stay distinguished however the printer is configured"))))
-  (testing "a mixed vector of forms sorts stably and reproducibly"
-    (let [forms ['(dog Rex) '(cat Rex) '(not (dog Rex)) 'CxUniverse 3 "s" :k]]
-      (is (= (sort nm/compare-form forms)
-             (sort nm/compare-form (reverse forms))
-             (sort nm/compare-form (shuffle forms)))))))

@@ -12,6 +12,7 @@
   (:require [clojure.test :refer [deftest is]]
             [vaelii.core :as v]
             [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.reads :as reads]
             [vaelii.impl.special :as special]
@@ -61,7 +62,7 @@
         seen (atom 0)]
     (dotimes [trial 12]
       (tu/with-neutral-kb [kb tu/isolated-fresh]
-        (binding [checks/*assertive-arg-types?* true
+        (binding [argument/*assertive-arg-types?* true
                   checks/*prune-subsumed-mints?* true]
           (world! kb rnd)
           (doseq [sx (context-edges kb)
@@ -76,7 +77,7 @@
   ;; unrelated `genlCx` edge, so a context's view is filtered: the edge into CxMcTop asks
   ;; what that one context sees, not what every descendant does
   (tu/with-neutral-kb [kb tu/isolated-fresh]
-    (binding [checks/*assertive-arg-types?* true
+    (binding [argument/*assertive-arg-types?* true
               checks/*prune-subsumed-mints?* true]
       (let [top  (tu/fresh-term :context 'CxMcTop)
             subs (vec (repeatedly 30 #(tu/fresh-term :context 'CxMc)))
@@ -127,7 +128,7 @@
   ;; holds it in the store, so the family must drop it with the second; the other rows
   ;; drop a record by a withdrawal, which sweeps it, and by a declaration's retraction.
   (tu/with-neutral-kb [kb tu/isolated-fresh]
-    (binding [checks/*assertive-arg-types?* true
+    (binding [argument/*assertive-arg-types?* true
               checks/*prune-subsumed-mints?* true]
       (tu/with-terms [kind sub_kind owns keeps Rex Fido Max Bone CxZoo]
         (let [m       {:strength :monotonic}
@@ -173,7 +174,7 @@
   ;; family against the stored justifications after each step, and empty at the end.
   (doseq [mark-first? [false true]]
     (tu/with-neutral-kb [kb tu/isolated-fresh]
-      (binding [checks/*assertive-arg-types?* true]
+      (binding [argument/*assertive-arg-types?* true]
         (tu/with-terms [person likes MotherFn Bob Tom]
           (let [m       {:strength :monotonic}
                 mark    (list 'reifiable_function MotherFn)

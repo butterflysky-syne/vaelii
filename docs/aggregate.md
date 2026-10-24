@@ -237,7 +237,10 @@ The mechanism is `exceptWhen`'s, with one addition.
 bodies (`rules/watched-literals`), since a fact arriving on any one changes which
 witnesses the join finds. `rules/recheck-predicates` unions those with the `unknown`
 antecedents' predicates: both conditions read belief rather than a fact the
-justification names.
+justification names. A negated census conjunct takes the three extra keys a negated
+conjunct of an `unknown` antecedent takes, its separation-denial, negates-denial and
+closed-extent keys ([exceptions.md](exceptions.md)), since `rules/condition-queries-of`
+reads the aggregate bodies beside the `unknown` antecedents.
 
 **The withdrawal.** `chain/post-join-withdrawn?`, reached through `rule-firing-blocked?`
 from `justification-excepted?`, re-runs the post-join literals in the conclusion's

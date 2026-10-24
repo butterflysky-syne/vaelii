@@ -1,15 +1,16 @@
 # Bounded KB integrity
 
 - **Covers:** `kb-integrity` — one read-only checkpoint report for the complete visible
-  `predAllSpecified` / `predSpecifiedAll` population, query-only definition clashes
-  over a caller-owned finite set of ground candidate terms, the predicate `genl`
-  edges that widen a declared argument type, the candidate types with no `genl`
+  `predAllSpecified` / `predSpecifiedAll` and *Exists* declaration population, query-only
+  definition clashes over a caller-owned finite set of ground candidate terms, the
+  predicate `genl` edges that widen a declared argument type, the candidate types with no `genl`
   path to `thing`, the `genl` edges a cover forces on a candidate type that the
   closure does not hold, the exact-arity class a candidate predicate or function's kind
   and arity force that it is not an instance of, the orthogonal declarations (`orthogonal` and
   `siblingDisjointException`) over a pair a stated separation divides, the stored rules a
-  declaration the engine implements states, the `genl` nodes with no declared arity, and
-  three ontology-engineering smells for review: sibling types with one direct `genl` set,
+  declaration the engine implements states, the `genl` nodes with no declared arity, the
+  functions a held rule applies with no single correspondence, and three
+  ontology-engineering smells for review: sibling types with one direct `genl` set,
   stated edges that derive without themselves, and `disjoint` pairs a known cover
   exhausts, plus every declared argument position no declaration types.
 - **Not here:** repairing findings, enumerating a domain, vocabulary completeness,
@@ -73,7 +74,8 @@ implicit-arity-class pass reads one census of the visible `predicateTypeByArity`
 `orthogonal` pass reads one census of visible orthogonal declarations, then one
 declaration at a time. The rule-macro pass reads one census of the stored rules, then
 one rule at a time. The undeclared-arity pass reads one census of the visible `genl`
-edges, then one node at a time. The three ontology-engineering passes read the taxonomy's types
+edges, then one node at a time. The uncorresponded-function pass reads one census of the
+stored rules, then one rule at a time. The three ontology-engineering passes read the taxonomy's types
 once, or one census of stated `genl` and `disjoint` declarations, then one type or one
 declaration at a time. These focused units are where
 cooperative checkpoints and partial-result preservation sit.
@@ -503,7 +505,7 @@ does not weigh them. `transitiveInArg` answers a ground goal only and leaves an 
 to the fact and rule provers ([inherit.md](inherit.md#reading-it-back)), where a
 forward rule stores each conclusion and answers an open goal from the store. A more
 specific contrary claim undercuts a `:default` claim the declaration carries
-([inherit.md](inherit.md#specificity-and-why-it-is-not-the-deleted-axis)), where the
+([inherit.md](inherit.md#specificity-undercuts-and-does-not-arbitrate)), where the
 rule's conclusion and the contrary claim form a nogood. A `genl` edge also places `P`
 under `Q` in the taxonomy, so `disjoint`, `arg` and the preservation declarations
 along `genl` read the edge; the rule's universal reading entails the same subsumption,
@@ -574,6 +576,39 @@ The pass has these limits:
 Reading each edge and each node's two arity reads spend one work unit, and
 `:max-results` counts these findings after the rule-macro category.
 
+## What an uncorresponded-function finding means
+
+A rule reads an application `(F a…)` of a `reifiable_function` through `F`'s
+corresponding predicate, and a rule naming a function the KB believes no
+`functionCorrespondingPredicate` for is held inert ([nat.md](nat.md#the-corresponding-predicate)).
+Nothing on the write path refuses the rule, so the sweep reports each such function with
+the held rules that name it:
+
+```clojure
+;; (reifiable_function FruitFn)
+;; (implies (tagged (FruitFn ?t)) (ripe ?t))
+{:status :gap
+ :candidate-count 0
+ :uncorresponded-function
+ [{:function FruitFn :rules [4711]}]}
+```
+
+One finding is reported for each function, in print order, with the rules in handle
+order.
+
+The pass has these limits:
+
+- **Rule census, not candidate terms.** The pass reads every stored rule, and the
+  caller's candidate set does not bound it.
+- **Functions without a correspondence only.** A rule held for an application inside an
+  `unknown`, `thereExists`, aggregate or `ist` condition names a function that has one,
+  and is not reported. A rule held for a variable-functor application names no function,
+  and is not reported.
+- **Visible from the audit context.** A rule the audit context cannot see is not read.
+
+Reading each rule spends one work unit, and `:max-results` counts these findings after
+the undeclared-arity category.
+
 ## The ontology-engineering smells
 
 Three census passes flag how the `genl` and `disjoint` declarations arrange the taxonomy's
@@ -628,7 +663,7 @@ How each pass decides, and its limits:
 All three read from the audit context, so a declaration or edge it cannot see contributes
 nothing, and an edge stated for a narrower reader that cannot see the other path is
 still reported from a context that sees both. Their findings count against `:max-results`
-last, in the order above, after the undeclared-arity category.
+last, in the order above, after the uncorresponded-function category.
 
 ## What a missing-arg finding means
 

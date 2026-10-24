@@ -377,19 +377,21 @@
   "Every `:type` on the refusal surface, by hand.  Going stale is the feature: a new
   or renamed keyword fails the comparison below until it is added here deliberately —
   with a changelog entry, since callers discriminate on it (CONTRIBUTING.md §3.8)."
-  #{:already-loaded :anti-transitive :arg-constraint-kind :arg-genl :arg-position
-    :arg-type :arg-variable :argument-family-ceiling :asymmetric :bad-algebra :bad-arg
+  #{:already-loaded :anti-symmetric :anti-transitive :arg-constraint-kind :arg-genl
+    :arg-position :arg-type :arg-variable :argument-family-ceiling :arity :asymmetric :bad-algebra :bad-arg
     :bad-args :bad-batch :bad-cursor :bad-foreign-manifest :bad-handle :bad-host
     :bad-level :bad-pattern :bad-registrant :bad-reply
-    :bad-snapshot :bad-table-entry :backup-failed :base-is-overlay :body-too-large :budget-exhausted
+    :bad-snapshot :bad-table-entry :backup-failed :base-is-overlay :belief-built :body-too-large
+    :budget-exhausted
     :choice-head-not-positive
-    :compaction-failed :cover :cross-origin :daemon-error :damaged-dictionary
+    :compaction-failed :complement :cover :cross-origin :daemon-error :damaged-dictionary
     :damaged-frame :definitional-clash :derived-only :disallowed-class
     :disjoint :disjunction-too-wide :disk-locked :duplicate-handle :duplicate-tokens :error
     :exception-not-closed :export-busy :fork-base-overlap :frozen-base :functional
     :handle-ceiling
-    :incomplete-racer :inter-arg-type :internal-error :job-busy
-    :labeling-inconsistent :labeling-run-blocked
+    :incomplete-racer :inter-arg-type :internal-error :irreflexive :job-busy
+    :labeling-inconsistent :labeling-run-blocked :length-against-shape
+    :length-against-spelling
     :malformed-entry :malformed-manifest :malformed-record :manifest-too-large
     :missing-adapter :missing-resource :naf-justification
     :naf-not-closed
@@ -400,7 +402,8 @@
     :not-a-report :not-found :not-ground :not-in-process :not-pg-snapshot :not-range-restricted :not-sealed :not-stratified
     :not-watchable :not-well-formed :not-writable :over-ceiling :path-not-served :pattern-too-costly
     :quantifier-not-local :quoted-arg-type
-    :reset :shape :short-transfer :shutdown-abort :solver-failed :solver-unavailable
+    :record-edit-unsupported :reset :shape :short-transfer :shutdown-abort :solver-failed
+    :solver-unavailable
     :stacked-batch
     :stacked-fork :stale-index-layout :stale-index-records :still-exporting :still-loading :still-stopping
     :still-writing :stopping
@@ -463,7 +466,8 @@
   here — several are two shapes of one condition and have nothing in common —
   but it is a hole in what a `catch` can act on, so each one is named in
   `carries-nothing` with the reason."
-  {:bad-arg                 #{:arg :value}
+  {:arity                   #{:clashes-with :message :sentence}
+   :bad-arg                 #{:arg :value}
    :bad-args                #{:op}
    :bad-cursor              #{:cursor :token}
    :bad-foreign-manifest    #{:url}
@@ -488,6 +492,7 @@
    ;; homogeneity arm (inter-args-homogeneity-problem) — the same payload at both
    :inter-arg-type          #{:message :sentence :arg :expected :position
                               :trigger :trigger-type :trigger-position :disjoint-with}
+   :irreflexive             #{:clashes-with :message :pred :sentence}
    :missing-adapter         #{:coordinate :records}
    :missing-resource        #{}
    :naf-not-closed          #{:antecedents :unbound}
@@ -567,7 +572,7 @@
   caller is the build: the value is read by whoever is looking at the failure, so the
   vocabulary is frozen here and not spelled out in a table cell forty rows long."
   {:bad-table-entry
-   #{:arbitrable :blank-exemption :blank-title :cached :checked :duplicate-name
+   #{:arbitrable :blank-exemption :blank-title :cached :checked :clash-check :duplicate-name
      :duplicate-reading :duplicate-title :enumeration :exempt-and-listed
      :family-lane :family-list :illegal-pair :image-axis :implication :inert :no-arm
      :no-names :partial-cache-triple :read-at :reading :recheck

@@ -5,7 +5,8 @@
   a refuted cover) as nogoods: stored at the entry point whatever the members' classes,
   the weaker side defeated, an equal defeasible pair a dilemma, an equal known-true pair
   a conflict (docs/nmtms.md, \"What a refusal may rest on\").  Also asserted: what stays a
-  refusal, a malformed sentence and an argument constraint.  `arity`'s refusal is
+  refusal, a malformed sentence and an argument constraint, and what `try-assert`
+  refuses.  What `assert` does with a tuple breaking its length is
   `constraint_vocabulary_test`'s."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vaelii.core :as v]
@@ -193,6 +194,68 @@
       (is (integer? h))
       (is (= h (v/handle-of kb (list cat_t Rex) 'CxUniverse))))))
 
+;; [label held strength held-in arriving written-in edge refused?]: `held` stored at
+;; `strength` in `held-in`, with `(genl dog_t animal_t)` stored at `edge` when it is not
+;; nil, then `try-assert` of `arriving` in `written-in`.  `siblingOf` is symmetric and
+;; `(genl kinOf siblingOf)` is `:monotonic`, so one `kinOf` row reads the denial mirrored.
+;; `likes` is declared forced-monotonic, and a `disjoint` is forced-monotonic, so either
+;; reads `:monotonic` at the `:default` strength written.
+(defn- complement-rows [{:keys [dog_t animal_t cat_t siblingOf kinOf likes Rex Ann CxLow]}]
+  (let [m :monotonic d :default U 'CxUniverse
+        dog (list dog_t Rex) animal (list animal_t Rex)
+        dis (list 'disjoint dog_t cat_t) sib (list siblingOf Ann Rex) lk (list likes Ann Rex)
+        no  #(list 'not %)]
+    [[:denial        dog m U (no dog) U nil true]
+     [:positive      (no dog) m U dog U nil true]
+     [:from-below    dog m U (no dog) CxLow nil true]
+     [:not-visible   dog m CxLow (no dog) U nil false]
+     [:default       dog d U (no dog) U nil false]
+     [:forced-denial dis d U (no dis) U nil true]
+     [:symmetric     sib m U (no (list siblingOf Rex Ann)) U nil true]
+     [:symmetric-super (no sib) m U (list kinOf Ann Rex) U nil true]
+     [:symmetric-super-mirrored (no sib) m U (list kinOf Rex Ann) U nil true]
+     [:fan-denial    (no animal) m U dog U m true]
+     [:fan-positive  dog m U (no animal) U m true]
+     [:default-edge-denial   (no animal) m U dog U d false]
+     [:default-edge-positive dog m U (no animal) U d false]
+     [:forced-positive (no lk) m U lk U nil false]]))
+
+(deftest try-assert-refuses-a-sentence-whose-complement-is-believed-monotonic
+  ;; per row: `try-assert` of the arriving sentence, then, where it refused, `assert` of
+  ;; it on the same KB; a `:default` pair is a dilemma, and a forced positive is believed
+  (doseq [row-index (range 14)]
+    (tu/with-kb [kb]
+      (tu/with-terms [dog_t animal_t cat_t siblingOf kinOf likes Rex Ann CxLow]
+        (v/assert kb (list 'genlCx CxLow 'CxUniverse) 'CxUniverse)
+        (v/assert kb (list 'symmetric siblingOf) 'CxUniverse)
+        (v/assert kb (list 'genl kinOf siblingOf) 'CxUniverse {:strength :monotonic})
+        (v/assert kb (list 'forced_monotonic_predicate likes) 'CxUniverse)
+        (let [[label held strength held-in arriving written-in edge refused?]
+              (nth (complement-rows {:dog_t dog_t :animal_t animal_t :cat_t cat_t
+                                     :siblingOf siblingOf :kinOf kinOf :likes likes
+                                     :Rex Rex :Ann Ann :CxLow CxLow})
+                   row-index)
+              _ (when edge (v/assert kb (list 'genl dog_t animal_t) 'CxUniverse {:strength edge}))
+              h (v/assert kb held held-in {:strength strength})
+              e (try (v/try-assert kb arriving written-in) :stored
+                     (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+          (testing (name label)
+            (if refused?
+              (do (is (= [:definitional-clash :complement
+                          [{:handle h :sentence (v/sentence-of (v/sentex kb h)) :context held-in}]]
+                         [(:type e) (:violation e) (:clashes-with e)]))
+                  (is (nil? (v/handle-of kb arriving written-in)) "nothing stored")
+                  (is (integer? (v/assert kb arriving written-in)) "assert stores it")
+                  (is (v/in? kb h) "the complement stands"))
+              (is (= :stored e)))
+            (case label
+              :default (is (some #(= #{h (v/handle-of kb arriving written-in)} (set (:nogood %)))
+                                 (v/contradictions kb))
+                           "a default pair is a dilemma")
+              :forced-positive (is (= [true false] [(v/ask? kb arriving written-in) (v/in? kb h)])
+                                   "the forced positive is believed and its denial loses")
+              nil)))))))
+
 ;;; ── an argument conflict ──────────────────────────────────────────────
 
 (defn- write-outcome
@@ -285,6 +348,144 @@
                             [(:type e) (:violation e) (:clashes-with e) (get-in e [:detail :count])]))
                      (is (nil? (v/handle-of kb decl 'CxUniverse)) "nothing stored")
                      (is (integer? (v/assert kb decl 'CxUniverse)) "assert stores it")))))))))))
+
+;;; ── a tuple against its functor's length and the self and converse marks ──
+
+;; [label declarations opposing tuple violation clashes-with]: `opposing` is stored first
+;; when it is not nil, and `clashes-with` is the sentence the refusal names.
+(defn- tuple-mark-rows [{:keys [likes adores A B]}]
+  (let [arity (list 'arity likes 2) irr (list 'irreflexive likes)
+        anti (list 'anti_symmetric likes) below (list 'genl adores likes)]
+    [[:arity                 [arity]       nil              (list likes A B A)  :arity          arity]
+     [:arity-below           [arity below] nil              (list adores A B A) :arity          arity]
+     [:arity-min             [(list 'variable_arity likes) (list 'arityMin likes 3)]
+      nil (list likes A B) :arity (list 'arityMin likes 3)]
+     [:irreflexive           [irr]         nil              (list likes A A)    :irreflexive    irr]
+     [:irreflexive-below     [irr below]   nil              (list adores A A)   :irreflexive    irr]
+     [:anti-symmetric        [anti]        (list likes A B) (list likes B A)    :anti-symmetric (list likes A B)]
+     [:anti-symmetric-below  [anti below]  (list likes A B) (list adores B A)   :anti-symmetric (list likes A B)]
+     [:anti-symmetric-values [anti]        (list likes 1 2) (list likes 2 1)    :anti-symmetric (list likes 1 2)]]))
+
+(deftest try-assert-refuses-a-tuple-that-breaks-its-length-or-a-self-or-converse-mark
+  ;; per row and order: under `:fact-last` the declarations are stored, `try-assert` of
+  ;; the tuple is refused, and `assert` of it stores it; under `:declaration-last` the
+  ;; tuple is stored first and `assert` stores each declaration (the refusal in that
+  ;; order is `try-assert-refuses-a-declaration-that-convicts-stored-tuples`).  Both
+  ;; orders end in one state, `[believed? reported?]`: an arity tuple inert and reported,
+  ;; a `:default` self tuple placed OUT, and a converse pair at `:default` a reported
+  ;; dilemma.
+  (doseq [row-index (range 8)
+          order     [:fact-last :declaration-last]]
+    (tu/with-kb [kb]
+      (tu/with-terms [likes adores A B]
+        (let [[label decls opposing tuple violation clashes]
+              (nth (tuple-mark-rows {:likes likes :adores adores :A A :B B}) row-index)
+              _ (some->> opposing (#(v/assert kb % 'CxUniverse)))
+              h (if (= order :fact-last)
+                  (do (run! #(v/assert kb % 'CxUniverse) decls)
+                      (let [e (try (v/try-assert kb tuple 'CxUniverse) :stored
+                                   (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                        (testing (str (name label) " " (name order))
+                          (is (= [:definitional-clash violation [clashes]]
+                                 [(:type e) (:violation e) (mapv :sentence (:clashes-with e))]))
+                          (is (nil? (v/handle-of kb tuple 'CxUniverse)) "nothing stored")))
+                      (v/assert kb tuple 'CxUniverse))
+                  (let [h (v/assert kb tuple 'CxUniverse)]
+                    (run! #(v/assert kb % 'CxUniverse) decls)
+                    h))]
+          (testing (str (name label) " " (name order))
+            (is (= ({:arity [false true] :irreflexive [false false] :anti-symmetric [true true]}
+                    violation)
+                   [(v/in? kb h)
+                    (boolean (some #(contains? (set (:nogood %)) h)
+                                   (concat (v/contradictions kb) (v/conflicts kb))))])
+                "assert stores it and the settle reports it")))))))
+
+;; [label stored declaration strength violation detail]: `stored` is asserted first, each
+;; entry a sentence or `[sentence strength]`; `detail` is the refusal's `:shapes` for
+;; `:arity` and its `:count` for `:irreflexive`, and a nil `violation` means
+;; `try-assert` stores the declaration.
+(defn- declaration-rows [{:keys [likes adores kind_t A B]}]
+  (let [m :monotonic, d :default, t3 (list adores A B A)
+        shape (fn [p n] [{:relation p :arguments n :count 1}])]
+    [[:arity              [(list likes A B A)]                     (list 'arity likes 2)               d :arity (shape likes 3)]
+     [:exact-class        [(list likes A B A)]                     (list 'binary_predicate likes)      d :arity (shape likes 3)]
+     [:arity-min          [(list likes A B) (list 'variable_arity likes)] (list 'arityMin likes 3)    d :arity (shape likes 2)]
+     [:variable-arity     [(list likes A B) (list 'arityMin likes 3)]     (list 'variable_arity likes) d :arity (shape likes 2)]
+     [:arity-above        [t3 (list 'genl adores likes)]           (list 'arity likes 2)               d :arity (shape adores 3)]
+     [:genl               [t3 (list 'arity likes 2)]               (list 'genl adores likes)           d :arity (shape adores 3)]
+     [:metatype-member    [t3 [(list 'genl kind_t 'binary_predicate) m]] (list kind_t adores)          m :arity (shape adores 3)]
+     [:metatype-edge      [t3 [(list kind_t adores) m]]            (list 'genl kind_t 'binary_predicate) m :arity (shape adores 3)]
+     [:default-member     [t3 [(list 'genl kind_t 'binary_predicate) m]] (list kind_t adores)          d nil nil]
+     [:default-edge       [t3 [(list kind_t adores) m]]            (list 'genl kind_t 'binary_predicate) d nil nil]
+     [:irreflexive        [(list likes A A) (list likes A B)]      (list 'irreflexive likes)           d :irreflexive 1]
+     [:irreflexive-below  [(list adores A A) (list 'genl adores likes)] (list 'irreflexive likes)      d :irreflexive 1]]))
+
+(deftest try-assert-refuses-a-declaration-that-convicts-stored-tuples
+  ;; per row: the stored tuples first, then `try-assert` of the declaration is refused with
+  ;; the shapes and their counts (arity) or the self tuples (irreflexive), and `assert`
+  ;; stores it, the convicted tuple no longer believed: inert, or placed OUT
+  (doseq [row-index (range 12)]
+    (tu/with-kb [kb]
+      (tu/with-terms [likes adores kind_t A B]
+        (let [[label stored decl strength violation detail]
+              (nth (declaration-rows {:likes likes :adores adores :kind_t kind_t :A A :B B}) row-index)
+              hs (mapv (fn [x] (let [[s st] (if (vector? x) x [x :default])]
+                                 (v/assert kb s 'CxUniverse {:strength st})))
+                       stored)
+              e  (try (v/try-assert kb decl 'CxUniverse {:strength strength}) :stored
+                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+          (testing (name label)
+            (if violation
+              (do (is (= [:definitional-clash violation detail]
+                         [(:type e) (:violation e)
+                          (get-in e [:detail (if (= :arity violation) :shapes :count)])]))
+                  (is (nil? (v/handle-of kb decl 'CxUniverse)) "nothing stored")
+                  (v/assert kb decl 'CxUniverse {:strength strength})
+                  (is (not (v/in? kb (first hs))) "assert stores it and the tuple is not believed"))
+              (do (is (= :stored e))
+                  (is (v/in? kb (first hs)) "a :default metatype route binds nothing")))))))))
+
+(tu/deftest-kb try-assert-refuses-an-except-of-a-length-binding
+  ;; `assert` stores the except, and the length stays bound at every context, so the
+  ;; tuple stays inert under either entry point's outcome
+  (tu/with-terms [likes A B]
+    (let [b (v/assert kb (list 'arity likes 2) 'CxUniverse)
+          t (v/assert kb (list likes A B A) 'CxUniverse)
+          x (list 'except (list 'sentexHandle b))
+          e (try (v/try-assert kb x 'CxUniverse) :stored
+                 (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+      (is (= [:definitional-clash :arity [(list 'arity likes 2)]]
+             [(:type e) (:violation e) (mapv :sentence (:clashes-with e))]))
+      (is (nil? (v/handle-of kb x 'CxUniverse)))
+      (is (integer? (v/assert kb x 'CxUniverse)))
+      (is (not (v/in? kb t))))))
+
+(deftest ^:slow try-assert-of-a-metatype-edge-names-every-predicate-it-binds
+  ;; 1000 predicates, each a `:monotonic` member of one type and each holding a
+  ;; three-argument tuple: an edge from the type into `binary_predicate` binds all of them
+  (tu/with-kb [kb]
+    (tu/with-terms [kind_t A B]
+      (let [ps (vec (repeatedly 1000 #(tu/tmp-pred "rel")))]
+        (v/with-deferred-settle kb
+          (doseq [p ps]
+            (v/assert kb (list kind_t p) 'CxUniverse {:strength :monotonic})
+            (v/assert kb (list p A B A) 'CxUniverse)))
+        (let [e (try (v/try-assert kb (list 'genl kind_t 'binary_predicate) 'CxUniverse
+                                   {:strength :monotonic})
+                     :stored
+                     (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+          (is (= [:definitional-clash :arity 1000 1000 1000]
+                 [(:type e) (:violation e) (get-in e [:detail :relations])
+                  (count (get-in e [:detail :shapes])) (get-in e [:detail :count])])))))))
+
+(tu/deftest-kb try-assert-of-a-converse-that-merges-two-symbols-stores-it
+  ;; both members `:monotonic` and both arguments symbols: the pair derives `(equals A B)`
+  (tu/with-terms [likes A B]
+    (v/assert kb (list 'anti_symmetric likes) 'CxUniverse)
+    (v/assert kb (list likes A B) 'CxUniverse {:strength :monotonic})
+    (is (integer? (v/try-assert kb (list likes B A) 'CxUniverse {:strength :monotonic})))
+    (is (v/ask? kb (list 'equals A B) 'CxUniverse))))
 
 ;;; ── a verdict lives as long as its grounds ────────────────────────────
 

@@ -23,7 +23,7 @@
   it; this one fails in an ordinary `lein test` the day a backend diverges."
   (:require [clojure.test :refer [deftest is testing]]
             [vaelii.core :as v]
-            [vaelii.impl.checks :as checks]
+            [vaelii.impl.decide.argument :as argument]
             [vaelii.impl.kb :as kb]
             [vaelii.impl.protocols :as p]
             [vaelii.impl.reads :as reads]
@@ -148,7 +148,7 @@
     ;; longer take his type with it.  That is the feature working, and it is tested
     ;; where it belongs (`vaelii.argtype-entail-test`); forced off here so the parity
     ;; script means the same thing however the engine is configured.
-    (try (binding [checks/*assertive-arg-types?* false] (session kb))
+    (try (binding [argument/*assertive-arg-types?* false] (session kb))
          (finally
            (tu/clear-kb! kb)
            ;; a disk arm holds a single-writer lock and file handles for the JVM's life

@@ -88,7 +88,7 @@ so — because they call `context?` — do the two checks that refuse an object 
 - `wff/genlCx-problems` admits a `cx/` constant as a `genlCx` argument;
 - `naming/problems*` admits it as a sentex's context slot.
 
-`nat/reified-nat-symbol?` recognizes both namespaces (everything that asks "is this an
+`nat-read/reified-nat-symbol?` recognizes both namespaces (everything that asks "is this an
 opaque reified constant" — display, the `K → E` lookup — wants both); `reified-context-symbol?`
 and `reified-object-symbol?` are the discriminants where the kind matters (the orphan
 sweep below).
@@ -99,7 +99,7 @@ The `natFormula` map is 1:1 **within** a namespace. One expression written in a 
 slot and in argument position maps twice: to a `cx/` constant `K′` from the slot, and to a
 `nat/` constant `K` from the argument when its head is a `reifiable_function`
 ([nat.md](nat.md)). Every read from expression to constant takes the namespace it wants
-(`nat/in-namespace?`, which splits the map by `naming/context?`): `dedup-constant`,
+(`nat-read/in-namespace?`, which splits the map by `naming/context?`): `dedup-constant`,
 `rewrite-target`, the collision grouping behind `merge-colliding-nats!`, and the
 applications a late `result` or correspondence declaration reaches. So the two constants
 are no collision, and neither read resolves to the other's constant. A function that is no
@@ -234,7 +234,7 @@ year one way and the month the other still orders the two contexts. Fields are n
 Three constructors and not six: a year, a month and a day are the granularities somebody
 writes a holiday or a policy *for*, and each finer field is a spelling ISO already gives.
 The three are declared in `resources/kb/upper/time.txt`, the upper file that owns time,
-each with a `(result … temporal)`, so a
+each with a `(result … time_interval)`, so a
 calendar term is an interval and not an instant. That is also why it cannot stand in an
 `instantBefore`, and why the moments it lies between are a separate term with a separate
 constructor: see [What this does not cover](#what-this-does-not-cover).
@@ -302,18 +302,16 @@ own contents and stands in the base ([overlay.md](overlay.md), base immutability
 
 ### Re-minting after a sweep
 
-Re-minting a swept expression dedups to **one** constant, exactly as it does when nothing
-was collected: the mint's dedup probe reads the `natFormula` map, the map is gone, so a
-fresh constant is minted and every later occurrence of the expression finds that one. The
-KB that results is indistinguishable from one the sweep never touched — one constant per
-expression, the same computed edges, the same answers through the compound context at
-every read entry point.
+Re-minting a swept expression gives back the constant the sweep collected. The mint's
+dedup probe finds no `natFormula` map, so the mint writes one, and `constant-for` names the
+constant by the content of the expression ([nat.md](nat.md#write-path)), so the `cx/`
+symbol is the one it had before. The KB that results is indistinguishable from one the
+sweep never touched: one constant per expression, the same computed edges, and the same
+answers through the compound context at every read entry point.
 
-The `cx/` **symbol** and the **handle** are not part of that, and nothing may read them as
-though they were. A reified constant is opaque and minted per KB, handles are allocated in
-assertion order, and belief may never tie-break on one — so a caller holding the old symbol
-across a sweep holds a name for nothing, and gets its answer back by naming the expression,
-which is the only spelling the map is keyed by.
+The re-minted sentexes take new **handles**, allocated in assertion order, and belief never
+tie-breaks on one. A caller holding the `cx/` symbol across a sweep holds a name for
+nothing until the expression is used again.
 
 ## What this does not cover
 
@@ -322,7 +320,7 @@ which is the only spelling the map is keyed by.
   `(result F context)`, a `contextArgSubrelation`, and either registering a comparator or
   asserting the `R` facts.
 - **A calendar term's endpoints are somebody else's job.** `(YearFn 2000)` is a
-  `temporal`, so it takes the interval relations and not `instantBefore`, which is a
+  `time_interval`, so it takes the interval relations and not `instantBefore`, which is a
   claim about moments. The moments it lies between are computed — half-open, so 2000 ends
   where 2001 begins — by the calendar clock, which answers `startOf` / `endOf` with an
   `(InstantFn Y M D h m s)` term and stores nothing ([time.md](time.md), "The calendar

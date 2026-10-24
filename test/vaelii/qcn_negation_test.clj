@@ -1,20 +1,8 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.qcn-negation-test
-  "Refutation and negative constraints over a qualitative constraint network.
-
-  These algebras are jointly exhaustive and pairwise disjoint, so exactly one base
-  relation holds of any pair — which is what lets a network prove a relation **false**
-  where the engine's open-world default rightly refuses to.  Two halves, tested together
-  because each is the other's mirror:
-
-  * a goal `(not (P a b))` is answered by **refutation**, `possible ∩ denotation(P) = ∅`,
-    where the positive goal needs the stronger `possible ⊆ denotation(P)`;
-  * a believed `(not (P a b))` is read into the network as a **constraint**, intersecting
-    the pair with the complement of that denotation.
-
-  So a negative fact and a negative goal meet in the same place, and the calculus prover
-  stays the sole complete method for its predicates under either polarity."
+  "A negative goal answered by refutation, and a believed negative fact read into the
+  network as the complement of its predicate's denotation (docs/qcn.md, \"Negation\")."
   (:require [clojure.test :refer [is testing use-fixtures]]
             [vaelii.core :as v]
             [vaelii.impl.interval :as iv]
@@ -51,9 +39,7 @@
       (is (not (v/ask? kb (list 'not (list 'partOfRegion A D)) C))))))
 
 (tu/deftest-kb an-open-pair-refutes-nothing
-  ;; The boundary.  Two regions the network says nothing about have all eight relations
-  ;; possible, so no denotation is disjoint from that set and no goal is refuted — "not
-  ;; provable", exactly as a non-entailment is.
+  ;; two unrelated regions have all eight relations possible, so nothing is refuted
   (tu/with-terms [A B D E]
     ;; two components with no path between them, so no composition reaches across
     (v/assert kb (list 'nonTangentialProperPart A B) C)
@@ -172,10 +158,7 @@
 ;; ---- a negative fact that contradicts a positive one ---------------------
 
 (tu/deftest-kb a-negative-fact-can-empty-a-constraint-and-is-reported
-  ;; `(not (partOfRegion A B))` and `(nonTangentialProperPart A B)` are different
-  ;; predicates, so nothing outside the calculus sees a clash — no nogood, no defeat, both
-  ;; believed.  Only the network knows they cannot both hold, and it says so through the
-  ;; ledger the engine already keeps.
+  ;; two predicates, so no nogood and both stay believed; the ledger reports the clash
   (tu/with-terms [A B]
     (v/assert kb (list 'nonTangentialProperPart A B) C)
     (v/assert kb (list 'not (list 'partOfRegion A B)) C)
@@ -213,9 +196,7 @@
       (is (contains? (set (:pairs (:detail (first es)))) [A B])))))
 
 (tu/deftest-kb a-self-assertion-a-negation-forbids-is-inconsistent
-  ;; the diagonal case: `(not (spatiallyEqual A A))` records a constraint on [A A] that
-  ;; excludes the identity, which no triple would ever visit and `constraint` would answer
-  ;; the identity for regardless — so only the up-front check reports it
+  ;; `(not (spatiallyEqual A A))` records a diagonal constraint excluding the identity
   (tu/with-terms [A B]
     (v/assert kb (list 'nonTangentialProperPart A B) C)
     (v/assert kb (list 'not (list 'spatiallyEqual A A)) C)

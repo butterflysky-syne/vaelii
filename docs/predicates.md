@@ -88,6 +88,7 @@ an entry to.
 | `:inert` | prose recording that nothing reads the term **and that this is a decision**. Written by the `inert` constructor, which sets the facet with it, so the class is never a second opinion about the facets |
 | `:stops-short` | facet → prose: an implication of `facet-contract` this entry does not satisfy, and the reason. Checked against the set actually owed, in both directions, so the record can neither be missing nor go stale |
 | `:opposing-read` | prose, required on every `:arbitrable` entry: what the conviction's opposing side is **read through**, and whether that read survives the nogood defeating either member. Not decidable from the declaration, so it is a stated claim |
+| `:clash-checks` | direction → violation keyword: the `try-assert` check that refuses a clash with this term's declaration, per arrival direction (`:fact` for a fact after the declaration, `:declaration` for the declaration after facts). The keyword names an entry of `checks/fact-clash-checks` or `checks/declaration-clash-checks`, and `check-facets` refuses one that names no check (`:mismatch :clash-check`) |
 
 `:enforced` and `:inert` are exclusive and the constructor is what makes them so — an entry
 cannot claim a lane and be classified inert, because claiming a lane means carrying a facet

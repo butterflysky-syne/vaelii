@@ -781,6 +781,12 @@
   (prof/record-read :exception-index)
   (p/family-leaf index :exception-index [pred]))
 
+(defn watched-rule-on?
+  "Is `handle` in the `watched-rules-on` slice for `pred`: an O(1) membership read."
+  [index pred handle]
+  (prof/record-read :exception-index)
+  (p/family-member? index :exception-index [pred] handle))
+
 ;; ---- reads scoped to the contexts a reader sees ---------------------------
 
 (defn as-stored-with-functor-in

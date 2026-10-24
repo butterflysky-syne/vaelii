@@ -342,7 +342,6 @@ vaelii.strength-test	0.01
 vaelii.structural-index-test	7.12
 vaelii.subsumption-strength-test	0.01
 vaelii.subsumption-support-test	9.35
-vaelii.sudoku-solve-test	0.00
 vaelii.svg-test	0.01
 vaelii.sync-test	21.94
 vaelii.target-following-meta-test	0.04
@@ -362,7 +361,6 @@ vaelii.tms-image-test	0.65
 vaelii.tokens-test	0.00
 vaelii.transitive-chain-test	0.85
 vaelii.truncation-fuzz-test	0.32
-vaelii.tsp-solve-test	0.00
 vaelii.tuple-marks-rebuild-test	1.03
 vaelii.turn-edge-test	53.81
 vaelii.type-contract-test	2.64

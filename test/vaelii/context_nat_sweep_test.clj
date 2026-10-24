@@ -20,6 +20,7 @@
             [vaelii.impl.disk.backend :as disk-backend]
             [vaelii.impl.naming :as nm]
             [vaelii.impl.nat :as nat]
+            [vaelii.impl.nat-read :as nat-read]
             [vaelii.koinii.channel :as ch]
             [vaelii.koinii.identity :as id]
             [vaelii.koinii.speech-acts :as sa]
@@ -72,7 +73,7 @@
   (let [cxfn   (declare-dimension! kb)
         expr   (list cxfn 'CxMonad (list 'DatetimeFn "2000"))
         [h k]  (context-in kb '(likes Tom Ann) expr)]
-    (is (nat/reified-context-symbol? k) "a cx/ constant")
+    (is (nat-read/reified-context-symbol? k) "a cx/ constant")
     (is (= 1 (v/count-in-context kb k)))
     (is (reified? kb k))
     (v/retract! kb h)
@@ -167,7 +168,7 @@
     (let [expr  (list cxfn (list dimfn 'CxMonad) (list 'DatetimeFn "2030"))
           [h k] (context-in kb '(likes Tom Ann) expr)
           inner (second (nat/nat-expression kb k))]
-      (is (nat/reified-object-symbol? inner) "the dimension argument reified to an object")
+      (is (nat-read/reified-object-symbol? inner) "the dimension argument reified to an object")
       (v/retract! kb h)
       (is (not (reified? kb k)))
       (is (empty? (v/sentexes-matching kb (list 'natFormula inner '?e) 'CxUniverse))
@@ -254,7 +255,7 @@
   (let [cxfn  (declare-dimension! kb)
         expr  (list cxfn 'CxMonad (list 'DatetimeFn "2007"))
         [h k] (context-in kb '(likes Tom Ann) expr)]
-    (is (= [false false false] (mapv nat/reified-context-symbol? (sort nm/query-contexts))))
+    (is (= [false false false] (mapv nat-read/reified-context-symbol? (sort nm/query-contexts))))
     (is (= [0 0 0] (mapv #(v/count-in-context kb %) (sort nm/query-contexts))))
     (is (empty? (mapcat #(v/sentexes-matching kb (list 'natFormula % '?e) 'CxUniverse)
                         nm/query-contexts))
@@ -282,8 +283,8 @@
           expr  (list cxfn 'CxMonad (list 'DatetimeFn "2008"))
           [hc k] (context-in kb2 '(likes Tom Ann) expr)]
       (is (= 'CxAtlas actx) "the agent's own context is a name, not a mint")
-      (is (= [false false] [(nat/reified-context-symbol? actx)
-                            (nat/reified-context-symbol? (:channel atlas))]))
+      (is (= [false false] [(nat-read/reified-context-symbol? actx)
+                            (nat-read/reified-context-symbol? (:channel atlas))]))
       (testing "retracting the agent's only assertion leaves its context and the channel"
         (v/retract! kb2 h)
         (is (v/sees? kb2 'CxDeploy actx) "still lifted under the channel")

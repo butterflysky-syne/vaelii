@@ -414,7 +414,7 @@
 
 (deftest a-malformed-connective-frame-is-refused-at-both-entry-points
   ;; `sx/connective-problems` and the literal checks behind it: one row per refusal,
-  ;; each asked of `check` and `assert` alike
+  ;; each asked of `check`, `assert` and `try-assert` alike
   (tu/with-neutral-kb [kb tu/fresh]
     (tu/with-terms [dog pet barks quiet owns Rex CxThe]
       (let [rule   (list 'implies (list dog '?x) (list barks '?x))
@@ -438,10 +438,32 @@
                         (list barks '?x))                                                  :not-well-formed]
                  ["the anonymous variable in an exception"
                   (list 'exceptWhen (list owns '?x '_) rule)                               :exception-not-closed]
-                 ["a definition at the wrong arity"      (list 'defnSufficient dog Rex Rex)  :not-well-formed]]]
+                 ["a definition at the wrong arity"      (list 'defnSufficient dog Rex Rex)  :not-well-formed]
+                 ;; no prover answers a negated query (docs/naf.md)
+                 ["a negated universal in an exception"
+                  (list 'exceptWhen (list 'not (list 'forall '?y (list 'implies (list owns '?x '?y)
+                                                                       (list pet '?y))))
+                        rule)                                                              :not-well-formed]
+                 ["a negated existential in an antecedent"
+                  (list 'implies (list 'and (list dog '?x)
+                                       (list 'not (list 'thereExists '?y (list owns '?x '?y))))
+                        (list barks '?x))                                                  :not-well-formed]
+                 ["a negated unknown in an antecedent"
+                  (list 'implies (list 'and (list dog '?x) (list 'not (list 'unknown (list pet '?x))))
+                        (list barks '?x))                                                  :not-well-formed]
+                 ["a negated universal under an unknown antecedent"
+                  (list 'implies (list 'and (list dog '?x)
+                                       (list 'unknown
+                                             (list 'and (list pet '?x)
+                                                   (list 'not (list 'forall '?y
+                                                                    (list 'implies (list owns '?x '?y)
+                                                                          (list dog '?y)))))))
+                        (list barks '?x))                                                  :not-well-formed]]]
           (testing label
             (is (= #{expected} (types-of-check kb sentence CxThe)))
-            (is (= expected (assert-type kb sentence CxThe)))))
+            (is (= expected (assert-type kb sentence CxThe)))
+            (is (= expected (try (v/try-assert kb sentence CxThe) nil
+                                 (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
         (is (= before (v/sentex-count kb)) "no refusal stored anything")))))
 
 ;; ---- encodability: what a sentence's content may be ----------------------
