@@ -46,18 +46,41 @@ from the config, from whether libclingo loaded, and from the program's size.
 
 ## Getting a solver
 
-Either backend is enough; both is better.
+A solver is optional. A KB that never calls `set-solver :asp`, `do/label`, `classify` or
+`bravely`/`cautiously` runs on the in-process `local-solver` and needs nothing installed.
+The edge solver takes either backend, and both is better.
 
-```sh
-brew install clingo          # provides the clingo binary, libclingo, and clasp
-lein with-profile +with-clingo test     # points JNA at /opt/homebrew/lib
+- **The executable** runs as a subprocess: ASPIF on stdin, `--outf=2` JSON on stdout. It
+  is `clasp`, found on `PATH`, or the executable `VAELII_CLASP_BIN` (or
+  `-Dvaelii.clasp.bin=…`) names. The `clingo` executable takes clasp's flags and writes
+  the same JSON, so it serves in clasp's place. An in-process native crash would take the
+  JVM with it, so a long-running process wants this backend.
+- **The library** is `libclingo`, loaded in-process through raw JNA: no JNI, no generated
+  bindings, no clingo Java library. JNA finds it on `jna.library.path`, or at the name or
+  absolute path `-Dvaelii.clingo.lib=…` gives. It is the faster backend on small programs,
+  which is the common case here.
+
+| Platform | Executable | Library |
+|---|---|---|
+| macOS (Homebrew) | `brew install clingo` installs `clasp` and `clingo` | the same install puts `libclingo.dylib` in `/opt/homebrew/lib` |
+| Debian, Ubuntu | `apt-get install clasp` (Ubuntu universe) | no package; build clingo from source, which installs `libclingo.so` |
+| any platform with Python 3 | `pip install clingo`, then a wrapper script that runs `python3 -m clingo "$@"`, named by `VAELII_CLASP_BIN` | none: the wheel's `_clingo` module is a Python extension, not `libclingo` |
+
+No Ubuntu suite packages `clingo` or `libclingo`. Windows has no tested install.
+
+Run from this checkout, `lein with-profile +with-clingo …` points `jna.library.path` at
+`VAELII_CLINGO_LIB`, default `/opt/homebrew/lib`. A project that depends on vaelii does not
+get the profile, so it passes the property itself:
+
+```clojure
+:jvm-opts ["-Dvaelii.clingo.lib=/opt/homebrew/lib/libclingo.dylib"   ; or a libclingo.so path
+           "--enable-native-access=ALL-UNNAMED"]                     ; JDK 24+ warns without it
 ```
 
-- **clingo** runs in-process through raw JNA — no JNI, no generated bindings, no
-  clingo Java library. Fastest for small programs, which is the common case here.
-- **clasp** is a subprocess taking ASPIF on stdin and returning JSON. It is the
-  deliberate fallback for long-running processes, where an in-process native crash
-  would take the JVM with it.
+`(solver/available?)` answers whether the selected backend can solve, and
+`VAELII_ASP_SOLVER=clasp` routes every solve to the executable, the setting CI runs on
+Ubuntu. The two executables and the library give one answer per mode on each program
+`asp_aspif_test/every-backend-answers-every-mode-alike` solves.
 
 `solver.clj` picks per program size (`VAELII_CLINGO_MAX_BYTES`, default 3000 bytes:
 clingo below, clasp above) and loads the clingo namespace lazily via
@@ -125,7 +148,8 @@ search than the limit stops deciding on every machine: the 90-vertex cover prove
 optimum in 1.37 million conflicts, so at the default the edge solver decides nothing on
 it and `do/label :one` returns its best model as best-effort. Raise the limit for such a
 program, and raise `VAELII_ASP_TIME_LIMIT` with it when the solve would then run near
-60 seconds on the slowest machine that runs it.
+60 seconds on the slowest machine that runs it. The core-guided strategy below proves a
+weighted cover of that shape in fewer conflicts than the default does.
 
 A search the limit stops reads as one the time limit stops: `:interrupted`, or
 `:best-effort` for a `:label` solve holding a model. Neither backend flags it. clasp
@@ -139,6 +163,35 @@ accessors), so their searches differ, and a program near the limit can finish on
 not the other. Which backend solves is configuration, not speed — `VAELII_ASP_SOLVER`,
 and in auto mode the program's size and whether libclingo loads — so two installations
 that must agree on such a program set `VAELII_ASP_SOLVER`.
+
+### The optimization strategy
+
+`VAELII_ASP_OPT_STRATEGY` picks how **every solve** optimizes, on both backends:
+`bb`, clasp's model-guided branch-and-bound and the default, or `usc`, core-guided
+optimization, which `clasp/search-args` passes as `--opt-strategy=usc,k,0,stratify`
+beside the solve limit. Branch-and-bound finds a model and descends from its cost.
+Core-guided optimization raises a lower bound from unsatisfiable cores, so its first model
+comes later and is closer to the optimum. A strategy is a search flag like the seed, so a
+solve stops at the same point on every machine under either
+(`asp_aspif_test/core-guided-optimization-proves-what-branch-and-bound-stops-short-of`).
+
+Measured on clasp 3.4.0, one thread, seed 1, the `:label` mode, over `asp_aspif_test`'s
+`weighted-cover` graphs and the 30-city cap `cardinality_solve_test` stops at the limit:
+
+| program | ASPIF | `bb` at 100,000 conflicts | `usc` at 100,000 conflicts |
+|---|---|---|---|
+| 60-vertex cover | 5 KB | optimum 149, 8,924 conflicts | optimum 149, 539 conflicts |
+| 90-vertex cover | 11 KB | best-effort 261 (optimum in 830,546) | optimum 260, 7,376 conflicts |
+| 30-city cap, `C(30, 10)` tied optima | 5 KB | best-effort | best-effort, same cost |
+| 600-vertex cover | 437 KB | best-effort 2,728 | best-effort 2,706 |
+
+The enumerating modes return the same optima and the same brave and cautious sets under
+both, and the 90-vertex cover's cautious enumeration spends 8,773 conflicts under `usc`
+against 2,351,976 under `bb`. The stratified `k` relaxation is the variant passed because
+the plain `usc` relaxation holds **no model** of the 600-vertex cover at the limit, where
+an interrupted search with no model decides nothing. The default stays `bb` because a change of strategy changes which model
+a `:label` solve that meets the limit returns, on every installation that does not set
+the variable.
 
 ### The time limit
 
@@ -423,8 +476,8 @@ what comes back. There is no multi-context classification and no multi-shot solv
 solve is one program, built from one region, answered once.
 
 A `do/label` program carries one thing a dilemma program does not: **cardinality bounds**.
-A `asp/atMost` / `asp/atLeast` rule ([solving.md](solving.md)) grounds to a `Program`
-`:cardinalities` entry, and `edge/translate` renders each as one ASPIF weight-body
+A `asp/atMost` / `asp/atLeast` rule, or a weighted `asp/atMostSum` / `asp/atLeastSum`
+([solving.md](solving.md)), grounds to a `Program` `:cardinalities` entry, and `edge/translate` renders each as one ASPIF weight-body
 statement (`aspif/weight-constraint` for a hard bound, `aspif/weight-rule` plus a minimize
 for a soft one) rather than the `C(n, k+1)` subset nogoods a hand-written bound needs.
 `label/dilemma-program` builds no cardinalities, so `local-solver`, which sees a dilemma

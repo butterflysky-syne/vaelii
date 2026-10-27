@@ -381,15 +381,15 @@
     :arg-position :arg-type :arg-variable :argument-family-ceiling :arity :asymmetric :bad-algebra :bad-arg
     :bad-args :bad-batch :bad-cursor :bad-foreign-manifest :bad-handle :bad-host
     :bad-level :bad-pattern :bad-registrant :bad-reply
-    :bad-snapshot :bad-table-entry :backup-failed :base-is-overlay :belief-built :body-too-large
+    :bad-snapshot :bad-table-entry :bad-token-table :backup-failed :base-is-overlay :belief-built :body-too-large
     :budget-exhausted
     :choice-head-not-positive
-    :compaction-failed :complement :cover :cross-origin :daemon-error :damaged-dictionary
+    :compaction-failed :complement :cover :creator-mismatch :cross-origin :daemon-error :damaged-dictionary
     :damaged-frame :definitional-clash :derived-only :disallowed-class
     :disjoint :disjunction-too-wide :disk-locked :duplicate-handle :duplicate-tokens :error
-    :exception-not-closed :export-busy :fork-base-overlap :frozen-base :functional
+    :exception-not-closed :export-busy :forbidden-context :fork-base-overlap :frozen-base :functional
     :handle-ceiling
-    :incomplete-racer :inter-arg-type :internal-error :irreflexive :job-busy
+    :incomplete-racer :inter-arg-type :internal-error :interrupted :irreflexive :job-busy
     :labeling-inconsistent :labeling-run-blocked :length-against-shape
     :length-against-spelling
     :malformed-entry :malformed-manifest :malformed-record :manifest-too-large
@@ -400,7 +400,7 @@
     :no-dump :no-foreign-reader :no-records-location :not-a-directory :not-assertible
     :not-checkable :not-edn :not-empty :not-encodable :not-indexable
     :not-a-report :not-found :not-ground :not-in-process :not-pg-snapshot :not-range-restricted :not-sealed :not-stratified
-    :not-watchable :not-well-formed :not-writable :over-ceiling :path-not-served :pattern-too-costly
+    :not-watchable :not-well-formed :not-writable :over-ceiling :owed-record-ahead :path-not-served :pattern-too-costly
     :quantifier-not-local :quoted-arg-type
     :record-edit-unsupported :reset :shape :short-transfer :shutdown-abort :solver-failed
     :solver-unavailable
@@ -411,6 +411,7 @@
     :torn-snapshot :truncated-dump :unauthorized :unbound-deferred :uncleared-forcing
     :unforkable-index :unknown-backend
     :unknown-command :unknown-entry :unknown-frame :unknown-framing :unknown-handle
+    :unknown-owed-record
     :unknown-op :unknown-option :unknown-source :unknown-subscription :unknown-tactician
     :unminted-nat
     :unreadable :unreadable-store :unrecovered-kb :unrecovered-premise
@@ -466,7 +467,9 @@
   here — several are two shapes of one condition and have nothing in common —
   but it is a hole in what a `catch` can act on, so each one is named in
   `carries-nothing` with the reason."
-  {:arity                   #{:clashes-with :message :sentence}
+  {:arg-constraint-kind     #{:clashes-with :message :predicate :sentence}
+   :arg-position            #{:clashes-with :message}
+   :arity                   #{:clashes-with :message :sentence}
    :bad-arg                 #{:arg :value}
    :bad-args                #{:op}
    :bad-cursor              #{:cursor :token}
@@ -726,8 +729,8 @@
   **except the `koinii/` subtree**.  koinii is an application layered on the public API
   (`docs/koinii.md`), not the engine, and it namespaces its own refusals (`:koinii/…`) as
   a deliberate subsystem vocabulary rather than adding to this flat caller-visible one;
-  those are koinii's contract, tracked in koinii's own tests, and folding them in would
-  churn this set on koinii's active development.  The directory koinii lives in is that
+  those are koinii's contract, frozen in `koinii_surface_test`'s golden, and folding them in
+  would move this set on every koinii change.  The directory koinii lives in is that
   boundary — the same line `spi_surface_test` draws — and extracting it to its own repo
   would only move it.
 

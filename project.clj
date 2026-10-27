@@ -1,7 +1,7 @@
 ;; Defines `jdk-major`, `bash` and `test-jvm-opts`, which the `~` forms below read.
 (load-file (str (.getParent (java.io.File. *file*)) "/project-env.clj"))
 
-(defproject com.vaelii/vaelii "0.29.0"
+(defproject com.vaelii/vaelii "0.30.0"
   :description "Vaelii — a contextualized common-sense knowledge base with a
                 count-aware trie index, forward/backward inference,
                 and JTMS truth maintenance, over an in-memory or on-disk store."
@@ -62,11 +62,12 @@
   ;; line above then reports as a reflection warning on every `lein run`. This keeps
   ;; the hint. Needs lein 2.10+; an older one ignores the key.
   :preserve-eval-meta true
-  ;; Four marks, each deferring a test for its own reason: `^:slow` a test costing
+  ;; Five marks, each deferring a test for its own reason: `^:slow` a test costing
   ;; about a second or more, `^:multi-jvm` one that forks a second JVM, `^:fuzz` the
-  ;; exhaustive truncation sweep, `^:full-kb` a probe of a full-size KB on disk. What
-  ;; each selects: CONTRIBUTING.md §5.
-  ;; **Three of the four are opt-in only**, so neither `:default` nor `:all` selects
+  ;; exhaustive truncation sweep, `^:full-kb` a probe of a full-size KB on disk, and
+  ;; `^:red` a test asserting behaviour the engine does not have yet, which fails until
+  ;; that behaviour lands and then loses the mark. What each selects: CONTRIBUTING.md §5.
+  ;; **Four of the five are opt-in only**, so neither `:default` nor `:all` selects
   ;; them and every other selector has to exclude them by name. `:all` is therefore
   ;; not `(complement :multi-jvm)`: a complement of one mark silently adopts the next
   ;; one added, which is how a forked JVM would end up in `lein gate`'s run.
@@ -79,12 +80,13 @@
   ;; namespace becomes the answer for every test whose metadata lacks the key, and
   ;; `lein test :fuzz some.ns` runs the whole suite instead of one marked namespace.
   ;; Every selector here is a fn for that reason.
-  :test-selectors {:default   (fn [m & _] (not (or (:slow m) (:multi-jvm m) (:fuzz m) (:full-kb m))))
-                   :slow      (fn [m & _] (and (:slow m) (not (or (:multi-jvm m) (:fuzz m) (:full-kb m)))))
+  :test-selectors {:default   (fn [m & _] (not (or (:slow m) (:multi-jvm m) (:fuzz m) (:full-kb m) (:red m))))
+                   :slow      (fn [m & _] (and (:slow m) (not (or (:multi-jvm m) (:fuzz m) (:full-kb m) (:red m)))))
                    :multi-jvm (fn [m & _] (boolean (:multi-jvm m)))
                    :fuzz      (fn [m & _] (boolean (:fuzz m)))
                    :full-kb   (fn [m & _] (boolean (:full-kb m)))
-                   :all       (fn [m & _] (not (or (:multi-jvm m) (:fuzz m) (:full-kb m))))}
+                   :red       (fn [m & _] (boolean (:red m)))
+                   :all       (fn [m & _] (not (or (:multi-jvm m) (:fuzz m) (:full-kb m) (:red m))))}
   ;; Leiningen's `:base` profile supplies the project JVM's `:jvm-opts` when the
   ;; project sets none, and `:base` appends `-XX:+TieredCompilation
   ;; -XX:TieredStopAtLevel=1` whenever the LEIN_JVM_OPTS environment variable
@@ -371,8 +373,8 @@
             ;; tag or a perf-sensitive land.  `lein gate` drops perf and only asks
             ;; for it; this always runs it.  See scripts/gate.sh's PERF header.
             "release-gate"    ["shell" ~bash "scripts/gate.sh" "--release"]
-            ;; rewrite the three goldens — the published API surface, the extension
-            ;; seams, the config surface — from the live tree.  `test` is already on a
+            ;; rewrite the four goldens — the published API surface, the extension
+            ;; points, the config surface, koinii's surface — from the live tree.  `test` is already on a
             ;; plain `run`'s classpath here, so no profile is needed.  Read
             ;; `vaelii.regen-goldens` before reaching for it: regenerating is how a
             ;; deliberate surface change is recorded, and never how a red golden is

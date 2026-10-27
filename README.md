@@ -23,11 +23,13 @@ with forward/backward inference and JTMS truth maintenance.
   with it the reasoning image, the operation log and the background rebuild that ride on
   it ([why](docs/storage.md#the-image-disk-snapshot)); `lein lint` and the other script
   aliases need Git for Windows ([CONTRIBUTING §1.1](CONTRIBUTING.md#11-static-analysis-lein-lint-setup))
+- Optional: an ASP solver, `clasp` or `clingo`, for labeling, `classify` and
+  brave/cautious queries ([install](docs/asp.md#getting-a-solver))
 
 ## Quick start
 
-As a dependency — Leiningen `[com.vaelii/vaelii "0.29.0"]`, or deps.edn
-`com.vaelii/vaelii {:mvn/version "0.29.0"}` — from [Clojars](https://clojars.org/com.vaelii/vaelii).
+As a dependency — Leiningen `[com.vaelii/vaelii "0.30.0"]`, or deps.edn
+`com.vaelii/vaelii {:mvn/version "0.30.0"}` — from [Clojars](https://clojars.org/com.vaelii/vaelii).
 To work on it instead:
 
 ```sh

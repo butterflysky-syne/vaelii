@@ -1,7 +1,8 @@
 ;; SPDX-License-Identifier: SSPL-1.0
 ;; Copyright © 2026 Vaelii LLC and the Vaelii contributors.
 (ns vaelii.impl.asp.clasp
-  "Subprocess wrapper around the clasp ASP solver.
+  "Subprocess wrapper around the clasp ASP solver, or the clingo executable, which takes
+   the same flags and answers the same JSON (`*clasp-binary*`).
 
    Takes ASPIF text on stdin and reads the JSON `Result` of `--outf=2`.  clasp's exit
    codes encode the solve outcome (10 sat, 20 unsat, 30 optimum) and are not errors; a
@@ -20,10 +21,18 @@
    [java.lang ProcessHandle]
    [java.util.concurrent TimeUnit]))
 
+(defn- configured-binary
+  "`vaelii.clasp.bin`, else `VAELII_CLASP_BIN`, else `clasp`; a blank value is unset."
+  []
+  (or (some-> (System/getProperty "vaelii.clasp.bin") str/trim not-empty)
+      (some-> (System/getenv "VAELII_CLASP_BIN") str/trim not-empty)
+      "clasp"))
+
 (def ^{:dynamic true
-       :doc "Name (or absolute path) of the clasp executable. Bind to point
-   `solve` at a non-default install or a test stub."}
-  *clasp-binary* "clasp")
+       :doc "Name (or absolute path) of the executable `solve` runs: clasp, or clingo, whose
+   application takes clasp's flags and writes the same `--outf=2` JSON.  Read once at load
+   from `configured-binary`; bind to point `solve` at another install or a test stub."}
+  *clasp-binary* (configured-binary))
 
 (def ^:private mode-args
   "The argv tail per mode.  The enumerating modes run `--opt-mode=optN`, over optimal
@@ -68,8 +77,8 @@
                      (.start (ProcessBuilder. ^java.util.List (into [*clasp-binary*] args)))
                      (catch java.io.IOException e
                        (throw (ex-info (str "clasp binary not found: " (pr-str *clasp-binary*)
-                                            " — put clasp on PATH, or bind"
-                                            " vaelii.impl.asp.clasp/*clasp-binary* to its path")
+                                            " — put clasp on PATH, or name it or a clingo"
+                                            " executable with VAELII_CLASP_BIN")
                                        {:type :solver-unavailable :binary *clasp-binary*} e))))
         out (future (slurp (.getInputStream p) :encoding "UTF-8"))
         err (future (slurp (.getErrorStream p) :encoding "UTF-8"))
@@ -141,14 +150,15 @@
 
 (defn search-args
   "The flags under which a solve's search is a function of its program alone: one
-   thread, clasp's own default seed (1) stated rather than assumed, and
-   `--solve-limit=N` for a positive `config/asp-solve-limit`.  The limit counts
+   thread, clasp's own default seed (1) stated rather than assumed, the
+   `config/asp-opt-strategy` optimization strategy, and `--solve-limit=N` for a positive
+   `config/asp-solve-limit`.  The limit counts
    conflicts, so it stops a search at the same point on any machine, where
    `--time-limit` stops it wherever the machine has got to.  In-process clingo's control
    takes the same flags (`vaelii.impl.asp.clingo`)."
   []
   (let [n (config/asp-solve-limit)]
-    (cond-> ["--parallel-mode=1" "--seed=1"]
+    (cond-> ["--parallel-mode=1" "--seed=1" (str "--opt-strategy=" (config/asp-opt-strategy))]
       (pos? n) (conj (str "--solve-limit=" n)))))
 
 (defn- optimum-costs

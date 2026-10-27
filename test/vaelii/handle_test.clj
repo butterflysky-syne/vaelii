@@ -133,7 +133,7 @@
       (is (false? (v/in? kb nil)))
       (is (false? (v/premise? kb nil)))
       (is (nil? (v/provenance kb nil)))
-      (is (false? (:stored? (v/why kb nil))))
+      (is (false? (:stored? (tu/why-root kb nil))))
       (is (nil? (v/sentex kb nil)))
       (is (nil? (v/justification kb nil)))
       (is (nil? (v/defeat-class kb nil)))
@@ -176,6 +176,7 @@
                           ["dependent-justifications"  #(v/dependent-justifications kb hs)]
                           ["provenance"     #(v/provenance kb hs)]
                           ["add-provenance" #(v/add-provenance kb hs {:source :test})]
+                          ["sentexes-naming" #(v/sentexes-naming kb hs)]
                           ["edit :remove"   #(v/edit! kb {:remove [hs]})]]]
             (let [d (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e)))]
               (is (= :bad-handle (:type d)) (str nm " refused the vector"))

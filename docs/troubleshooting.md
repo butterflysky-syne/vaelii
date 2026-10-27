@@ -219,7 +219,7 @@ without storing anything, and answers with the identical problem.
 | `:length-against-spelling` / `:length-against-shape` | a length binding (`(arity P n)`, `(arityMin P n)`, `(binary_predicate P)`) gives a type-spelled term a length other than 1 or a camelCase term the length 1, or binds an engine term to lengths its `:shape` refuses — [naming.md](naming.md#a-length-binding-is-held-to-the-spelling) |
 | `:not-ground` | a fact with a variable in it; write a universal as a rule |
 | `:shape` | not an s-expression at all — a string, `nil`, a map, a bare symbol — or a **vector**, which is a query's conjunction.  Refused at the read entry points as well as the write ones, carrying `:goal` or `:conjunct` ([api.md](api.md)) — or a `(set/inert S)` written to `assert`, which is the text KB format's spelling of `assert-inert`, or a `(set/monotonic …)` anywhere but around the whole sentence or an `exceptWhen` query ([kbs.md](kbs.md)) |
-| `:not-well-formed` | a malformed connective frame, such as a bare `(implies)`, a bare symbol or variable under `not` or a `set/*` wrapper, a bare variable as a rule's antecedent, exception or consequent literal (a derived sentence whose predicate a firing binds is `(?pred . ?args)`), or an `exceptWhen` around a fact ([exceptions.md](exceptions.md)) — or a `thereExists`, `forall` or head `exists` whose binder is not a variable ([naf.md](naf.md)) — or an `or` somewhere the polycanonicalization cannot expand it away: a conclusion, a closed-query body, an `exceptWhen` query, under `not` ([canonicalization.md](canonicalization.md)) — or a combination of `set/*` wrappers the record cannot hold: two different directions, two different head wrappers, or a choice or constraint under a direction or `set/defaultRule` ([canonicalization.md](canonicalization.md#rule-wrappers-become-fields)) — or a predicate a prover computes and nothing stores: `different`, a query operator, an aggregate, `bravely`/`cautiously`, `totalDuration`/`overlapDuration` ([duration.md](duration.md)), or a `not` over one, which a rule antecedent or an `exceptWhen` query is refused for too ([naf.md](naf.md)) — or an individual or a value in a position that names a type, such as either side of `genl` ([taxonomy.md](taxonomy.md#well-formedness-vaeliiimplwff)) — or a symbol as `interArgEqual`'s trigger value, which takes a number, string, keyword, boolean or character ([argtypes.md](argtypes.md#a-type-conditioned-on-an-argument-value-interargequal)) |
+| `:not-well-formed` | a malformed connective frame, such as a bare `(implies)`, a bare symbol or variable under `not` or a `set/*` wrapper, a bare variable as a rule's antecedent, exception or consequent literal (a derived sentence whose predicate a firing binds is `(?pred . ?args)`), or an `exceptWhen` around a fact ([exceptions.md](exceptions.md)) — or a `thereExists`, `forall` or head `exists` whose binder is not a variable ([naf.md](naf.md)) — or an `or` somewhere the polycanonicalization cannot expand it away: a conclusion, a closed-query body, an `exceptWhen` query, under `not` ([canonicalization.md](canonicalization.md)) — or a combination of `set/*` wrappers the record cannot hold: two different directions, two different head wrappers, or a choice or constraint under a direction or `set/defaultRule` ([canonicalization.md](canonicalization.md#rule-wrappers-become-fields)) — or a predicate a prover computes and nothing stores: `different`, a query operator, an aggregate, `bravely`/`cautiously`, `totalDuration`/`overlapDuration` ([duration.md](duration.md)), or a `not` over one, which a rule antecedent or an `exceptWhen` query is refused for too ([naf.md](naf.md)) — or an individual or a value in a position that names a type, such as either side of `genl`, or one that names a predicate or a function, such as the argument of `transitive` or either side of `inverse` ([taxonomy.md](taxonomy.md#well-formedness-vaeliiimplwff)) — or a symbol as `interArgEqual`'s trigger value, which takes a number, string, keyword, boolean or character ([argtypes.md](argtypes.md#a-type-conditioned-on-an-argument-value-interargequal)) |
 | `:not-range-restricted` | a rule variable in the consequent that no antecedent binds — asked per alternative of a disjunctive antecedent, and the message names the disjunct |
 | `:disjunction-too-wide` | a disjunctive antecedent over the 16-alternative cap; the message names the count — [canonicalization.md](canonicalization.md) |
 | `:arg-type` / `:arg-genl` | an `arg` / `genlArg` constraint convicted an input of a function application inside an argument; a convicted fact is stored and held inert — [argtypes.md](argtypes.md#an-argument-that-fails-its-declared-type-is-held-inert) |
@@ -433,6 +433,11 @@ rather than opening the store beside it — `lein run -m vaelii.web --attach HOS
 allowlist, so without the refusal the exposed configuration would be the one with the
 fewest checks. Export a token, or drop the flag and take the loopback default.
 
+A token table that does not check (`:bad-token-table`) exits 2 the same way, before the KB
+is opened: a missing file, text that is not EDN, a table naming no token, or a grant with a
+misspelt key. The daemon does not fall back to `VAELII_API_TOKEN` when
+`VAELII_TOKEN_TABLE` is set.
+
 The refusal lands before the KB is opened, so a daemon that is not going to serve does
 not first take the directory's single-writer lock off the process that could have. On
 the loopback default a missing token is not an error: the daemon starts and says which
@@ -459,7 +464,9 @@ either being configured; a client elsewhere needs the value exported in its own
 environment or passed as `:token`. An attached browser is a client too, and one started
 without the token shows the daemon's own refusal on every page rather than an empty KB.
 `GET /health` answers unauthenticated by design, so a probe that succeeds while `POST
-/op` refuses is the daemon working, not a half-configured one. [operations.md](operations.md).
+/op` refuses is the daemon working, not a half-configured one. Under `VAELII_TOKEN_TABLE`
+only the table's tokens authenticate, and `VAELII_API_TOKEN` in the daemon's environment
+is unread. [operations.md](operations.md).
 
 ## The log does not say enough
 
@@ -506,9 +513,9 @@ so one vocabulary reads both.
 | `:already-loaded` | the catalog already holds a KB under this source's key — unload it first | [catalog.md](catalog.md) |
 | `:anti-symmetric` | `try-assert`'s `:violation`: the converse of a believed tuple of a relation declared `anti_symmetric`, with distinct arguments that do not merge | [api.md](api.md#refusing-a-clash) |
 | `:anti-transitive` | two steps of a predicate declared `anti_transitive` are stored, so the direct step between their ends cannot also hold | [taxonomy.md](taxonomy.md) |
-| `:arg-constraint-kind` | `genlArg` on a predicate declared `instance_relation_predicate` | [argtypes.md](argtypes.md) |
+| `:arg-constraint-kind` | `try-assert`'s `:violation`: `genlArg` on a predicate declared `instance_relation_predicate`, whichever arrived first; `assert` stores both | [taxonomy.md](taxonomy.md#the-declarations-are-checked-against-each-other) |
 | `:arg-genl` | a `genlArg` constraint convicted an input of a function application inside an argument; a convicted fact is stored and held inert — see [An `arg` constraint never convicts](#an-arg-constraint-never-convicts) | [argtypes.md](argtypes.md) |
-| `:arg-position` | an argument constraint names a position the predicate's declared arity does not have | [argtypes.md](argtypes.md) |
+| `:arg-position` | `try-assert`'s `:violation`: an argument declaration names a position past its predicate's bound length, or a binding, `genl` edge or `:monotonic` metatype route would strand a stored one so; `assert` stores both, and `kb-quality`'s `:declarations` lists the stranded declaration | [taxonomy.md](taxonomy.md#the-declarations-are-checked-against-each-other) |
 | `:arg-type` | an `arg` constraint convicted an input of a function application inside an argument; a convicted fact is stored and held inert — see [`assert` refused it](#assert-refused-it) | [argtypes.md](argtypes.md) |
 | `:arg-variable` | the `:conviction` of a rule held inert, and `try-assert`'s `:violation`: two argument constraints demand separated types of one rule variable | [argtypes.md](argtypes.md#a-rule-whose-variable-no-term-can-fill-is-held-inert) |
 | `:arity` | `try-assert`'s `:violation`: the fact's length breaks the length its relation's binding answers, and `:detail` names the binding; or a binding, `genl` edge or `:monotonic` metatype route would break the length of stored tuples, and `:detail :shapes` names each length with its count; or the sentence is an `except` of a binding (`:detail :excepted`) | [taxonomy.md](taxonomy.md) |
@@ -527,6 +534,7 @@ so one vocabulary reads both.
 | `:bad-reply` | the daemon's reply does not read as EDN, or is not a map | [operations.md](operations.md) |
 | `:bad-snapshot` | an index snapshot file's magic number is not this engine's — the index rebuilds from the records, which are untouched | [storage.md](storage.md) |
 | `:bad-table-entry` | a table and the arms that answer to it do not agree, refused at namespace load: a declaration with a partial cache triple or no arm at all, arms that disagree with what `vaelii.impl.predicates` declares about the functor, a mark family whose spellings disagree about what they sweep, a sweep naming a reach `settle` has no arm for, a switch reader with no row, a backend axis nothing opens, a quality reading nothing renders. `:mismatch` says which. Unlike the other discriminants here, this vocabulary is read by whoever is looking at a failed build rather than branched on by a caller, so the message is the remedy and the words are frozen in `type_contract_test` rather than listed in this row | [predicates.md](predicates.md) |
+| `:bad-token-table` | the token table `VAELII_TOKEN_TABLE` (or `start`'s `:token-table`) names is not a readable file, does not read as EDN, or holds a grant outside `{:principal <symbol> :writes #{<context> …} :admin? <boolean>}`; the daemon does not start, and the message names no token — see [The daemon exits 2 without serving](#the-daemon-exits-2-without-serving) | [operations.md](operations.md#the-token-table) |
 | `:base-is-overlay` | a fork's own half and its base name one store, so the fork would write its own base | [overlay.md](overlay.md) |
 | `:backup-failed` | a browser backup's `cp` or `pg_dump` exited non-zero; the message carries its output, and the partial backup directory was deleted | [web.md](web.md#backing-up-a-store-kept-in-postgres) |
 | `:belief-built` | `edit-records!` was called on a KB with belief, or one answering from an installed image; it skips the checks, the sweep and the settle belief owes, so it runs on a store opened `{:recover? false}` | [storage.md](storage.md#editing-the-records-of-a-kb-without-belief) |
@@ -536,6 +544,7 @@ so one vocabulary reads both.
 | `:compaction-failed` | a record or index log compaction failed after its commit point — the store refuses writes until it is reopened | [storage.md](storage.md) |
 | `:complement` | `try-assert`'s `:violation`: a read from the context answers the sentence's complement (`(not S)` for `S`, `S` for `(not S)`) `:monotonic` through `:monotonic` `genl` edges, and the sentence is not a forced-monotonic positive | [api.md](api.md#refusing-a-clash) |
 | `:cover` | a coverage claim refuted: a term holds the whole and every named part is explicitly denied of it — see [`assert` refused it](#assert-refused-it) | [taxonomy.md](taxonomy.md) |
+| `:creator-mismatch` | a write names a `:creator`, or a provenance `:principal`, other than the principal of the token-table grant it presents; a daemon with no table refuses any request naming `:principal`, which it records from a grant alone. `:key` says which | [operations.md](operations.md#the-token-table) |
 | `:cross-origin` | the daemon refused a request whose `Origin` names another site | [operations.md](operations.md) |
 | `:daemon-error` | the daemon refused and its reply carried no `:type` of its own — the client's fallback | [operations.md](operations.md) |
 | `:damaged-dictionary` | a tokenized frame cites a token id the dictionary has no entry for | [storage.md](storage.md) |
@@ -550,6 +559,7 @@ so one vocabulary reads both.
 | `:error` | a check reached something it could not classify, and reports the throwable's own message | [api.md](api.md) |
 | `:exception-not-closed` | an `exceptWhen` reads a variable no antecedent binds, or the anonymous wildcard `_`, which binds nothing | [exceptions.md](exceptions.md) |
 | `:export-busy` | an export is already running, and one runs at a time | [catalog.md](catalog.md) |
+| `:forbidden-context` | a write op under a token-table grant places a sentence in, or removes or annotates a sentex stored in, a context the grant's `:writes` does not name; `:context` names it, and a `do/` imperative is refused to every grant but an admin one | [operations.md](operations.md#the-token-table) |
 | `:fork-base-overlap` | a durable fork that has written anything was remounted over a base that has grown or been rebuilt in another order since, so its records and removals would hide the base's sentences; `:handles` names the handles at issue | [overlay.md](overlay.md) |
 | `:frozen-base` | a write reached the overlay's base, which is mounted read-only | [overlay.md](overlay.md) |
 | `:functional` | a second value for a predicate declared `functional`, or for the position a `functionalInArg` declaration names — see [`assert` refused it](#assert-refused-it) | [equality.md](equality.md) |
@@ -558,6 +568,7 @@ so one vocabulary reads both.
 | `:incomplete-racer` | a portfolio was handed a strategy with `:first-result?` on, which stops the search rather than steering it | [inference.md](inference.md) |
 | `:inter-arg-type` | under the constraint-only reading, an `interArg`, `interArgs` or `interArgAndRest` constraint convicted an input of a function application inside an argument because of what another input is; a convicted fact is stored and held inert | [argtypes.md](argtypes.md) |
 | `:internal-error` | the daemon caught a throwable carrying no `:type` of its own | [operations.md](operations.md) |
+| `:interrupted` | a chaining write reached the caller's `:max-ms`, `:stop?` or `:max-derivations`, or a collection left the heap's old generation nearly full (`:bound` names which), and the write was rolled back, a `forward-chain` under `:on-stop :keep` that a bound other than `:heap` stopped aside; `assert-many`'s carries `:stored`, the sentences kept before it | [inference.md](inference.md#stopping-a-run) |
 | `:irreflexive` | `try-assert`'s `:violation`: a self tuple of a relation declared `irreflexive`, or of one below it through predicate `genl`; or an `irreflexive` mark over stored self tuples, with `:detail :count` | [api.md](api.md#refusing-a-clash) |
 | `:job-busy` | a job holding this process's one writer is already running | [operations.md](operations.md) |
 | `:labeling-inconsistent` | a labeling disagrees with the brave/cautious classification of the same program | [labeling.md](labeling.md) |
@@ -599,6 +610,7 @@ so one vocabulary reads both.
 | `:not-watchable` | a `watch` that could never deliver — no listener, a goal nothing unifies with, or an unscoped goal | [feed.md](feed.md) |
 | `:not-well-formed` | a malformed connective frame, or an `or` somewhere polycanonicalization cannot expand it away | [canonicalization.md](canonicalization.md) |
 | `:not-writable` | a disk KB's directory is not writable by this process, and every open, reads included, creates the single-writer lock file there — see [The disk KB will not open](#the-disk-kb-will-not-open) | [storage.md](storage.md) |
+| `:owed-record-ahead` | the argument-type pass's owed record was written after the records the store holds — a store restored from an older copy under a newer record; `{:resume? false}` starts the pass again | [argtypes.md](argtypes.md#the-pass-over-a-stored-kb) |
 | `:path-not-served` | a wire `:kb-diff` side is a string naming no KB the server serves, a wire `:export` names a directory, or a browser `/kbs/load` or `/kbs/export` names a `dir`; the server reads or writes no path a request names unless `VAELII_REQUEST_PATHS` is on | [operations.md](operations.md) |
 | `:pattern-too-costly` | a `find-terms` regex read past its per-term or scan-wide character budget | [api.md](api.md) |
 | `:quantifier-not-local` | a bound existential or universal variable appears outside its own quantifier | [aggregate.md](aggregate.md) |
@@ -610,7 +622,7 @@ so one vocabulary reads both.
 | `:short-transfer` | a file copy stalled before the byte count it was told to move | [storage.md](storage.md) |
 | `:shutdown-abort` | the process began to shut down while this write ran, and the shutdown asked it to stop past its bound; the write stopped after a rule firing or at a settle pass and was rolled back as a refusal is | [storage.md](storage.md#a-shutdown-under-a-running-write) |
 | `:solver-failed` | the ASP backend ran and produced no usable answer | [asp.md](asp.md) |
-| `:solver-unavailable` | the ASP backend is not on this machine — no `clasp` binary, no `libclingo` | [asp.md](asp.md) |
+| `:solver-unavailable` | the ASP backend did not run: no `clasp` on `PATH` or at `VAELII_CLASP_BIN`, no `libclingo`, or a clasp process killed past its deadline | [asp.md](asp.md#getting-a-solver) |
 | `:stacked-batch` | a bulk load's in-memory index state moved under it, so installing the batch would discard what moved | [storage.md](storage.md) |
 | `:stacked-fork` | a fork's base is itself a fork, and stacks are refused rather than half-supported | [overlay.md](overlay.md) |
 | `:stale-index-layout` | a durable index was written under another key layout, and a fork mounts its base read-only | [indexing.md](indexing.md) |
@@ -627,7 +639,7 @@ so one vocabulary reads both.
 | `:too-many-waiters` | the daemon already has its maximum of long polls parked | [feed.md](feed.md) |
 | `:torn-snapshot` | a durable index part reloaded at a size its own metadata contradicts | [storage.md](storage.md) |
 | `:truncated-dump` | a dump stream ended early, or holds a chunk length this framing does not write | [storage.md](storage.md) |
-| `:unauthorized` | the token presented is not the one the daemon holds — see [Every call to the daemon is refused](#every-call-to-the-daemon-is-refused) | [operations.md](operations.md) |
+| `:unauthorized` | the token presented is not the one the daemon holds, nor one its token table holds — see [Every call to the daemon is refused](#every-call-to-the-daemon-is-refused) | [operations.md](operations.md) |
 | `:unbound-deferred` | a computed antecedent reached the join with an input no earlier antecedent bound | [generators.md](generators.md) |
 | `:uncleared-forcing` | a retraction named a forced-monotonic declaration whose predicate has no unforced semantics yet (`:predicate`, `:missing`); its declaration stays, and `genlCx` is always forced | [nmtms.md](nmtms.md#the-forced-monotonic-set) |
 | `:unforkable-index` | a `:columnar` index cannot be forked, since its trie is not written over a KV backend; a taxonomy probe over an index keeping no family backend refuses too | [overlay.md](overlay.md) |
@@ -639,6 +651,7 @@ so one vocabulary reads both.
 | `:unknown-handle` | no sentex is stored under the handle | [api.md](api.md) |
 | `:unknown-op` | the daemon has no op by that name | [operations.md](operations.md) |
 | `:unknown-option` | an option an entry point will not take, `:mismatch` saying how: `:unknown-key`, `:bad-value`, `:missing-value`, `:not-a-map`, `:missing-companion` or `:conflict` | [api.md](api.md) |
+| `:unknown-owed-record` | the argument-type pass's owed record beside the store has a shape this engine does not read; `:path` names the file and `:version` its shape | [argtypes.md](argtypes.md#the-pass-over-a-stored-kb) |
 | `:unknown-source` | the catalog has no KB source by that id, the source names a kind nothing loads, or the directory `lein cli upgrade` names holds no store | [catalog.md](catalog.md) |
 | `:unknown-subscription` | the feed token names no subscription — it was dropped, timed out, or belongs to another daemon | [feed.md](feed.md) |
 | `:unknown-tactician` | a strategy names a tactician the ordering table does not hold | [inference.md](inference.md) |
@@ -671,6 +684,7 @@ rather than adding to the engine's flat one ([koinii.md](koinii.md)).
 | `:koinii/foreign-context` | an agent aimed a write at a context that is not its own |
 | `:koinii/identity-unverified` | a `:proof-tier` or `:admin?` claim has no verify-fn bound or did not pass it, a principal claims `:authenticated?` with no grant, or a majority count read a ballot with no attestation |
 | `:koinii/missing-seed` | koinii's seed KB file for a context is not on the classpath |
+| `:koinii/needs-kb` | a `dispute`, `adjudication`, `belief`, `deref` or `identity` fn that takes a KB was handed a `vaelii.client` connection or a medium; run it in the process that holds the KB ([koinii.md](koinii.md#the-deployment-shape)) |
 | `:koinii/no-cursor` | a catch-up poll answered something that is not a resumable cursor |
 | `:koinii/no-such-handle` | a handle names no record on this medium |
 | `:koinii/no-such-stance` | a ballot stance other than `:for` or `:against` |

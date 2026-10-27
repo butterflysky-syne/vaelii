@@ -16,6 +16,7 @@
             [clojure.test :refer [deftest is testing]]
             [vaelii.impl.asp.aspif :as aspif]
             [vaelii.impl.asp.atoms :as atoms]
+            [vaelii.impl.asp.clasp :as clasp]
             [vaelii.impl.asp.solver :as solver]
             [vaelii.impl.config :as config]))
 
@@ -194,14 +195,17 @@
 
 (defn- backends
   "Every backend this JVM can actually run, as `[name (fn [stmts mode])]` — clasp when
-  the binary answers (on the rendered ASPIF text), clingo when libclingo loaded (on the
-  structured statements through the backend accessors)."
+  the binary answers and the clingo executable in its place (both on the rendered ASPIF
+  text), clingo when libclingo loaded (on the structured statements through the backend
+  accessors)."
   []
   (cond-> []
-    (do (require 'vaelii.impl.asp.clasp)
-        ((resolve 'vaelii.impl.asp.clasp/available?)))
-    (conj ["clasp" (let [f (resolve 'vaelii.impl.asp.clasp/solve)]
-                     (fn [stmts mode] (f (aspif/render stmts) mode)))])
+    (clasp/available?)
+    (conj ["clasp" (fn [stmts mode] (clasp/solve (aspif/render stmts) mode))])
+    (binding [clasp/*clasp-binary* "clingo"] (clasp/available?))
+    (conj ["the clingo executable"
+           (fn [stmts mode]
+             (binding [clasp/*clasp-binary* "clingo"] (clasp/solve (aspif/render stmts) mode)))])
     (try (require 'vaelii.impl.asp.clingo)
          ((resolve 'vaelii.impl.asp.clingo/available?))
          (catch Throwable _ false))
@@ -263,15 +267,61 @@
           (is (#{:optimum :sat} (:status (solve cover :label))))
           (is (= :unsat (:status (solve (pigeonhole 6) :sat)))))))))
 
-(deftest both-backends-agree
-  ;; The facade routes by program size and availability; a program must mean the
-  ;; same thing whichever backend sees it.
-  (when (and asp? (some? (resolve 'vaelii.impl.asp.clasp/solve)))
-    (require 'vaelii.impl.asp.clasp)
-    (let [clasp-solve (resolve 'vaelii.impl.asp.clasp/solve)
-          stmts [(aspif/choice 1) (aspif/choice 2)
-                 (aspif/constraint [1 2])
-                 (aspif/minimize 1 [[1 1] [2 1]])
-                 (aspif/show 1 "a") (aspif/show 2 "b")]]
-      (is (= (set (:atoms (solver/solve (pm stmts) :label)))
-             (set (:atoms (clasp-solve (aspif/render stmts) :label))))))))
+(deftest core-guided-optimization-proves-what-branch-and-bound-stops-short-of
+  ;; On the 90-vertex cover clasp 3.4.0's branch-and-bound proves the optimum in 830,546
+  ;; conflicts and `usc,k,0,stratify` in 7,376, so a limit of 10,000 separates the two.
+  ;; The two strategies agree on the cost of a cover both prove, and a core-guided search
+  ;; the limit stops stops at the same point on every run, as a branch-and-bound one does.
+  (let [usc   (config/asp-opt-strategies "usc")
+        c60   (weighted-cover 60)
+        c90   (weighted-cover 90)]
+    (doseq [[nm solve] (backends)]
+      (let [run (fn [strategy limit program]
+                  (with-redefs [config/asp-opt-strategy (constantly strategy)
+                                config/asp-solve-limit  (constantly limit)]
+                    (select-keys (solve program :label) [:status :atoms :cost])))]
+        (testing (str nm ": both strategies prove one optimum cost on the 60-vertex cover")
+          (is (= [:optimum :optimum] (mapv #(:status (run % 100000 c60)) ["bb" usc])))
+          (is (= (:cost (run "bb" 100000 c60)) (:cost (run usc 100000 c60)))))
+        (testing (str nm ": at 10,000 conflicts on the 90-vertex cover, only core-guided proves")
+          (is (= :best-effort (:status (run "bb" 10000 c90))))
+          (is (= :optimum (:status (run usc 10000 c90)))))
+        (testing (str nm ": a core-guided search the limit stops is repeatable")
+          (is (= 1 (count (distinct (repeatedly 3 #(run usc 2000 c90)))))))))))
+
+;; Each program with the modes it is solved in.  The enumerations answer the same on
+;; any solver version.  `:label` and `:sat` return one model the search reaches first,
+;; so they run only on a program with one model or one optimum.
+(def ^:private enumerations [:all-optima :classify-true :classify-supportable])
+
+(def ^:private agreement-programs
+  {"a fact"              [[(aspif/fact 1) (aspif/show 1 "a")] [:label :sat]]
+   "an unsatisfiable"    [[(aspif/fact 1) (aspif/constraint [1])] [:label :sat]]
+   "two free choices"    [[(aspif/choice 1) (aspif/choice 2) (aspif/show 1 "a") (aspif/show 2 "b")]
+                          []]
+   "a two-level minimize" [[(aspif/choice 1) (aspif/choice 2)
+                            (aspif/constraint [1 2]) (aspif/constraint [-1 -2])
+                            (aspif/minimize 5 [[1 1]]) (aspif/minimize 1 [[2 1]])
+                            (aspif/show 1 "a") (aspif/show 2 "b")]
+                           [:label]]
+   "a weight constraint" [[(aspif/choice 1) (aspif/choice 2) (aspif/choice 3)
+                           (aspif/weight-constraint 2 [[1 1] [2 1] [3 1]])
+                           (aspif/weight-constraint 3 [[-1 1] [-2 1] [-3 1]])
+                           (aspif/minimize 1 [[1 1] [2 1]])
+                           (aspif/show 1 "a") (aspif/show 2 "b") (aspif/show 3 "c")]
+                          [:label]]})
+
+(deftest every-backend-answers-every-mode-alike
+  ;; The facade routes by program size and availability, and VAELII_CLASP_BIN may name
+  ;; the clingo executable, so a program must mean the same thing whichever backend
+  ;; sees it.  The atoms are compared as sets and the witnesses as a set of sets: the
+  ;; order a backend lists them in is not part of the answer.
+  (let [answer (fn [r] (-> (select-keys r [:status :cost])
+                           (assoc :atoms (set (:atoms r))
+                                  :witnesses (some->> (:witnesses r) (map set) set))))
+        bs     (backends)]
+    (doseq [[nm [stmts modes]] agreement-programs
+            mode (into enumerations modes)]
+      (let [answers (into {} (for [[b solve] bs] [b (answer (solve stmts mode))]))]
+        (is (>= 1 (count (distinct (vals answers))))
+            (str nm " under " mode ": " (pr-str answers)))))))
