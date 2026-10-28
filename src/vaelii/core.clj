@@ -138,12 +138,15 @@
   | `:naming` | `:strict` / `:warn` / `:off` — what the public entry point does with a name | `:strict` |
   | `:recover?` | `:trust` / `:auto` (or `true`) / `:background` / `:warn` / `false` — what a non-empty store gets | `:trust` |
   | `:oplog?` | `true` (or `:each`) / `:tick` / `false` — an operation log, and when its frames are fsynced | `false` |
+  | `:reasoners` | the shipped reasoners to register (`reasoners`), or `:stored` for the set the store records | none |
 
   The seven legal backends and why the eighth is refused: docs/storage.md.  What
   `:recover? :background` installs, and what it refuses until its rebuild finishes:
   docs/storage.md, \"Rebuilding behind an image\"; what `:trust` keeps instead: \"Trusting
   an image\".  What `:oplog?` attaches, and what an
-  open with it restores: docs/storage.md, \"The operation log\".  The naming
+  open with it restores: docs/storage.md, \"The operation log\".  A store records the
+  reasoner set `:reasoners` and `add-reasoner` name, and an open naming another set is
+  refused (`:reasoner-mismatch`): docs/storage.md, \"The reasoner set\".  The naming
   policy and what no setting moves: docs/naming.md.  `fork` is the ergonomic spelling of
   `:overlay` and takes its base from a live KB; the raw form takes `:base` opts instead,
   which is what mounts a base this process has no KB open over.
@@ -200,7 +203,9 @@
   documented on the record in `vaelii.impl.kb`."
   ([] (open-kb {}))
   ([opts]
-   (let [plain (fn [o] (recovery/register-fresh-store! (kb/open-kb o recover reindex)))
+   (let [plain (fn [o]
+                 (let [k (recovery/register-fresh-store! (kb/open-kb o recover reindex))]
+                   (kb/register-reasoners! k (kb/reasoners-of k))))
          mode  (kb/oplog-mode opts)]
      (releasing-on-throw opts (if mode
                                 #(seal/open! opts plain {:fsync mode})
@@ -233,7 +238,9 @@
 
   **The naming policy is inherited** unless `opts` names one.  A fork is a hypothesis
   over the base's own content, and a fork that quietly held it to different conventions
-  would answer a different question from the one the caller asked."
+  would answer a different question from the one the caller asked.  The fork registers
+  the reasoners `kb` registered by name, for the same reason, and its own store records
+  them."
   ([kb] (fork kb {}))
   ([kb opts]
    (let [own    (dissoc opts :tms :naming)
@@ -253,8 +260,10 @@
                  :overlay  own
                  :tms      (:tms opts :dense)
                  :naming   (:naming opts (:naming kb :strict))
+                 :reasoners (kb/reasoners-of kb)
                  :recover? false}]
-     (releasing-on-throw spec #(doto (kb/open-kb spec recover reindex) recover)))))
+     (releasing-on-throw spec #(let [k (doto (kb/open-kb spec recover reindex) recover)]
+                                 (kb/register-reasoners! k (kb/reasoners-of k)))))))
 
 (def default-chain-opts
   "The bounds a chaining run takes when `opts` names none: `:max-term-depth`, the
@@ -5146,39 +5155,9 @@
 ;; ---- the optional reasoners ---------------------------------------------
 ;; Eleven reasoners ship without being registered, and until one is, its vocabulary is
 ;; ordinary content: a KB stores `(before A B)` and `(before B C)`, retrieves both, and
-;; does not derive `(before A C)`.  That is the right default — an algebra's fixpoint is
-;; not free, and most KBs use none of them — but the *provers* live in `vaelii.impl.*`,
-;; and `vaelii.core` is the only namespace anything outside this repo may name.  So
-;; without a named list here, opting in means reaching past the boundary, and a subsystem
-;; nobody can ask for is one nobody has.
-;;
-;; Named by keyword and resolved at runtime, so requiring this namespace does not drag
-;; in eight leaf algebras — the same discipline `calculus-vars` and `imperative` use.
-
-(def ^:private reasoner-vars
-  "The reasoners a KB can register, and the var holding each one's constructor.  Six are
-  the relation algebras `calculi` describes; `:duration` and `:metric-time` are the
-  quantitative pair over the same intervals and instants (docs/duration.md,
-  docs/stp.md), `:sign` is the qualitative arithmetic over quantities nobody has put
-  a figure on (docs/sign.md), and `:calendar` is the clock behind the calendar
-  constructors — a calendar term's endpoints and the orderings they give, computed from
-  its fields and stored nowhere (docs/time.md).  `:includes-instant` reads a temporal
-  thing against a moment off the point network, answering `(includesInstant X t)` and its
-  negation (docs/time.md).  `:brave-cautious` is the odd one out — not
-  an algebra but the ASP brave/cautious reader over the current dilemmas, answering
-  `(bravely S)` / `(cautiously S)` as a read and storing nothing (docs/labeling.md)."
-  '{:rcc8        vaelii.impl.space/spatial-prover
-    :cardinal    vaelii.impl.orientation/orientation-prover
-    :relative    vaelii.impl.relative/relative-prover
-    :distance    vaelii.impl.distance/distance-prover
-    :allen       vaelii.impl.interval/allen-prover
-    :point       vaelii.impl.point/point-prover
-    :duration    vaelii.impl.duration/duration-prover
-    :metric-time vaelii.impl.stp/stp-prover
-    :sign        vaelii.impl.sign/sign-prover
-    :calendar    vaelii.impl.calendar/calendar-prover
-    :includes-instant vaelii.impl.point/includes-instant-prover
-    :brave-cautious vaelii.impl.asp.prover/brave-cautious-prover})
+;; does not derive `(before A C)`.  An algebra's fixpoint costs work, and most KBs use
+;; none of them.  The provers live in `vaelii.impl.*`, and `vaelii.core` is the only
+;; namespace anything outside this repo may name, so these fns name them.
 
 (defn reasoners
   "The names of the optional reasoners, sorted — what `add-reasoner` takes.  `calculi`
@@ -5186,19 +5165,23 @@
   quantitative reasoners, the calendar clock and the instant-inclusion reader, and
   `:brave-cautious` is the ASP dilemma reader (docs/labeling.md)."
   []
-  (vec (sort (keys reasoner-vars))))
+  (provers/reasoner-names))
 
 (defn reasoner
   "The prover named by keyword — a value for `add-prover`, or for a caller assembling a
-  registry of its own.  `add-reasoner` is the ordinary way in."
+  registry of its own.  `add-reasoner` is the ordinary way in.
+
+  Six are the relation algebras `calculi` describes; `:duration` and `:metric-time` are
+  the quantitative pair over the same intervals and instants (docs/duration.md,
+  docs/stp.md), `:sign` is the qualitative arithmetic over quantities nobody has put a
+  figure on (docs/sign.md), and `:calendar` is the clock behind the calendar
+  constructors (docs/time.md).  `:includes-instant` reads a temporal thing against a
+  moment off the point network (docs/time.md).  `:brave-cautious` is the ASP
+  brave/cautious reader over the current dilemmas, answering `(bravely S)` /
+  `(cautiously S)` as a read and storing nothing (docs/labeling.md).  An unknown name is
+  refused as `:unknown-option`."
   [nm]
-  (if-let [sym (reasoner-vars nm)]
-    ((requiring-resolve sym))
-    ;; `:unknown-option` for `the-calculus`'s reason: naming a reasoner that does not exist is a
-    ;; bad argument from a caller, never something a sentence can be checked into
-    (throw (ex-info (str "no such reasoner: " nm " — want one of "
-                         (str/join ", " (map pr-str (reasoners))))
-                    {:type :unknown-option :mismatch :bad-value :reasoner nm :known (reasoners)}))))
+  (provers/reasoner nm))
 
 (defn add-reasoner
   "Register one or more shipped reasoners on `kb` by name, returning `kb`.
@@ -5212,16 +5195,16 @@
   support, and so can be forward-chained on and retracted through like any other
   antecedent (docs/qcn.md).
 
-  Idempotent per name: registering one twice would have the goal claimed twice and
-  answered identically, so the second is dropped rather than paid for.  Sameness is the
-  prover **value**, not its class — the six algebras share one record type and differ
-  only in the calculus they carry, so a class check would register the first and silently
-  drop the other five."
+  **The store records the names.**  A later `open-kb` over the same store names the same
+  set in `:reasoners`, or passes `:reasoners :stored`, and any other set is refused
+  (`:reasoner-mismatch`); `export!` writes the set into the dump, and `import!` holds the
+  destination to it (docs/storage.md, \"The reasoner set\").
+
+  Idempotent per name: sameness is the prover **value**, not its class, since the six
+  algebras share one record type and differ only in the calculus they carry.  A bad name
+  in the list registers none of it."
   [kb & names]
-  (let [want (mapv reasoner names)                      ; resolve all before mutating any,
-        have (set @(:provers kb))]                      ; so a bad name registers nothing
-    (doseq [pr want :when (not (contains? have pr))]
-      (add-prover kb pr)))
+  (kb/add-reasoners! kb names)
   kb)
 
 ;; ---- qualitative constraint reasoning -----------------------------------
@@ -8680,7 +8663,7 @@
   halves are not both public is not a round trip.
 
   `opts`: `{:belief? true|:stored|false :report-every n :on-progress f :drop-principal?
-  bool}`.  With `:belief? true` (the default) the dump lands in the state a restart
+  bool :reasoners :stored}`.  With `:belief? true` (the default) the dump lands in the state a restart
   produces — records, justifications and premise marks stored, index rebuilt, belief
   recovered.  With
   `:belief? false` every sentex is stored and indexed but no justification stream is read
@@ -8712,6 +8695,11 @@
   `:principal`, the key a daemon records from its token table
   ([docs/operations.md](docs/operations.md#the-token-table)); `koinii.deref/pull!` passes it.
 
+  A dump records the reasoner set of the KB that wrote it, and a destination registering
+  another set is refused before the first write (`:reasoner-mismatch`).  `:reasoners
+  :stored` registers the dump's set once the import lands, when the destination
+  registers no name outside it (docs/storage.md, \"The reasoner set\").
+
   Two counts in the summary are disagreements between the dump and this build, and
   neither stops the load: `:naming` is what got stored under a name `assert` would
   refuse, and `:refused` is what was skipped.  A frame is skipped when it could not be
@@ -8736,7 +8724,12 @@
   one reaches the import from a hand-edited dump, another dialect's or another build's, or
   as an `(ist Ctx S)` frame beside S in Ctx ([docs/naming.md](docs/naming.md))."
   ([kb dir] (import! kb dir {}))
-  ([kb dir opts] (io-import/import-dump kb dir opts)))
+  ([kb dir opts]
+   (let [summary (io-import/import-dump kb dir opts)]
+     ;; after the recover, where a caller's own `add-reasoner` call after an import lands
+     (some->> (io-import/dump-reasoners kb (io-import/read-meta dir) dir opts)
+              (kb/add-reasoners! kb))
+     summary)))
 
 (defn read-manifest
   "The EDN manifest in file `f` — a dump's or a store's `meta.edn` / `format.edn` — read

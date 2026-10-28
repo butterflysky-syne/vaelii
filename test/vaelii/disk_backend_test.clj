@@ -488,6 +488,38 @@
                              nil
                              (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))
 
+(deftest a-reopen-under-another-reasoner-set-is-refused
+  ;; Two seats over the same records reach different beliefs when one registers `:allen`
+  ;; and the other does not: the one without it finds `(before A C)` underivable.
+  (with-tmp
+    (fn [dir]
+      (tu/with-terms [EarlyEvent MidEvent LateEvent]
+        (let [opts {:backend :disk-log :dir dir}
+              late (list 'before EarlyEvent LateEvent)
+              open (fn [o] (try (v/open-kb (merge opts o))
+                                (catch clojure.lang.ExceptionInfo e (ex-data e))))]
+          (let [kb (v/open-kb opts)]
+            (v/add-reasoner kb :allen)
+            (v/assert kb (list 'before EarlyEvent MidEvent) 'CxUniverse)
+            (v/assert kb (list 'before MidEvent LateEvent) 'CxUniverse)
+            (v/close! kb))
+          (testing "an open naming no reasoner is refused, naming both sets"
+            (let [d (open {})]
+              (is (= :reasoner-mismatch (:type d)))
+              (is (= [:allen] (:stored d)))
+              (is (= [] (:requested d)))
+              (is (not (lock/held? dir)) "and the refused open released the lock")))
+          (testing "an open naming another set is refused"
+            (is (= :reasoner-mismatch (:type (open {:reasoners [:allen :rcc8]})))))
+          (testing "an open naming the recorded set registers it"
+            (let [kb (open {:reasoners [:allen]})]
+              (is (v/ask? kb late 'CxUniverse))
+              (v/close! kb)))
+          (testing ":reasoners :stored registers the recorded set"
+            (let [kb (open {:reasoners :stored})]
+              (is (v/ask? kb late 'CxUniverse))
+              (v/close! kb))))))))
+
 (deftest a-durable-index-built-against-other-records-is-refused
   ;; A `:disk-log` index over records on a server is a directory and a database joined by
   ;; nothing but one opts map, so the directory records the database it describes

@@ -16,8 +16,8 @@
     defrecord class names the namespace that defines it;
   - every fully-qualified symbol under a `quote` in code.  These are the edges no `ns`
     form states: the `requiring-resolve` targets and the fixed symbol tables that name
-    them (`vaelii.core`'s calculi, reasoners and solvers, `vaelii.impl.imperative`'s `do/`
-    handlers, `vaelii.impl.wiring`'s five targets).
+    them (`vaelii.core`'s calculi and solvers, `vaelii.impl.provers`' reasoners,
+    `vaelii.impl.imperative`'s `do/` handlers, `vaelii.impl.wiring`'s five targets).
 
   The walk follows `vaelii.core` and `vaelii.impl.*` and nothing else.  Code from outside
   those prefixes — a registered prover or evaluatable, a foreign plugin — is not in the

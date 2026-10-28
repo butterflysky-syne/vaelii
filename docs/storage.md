@@ -6,7 +6,8 @@
   `:pg` records adapters, nippy serialization, what one fact of a bulk load costs phase by
   phase, the two routes from a load to the chained closure and what each costs, loading a
   snapshot that changes over a fixed base, what an open reports of a record nothing
-  supports, what a shutdown waits for, and the single-writer contract.
+  supports, what a shutdown waits for, the reasoner set a store records, and the
+  single-writer contract.
 - **Not here:** the six index families' key layout and retrieval →
   [indexing.md](indexing.md); the dense/columnar backends that replace the default
   map-based structures → [density.md](density.md).
@@ -2032,6 +2033,40 @@ checks) runs *before* any write, so a rejected assert leaves no trace (tested).
 Cross-store atomicity is bounded by the two-store design: each side commits as a
 single unit, and `reindex` rebuilds the index from the records to repair a torn
 write.
+
+### The reasoner set
+
+A store records the names of the shipped reasoners its KB registers (`add-reasoner`, or
+`open-kb`'s `:reasoners`). Two KBs over the same records derive different beliefs when
+one registers `:allen` and the other does not: the second stores `(before A B)` and
+`(before B C)` and finds `(before A C)` underivable. So the set is part of the store:
+
+| store | where the set is recorded |
+|---|---|
+| a directory (`:disk`, a `:disk-log` or `:snapshot` index, a durable fork's own half) | `reasoners.edn` at the directory's root |
+| records in RAM, a RAM fork's own half | the memory registry, keyed by the space, for the life of the JVM |
+| records on a server with no `:dir` | nowhere: nothing is recorded or checked |
+
+`open-kb` compares the set `:reasoners` names (none when the option is absent) with the
+recorded one, and refuses a difference before recovery runs (`:reasoner-mismatch`, with
+`:stored` and `:requested`). `:reasoners :stored` takes the recorded set instead. A fork
+mounted by `:base` opts with nothing recorded in its own half is held to the set its base
+records, and `fork` registers the reasoners of the KB it forks. A store that records no
+set accepts any, and records the set the open names. Either way the provers are
+registered once recovery has run, which is where a caller's own `add-reasoner` after
+`open-kb` lands, and `add-reasoner` adds its names to the record. `clear!` keeps the
+record, as it keeps `format.edn`. No entry point removes a name from it; deleting
+`reasoners.edn` forgets it.
+
+`export!` writes the set into `meta.edn` as `:reasoners`, and `import!` refuses a
+destination registering another set before the first write. `{:reasoners :stored}`
+registers the dump's set once the import has recovered, when the destination registers
+no name outside it; `koinii.deref/pull!` passes its opts through. A dump with no
+`:reasoners` key, from an earlier build or another dialect, is not checked.
+
+The record holds names only. A prover `add-prover` registers is code no record can carry,
+so neither the store nor a dump names one. The CLI, the daemon and the browser's attach
+open an existing directory with `:reasoners :stored`.
 
 ### Editing the records of a KB without belief
 

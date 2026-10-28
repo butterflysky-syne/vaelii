@@ -48,6 +48,23 @@ it — `git show v0.16.0:CHANGELOG.md`.
   *Breaks:* `try-assert` of a unary predicate's membership over an argument outside the
   removed declaration's type
 
+### Breaking: storage
+
+- **A store records its reasoner set, and an open under another set is refused.**
+  `add-reasoner` and `open-kb`'s new `:reasoners` option record the shipped reasoners'
+  names in the store (`reasoners.edn` in a directory, the memory registry for a space),
+  and `export!` writes them into the dump's `meta.edn`. An `open-kb` naming another set,
+  none included, and an `import!` into a KB registering another set are refused
+  (`:reasoner-mismatch`, naming both sets); `:reasoners :stored` registers the recorded
+  set. `fork` registers the reasoners of the KB it forks. The CLI, the daemon and the
+  browser's attach open a directory with `:reasoners :stored`.
+  [storage.md](docs/storage.md#the-reasoner-set)
+  *Migration:* reopen a store that `add-reasoner` was called on with `:reasoners
+  [<the names>]` or `:reasoners :stored`, and pass `{:reasoners :stored}` to `import!` or
+  `koinii.deref/pull!` to register a dump's set.
+  *Breaks:* `open-kb` over a store a KB called `add-reasoner` on, and `import!` of such a
+  KB's dump, without `:reasoners`
+
 ## 0.30.0 — 2026-10-27 — "Chaining writes rolled back at `:max-derivations` and a full heap, `why` as a justification graph, `functionCorrespondingPredicate` scoped to the reader, `kb-integrity`'s stranded declarations and rule clashes, `CxTimeFn` time slices"
 
 | Area | Change |

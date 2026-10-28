@@ -359,7 +359,8 @@ default-chain-opts                              ; the bounds a chain run takes w
                                                ; `(modal_predicate pred)`, so the grant follows
                                                ; retraction and is scoped by the context holding
                                                ; it — `CxUniverse` by default (docs/belief.md) -> kb
-(add-reasoner kb :allen :rcc8)                 ; register shipped ones by name -> kb
+(add-reasoner kb :allen :rcc8)                 ; register shipped ones by name, recorded in the
+                                               ;   store an open is held to (docs/storage.md) -> kb
 (reasoners)                                    ; the list: the six algebras + :duration :metric-time
                                                ;   :sign :calendar, and :brave-cautious, the ASP
                                                ;   dilemma reader (docs/labeling.md)

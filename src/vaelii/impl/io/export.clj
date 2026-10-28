@@ -23,7 +23,7 @@
   a cache (`reindex`), the taxonomy and the TMS labels are recomputed (`recover`).
 
       <dump>/
-        meta.edn                     the marker, the schema, and the counts
+        meta.edn                     the marker, the schema, the counts, the reasoner set
         sentexes.nippy.stream        one frame per sentex
         justifications.nippy.stream  one frame per justification
         provenance.nippy.stream      [handle provenance-map] per frame (omitted when none)
@@ -57,6 +57,7 @@
             [vaelii.impl.io.fingerprint :as fp]
             [vaelii.impl.io.frames :as frames]
             [vaelii.impl.io.snapshot :as snapshot]
+            [vaelii.impl.kb :as kb]
             [vaelii.impl.kv :as kv]
             [vaelii.impl.observe :as observe]
             [vaelii.impl.opts :as opts]
@@ -409,6 +410,7 @@
                      :provenance-count    p-n
                      :index-entry-count   i-n
                      :reasoning-image     (some? image)
+                     :reasoners           (vec (sort (kb/reasoners-of kb)))
                      :handle-policy       :preserved
                      :written-at          (str (Instant/now))
                      :writer              (writer-id)))

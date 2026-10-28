@@ -809,7 +809,7 @@
   "Every key `open-kb` reads.  Public because it is the answer to \"is this a real
   option?\", and a caller that can ask does not have to find out from a wrong answer."
   #{:backend :records :index :space :dir :pg :tms :recover?
-    :naming :base :base-stores :overlay :oplog?})
+    :naming :base :base-stores :overlay :oplog? :reasoners})
 
 (defn- check-constraints-opt!
   "Refuse `:constraints` with the reading that replaces it.  No `open-kb` option chooses
@@ -840,10 +840,11 @@
   than reaching `keys` and coming back as a bare `IllegalArgumentException` about creating
   an ISeq.  This is the most-used option map in the API, so the structure of it is guarded
   here and not left to the first thing that dereferences it."
-  [opts where]
-  (opts/check! opts opt-keys where
-               (str "An option nothing reads takes the default in silence,"
-                    " which for a store number means sharing a store.")))
+  ([opts where] (check-opts! opts opt-keys where))
+  ([opts ks where]
+   (opts/check! opts ks where
+                (str "An option nothing reads takes the default in silence,"
+                     " which for a store number means sharing a store."))))
 
 (defn- store-space?
   "Is `space` a value `:space` names a store with?  A whole number 0 or more, or a
@@ -1741,7 +1742,7 @@
   stores, and the configuration the stores are read under.  Every KB field other than
   `:reasoning` is in exactly one of `rebuild-shared` and `rebuild-own`, `:reasoning` holds a
   new `empty-reasoning`, and `background_rebuild_test` fails on a field in none of them."
-  [:records :index :provers :solver :naming])
+  [:records :index :provers :reasoners :solver :naming])
 
 (def rebuild-own
   "The KB fields a rebuild KB holds for itself.  `:dir`, `:snapshot-dir`, `:index-space`
@@ -1800,6 +1801,111 @@
                           (env "PGPASSWORD") (assoc :password (env "PGPASSWORD")))))
       opts)))
 
+(defn- reasoners-at
+  "The reasoner set recorded where `at` names (`reasoner-locus`), or nil when none is."
+  [{:keys [dir space] :as at}]
+  (cond dir (dfiles/recorded-reasoners dir)
+        at  (mem/recorded-reasoners space)))
+
+(defn- record-reasoners-at!
+  "Record `names` as the reasoner set where `at` names.  A no-op for a nil `at`."
+  [{:keys [dir space] :as at} names]
+  (cond dir (dfiles/write-reasoners! dir names)
+        at  (mem/record-reasoners! space names)))
+
+(defn- reasoner-locus
+  "Where a store records its reasoner set: `{:dir d}` for a store with a directory,
+  `{:space s}` for records in RAM, which the memory registry holds for the life of the
+  JVM, and nil for records on a server opened with no `:dir`, which record none."
+  [{:keys [space] :or {space 0}} rkind ovr ov-opts kb-dir]
+  (cond
+    (= :memory rkind)                         {:space space}
+    (and (= :overlay rkind) (= :memory ovr)) {:space (:space ov-opts 0)}
+    kb-dir                                    {:dir kb-dir}))
+
+(defn- base-reasoner-locus
+  "`reasoner-locus` of the base a fork mounts by `:base` opts, or nil."
+  [{:keys [base]}]
+  (when (map? base)
+    (let [{brk :records bik :index} (backend-axes base)]
+      (cond
+        (= :memory brk) {:space (:space base 0)}
+        (or (= :disk brk) (#{:disk-log :snapshot} bik))
+        {:dir (disk/canonical-dir (disk/disk-dir base))}))))
+
+(defn- check-reasoners-opt!
+  "Refuse a `:reasoners` value other than `:stored` or a collection of reasoner names."
+  [v]
+  (if (or (= :stored v) (and (coll? v) (not (map? v))))
+    (when (coll? v) (run! provers/check-reasoner-name! v))
+    (throw (ex-info (str "unknown :reasoners value " (pr-str v)
+                         " — want :stored or a collection of reasoner names")
+                    {:type :unknown-option :mismatch :bad-value :option :reasoners
+                     :value v :known (provers/reasoner-names)}))))
+
+(defn reasoner-mismatch
+  "The `:reasoner-mismatch` refusal: `where` records the set `stored`, and the caller
+  names `requested`."
+  [where stored requested fix]
+  (let [s (vec (sort stored)) r (vec (sort requested))]
+    (ex-info (str where " records the reasoner set " (pr-str s) " and this call names "
+                  (pr-str r) ".  A KB registering another set derives other beliefs from"
+                  " the same records.  " fix)
+             {:type :reasoner-mismatch :stored s :requested r})))
+
+(defn- open-reasoners!
+  "The reasoner names a KB opened with `opts` registers, recorded at `own` when they are
+  not what `own` records.  `:reasoners :stored` takes the set `own` records, else the one
+  the base records; a collection of names must equal that recorded set when there is one,
+  and is refused (`:reasoner-mismatch`) when it is not.  An absent `:reasoners` names no
+  reasoner."
+  [opts own base]
+  (let [want   (:reasoners opts [])
+        own-s  (reasoners-at own)
+        stored (or own-s (reasoners-at base))
+        names  (if (= :stored want) (or stored #{}) (set want))]
+    (when (and stored (not= stored names))
+      (throw (reasoner-mismatch
+              (str "the store at " (or (:dir own) (:dir base) (str "space " (pr-str (:space own)))))
+              stored names
+              (str "Open with :reasoners " (pr-str (vec (sort stored)))
+                   ", or :reasoners :stored to take the recorded set."))))
+    (when (and own (not= (or own-s #{}) names))
+      (record-reasoners-at! own names))
+    names))
+
+(defn reasoners-of
+  "The names of the shipped reasoners `kb` registered through `open-kb`'s `:reasoners`
+  or `add-reasoner`, as a set."
+  [kb]
+  (or (some-> (:reasoners kb) :names deref) #{}))
+
+(defn register-reasoners!
+  "Register on `kb` the prover of each reasoner in `names` whose prover value is not
+  registered yet, without recording anything.  `open-kb` and `fork` call it once recovery
+  has run, which is where a caller's own `add-reasoner` call lands."
+  [kb names]
+  (let [want (mapv provers/reasoner names)]
+    (swap! (:provers kb) (fn [have] (into have (remove (set have)) want)))
+    kb))
+
+(defn record-reasoners!
+  "Replace `kb`'s recorded reasoner names with `names`, in the KB and in its store."
+  [kb names]
+  (let [{held :names at :at} (:reasoners kb)
+        s                    (set names)]
+    (reset! held s)
+    (record-reasoners-at! at s)
+    kb))
+
+(defn add-reasoners!
+  "Register the reasoners in `names` on `kb` and record the union in its store.  Every
+  name is resolved before anything is registered, so a bad name registers none."
+  [kb names]
+  (run! provers/check-reasoner-name! names)
+  (register-reasoners! kb names)
+  (record-reasoners! kb (into (reasoners-of kb) names)))
+
 (defn open-kb
   "Construct a KB — the implementation behind `vaelii.core/open-kb`, which owns the
   user-facing docstring.  `:backend` (`:memory` default) names a record/index store
@@ -1843,9 +1949,11 @@
   (check-constraints-opt! opts)
   (check-opts! opts "open-kb")
   (check-naming! naming)
+  (when (contains? opts :reasoners) (check-reasoners-opt! (:reasoners opts)))
   (doseq [half [:base :overlay]]
     (when-let [sub (get opts half)]
-      (check-opts! sub (str half))
+      ;; the reasoner set is the whole KB's, named at the top level
+      (check-opts! sub (disj opt-keys :reasoners) (str half))
       (check-mount-opts! sub (backend-axes sub) (str half))
       (check-store-values! sub (str half))))
   ;; A fork's own writable half needs bookkeeping beside its records (`mount/meta-kv`),
@@ -1967,6 +2075,9 @@
         index-space (when (and (not (:durable? (index-axes ikind)))
                                (contains? #{:disk :sqlite :pg} rkind))
                       (derived-index-space rkind opts))
+        reasoner-at    (reasoner-locus opts rkind ovr ov-opts kb-dir)
+        reasoner-names (open-reasoners! opts reasoner-at
+                                        (when overlay? (base-reasoner-locus opts)))
         kb (kb-types/map->KB
             (merge
              {:records rstore
@@ -1997,6 +2108,10 @@
               :engine-space (let [own (if overlay? (:space ov-opts) space)]
                               (when (mem/engine-space? own) own))
               :provers  (atom provers/default-provers)
+              ;; the shipped reasoners this KB names, and where its store records them;
+              ;; `open-kb` and `fork` register their provers once recovery has run
+              :reasoners {:names (atom reasoner-names)
+                          :at    reasoner-at}
               :solver   (atom solve/local-solver)
               :feed      (feed/create-feed)
               ;; a plain value, not an atom: which conventions the public entry point

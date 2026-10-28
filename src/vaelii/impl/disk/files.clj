@@ -203,6 +203,22 @@
   (spit (str root "/" index-layout-file) (pr-str {:index-layout current}))
   nil)
 
+(def ^:private reasoners-file "reasoners.edn")
+
+(defn recorded-reasoners
+  "The reasoner names recorded in the store directory `root` (`reasoners.edn`), as a set,
+  or nil when the directory records none.  Read through `read-edn-manifest`."
+  [root]
+  (let [file (File. ^String (str root) ^String reasoners-file)]
+    (when (.exists file)
+      (set (:reasoners (read-edn-manifest file))))))
+
+(defn write-reasoners!
+  "Record `names` as the reasoner set of the store directory `root`."
+  [root names]
+  (spit (str root "/" reasoners-file) (pr-str {:reasoners (vec (sort names))}))
+  nil)
+
 (def ^:private records-identity-file "records.edn")
 
 (defn records-identity

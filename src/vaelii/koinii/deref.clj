@@ -654,7 +654,9 @@
   re-canonicalizes every record through this build's constructor and recovers belief —
   the property that makes this seat compute the same locators as the seat that published.
   Every provenance `:principal` is dropped (`import!`'s `:drop-principal?`), since no
-  daemon of this seat recorded the publisher's.  Returns `import!`'s summary."
+  daemon of this seat recorded the publisher's.  A seat registering a reasoner set other
+  than the publisher's is refused (`:reasoner-mismatch`), and `{:reasoners :stored}`
+  registers the publisher's set.  Returns `import!`'s summary."
   ([kb dir] (pull! kb dir {}))
   ([kb dir opts]
    (koinii-types/needs-kb! `pull! kb)

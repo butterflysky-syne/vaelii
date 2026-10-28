@@ -491,7 +491,7 @@
 
 (defn open-kb-from
   "Build the KB a run operates on from the parsed `opts`: `:dir` → durable disk
-  (recovered), else in-memory — which `:memory` also names explicitly, so `--memory
+  (recovered, with the reasoners the store records registered), else in-memory — which `:memory` also names explicitly, so `--memory
   --dir <path>` is a contradiction and is refused rather than resolved by a guess.
   `:starter` loads the shipped schema.
 
@@ -520,7 +520,8 @@
                              " create the parent first (mkdir -p " (.getPath parent) ").")
                         {:type :unknown-source :path (str dir) :missing (.getPath parent)})))))
   (let [kb (if dir
-             (v/open-kb {:backend (or (v/store-backend dir) :disk-log) :dir dir})
+             (v/open-kb {:backend (or (v/store-backend dir) :disk-log) :dir dir
+                         :reasoners :stored})
              (v/open-kb {}))]
     (when starter (starter/load-into kb))
     kb))
@@ -596,7 +597,8 @@
        ;; a `reasoning.prev/` left by an interrupted --verify holds an image this build declined
        (ri/delete-image! prev)
        (ri/move-image! bdir prev))
-     (let [kb       (v/open-kb {:backend backend :dir (str dir) :recover? (if trust :trust :auto)})
+     (let [kb       (v/open-kb {:backend backend :dir (str dir) :recover? (if trust :trust :auto)
+                                :reasoners :stored})
            [opened verified synced]
            (try
              ;; the open's image is read before the sync moves the records the close then

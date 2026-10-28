@@ -935,7 +935,7 @@
                                              "opening the store and recovering belief and the taxonomy"
                                              "opening the store — records only, recover to build belief")})
                       kb (binding [trove/*log-fn* (noting-log-fn progress! trove/*log-fn*)]
-                           (v/open-kb (cond-> {:backend backend :dir path}
+                           (v/open-kb (cond-> {:backend backend :dir path :reasoners :stored}
                                         (not recover?) (assoc :recover? false)
                                         (and recover? (#{:disk-snapshot :pg-snapshot} backend))
                                         (assoc :oplog? true))))]

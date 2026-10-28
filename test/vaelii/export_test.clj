@@ -514,6 +514,27 @@
               (is (map? s))
               (is (pos? @seen) "the callback ran at the named cadence"))))))))
 
+(deftest a-dump-carries-its-reasoner-set-and-an-import-under-another-is-refused
+  (tu/with-neutral-kb [kb tu/fresh]
+    (with-dirs* 1 "reasoners"
+      (fn [^File dir]
+        (rm-rf! dir)
+        (tu/with-terms [EarlyEvent MidEvent LateEvent]
+          (v/add-reasoner kb :allen)
+          (v/assert kb (list 'before EarlyEvent MidEvent) 'CxUniverse)
+          (v/assert kb (list 'before MidEvent LateEvent) 'CxUniverse)
+          (v/export! kb (str dir))
+          (is (= [:allen] (:reasoners (imp/read-meta dir))))
+          (tu/with-cleared-kb [target #(tu/isolated-fresh)]
+            (testing "a destination registering no reasoner is refused before a write"
+              (let [d (try (v/import! target (str dir)) nil
+                           (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                (is (= {:type :reasoner-mismatch :stored [:allen] :requested []} d))
+                (is (zero? (:sentexes (tu/content-count target))))))
+            (testing ":reasoners :stored registers the dump's set after the import"
+              (v/import! target (str dir) {:reasoners :stored})
+              (is (v/ask? target (list 'before EarlyEvent LateEvent) 'CxUniverse)))))))))
+
 (deftest an-export-destination-that-is-a-file-is-refused
   ;; A dump is a directory of streams plus the `meta.edn` that vouches for them, so a
   ;; destination that is already a regular file is a name no dump can be written under.

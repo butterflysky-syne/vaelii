@@ -402,7 +402,7 @@
     :not-a-report :not-found :not-ground :not-in-process :not-pg-snapshot :not-range-restricted :not-sealed :not-stratified
     :not-watchable :not-well-formed :not-writable :over-ceiling :owed-record-ahead :path-not-served :pattern-too-costly
     :quantifier-not-local :quoted-arg-type
-    :record-edit-unsupported :reset :shape :short-transfer :shutdown-abort :solver-failed
+    :reasoner-mismatch :record-edit-unsupported :reset :shape :short-transfer :shutdown-abort :solver-failed
     :solver-unavailable
     :stacked-batch
     :stacked-fork :stale-index-layout :stale-index-records :still-exporting :still-loading :still-stopping

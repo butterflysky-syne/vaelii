@@ -1270,7 +1270,7 @@
 
 (def ^:private import-opt-keys
   "Every key `import-dump` reads."
-  #{:belief? :report-every :on-progress :drop-principal?})
+  #{:belief? :report-every :on-progress :drop-principal? :reasoners})
 
 (def belief-modes
   "What `:belief?` may be, and what each one loads.
@@ -1312,7 +1312,30 @@
                          " and run the recover.")
                     {:type :unknown-option :mismatch :bad-value :option :belief?
                      :value (:belief? opts)
-                     :values (vec (sort-by pr-str (keys belief-modes)))}))))
+                     :values (vec (sort-by pr-str (keys belief-modes)))})))
+  (when (and (contains? opts :reasoners) (not= :stored (:reasoners opts)))
+    (throw (ex-info (str "unknown :reasoners value " (pr-str (:reasoners opts))
+                         " — import-dump reads :stored, which registers the dump's set")
+                    {:type :unknown-option :mismatch :bad-value :option :reasoners
+                     :value (:reasoners opts) :values [:stored]}))))
+
+(defn dump-reasoners
+  "The reasoners `kb` registers once the dump `meta` describes has landed: nil when `meta`
+  records no set or records `kb`'s own, and the dump's set under `:reasoners :stored` when
+  it holds every name `kb` registered.  Any other pair is refused (`:reasoner-mismatch`);
+  `import-dump` asks before the first write, and `vaelii.core/import!` registers the
+  answer after the recover."
+  [kb meta dir {want :reasoners}]
+  (when-let [dumped (some-> (:reasoners meta) set)]
+    (let [have (kb/reasoners-of kb)]
+      (cond
+        (= dumped have) nil
+        (and (= :stored want) (every? dumped have)) dumped
+        :else (throw (kb/reasoner-mismatch
+                      (str "the dump at " dir) dumped have
+                      (str "Register " (pr-str (vec (sort dumped)))
+                           " on the destination first, or import with :reasoners"
+                           " :stored to register the dump's set.")))))))
 
 (def ^:private content-refusals
   "The `:type`s of the refusals of a dump's own content that a frame decides in the
@@ -1598,6 +1621,7 @@
        (throw (ex-info (str "unsupported dump variant " variant
                             " — this importer reads :records / :records+index")
                        {:type :unsupported-variant :variant variant})))
+     (dump-reasoners kb meta dir opts)
      (let [compression (or (:compression meta) :none)
            read-fn     (stream-reader-for meta)
            decode      (frame-decoder)

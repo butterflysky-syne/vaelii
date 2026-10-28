@@ -51,6 +51,7 @@
             [vaelii.impl.observe :as observe]
             [vaelii.impl.overlay.mount :as mount]
             [vaelii.impl.protocols :as p]
+            [vaelii.impl.provers :as provers]
             [vaelii.impl.sentex :as sx]
             [vaelii.impl.special :as special]
             [vaelii.impl.types.reasoning :as reasoning])
@@ -513,7 +514,9 @@
   fork over `overlay-base-space` whose own half is the slot's current fork space, taken on
   the first call; on every other storage it is space `s`."
   [s]
-  (let [common {:recover? false :tms tms-kind}]
+  ;; `:reasoners :stored`: a test that registered a reasoner left it recorded in the slot's
+  ;; store, and `fresh` forgets it after the open (`forget-reasoners!`)
+  (let [common {:recover? false :tms tms-kind :reasoners :stored}]
     (if (overlay?)
       (let [own (or (@fork-spaces s)
                     ((swap! fork-spaces update s #(or % (fork-space))) s))]
@@ -540,6 +543,12 @@
   (some-> (reasoning/refused kb) (reset! {}))
   ;; the owed record names a position among the deleted records, as `v/clear!` drops it
   (argpass/clear-owed! kb))
+
+(defn- forget-reasoners!
+  "Unregister every prover from `kb` but the defaults, and record no reasoner in its store."
+  [kb]
+  (reset! (:provers kb) provers/default-provers)
+  (kb/record-reasoners! kb #{}))
 
 (defn drop-space!
   "Forget every RAM store held under `space`: its records, its index on any RAM backend and
@@ -569,7 +578,7 @@
       (some-> old drop-fork-space!)
       (v/open-kb (merge (slot-opts s) opts)))
     (let [opts (merge (slot-opts s) opts)
-          open #(doto (v/open-kb opts) (clear-kb!))]
+          open #(doto (v/open-kb opts) (clear-kb!) (forget-reasoners!))]
       (try (open)
            (catch clojure.lang.ExceptionInfo e
              (when-not (= :store-unusable (:type (ex-data e))) (throw e))

@@ -1856,7 +1856,7 @@
         hosts (host-posture host)
         starter? (boolean (some #{"--starter"} args))
         kb    (cond-> (if dir
-                        (v/open-kb {:backend (dir-backend dir) :dir dir})
+                        (v/open-kb {:backend (dir-backend dir) :dir dir :reasoners :stored})
                         (v/open-kb {}))
                 starter? starter/load-into)]
     (trove/log! {:level :info :id ::start

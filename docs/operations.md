@@ -593,7 +593,7 @@ VAELII_API_TOKEN=… lein serve 4200 /var/lib/vaelii --listen 0.0.0.0   # off-ma
   | `close!` | 2 | It ends the process's ownership of the store; the socket that asked would be answering from a KB that no longer has one |
   | `seal` | 2 | It writes the images of an operation log `open-kb`'s `:oplog?` attached, and the daemon opens without one; the cadence of seals is the opener's |
   | `write-hazards`, `store-state`, `rebuild-progress` | 2 | Each reads the state that opening the store left. The daemon opens with `open-kb`'s default, `{:recover? :trust}`, so each answers the same value for the whole of its service, and the repair each one names (`recover`, `reindex`, a reload) is a row above. A write into an unrecovered KB is refused `:unrecovered-kb` over the wire as in process |
-  | `add-prover`, `add-evaluatable`, `add-reasoner`, `set-solver` | 1, 2 | The prover registry and the edge solver are held in the process's memory, and none of them is stored. `add-prover` and `add-evaluatable` take a function, and `add-reasoner` and `set-solver` answer the KB value |
+  | `add-prover`, `add-evaluatable`, `add-reasoner`, `set-solver` | 1, 2 | The prover registry and the edge solver are held in the process's memory. `add-prover` and `add-evaluatable` take a function, and `add-reasoner` and `set-solver` answer the KB value. The daemon registers the reasoners its store records when it opens ([storage.md](storage.md#the-reasoner-set)) |
   | `fork` | 1 | It answers a KB value |
   | `with-deferred-settle` | 1 | It is a macro over a body of forms, and `:assert-many` is the batch a request sends |
   | `watch`, `unwatch`, `watchers` | 1 | `watch` takes a callback. The feed crosses as a subscription with a cursor, `serve/feed-ops` (above) |

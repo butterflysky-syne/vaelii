@@ -3736,6 +3736,49 @@
 
 (defn registry [kb] (if-let [pv (:provers kb)] @pv default-provers))
 
+;; ---- the optional reasoners ----------------------------------------------
+;; Resolved at runtime by name, so loading this namespace loads none of the leaf
+;; algebras (docs/qcn.md).  `vaelii.core/reasoners` and `add-reasoner` are the public
+;; surface; a KB records the names it registered (`vaelii.impl.kb/add-reasoners!`).
+
+(def reasoner-vars
+  "The reasoners a KB can register by name, and the var holding each one's constructor.
+  `vaelii.core/reasoner` documents each one."
+  '{:rcc8        vaelii.impl.space/spatial-prover
+    :cardinal    vaelii.impl.orientation/orientation-prover
+    :relative    vaelii.impl.relative/relative-prover
+    :distance    vaelii.impl.distance/distance-prover
+    :allen       vaelii.impl.interval/allen-prover
+    :point       vaelii.impl.point/point-prover
+    :duration    vaelii.impl.duration/duration-prover
+    :metric-time vaelii.impl.stp/stp-prover
+    :sign        vaelii.impl.sign/sign-prover
+    :calendar    vaelii.impl.calendar/calendar-prover
+    :includes-instant vaelii.impl.point/includes-instant-prover
+    :brave-cautious vaelii.impl.asp.prover/brave-cautious-prover})
+
+(defn reasoner-names
+  "The names of the optional reasoners, sorted."
+  []
+  (vec (sort (keys reasoner-vars))))
+
+(defn check-reasoner-name!
+  "`nm`, or a refusal naming the reasoners there are.  `:unknown-option`: naming a
+  reasoner that does not exist is a bad argument from a caller, never something a
+  sentence can be checked into."
+  [nm]
+  (when-not (contains? reasoner-vars nm)
+    (throw (ex-info (str "no such reasoner: " (pr-str nm) " — want one of "
+                         (str/join ", " (map pr-str (reasoner-names))))
+                    {:type :unknown-option :mismatch :bad-value :reasoner nm
+                     :known (reasoner-names)})))
+  nm)
+
+(defn reasoner
+  "The prover the reasoner named `nm` registers, or `check-reasoner-name!`'s refusal."
+  [nm]
+  ((requiring-resolve (reasoner-vars (check-reasoner-name! nm)))))
+
 ;; ---- which provers are even worth asking ---------------------------------
 
 (defn fact-prover?

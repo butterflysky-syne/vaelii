@@ -615,6 +615,7 @@ so one vocabulary reads both.
 | `:pattern-too-costly` | a `find-terms` regex read past its per-term or scan-wide character budget | [api.md](api.md) |
 | `:quantifier-not-local` | a bound existential or universal variable appears outside its own quantifier | [aggregate.md](aggregate.md) |
 | `:quoted-arg-type` | a `quotedArg` constraint convicted an input of a function application inside an argument on its EDN kind as a term; a convicted fact is stored and held inert | [argtypes.md](argtypes.md) |
+| `:reasoner-mismatch` | a store or a dump records one reasoner set and the open or import names another, and two sets derive two beliefs from the same records; name the recorded set or pass `:reasoners :stored` | [storage.md](storage.md#the-reasoner-set) |
 | `:record-edit-unsupported` | an `edit-records!` batch removes an `except`, `defeat` or `exceptWhen` record, whose departure re-posts what the remaining ones name; remove it with `edit!` | [storage.md](storage.md#editing-the-records-of-a-kb-without-belief) |
 | `:reserved-family` | a packed index key names the reserved family, which nothing packs | [indexing.md](indexing.md) |
 | `:reset` | the sandbox page's row saying how much a reset discarded | [web.md](web.md) |
