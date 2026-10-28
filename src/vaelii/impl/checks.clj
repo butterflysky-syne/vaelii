@@ -5398,6 +5398,22 @@
           (when (some #(= 'different %) antecedent-preds)
             (nm/sort-by-content-key identity different-negatives))))
 
+(defn- closure-only-predicates
+  "The predicates of `negative-predicates` a rule reads only through a `different`
+  antecedent: `different-negatives` less its antecedent predicates and `neg-query-preds`.
+  `different` reads the stored merges, the stored `indeterminate_term` memberships and
+  the stored `genl` edges, so only a rule whose conclusions are stored withdraws it, and
+  `wff/negation-walk` takes no edge into such a predicate from a backward-only rule."
+  [antecedent-preds neg-query-preds]
+  (when (some #(= 'different %) antecedent-preds)
+    (reduce disj different-negatives (concat antecedent-preds neg-query-preds))))
+
+(defn- backward-only?
+  "Does only the backward chainer run this rule sentex, so that no conclusion of it is
+  stored?"
+  [sentex]
+  (= #{:backward} (:engines sentex)))
+
 (defn- negative-edge-rules
   "Handles of every **stored** rule a negative edge leaves — the presence check on walking at all:
   with none, the stored graph has no negative edge and no cycle through negation.
@@ -5449,20 +5465,25 @@
          ;; an `:inert` rule with a variable consequent keeps the canonical variable, and
          ;; concludes nothing
          conseq  (rules/consequent-index-pred rule-sentex)
-         tx      (reasoning/taxonomy kb)]
+         tx      (reasoning/taxonomy kb)
+         ;; `recheck-predicates` less its `different` half, which `negative-predicates`
+         ;; adds back and `closure-only-predicates` keeps apart
+         negs    (concat (mapcat rules/watched-predicates exceptions)
+                         (rules/naf-predicates rule-sentex)
+                         (rules/aggregate-predicates rule-sentex)
+                         (rules/closed-extent-recheck-predicates-of
+                          tx (sx/sentence-of rule-sentex))
+                         (rules/closed-extent-query-predicates
+                          tx (mapcat identity exceptions)))]
      {:id               handle
       :label            (str "rule#" handle)
       :content          [(sx/sentence-of rule-sentex) (:context rule-sentex)]
       :consequent-pred  (when (symbol? conseq) (when-not (sx/variable? conseq) conseq))
       :concludes-any?   (= p/var-consequent-key conseq)
       :antecedent-preds antes
-      :exception-preds  (negative-predicates
-                         antes (concat (mapcat rules/watched-predicates exceptions)
-                                       (rules/recheck-predicates rule-sentex)
-                                       (rules/closed-extent-recheck-predicates-of
-                                        tx (sx/sentence-of rule-sentex))
-                                       (rules/closed-extent-query-predicates
-                                        tx (mapcat identity exceptions))))})))
+      :exception-preds  (negative-predicates antes negs)
+      :closure-only     (closure-only-predicates antes negs)
+      :backward-only?   (backward-only? rule-sentex)})))
 
 (defn- reads-predicate?
   [node g]
@@ -5628,13 +5649,12 @@
         ;; concludes has no settled answer, and which one it lands on would depend on
         ;; arrival order.
         tx                (reasoning/taxonomy kb)
-        negatives         (negative-predicates antes (concat (rules/watched-predicates exception)
-                                                             (rules/naf-predicates-of inner)
-                                                             (rules/aggregate-predicates-of inner)
-                                                             (rules/closed-extent-recheck-predicates-of
-                                                              tx inner)
-                                                             (rules/closed-extent-query-predicates
-                                                              tx exception)))]
+        neg-queries       (concat (rules/watched-predicates exception)
+                                  (rules/naf-predicates-of inner)
+                                  (rules/aggregate-predicates-of inner)
+                                  (rules/closed-extent-recheck-predicates-of tx inner)
+                                  (rules/closed-extent-query-predicates tx exception))
+        negatives         (negative-predicates antes neg-queries)]
     ;; The fast path skips the walk when the graph has no negative edge at all — and a
     ;; `different` antecedent counts as one on both sides, so a rule that reads the
     ;; equality closure is walked, and a *stored* one keeps the walk alive for a rule
@@ -5645,6 +5665,8 @@
                      :label            "the rule being asserted"
                      :antecedent-preds antes
                      :exception-preds  negatives
+                     :closure-only     (closure-only-predicates antes neg-queries)
+                     :backward-only?   (backward-only? (sx/sentex sentence context))
                      :consequent-pred  (when-not (sx/variable? conseq) conseq)
                      :concludes-any?   (sx/variable? conseq)}]
         (when-let [cycle (wff/negation-cycle (reasoning/taxonomy kb)
@@ -5992,7 +6014,8 @@
                                :label           (str "rule#" rule-handle " (with the new exception)")
                                :exception-preds (concat (:exception-preds base)
                                                         (negative-predicates (:antecedent-preds base)
-                                                                             new-exc-preds)))]
+                                                                             new-exc-preds))
+                               :closure-only    (reduce disj (:closure-only base) new-exc-preds))]
       (when (seq (:exception-preds pending))
         (when-let [cycle (wff/negation-cycle (reasoning/taxonomy kb)
                                              (stratification-readers kb pending)
@@ -6045,7 +6068,9 @@
                                                    :exception-preds
                                                    (concat (:exception-preds base)
                                                            (negative-predicates
-                                                            (:antecedent-preds base) [pred])))]
+                                                            (:antecedent-preds base) [pred]))
+                                                   :closure-only
+                                                   (disj (:closure-only base) pred))]
                                 (when-let [c (wff/negation-cycle
                                               (reasoning/taxonomy kb)
                                               (stratification-readers kb pending)

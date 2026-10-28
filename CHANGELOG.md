@@ -67,6 +67,15 @@ it — `git show v0.16.0:CHANGELOG.md`.
 
 ### Fix: inference
 
+- **A rule reading `different` beside the starter's time-slice equality is stored.** A
+  forward rule with a `(different ?a ?b)` antecedent concluding a kind of
+  `uninterrupted` was refused `:not-stratified`, the cycle running through the
+  backward `(equals (CxTimeFn (CxTimeFn ?c ?t1) ?t2) …)` rule in `time.txt`. A forward
+  rule concluding an equality from a `different` antecedent is refused as before.
+  [equality.md](docs/equality.md#interactions)
+  *Migration:* a rule set whose only cycle ran through a backward-only equality rule is
+  stored.
+
 - **`chain-report` no longer counts a firing an aggregate's moved count withdrew as
   refused.** A rule on `(agg/count 0 …)` whose counted fact arrived in the same `edit!`
   as its subject reported one `:blocked` refusal per subject with no reason, where the

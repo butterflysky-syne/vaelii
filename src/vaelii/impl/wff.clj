@@ -684,7 +684,10 @@
   called with no argument, every rule): an edge `reader -> node` exists exactly when the
   reader reads a predicate whose spec closure holds `c`.  A node concluding any predicate
   steps to every rule.  So a step reads the consequent's upward closure and the rule
-  index under each predicate in it, and no spec closure.
+  index under each predicate in it, and no spec closure.  A step from a `:backward-only?`
+  node skips a reader holding the predicate in its `:closure-only` set: that reader reads
+  the predicate only through `different`, which reads stored content, and a backward-only
+  rule stores no conclusion.
 
   The search state is the consequent and the `negative?` flag, not the rule: two rules
   concluding one predicate have the same edges in.  A state is pushed once, and a
@@ -713,7 +716,9 @@
                      (some? c)
                      (for [g (nm/sort-by-content-key identity (tax/genls-global tax c))
                            :when (.add seen-g [g negative?])
-                           r (readers g)]
+                           r (readers g)
+                           :when (not (and (:backward-only? node)
+                                           (contains? (:closure-only r) g)))]
                        [(edge-kind r g) c r]))))]
     (or (some (fn [[node negative?]] (when (closes? node negative?) [node])) starts)
         (loop [q (reduce push clojure.lang.PersistentQueue/EMPTY
@@ -782,8 +787,11 @@
   The walk starts at the rules reading a predicate in `genls-global(super)`, in content
   order, and goes against the graph's edges (`negation-walk`).  It closes at a rule
   concluding a spec of `sub` when a negative edge is on the path or the edge from the
-  start is negative.  It reads only the rules those starts reach, and finds only cycles
-  through the new edge, so a cycle already stored refuses no edge that does not reach it.
+  start is negative.  A backward-only closing rule reaches no start through a
+  `:closure-only` read, so a second walk over the starts less those reads looks for one,
+  and runs only when some start has such a read.  It reads only the rules those starts
+  reach, and finds only cycles through the new edge, so a cycle already stored refuses no
+  edge that does not reach it.
 
   A `genlCx` edge needs no walk: the graph's edges read the `genl` closure alone.
 
@@ -792,16 +800,35 @@
   ([tax readers sub super]
    (genl-negation-cycle tax readers #(negation-starts readers %) sub super))
   ([tax readers starts-of sub super]
-   (let [above  (tax/genls-global tax super)
-         starts (starts-of above)
-         below? (fn [node]
-                  (or (:concludes-any? node)
-                      (some-> (:consequent-pred node) (->> (tax/genls-global tax)) (contains? sub))))]
-     (when-let [chain (negation-walk tax readers starts
-                                     (fn [node negative?] (and negative? (below? node))))]
+   (let [above   (tax/genls-global tax super)
+         starts  (starts-of above)
+         below?  (fn [node]
+                   (or (:concludes-any? node)
+                       (some-> (:consequent-pred node) (->> (tax/genls-global tax)) (contains? sub))))
+         ;; what a start reads of `above` when the closing rule is backward-only, which no
+         ;; `:closure-only` read reaches (`negation-walk`)
+         reads   (fn [start backward-only?]
+                   (if backward-only?
+                     #(and (above %) (not (contains? (:closure-only start) %)))
+                     above))
+         stored  (into [] (keep (fn [[r _]]
+                                  (let [r? (reads r true)]
+                                    (when (or (some r? (:antecedent-preds r))
+                                              (some r? (:exception-preds r)))
+                                      [r (boolean (some r? (:exception-preds r)))]))))
+                       starts)
+         walk    (fn [starts closing?]
+                   (negation-walk tax readers starts
+                                  (fn [node negative?] (and negative? (closing? node)))))
+         chain   (if (= starts stored)
+                   (walk starts below?)
+                   (or (walk starts #(and (below? %) (not (:backward-only? %))))
+                       (walk stored #(and (below? %) (:backward-only? %)))))]
+     (when chain
        (let [[start] chain
              closing (if (= 1 (count chain)) start (peek (peek chain)))
-             edge    (if (some above (:exception-preds start)) :excepts-on :depends-on)]
+             edge    (if (some (reads start (:backward-only? closing)) (:exception-preds start))
+                       :excepts-on :depends-on)]
          (conj (forward-path chain)
                (str (name edge) " " (if (:concludes-any? closing) sub (:consequent-pred closing)))
                (:label closing)))))))

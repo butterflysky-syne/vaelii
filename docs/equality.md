@@ -700,6 +700,9 @@ displaced it.
   `indeterminate_term` or a `genl` into it, since the unique-name assumption is
   suspended for a member and the guard is withdrawn the same way
   ([predall.md](predall.md)). The negative edge runs to the three equality relations.
+  `different` reads stored merges, memberships and edges, so the edge leaves only a rule
+  whose conclusions are stored: a `set/backwardRule` concluding an equality closes no
+  cycle through a `different` reader.
   `checks/negative-edge-rules` reads the re-check index beside the antecedent index, so
   a stored `different` rule keeps a `genl` edge's stratification walk on, and a cycle a
   later taxonomy edge closes beneath it is refused.
