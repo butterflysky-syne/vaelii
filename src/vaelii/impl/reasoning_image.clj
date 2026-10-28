@@ -23,8 +23,9 @@
   ## The manifest
 
   The two layout numbers, a records fingerprint, the source identity's digest, and the
-  policies that move belief: `config/assertive-arg-types?`, and the forced-monotonic
-  set the stored declarations give and where each is stated (`declared-forced`).  The
+  policies that move belief: `config/assertive-arg-types?`, the forced-monotonic set the
+  stored declarations give and where each is stated (`declared-forced`), and the shipped
+  reasoners the KB records (`kb/reasoners-of`).  The
   records fingerprint differs by place, because each place is checked against something
   different.  A store's own image carries the record store's `p/belief-fingerprint` — on
   the disk store its `reasoning-fingerprint`, read off the slots without decoding a record.
@@ -38,8 +39,9 @@
   KB untouched for the full recover:
 
   - the KB is on the dense network, and its network holds no node;
-  - its provers and its solver are the defaults (`refusal`): a registered prover or
-    evaluatable runs code the source identity does not cover;
+  - its provers are the defaults and the shipped reasoners it records, and its solver is
+    the default (`refusal`): a registered prover or evaluatable runs code the source
+    identity does not cover;
   - the manifest equals the one `manifest-for` gives the KB (`decision`).
 
   Both sections are read in full before anything moves into the KB, so a torn or
@@ -87,6 +89,7 @@
             [vaelii.impl.io.thaw :as safe]
             [vaelii.impl.journal :as journal]
             [vaelii.impl.jtms :as jtms]
+            [vaelii.impl.kb :as kb]
             [vaelii.impl.observe :as observe]
             [vaelii.impl.progress :as progress]
             [vaelii.impl.protocols :as p]
@@ -167,13 +170,19 @@
 
 (defn refusal
   "Why `kb` may neither write nor install an image, or nil.  A prover or evaluatable
-  beyond the defaults, or a solver other than the local one, runs code the source identity
-  does not cover."
+  beyond the defaults and the shipped reasoners `kb` records, or a solver other than the
+  local one, runs code the source identity does not cover.  A recorded reasoner whose
+  prover an open has not registered yet is no reason: the open registers it after the
+  install."
   [kb]
-  (cond
-    (not= provers/default-provers @(:provers kb)) :provers-registered
-    (not= solve/local-solver @(:solver kb))       :solver-set
-    :else                                         nil))
+  (let [pv      @(:provers kb)
+        n       (count provers/default-provers)
+        shipped (into #{} (map provers/reasoner) (kb/reasoners-of kb))]
+    (cond
+      (not (and (= provers/default-provers (subvec (vec pv) 0 (min n (count pv))))
+                (every? shipped (drop n pv))))   :provers-registered
+      (not= solve/local-solver @(:solver kb))  :solver-set
+      :else                                    nil)))
 
 (defn- belief-built?
   "Does `kb` hold belief for every stored sentex?  Two conditions: no loader declared the
@@ -250,7 +259,8 @@
               :source    (or source (:digest sid))
               :libraries (:libraries sid)
               :policy    {:assertive-arg-types (boolean (config/assertive-arg-types?))
-                          :forced-monotonic    (vec (sort (declared-forced kb)))}}
+                          :forced-monotonic    (vec (sort (declared-forced kb)))
+                          :reasoners           (vec (sort (kb/reasoners-of kb)))}}
        lr (assoc :recover lr)))))
 
 (defn decision

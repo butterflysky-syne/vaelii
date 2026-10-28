@@ -416,6 +416,23 @@
         (is (not (.exists (manifest dir))) "nor does its close write one")
         (finally (rm-rf! dir))))))
 
+(deftest a-kb-registering-a-shipped-reasoner-takes-an-image-the-next-open-installs
+  (tu/with-snapshot-platform
+    (let [dir (tmpdir)]
+      (try
+        (let [kb (open dir)]
+          (content! kb)
+          (v/add-reasoner kb :allen)
+          (is (nil? (ri/refusal kb)))
+          (is (= [:allen] (:reasoners (:policy (ri/save! kb)))))
+          (v/close! kb))
+        (let [before (manifest-text dir)
+              kb     (v/open-kb {:backend :disk-snapshot :dir dir :reasoners :stored})]
+          (try
+            (is (= before (manifest-text dir)) "the open installed the image")
+            (finally (v/close! kb))))
+        (finally (rm-rf! dir))))))
+
 (deftest no-image-is-written-while-a-settle-decides-the-belief
   (tu/with-snapshot-platform
     ;; The writer's settle is parked before its discovery, and the image write on this

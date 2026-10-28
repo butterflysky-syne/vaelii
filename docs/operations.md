@@ -68,7 +68,7 @@ a `:disk-locked` refusal names a process that is still running.
 
   | reason | what happened | what to do |
   |---|---|---|
-  | `[:unusable [:config op]]` | a prover, evaluatable, reasoner or solver was registered | nothing; a KB that registers one cannot be sealed, so each crash of it rebuilds |
+  | `[:unusable [:config op]]` | a prover, evaluatable, reasoner or solver was registered | nothing; the next seal clears a reasoner's mark, and a KB that registers any of the others cannot be sealed, so each crash of it rebuilds |
   | `[:unusable [:seal op]]` | the crash came inside `import!`, `clear!`, `recover`, `reindex` or `load-text!`, before its seal | check what that operation stored, and run it again if it did not finish |
   | `[:unusable [:unfreezable op cls]]`, `[:unusable [:listener-write op]]`, `[:unusable [:unlogged-write kind]]` | a write the log could not record ran | nothing; writes from a change-feed listener are the usual source |
   | `[:unusable [:vm-error op cls]]` | a write ran out of heap or stack after its frame was written, and was rolled back | raise `-Xmx` (or `-Xss` for `StackOverflowError`) |

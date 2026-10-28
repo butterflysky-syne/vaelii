@@ -65,6 +65,16 @@ it — `git show v0.16.0:CHANGELOG.md`.
   *Breaks:* `open-kb` over a store a KB called `add-reasoner` on, and `import!` of such a
   KB's dump, without `:reasoners`
 
+### Fix: performance
+
+- **A KB that registers a shipped reasoner keeps a reasoning image and seals its log.**
+  A `:disk-snapshot` KB opened with `:reasoners` or given `add-reasoner` wrote no image
+  at close, so every open paid a full recover, and a crash of its log rebuilt from the
+  records. The image's manifest records the reasoner set, and an open with the same
+  set installs it.
+  [storage.md](docs/storage.md#the-reasoning-image)
+  *Migration:* none; the first close after the upgrade writes the image.
+
 ## 0.30.0 — 2026-10-27 — "Chaining writes rolled back at `:max-derivations` and a full heap, `why` as a justification graph, `functionCorrespondingPredicate` scoped to the reader, `kb-integrity`'s stranded declarations and rule clashes, `CxTimeFn` time slices"
 
 | Area | Change |

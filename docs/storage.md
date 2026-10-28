@@ -741,9 +741,10 @@ and the next open installs it in place of the recover (`vaelii.impl.reasoning-im
 
 **The manifest** holds the two layout numbers, the records'
 `record-store/reasoning-fingerprint`, the **source identity** of the engine code that
-derived the belief ([glossary.md](glossary.md)), and the two policies that move belief:
-`VAELII_ASSERTIVE_ARG_TYPES`, and the forced-monotonic declarations the store holds
-(`reasoning-image/declared-forced`, [nmtms.md](nmtms.md#the-forced-monotonic-set)). The
+derived the belief ([glossary.md](glossary.md)), and the three policies that move belief:
+`VAELII_ASSERTIVE_ARG_TYPES`, the forced-monotonic declarations the store holds
+(`reasoning-image/declared-forced`, [nmtms.md](nmtms.md#the-forced-monotonic-set)), and
+the reasoner set the store records ([The reasoner set](#the-reasoner-set)). The
 records fingerprint reads the justifications kind's slots beside the sentexes kind's,
 where the index image's `slot-fingerprint` reads the sentexes alone: a justification
 stored over sentexes that did not change moves belief and not the index. A premise mark
@@ -751,9 +752,10 @@ re-stores its sentex, so the sentex slots cover it. Both fingerprints carry the 
 epoch described above, so an image of records a `clear!` removed is declined.
 
 **An open installs the image** only when every part of the manifest equals the KB's own, the
-KB's provers and solver are the defaults — a registered prover or evaluatable runs code the
-source identity does not cover — and both sections read in full into a scratch network
-before anything moves into the KB's own. Any mismatch, a registered prover, or a torn
+KB's provers are the defaults and the shipped reasoners its store records, its solver is the
+default — a registered prover or evaluatable runs code the source identity does not cover —
+and both sections read in full into a scratch network before anything moves into the KB's
+own. Any mismatch, a registered prover, or a torn
 section leaves the KB to the full recover, which then writes a fresh image. The install
 thaws `state.nippy` and the network's object frames under `io.thaw/sharing`: each symbol is
 the symbol pool's and each handle one `Long` per value in a section, so the installed KB
@@ -973,8 +975,8 @@ mark is fsynced when it is appended, under `:tick` as under `:each`, so a write 
 runs only once the mark is on disk. A `VirtualMachineError` while a frame is
 frozen, an `OutOfMemoryError` or a `StackOverflowError` on a deeply nested sentence, marks
 nothing: it propagates as itself, no frame is written, and the write does not run. A KB
-with a registered prover or solver cannot be sealed, so its log stays unusable and the
-next open rebuilds.
+with a registered prover or solver other than a shipped reasoner cannot be sealed, so its
+log stays unusable and the next open rebuilds.
 
 **A log that cannot take a frame stops.** A failed append, fsync or truncation latches the
 log's fault, as a record store's does ("A store that stops"): the operation is refused
