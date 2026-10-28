@@ -65,6 +65,16 @@ it — `git show v0.16.0:CHANGELOG.md`.
   *Breaks:* `open-kb` over a store a KB called `add-reasoner` on, and `import!` of such a
   KB's dump, without `:reasoners`
 
+### Fix: inference
+
+- **`chain-report` no longer counts a firing an aggregate's moved count withdrew as
+  refused.** A rule on `(agg/count 0 …)` whose counted fact arrived in the same `edit!`
+  as its subject reported one `:blocked` refusal per subject with no reason, where the
+  facts arriving first reported the rule `:silent`. Both orders report it `:silent`, and
+  belief is unchanged.
+  [aggregate.md](docs/aggregate.md#maintenance-when-the-aggregate-is-a-rule-antecedent)
+  *Migration:* none.
+
 ### Fix: performance
 
 - **A KB that registers a shipped reasoner keeps a reasoning image and seals its log.**

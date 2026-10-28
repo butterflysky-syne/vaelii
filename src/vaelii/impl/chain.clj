@@ -1977,16 +1977,20 @@
   refused at its placement would have recorded, so the trigger that lifts the block
   releases it from its bindings (`release-refusal!`) and not by a join over the rule's
   extent.  `:handles` is every antecedent but the rule.  Records nothing for a firing
-  an `except` hides an antecedent of at its placement, which the refusal record does not
-  hold (docs/exceptions.md, \"A refused firing is remembered as bindings\").  Reads the
-  conclusion's record, so it runs before the sweep's records are deleted."
+  an `except` hides an antecedent of at its placement, or whose post-join literal no
+  longer answers, neither of which the refusal record holds (docs/exceptions.md, \"A
+  refused firing is remembered as bindings\").  Reads the conclusion's record, so it runs
+  before the sweep's records are deleted."
   [kb j]
   (let [rh (:informant j)]
     (when (integer? rh)
       (when-let [csx (p/get-sentex (:records kb) (:consequence j))]
         (let [antes (vec (:antecedents j))
               pctx  (:context csx)]
-          (when-not (antecedent-hidden? kb antes pctx)
+          (when-not (or (antecedent-hidden? kb antes pctx)
+                        (post-join-withdrawn? kb (p/get-sentex (:records kb) rh)
+                                              (delay (settled-bindings kb (:bindings j) pctx))
+                                              pctx))
             (record-refusal! kb {:rule-handle rh} (:sentence csx) pctx antes
                              (into [] (remove #{rh}) antes) (:bindings j) nil
                              (when-let [subs (:subsumptions j)] {:subsumptions subs}))))))))
