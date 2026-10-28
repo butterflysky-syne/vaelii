@@ -65,6 +65,16 @@ it — `git show v0.16.0:CHANGELOG.md`.
   *Breaks:* `open-kb` over a store a KB called `add-reasoner` on, and `import!` of such a
   KB's dump, without `:reasoners`
 
+### Fix: answers
+
+- **An open query answers a part's location and ownership again.** With the starter,
+  `(query kb '(locatedIn U1 ?w) ctx)` answered `()` where `ask?` on `(locatedIn U1 Desk)`
+  answered true, and `(owns Ann ?p)` named the whole and none of its parts. `CxMereology`
+  states its two forward rules again and acknowledges kb-integrity's
+  `transitiveInArgInverse` suggestion for each, so `query`, `prove` and `ask?` agree.
+  [inherit.md](docs/inherit.md), [integrity.md](docs/integrity.md#what-a-rule-macro-finding-means)
+  *Migration:* none; a part's derived `locatedIn` and `owns` are stored again.
+
 ### Fix: inference
 
 - **A rule reading `different` beside the starter's time-slice equality is stored.** A
